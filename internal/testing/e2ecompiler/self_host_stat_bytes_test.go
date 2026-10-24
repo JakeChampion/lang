@@ -37,8 +37,6 @@ func TestSelfHostStatBytes(t *testing.T) {
 					runner = []string{qemu}
 				}
 			case "wasm32-wasi":
-				// stat requires cwd, permission and filesystem metadata that
-				// WASI does not provide. Preserve the explicit capability refusal.
 				cmd := runX86_64Bin(cli.runner, cli.bin, "-target", target, "-o", filepath.Join(t.TempDir(), "stat.wasm"), src, cli.stdlib)
 				cmd.Env = append(os.Environ(), env...)
 				out, err := cmd.CombinedOutput()

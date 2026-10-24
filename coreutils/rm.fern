@@ -1,47 +1,3 @@
-// rm.fern — GNU-compatible `rm`.
-//
-//   rm [OPTION]... [FILE]...
-//
-// One unlink(2) per file, one rmdir(2) per directory, and a
-// depth-first walk under `-r` that visits a directory's children in
-// raw readdir order — GNU passes fts no comparator, so the order the
-// kernel hands back is the order `-v` prints and the order the
-// removals happen in.
-//
-// ---- what decides whether a file is even reached --------------------
-//
-// Four checks stand between an operand and its removal, in this order,
-// and each has its own wording:
-//
-//   1. a directory without -r or -d is EISDIR, which is rm's own
-//      hard-coded errno; with -d the rmdir(2) is simply made and its
-//      errno reported, so `rm -d sl/` on a symlink to a directory says
-//      `Not a directory` and the three checks below are not asked;
-//   2. an operand whose last component is `.` or `..` is refused;
-//   3. an operand that IS the root directory — compared by device and
-//      inode, so a bind mount of `/` is caught too — is the failsafe;
-//   4. --preserve-root=all refuses an operand on a different device
-//      from its parent, and --one-file-system skips a directory
-//      reached BELOW an operand on a different device from it.
-//
-// ---- the prompts ----------------------------------------------------
-//
-// `-i` prompts for everything, `-I` prompts once before four or more
-// operands (or any number under -r), and the DEFAULT prompts for a
-// file the process cannot write — but only when stdin is a terminal,
-// which is what the hidden `---presume-input-tty` forces so the path
-// is reachable from a pipe. The answer is glibc's rpmatch in the C
-// locale: the whole line is consumed and only a leading `y` or `Y` is
-// yes.
-//
-// Declining is never an error: every prompt path exits 0.
-//
-// ---- the walk is fd-relative ----------------------------------------
-//
-// Below an operand, every entry is statted, tested, opened and removed
-// by name inside its directory, which is held open (`Dir`) while its
-// children are walked, as GNU's fts does with openat / unlinkat. So a
-// tree whose full path is longer than PATH_MAX goes like any other.
 import "std/errno";
 import "./lib/filetype";
 import "./lib/fts";
@@ -91,9 +47,6 @@ function opt_verbose(): i32 {
   return 11;
 }
 
-// When rm asks. `sometimes` is the default: only a write-protected
-// file, and only with a terminal on stdin. `once` degrades to
-// `sometimes` after its single prompt has been answered.
 function rmi_never(): i32 {
   return 0;
 }
@@ -110,8 +63,6 @@ function rmi_sometimes(): i32 {
   return 3;
 }
 
-// The `--interactive` table, in the order argmatch prints it: three
-// names for never, one for once, two for always.
 function when_names(): string[] {
   let out: string[] = [];
   out = out.append("never");
@@ -134,12 +85,6 @@ function when_values(): i32[] {
   return out;
 }
 
-// What one entry's removal came to. `mark` is the one that
-// propagates: an ancestor of an entry whose REMOVAL failed, that was
-// skipped, or that was declined at a directory's FIRST visit is
-// silently left alone — no prompt for it and no second diagnostic
-// naming it. `keep` is an entry still there without that consequence:
-// a declined prompt, and a stat that failed before one.
 function res_ok(): i32 {
   return 0;
 }
@@ -152,15 +97,8 @@ function res_mark(): i32 {
   return 2;
 }
 
-// `preserve_root` and `preserve_all` are two flags rather than one
-// setting because GNU keeps two: `--no-preserve-root` clears the first
-// and leaves the second alone, so `--preserve-root=all
-// --no-preserve-root` still refuses an operand on another device while
-// no longer refusing `/`.
 struct Settings { interactive: i32, ignore_missing: boolean, one_file_system: boolean, preserve_root: boolean, preserve_all: boolean, recursive: boolean, dir: boolean, verbose: boolean, tty: boolean }
 
-// The whole of the mutable state: the stdio stream `-v` writes
-// through, and the exit status a diagnostic turns to 1.
 struct St { out: gnu.Stdio, status: i32 }
 
 function help_text(): string {
@@ -196,9 +134,6 @@ function help_text(): string {
   return out;
 }
 
-// ---- paths -----------------------------------------------------------------
-// The last component of `p`, trailing slashes ignored: `d/./` is `.`,
-// `..//` is `..`, `//` is empty.
 function base_name(p: string): string {
   let end: i32 = p.len();
   while (end > 0 && p[end - 1] as i32 == 47) {
@@ -211,7 +146,6 @@ function base_name(p: string): string {
   return slice_unchecked(p, start, end) + "";
 }
 
-// The directory `p` lives in, for --preserve-root=all's comparison.
 function parent_name(p: string): string {
   let end: i32 = p.len();
   while (end > 0 && p[end - 1] as i32 == 47) {
@@ -229,10 +163,6 @@ function parent_name(p: string): string {
   return slice_unchecked(p, 0, end) + "";
 }
 
-// ---- errors and prompts ----------------------------------------------------
-// The two errnos `-f` passes over. rm treats both as "it was not
-// there": `rm -f x/` on a regular file `x` is silent, and so is
-// `rm -rf dangling/`, while ELOOP and ENAMETOOLONG are still reported.
 function nonexistent_errno(e: IoError): boolean {
   let n: i32 = errno.of(e);
   return n == errno.ENOENT || n == errno.ENOTDIR;
@@ -242,9 +172,6 @@ function fail(st: St, msg: string): St {
   return St { out: st.out.report(msg), status: 1 };
 }
 
-// `Ent` — where an entry is: its full path, which every message and
-// prompt names it by, and below an operand the directory holding it and
-// its name there, which every call reaches it through.
 struct Ent { path: string, dir: Option[Dir], name: string }
 
 function operand(path: string): Ent {
@@ -310,11 +237,6 @@ function cannot_remove(st: St, path: string, e: IoError): St {
   return fail(st, "cannot remove " + gnu.quotea(path) + ": " + gnu.io_error_text(e));
 }
 
-// Whether the process may write `path`. A symlink is never
-// write-protected — the permissions on the other end are not the ones
-// that decide whether the link can be unlinked — and only EACCES
-// counts, so a name that went away between the stat and here is left
-// to the removal to report.
 function write_protected(e: Ent, mode: u32): boolean {
   if (filetype.is_link(mode)) {
     return false;
@@ -329,12 +251,6 @@ function write_protected(e: Ent, mode: u32): boolean {
   }
 }
 
-// Whether rm would have STATTED this entry to word a prompt before
-// trying to remove it. When it would, a failed stat is itself the
-// diagnostic — carrying the STAT's errno, and without the ancestor
-// marking a failed removal carries. fts hands a command-line
-// operand's stat to rm already, so only a name found inside a
-// directory reaches the prompt with nothing stat'ed yet.
 function prompt_stats(s: Settings, top: boolean): boolean {
   if (s.interactive == rmi_always()) {
     return true;
@@ -342,9 +258,6 @@ function prompt_stats(s: Settings, top: boolean): boolean {
   return s.interactive == rmi_sometimes() && s.tty && !top;
 }
 
-// Whether rm asks before removing `path`, and the prompt it asks with.
-// `verb` is "remove" or "descend into"; `what` names the file's kind.
-// Returns true to go ahead.
 function confirm(s: Settings, e: Ent, mode: u32, verb: string, what: string): boolean {
   if (s.interactive == rmi_never()) {
     return true;
@@ -373,12 +286,6 @@ function verbose(st: St, s: Settings, path: string, is_dir: boolean): St {
   return St { ...st, out: st.out.fwrite(what + gnu.quotea(path) + "\n") };
 }
 
-// ---- the walk --------------------------------------------------------------
-// One entry. `top` marks a command-line operand — the checks for `.`,
-// for the root directory and for --preserve-root=all are its alone,
-// and --one-file-system is the other way round, skipping only what is
-// found BELOW one. `cl_dev` is the device of the operand this entry
-// was reached through.
 function rm_entry(st0: St, s: Settings, ent: Ent, top: boolean, cl_dev: i64): (St, i32) {
   let st: St = st0;
   let path: string = ent.path;
@@ -387,9 +294,6 @@ function rm_entry(st0: St, s: Settings, ent: Ent, top: boolean, cl_dev: i64): (S
       if (prompt_stats(s, top)) {
         return (cannot_remove(st, path, why), res_keep());
       }
-      // Nothing was going to be stat'ed, so rm tries the removal and
-      // the errno THAT fails with is the one reported: a dangling
-      // `sl/` is `Not a directory` rather than ENOENT.
       match (ent_remove_file(ent)) {
         Ok(_) => {
           return (verbose(st, s, path, false), res_ok());
@@ -425,19 +329,11 @@ function rm_entry(st0: St, s: Settings, ent: Ent, top: boolean, cl_dev: i64): (S
   return (st, res_ok());
 }
 
-// The refusals that stand between a directory and its removal, in the
-// order GNU applies them. Returns None to go on, or the state after
-// the diagnostic it printed.
 function refuse_dir(st: St, s: Settings, path: string, top: boolean, cl_dev: i64, info: FileStat): Option[St] {
   if (!s.recursive) {
     if (!s.dir) {
       return Some(fail(st, "cannot remove " + gnu.quotea(path) + ": Is a directory"));
     }
-    // `-d` without `-r` is one rmdir(2) and whatever it answers. 9.5
-    // stopped standing rm's own ENOTEMPTY in front of the call, and
-    // every refusal below goes with it: `rm -d sl/` is the ENOTDIR
-    // rmdir returns, `rm -d .` EINVAL and `rm -d /` EBUSY, none of
-    // which rm has a wording of its own for any more.
     return None;
   }
   if (top) {
@@ -543,9 +439,6 @@ function rm_dir(st0: St, s: Settings, ent: Ent, top: boolean, cl_dev: i64, info:
   }
   release(held);
   if (!confirm(s, ent, info.mode, "remove", "directory")) {
-    // Declining a directory's FIRST visit — which for an empty one is
-    // this prompt — leaves its ancestors alone as well; declining the
-    // visit on the way back UP does not.
     if (descended) {
       return (st, res_keep());
     }
@@ -574,11 +467,6 @@ function release(held: Option[Dir]): void {
   }
 }
 
-// Every name inside `path`, in the order its listing handed them back —
-// which is raw readdir order, the order GNU walks in because it passes
-// fts no comparator. Reports whether any of them left this directory
-// marked, which is what makes it go quietly rather than be prompted
-// for and fail.
 function rm_children(st0: St, s: Settings, path: string, held: Option[Dir], names: string[], dev: i64): (St, boolean) {
   let st: St = st0;
   let marked: boolean = false;
@@ -595,12 +483,6 @@ function rm_children(st0: St, s: Settings, path: string, held: Option[Dir], name
   return (st, marked);
 }
 
-// A directory rm cannot read. GNU does not diagnose that while the
-// rmdir can still succeed, so an unreadable EMPTY directory goes
-// quietly; when the rmdir fails it is the READ error that is
-// reported, not the ENOTEMPTY the rmdir returned. A prompt has
-// nothing to ask about here — rm cannot tell whether the directory is
-// empty — so an interactive run reports the read error instead.
 function rm_unreadable_dir(st: St, s: Settings, ent: Ent, info: FileStat, why: IoError): (St, i32) {
   let path: string = ent.path;
   let asks: boolean = s.interactive == rmi_always();
@@ -618,11 +500,6 @@ function rm_unreadable_dir(st: St, s: Settings, ent: Ent, info: FileStat, why: I
   return (cannot_remove(st, path, why), res_mark());
 }
 
-// ---- options ---------------------------------------------------------------
-// The `Try 'rm ./-x' to remove the file '-x'.` line GNU inserts
-// between a getopt fault and the `Try … --help` line: the first argv
-// element that looks like an option and names something lstat can
-// see, whether or not it is the element that faulted.
 function removable_operand_hint(argv: string[]): string {
   let i: i32 = 1;
   while (i < argv.len()) {
@@ -682,9 +559,6 @@ function parse(argv: string[]): (Settings, gnu.Getopt) {
         } else if (m.id == opt_one_file_system()) {
           s = Settings { ...s, one_file_system: true };
         } else if (m.id == opt_no_preserve_root()) {
-          // rm refuses the abbreviation getopt would have accepted,
-          // and says so without the `Try …` line every other usage
-          // error carries.
           if (argv[g.index() - 1] != "--no-preserve-root") {
             gnu.error("you may not abbreviate the --no-preserve-root option");
             exit(1);
@@ -693,7 +567,6 @@ function parse(argv: string[]): (Settings, gnu.Getopt) {
         } else if (m.id == opt_preserve_root()) {
           let all: boolean = s.preserve_all;
           if (m.has_value) {
-            // Not argmatch: `all` exactly, with rm's own wording.
             if (m.value != "all") {
               gnu.error("unrecognized --preserve-root argument: " + gnu.quote(m.value));
               exit(1);
@@ -719,8 +592,6 @@ function parse(argv: string[]): (Settings, gnu.Getopt) {
   return (Settings { ...s, tty: presume || isatty(0) }, g);
 }
 
-// The single `-I` prompt, before any operand is looked at: four or
-// more of them, or any number at all under -r.
 function prompt_once(s: Settings, n: i32): boolean {
   if (s.interactive != rmi_once() || !(s.recursive || n > 3)) {
     return true;

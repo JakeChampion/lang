@@ -8,18 +8,6 @@ import (
 	"testing"
 )
 
-// The full `@derive` family on the self-host IR path THROUGH THE REAL stdlib.
-// With stdlib loading + the treeshake pass (now applied by default whenever a
-// stdlib root is given), a `@derive`d type's methods dispatch to core/cmp's
-// real `eq`/`cmp`/`hash` and std/json's `to_json` — including the cases the
-// inline lowerings (#3759 Eq, #3765 Ord) deliberately did NOT cover:
-//   - `@derive(Hash)`     — core/cmp's __hash_mix_i32 + per-width / FNV string,
-//   - `@derive(Json)`     — std/json's field-/variant-wise renderer,
-//   - string-keyed `@derive(Ord)` — core/cmp's `impl Ord for string`.
-//
-// All route IR (the merged module fits the budget after treeshake) and match
-// the native interpreter. Drives the self-hosted x86-64 loader (asm_load_run)
-// with the repo's real stdlib as the root.
 var deriveStdlibCases = []struct {
 	name string
 	src  string
@@ -36,14 +24,6 @@ function main(): i32 { let a = S { name: "hi", n: 1 }; let b = S { name: "hi", n
 @derive(json.Json)
 struct P { x: i32, name: string }
 function main(): i32 { let a = P { x: 7, name: "hi" }; return a.to_json().len(); }`},
-	// `@derive(json.FromJson)` synthesises the decoder `from_json_value(v)`
-	// and its text-taking companion `from_json(s): Result[Self, string]` —
-	// the self-host twin of native's synthFromJsonValue. Each case exercises
-	// a distinct way the associated call `User.from_json(...)` is consumed,
-	// all of which must route IR (the associated-call Option/Result
-	// return-type recovery in the lowering's scrutinee/binding sites) and
-	// match the interpreter. A direct `match (User.from_json(...))` over
-	// valid / missing-field / invalid-JSON inputs → 9 + 7 + 5 = 21.
 	{"json-from-struct", `import "std/json";
 @derive(json.FromJson) struct User { id: i32, name: string }
 function main(): i32 {
@@ -53,10 +33,6 @@ function main(): i32 {
     match (User.from_json("nope")) { Ok(u3) => { sum = sum + 100; }, Err(e) => { sum = sum + 5; } }
     return sum;
 }`},
-	// With std/i32 and std/string imported, `i32` and `string` also name
-	// modules, so a decoder spelled `i32.from_json_value(v)` became a call to
-	// a module function that does not exist (#11849). The derive names the
-	// field type in type position, through json.from_json_elem. 9 + 2 = 11.
 	{"json-from-struct-scalar-modules-imported", `import "std/json";
 import "std/i32";
 import "std/string";
@@ -64,26 +40,17 @@ import "std/string";
 function main(): i32 {
     match (User.from_json("{\"id\":9,\"name\":\"xy\"}")) { Ok(u) => { return u.id + u.name.len(); }, Err(e) => { return 100; } }
 }`},
-	// A boolean field decodes through std/json's `impl FromJson for
-	// boolean` → 14.
 	{"json-from-bool", `import "std/json";
 @derive(json.FromJson) struct Flag { id: i32, on: boolean }
 function main(): i32 {
     match (Flag.from_json("{\"id\":4,\"on\":true}")) { Ok(f) => { if (f.on) { return f.id + 10; } return f.id; }, Err(e) => { return 1; } }
 }`},
-	// A full round-trip over boolean fields: to_json now renders a bool as
-	// `true`/`false` (its Json impl) rather than the i32 `1`/`0` fallback, so
-	// the serialised text parses straight back. Both a true and a false field
-	// → 5 + 10 (on) + 100 (!off) = 115. Fails without the boolean-dispatch fix
-	// (to_json would emit `"on":1`, which json_get_bool then rejects → Err).
 	{"json-roundtrip-bool", `import "std/json";
 @derive(json.Json, json.FromJson) struct Flag { id: i32, on: boolean, off: boolean }
 function main(): i32 {
     let f = Flag { id: 5, on: true, off: false };
     match (Flag.from_json(f.to_json())) { Ok(g) => { let r = g.id; if (g.on) { r = r + 10; } if (!g.off) { r = r + 100; } return r; }, Err(e) => { return 1; } }
 }`},
-	// The `let r = User.from_json(...)` binding form AND `?`-propagation of an
-	// associated-call Result through a helper → 8 + 3 = 11.
 	{"json-from-var-try", `import "std/json";
 @derive(json.FromJson) struct User { id: i32, name: string }
 function pick(s: string): Result[i32, string] { let u: User = User.from_json(s)?; return Ok(u.id); }
@@ -94,7 +61,6 @@ function main(): i32 {
     match (pick("{\"id\":3,\"name\":\"z\"}")) { Ok(n) => { a = a + n; }, Err(e) => { a = a + 100; } }
     return a;
 }`},
-	// A full serialise→deserialise round-trip over i32 / string fields → 7.
 	{"json-roundtrip", `import "std/json";
 @derive(json.Json, json.FromJson) struct P { x: i32, name: string }
 function main(): i32 {
@@ -140,14 +106,10 @@ func TestSelfHostDeriveStdlibIR(t *testing.T) {
 			if err := os.WriteFile(entry, []byte(tc.src+"\n"), 0o644); err != nil {
 				t.Fatalf("write entry: %v", err)
 			}
-			// Oracle: the native interpreter's exit code.
 			_, want := runFixtureInterp(t, entry, "")
-			// Loading the stdlib auto-applies treeshake; `-decide` must still
-			// report the merged module as IR.
 			if out, _ := runDriver(entry, root, "-decide"); strings.TrimSpace(out) != "ir" {
 				t.Errorf("%s decide = %q, want \"ir\"", tc.name, strings.TrimSpace(out))
 			}
-			// Emit + assemble + run; must match the oracle.
 			asm, _ := runDriver(entry, root)
 			if len(asm) == 0 {
 				t.Fatalf("%s: driver emitted 0 bytes", tc.name)

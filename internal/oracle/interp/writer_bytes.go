@@ -14,9 +14,6 @@ func builtinWriterWriteSomeBytes(i *Interp, args []Value) (Value, error) {
 	return writerBytes(i, args, false)
 }
 
-// Borrow the Fern byte view, represented as an Array by the interpreter.
-// Copying into the host byte buffer keeps writes from
-// exposing its mutable storage to an injected io.Writer.
 func writerBytes(i *Interp, args []Value, all bool) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("byte write: expected 2 args")

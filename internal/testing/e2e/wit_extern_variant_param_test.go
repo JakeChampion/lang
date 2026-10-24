@@ -12,18 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExternVariantParamCustomProvider is the P4c general-`variant` parameter
-// gate (docs/WIT-BRING-YOUR-OWN.md): a Fern user enum with payload-carrying
-// variants passed to an `@import` extern whose WIT takes a `variant`. With a
-// uniform scalar payload (+ payloadless cases) the canonical variant flattens to
-// (disc, payload) — exactly like Result — so it reuses the (disc, payload) enum
-// param wrapper with no discriminant remap (`externVariantParamLayout`). For a
-// payloadless-case value (a sentinel) the wrapper's payload read yields ignored
-// garbage (the host drops it for that disc).
-//
-// The provider exports `describe: func(s: shape) -> s32` over
-// `variant shape { circle(s32), square(s32), empty }`: circle→p, square→p*10,
-// empty→999. The Fern side passes Circle(7)/Square(7)/Empty, expects 7/70/999.
 func TestExternVariantParamCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -50,8 +38,6 @@ func TestExternVariantParamCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export sink; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// describe receives the variant flattened to (disc, payload): circle(0)→p,
-	// square(1)→p*10, empty(2)→999 (payload ignored).
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)
   (func (export "local:test/sink@0.1.0#describe") (param $disc i32) (param $p i32) (result i32)

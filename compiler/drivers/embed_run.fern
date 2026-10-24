@@ -1,24 +1,9 @@
-// compiler/embed_run.fern — driver for the `-embed` asset bundle
-// (embed.fern, #6643).
-//
-// Two halves, and both matter. The BUNDLE half builds a real directory under
-// temp_dir and walks it, because sorted order, nested paths and binary bytes
-// are properties of the walk rather than of a hand-built Assets value. The
-// SUBSTITUTION half parses source and asserts on the tree that comes back,
-// because "resolved to a literal" is the only thing the rest of the compiler
-// can observe.
-//
-// Exit code 0 means every assertion held; a non-zero code identifies the one
-// that failed, so a regression names its own case without a stdout diff.
-
 import "../ast";
 import "../embed";
 import "../lexer";
 import "../parser";
 import "../util";
 
-// tree writes a fixture directory and returns its path, or "" if the host
-// would not let us.
 function tree(): string {
   let dir: string = "";
   match (temp_dir("fern-embed-run")) {
@@ -35,8 +20,6 @@ function tree(): string {
       return "";
     }
   }
-  // Written out of order on purpose: `load` has to sort, and a walk that
-  // happens to return them sorted would hide a missing sort.
   match (write_file(dir + "/z.txt", "ZZZ")) {
     Ok(u) => {},
     Err(e) => {
@@ -55,10 +38,6 @@ function tree(): string {
       return "";
     }
   }
-  // The essential asset. An interior NUL and a byte past 0x7f are what a
-  // real bundle carries — an image, a font, a wasm module — and `read_file`
-  // refuses the second of those outright, so a walk built on it embeds text
-  // and rejects every directory holding anything else.
   match (write_file_bytes(dir + "/blob.bin", blob())) {
     Ok(u) => {},
     Err(e) => {
@@ -68,13 +47,10 @@ function tree(): string {
   return dir;
 }
 
-// blob is "A\0B\xffC": five bytes, one of them NUL and one of them not valid
-// UTF-8 in any position.
 function blob(): u8[] {
   return [65u8, 0u8, 66u8, 255u8, 67u8];
 }
 
-// bytes_are reports whether `bs` holds exactly the bytes of `want`.
 function bytes_are(bs: u8[], want: u8[]): boolean {
   if (bs.len() != want.len()) {
     return false;
@@ -89,7 +65,6 @@ function bytes_are(bs: u8[], want: u8[]): boolean {
   return true;
 }
 
-// bytes_of reads the compact literal's byte payload independently of its lowering.
 function bytes_of(e: ast.Expr): string {
   let out: string = "";
   match (e) {
@@ -106,7 +81,6 @@ function bytes_of(e: ast.Expr): string {
   return out;
 }
 
-// var_init_of digs the first StmtVar initialiser out of `main`.
 function var_init_of(mod: parser.Module): ast.Expr {
   for fd in mod.funcs {
     if (fd.name != "main") {
@@ -124,15 +98,12 @@ function var_init_of(mod: parser.Module): ast.Expr {
   return ast.ExprUnknown { kind: "none", line: 0, col: 0 };
 }
 
-// folded_init parses `src`, resolves assets against `a`, and returns the first
-// `let` initialiser in `main` plus every error the pass reported.
 function folded_init(src: string, a: embed.Assets): (ast.Expr, string[]) {
   let mod: parser.Module = parser.parse_module(lexer.tokenize(src));
   let folded: embed.Folded = embed.fold_assets(mod, a);
   return (var_init_of(folded.module), folded.errs);
 }
 
-// str_of returns a string literal's value, or "" for any other node.
 function str_of(e: ast.Expr): string {
   match (e) {
     ast.ExprString(s) => {
@@ -146,7 +117,6 @@ function str_of(e: ast.Expr): string {
 }
 
 function main(): i32 {
-  // ---- 1. the bundle -------------------------------------------------
   let dir: string = tree();
   if (dir.len() == 0) {
     return 10;
@@ -163,8 +133,6 @@ function main(): i32 {
     return 13;
   }
 
-  // Sorted, slash-separated, relative to the root — "sub/b.txt", not the
-  // absolute path and not a host separator.
   if (a.names.len() != 4) {
     return 14;
   }
@@ -190,8 +158,6 @@ function main(): i32 {
     return 21;
   }
 
-  // Byte-exact: nothing truncated at the NUL and nothing rewrote the 0xff,
-  // which a length check alone would not catch.
   if (!bytes_are(a.contents[1], blob())) {
     return 22;
   }
@@ -203,13 +169,10 @@ function main(): i32 {
     return 26;
   }
 
-  // A missing directory is an error, not an empty bundle: silently embedding
-  // nothing would turn a typo into a program that compiles and serves 404s.
   if (embed.load(dir + "/not-here").err.len() == 0) {
     return 27;
   }
 
-  // An EMPTY directory is legitimate, and is not the same as no -embed.
   let empty_dir: string = dir + "/empty";
   match (create_dir_all(empty_dir)) {
     Ok(u) => {},
@@ -231,12 +194,9 @@ function main(): i32 {
     return 32;
   }
 
-  // ---- 2. the miss diagnostic ----------------------------------------
   if (embed.format_available(a) != "embedded assets: a.txt, blob.bin, sub/b.txt, z.txt") {
     return 33;
   }
-  // A near miss suggests; an unrelated name does not, because a suggestion
-  // that matches almost nothing is worse than none.
   if (embed.suggest(a, "sub/b.tx") != "sub/b.txt") {
     return 34;
   }
@@ -247,7 +207,6 @@ function main(): i32 {
     return 36;
   }
 
-  // ---- 3. __fern_asset -----------------------------------------------
   let one: string = "function main(): i32 { let s: string = __fern_asset(\"a.txt\"); return s.len(); }\n";
   let (e1, err1) = folded_init(one, a);
   if (err1.len() != 0) {
@@ -257,8 +216,6 @@ function main(): i32 {
     return 41;
   }
 
-  // Nested one level in: the pass has to reach every expression position,
-  // not just a `let` initialiser it happens to be handed.
   let nested: string = "function main(): i32 { let s: string = __fern_asset(\"a.txt\") + __fern_asset(\"sub/b.txt\"); return s.len(); }\n";
   let (e2, err2) = folded_init(nested, a);
   if (err2.len() != 0) {
@@ -278,7 +235,6 @@ function main(): i32 {
     }
   }
 
-  // ---- 4. every error the pass can report -----------------------------
   let (e3, err3) = folded_init(one, embed.no_assets());
   if (err3.len() != 1) {
     return 50;
@@ -317,9 +273,6 @@ function main(): i32 {
     return 58;
   }
 
-  // The name is checked SYNTACTICALLY, before anything could have rewritten
-  // it — an asset resolved from a computed name would have to exist at
-  // runtime, which is the one thing embedding rules out.
   let computed: string = "function main(): i32 { let n: string = \"a.txt\"; let s: string = __fern_asset(n); return 0; }\n";
   let (e7, err7) = folded_init(computed, a);
   if (err7.len() != 1) {
@@ -329,10 +282,6 @@ function main(): i32 {
     return 60;
   }
 
-  // A nested asset call is refused, ONCE, on the outer call's argument not
-  // being a literal — the pass claims a call before the spine descends into
-  // it, so the inner one is never resolved into a name the outer could then
-  // accept. Post-order would compile this into a lookup of "hello asset".
   let inner: string = "function main(): i32 { let s: string = __fern_asset(__fern_asset(\"a.txt\")); return 0; }\n";
   let (e13, err13) = folded_init(inner, a);
   if (err13.len() != 1) {
@@ -342,15 +291,12 @@ function main(): i32 {
     return 63;
   }
 
-  // Two bad names report twice: one failure must not hide the next.
   let two_bad: string = "function main(): i32 { let s: string = __fern_asset(\"nope1\") + __fern_asset(\"nope2\"); return 0; }\n";
   let (e8, err8) = folded_init(two_bad, a);
   if (err8.len() != 2) {
     return 61;
   }
 
-  // The text form refuses a file that is not UTF-8, naming it, because the
-  // string it would yield could not be one.
   let text_of_blob: string = "function main(): i32 { let s: string = __fern_asset(\"blob.bin\"); return 0; }\n";
   let (e14, err14) = folded_init(text_of_blob, a);
   if (err14.len() != 1) {
@@ -360,8 +306,6 @@ function main(): i32 {
     return 65;
   }
 
-  // ---- 5. __fern_asset_bytes -----------------------------------------
-  // Byte-exact, as a u8[] literal: the NUL and the 0xff both survive.
   let bytes_one: string = "function main(): i32 { let b: u8[] = __fern_asset_bytes(\"blob.bin\"); return 0; }\n";
   let (e15, err15) = folded_init(bytes_one, a);
   if (err15.len() != 0) {
@@ -370,7 +314,6 @@ function main(): i32 {
   if (bytes_of(e15) != "65,0,66,255,67") {
     return 67;
   }
-  // Text is bytes too: the bytes form takes any file.
   let bytes_text: string = "function main(): i32 { let b: u8[] = __fern_asset_bytes(\"sub/b.txt\"); return 0; }\n";
   let (e16, err16) = folded_init(bytes_text, a);
   if (err16.len() != 0 || bytes_of(e16) != "66,66") {
@@ -382,8 +325,6 @@ function main(): i32 {
     return 69;
   }
 
-  // ---- 6. __fern_assets / __fern_assets_bytes ------------------------
-  // The text enumeration refuses the whole bundle over its one binary file.
   let all: string = "function main(): i32 { let xs = __fern_assets(); return xs.len(); }\n";
   let (e18, err18) = folded_init(all, a);
   if (err18.len() != 1 || !util.contains(err18[0], "\"blob.bin\"")) {
@@ -396,8 +337,6 @@ function main(): i32 {
   }
   match (e9) {
     ast.ExprArray(arr) => {
-      // The element type is stamped whether or not the bundle is empty:
-      // an unstamped empty literal has no width for the checker.
       if (arr.elem_ty != "(string, u8[])") {
         return 71;
       }
@@ -426,7 +365,6 @@ function main(): i32 {
     }
   }
 
-  // A bundle of text enumerates as text.
   let text_lr: embed.LoadResult = embed.load(dir + "/sub");
   let (e19, err19) = folded_init(all, text_lr.assets);
   if (text_lr.err.len() != 0 || err19.len() != 0) {

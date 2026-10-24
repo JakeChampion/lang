@@ -7,16 +7,6 @@ import (
 	"testing"
 )
 
-// #8723: every core/bigint value a long-double term builds — the `__bi_make`
-// box, its limb array, the `__bi_trim` copy — and the strings coreutils/ld
-// renders from them were stranded once per generation, about 4 KB per line of
-// `seq 1e29 1e26 2.2e29`. The chains are struct-returning METHOD calls whose
-// receivers are field reads (`a.m.shl(..)`) or other call results
-// (`s.sub(kept.shl(1))`), and every producer has an identity fast path, so no
-// reclaim credit opened on them.
-//
-// Both programs import modules, so the driver is the self-host CLI rather
-// than asm_ir_run.
 const bigintChainSrc = `import "core/bigint";
 
 struct LD { m: bigint.BigInt, e: i32 }
@@ -52,8 +42,6 @@ function main(): i32 {
 
 const bigintChainExit = 50
 
-// 1201 terms on the long-double path; 34,027 allocations in the reduced
-// program, of which 28,012 went unfreed before.
 var seqLongDoubleArgs = []string{"1e29", "1e26", "2.2e29"}
 
 func TestSelfHostBigintChainReclaimX86_64(t *testing.T) {
@@ -103,8 +91,6 @@ func TestSelfHostBigintChainReclaimX86_64(t *testing.T) {
 	})
 }
 
-// The wasm leg also covers argv: seq reads args(), whose runtime helper
-// allocated two scratch buffers per call and freed neither.
 func TestSelfHostBigintChainReclaimWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm bigint chain reclaim")

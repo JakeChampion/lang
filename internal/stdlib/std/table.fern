@@ -1,23 +1,9 @@
-// std/table — render rows of strings as a column-aligned text table,
-// the kind of output CLI tools print.
-//
-//   render([["name", "age"], ["ada", "36"], ["bo", "9"]])
-//     name  age
-//     ada   36
-//     bo    9
-//
-// Each column is padded (with spaces) to the widest cell in that column;
-// columns are separated by two spaces and the last column is not padded
-// (no trailing whitespace). Short rows are treated as having empty
-// trailing cells. Widths are measured in Unicode CODE POINTS, so
-// accented text lines up; full-width (CJK) and combining marks are a
-// known limitation (they count as one column each).
+// This module formats text as tables.
 
 import "std/utf8";
 import "std/string";
 import "std/array";
 
-// __tbl_pad appends spaces so `s` reaches `width` code points.
 function __tbl_pad(s: string, width: i32): string {
   let out: u8[] = [];
   let i: i32 = 0;
@@ -34,7 +20,6 @@ function __tbl_pad(s: string, width: i32): string {
   return string_from_bytes_unchecked(out);
 }
 
-// __tbl_widths returns the per-column max code-point width across `rows`.
 function __tbl_widths(rows: string[][]): i32[] {
   let ncols: i32 = 0;
   let r: i32 = 0;
@@ -65,8 +50,6 @@ function __tbl_widths(rows: string[][]): i32[] {
   return widths;
 }
 
-// __tbl_row renders one row against the given column widths (the last
-// column is emitted unpadded).
 function __tbl_row(row: string[], widths: i32[]): string {
   let cells: string[] = [];
   let c: i32 = 0;
@@ -85,8 +68,6 @@ function __tbl_row(row: string[], widths: i32[]): string {
   return cells.join("  ");
 }
 
-// `render(rows)` — the column-aligned table (no header rule). Rows are
-// joined by newlines, with no trailing newline.
 pub function render(rows: string[][]): string {
   let widths: i32[] = __tbl_widths(rows);
   let lines: string[] = [];
@@ -98,11 +79,7 @@ pub function render(rows: string[][]): string {
   return lines.join("\n");
 }
 
-// `render_with_header(headers, rows)` — like `render`, but with the
-// header row followed by a rule of `-` under each column (widths span
-// the header AND the rows).
 pub function render_with_header(headers: string[], rows: string[][]): string {
-  // Combine into one array to size the columns over everything.
   let all: string[][] = [headers];
   let i: i32 = 0;
   while (i < rows.len()) {
@@ -112,13 +89,12 @@ pub function render_with_header(headers: string[], rows: string[][]): string {
   let widths: i32[] = __tbl_widths(all);
   let lines: string[] = [];
   lines = lines.append(__tbl_row(headers, widths));
-  // Rule row: each column's width in '-'.
   let rule: string[] = [];
   let c: i32 = 0;
   while (c < widths.len()) {
     let dashes: u8[] = [];
     let d: i32 = 0;
-    while (d < widths[c]) {  // '-'
+    while (d < widths[c]) {
       dashes = dashes.append(45 as u8);
       d = d + 1;
     }

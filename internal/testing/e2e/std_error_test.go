@@ -8,11 +8,6 @@ import (
 	"testing"
 )
 
-// std/error provides the canonical `Error` supertype: any type with a
-// `message()` can be returned as `dyn error.Error`, propagated through `?`
-// (each concrete error boxes into `dyn error.Error`), and handled
-// uniformly. handler(true) → Ok(43); handler(false) → Err whose
-// .message() is "missing" (len 7). 43 + 7 = 50. See std/error.fern.
 const stdErrorSrc = `import "std/error" as error;
 struct NotFound { what: string }
 impl error.Error for NotFound { function message(self: Self): string { return self.what; } }

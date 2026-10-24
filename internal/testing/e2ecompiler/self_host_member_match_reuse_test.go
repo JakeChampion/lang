@@ -5,31 +5,11 @@ import (
 	"testing"
 )
 
-// memberMatchReuseCases pin the consuming match over a struct-union: an arm
-// that reads the fields of a member binding and builds the same member, on a
-// scrutinee this frame owns and reads no further, rebuilds the value in the
-// scrutinee's box and moves its reference fields out rather than retaining
-// them.
-//
-// A member binding is the scrutinee narrowed to its record, so its field reads
-// used to be reads of a second value, one holding no unit of its own: the
-// ownership walk saw a box read through an alias and could neither take its
-// fields nor pair its death with the construction, and every rebuild of a
-// struct-union tree allocated a fresh node and released the old one. Now a
-// field read of the binding is a payload read of the scrutinee, the shape the
-// declared-enum match already has, and the planner's pairing, kept fields and
-// payload takes all apply.
-//
-// Each case is oracle-checked against the interpreter under FERN_STRICT_IR, and
-// `maxAllocs` is the census after the change; the rebuild cases exceed it by
-// one allocation per node per round before.
 var memberMatchReuseCases = []struct {
 	name      string
 	src       string
 	maxAllocs int64
 }{
-	// The headline: a tree of two member kinds rebuilt in place. Building the
-	// 63-node tree allocates 63 boxes; four owned rebuilds allocate none.
 	{"owned-tree-rebuilt-in-place", `struct Leaf { v: i32 }
 struct Node { left: Tree, right: Tree, tag: i32 }
 type Tree = Leaf | Node;
@@ -58,10 +38,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 70},
-	// A SHARED scrutinee is not rebuilt in place: a second binding still names
-	// the old tree and reads it back unchanged, so the rebuild allocates and
-	// the token path degrades to a fresh box. The sum of the kept tree is the
-	// assertion.
 	{"shared-tree-left-intact", `struct Leaf { v: i32 }
 struct Node { left: Tree, right: Tree, tag: i32 }
 type Tree = Leaf | Node;
@@ -94,9 +70,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 70},
-	// A reference field of the member is TAKEN out of an owned scrutinee: the
-	// append then grows the buffer in place instead of copying it, so thirty
-	// appends cost the doublings alone.
 	{"member-buffer-grown-in-place", `struct Call { args: i32[], n: i32 }
 struct Lit { v: i32 }
 type E = Call | Lit;
@@ -118,8 +91,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 12},
-	// A BORROWED scrutinee's field is not taken: the caller reads the original
-	// back after the call, so the append copies as a borrow always did.
 	{"borrowed-member-not-taken", `struct Call { args: i32[], n: i32 }
 struct Lit { v: i32 }
 type E = Call | Lit;
@@ -140,8 +111,6 @@ function main(): i32 {
 }`, 6},
 }
 
-// TestSelfHostMemberMatchReuse runs each case through the self-host CLI on
-// every target with the leak census on, against the interpreter oracle.
 func TestSelfHostMemberMatchReuse(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {

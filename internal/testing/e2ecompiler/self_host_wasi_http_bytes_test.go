@@ -10,9 +10,6 @@ import (
 	"testing"
 )
 
-// Execute the adapter's actual chunk loop with a host substitute that can
-// reject writes. Reactor instances do not exit through the census printer,
-// so a command program separately verifies cleanup after success and errors.
 func TestSelfHostWasiHttpByteWriterCleanup(t *testing.T) {
 	source, err := os.ReadFile("../../stdlib/std/wasi_http.fern")
 	if err != nil {
@@ -24,7 +21,6 @@ func TestSelfHostWasiHttpByteWriterCleanup(t *testing.T) {
 	if start < 0 || limit < 0 {
 		t.Fatal("HTTP adapter is missing its write loop or chunk limit")
 	}
-	// The write loop alone: the function's closing brace ends the slice.
 	end := start + strings.Index(text[start:], "\n}\n") + 3
 	program := text[limit:limit+strings.Index(text[limit:], ";")+1] + "\n" + text[start:end] + `
 function stream_write(stream: i32, data: u8[]): Result[i32, i32] {
@@ -111,10 +107,6 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 }
 `
 
-// The primary HTTP adapter must keep byte-domain bodies intact through its
-// list<u8> import. Exercise all body producers and both sides of the host's
-// 4096-byte write limit against actual wasmtime serve, with native as a second
-// compiler rather than the sole expected-output oracle.
 func TestSelfHostWasiHttpByteBodies(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {

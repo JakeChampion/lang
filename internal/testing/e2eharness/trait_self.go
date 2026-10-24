@@ -6,13 +6,6 @@ import (
 	"testing"
 )
 
-// TraitSelfProgram pins two trait rules both checkers agree on (#12282,
-// #12296): inside trait B's default body, `self.scale()` is B's `scale`
-// even though trait A gives P one too, and so is `other.scale()` in B's
-// associated default, whose parameter is the impl type; and `Self.f()`
-// inside an impl method or a trait default is the associated call on the
-// impl type. main answers 0 when every call dispatched where the rules
-// say, and the sum it got otherwise.
 const TraitSelfProgram = `trait A { function scale(self: Self): i32; }
 trait B {
     function scale(self: Self): i32;
@@ -46,8 +39,6 @@ function main(): i32 {
 }
 `
 
-// WriteTraitSelfProgram writes the program into a fresh directory and
-// returns its path.
 func WriteTraitSelfProgram(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "main.fern")

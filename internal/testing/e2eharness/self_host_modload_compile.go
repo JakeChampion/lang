@@ -1,7 +1,3 @@
-// Package e2eharness holds the shared e2e test harness — driver builds,
-// tooling discovery, caches — used by both internal/testing/e2e and
-// internal/testing/e2ecompiler (#4398 part 3). Extracted verbatim from
-// internal/testing/e2e/self_host_modload_compile_test.go.
 package e2eharness
 
 import (
@@ -13,33 +9,14 @@ import (
 	"github.com/jakechampion/lang/internal/pkg/modload"
 )
 
-// BuildModloadDriverX86 builds the file-based, import-driven self-host
-// driver (asm_modload_run) as an x86 host binary — the successor to the
-// bundle_run `///MODULE`-marker driver. Returns the gcc/runner tooling and
-// the driver binary path.
 func BuildModloadDriverX86(t *testing.T) (gcc string, runner []string, driverBin string) {
 	t.Helper()
 	gcc, runner = X86_64Tooling(t)
 	dir := WriteSelfHostModloadProject(t)
-	// Route through the content-addressed asm cache: dozens of tests build this
-	// same ~35k-line driver, and recompiling it per test is both the suite's
-	// dominant time cost and a RAM/disk spike that, accumulated across a shard,
-	// has been exhausting the GitHub-hosted runner (the mid-run `exit 143`
-	// reclaims). cachedSelfHostAsm runs the identical modload.Load → constfold →
-	// checker.Check → x86_64.Emit pipeline, keyed by source-set hash, so this is
-	// behaviour-identical and only deduplicates the repeated compile.
 	driverBin = BuildSelfHostBin(t, gcc, dir, "drivers/asm_modload_run.fern", "driver")
 	return gcc, runner, driverBin
 }
 
-// BuildModloadArm64DriverX86 builds the arm64-emitting file-based driver as
-// an x86 HOST binary — it runs on x86 and emits aarch64 asm, the file-based
-// successor to bundle_run_arm64. Since the #4398 fold this is the SAME merged
-// asm_modload_run driver BuildModloadDriverX86 builds (one shared cached
-// build); callers select arm64 by passing "-target", "arm64-linux" through their
-// compile*/RunDriverFile invocation. Returns the x86 gcc/runner (for
-// executing the driver) and the driver binary path. The caller links the
-// emitted arm64 asm with the aarch64 cross toolchain.
 func BuildModloadArm64DriverX86(t *testing.T) (x86gcc string, x86runner []string, driverBin string) {
 	t.Helper()
 	x86gcc, x86runner = X86_64Tooling(t)
@@ -47,20 +24,6 @@ func BuildModloadArm64DriverX86(t *testing.T) (x86gcc string, x86runner []string
 	return x86gcc, x86runner, BuildSelfHostBin(t, x86gcc, dir, "drivers/asm_modload_run.fern", "arm64driver")
 }
 
-// CompileFilesModload compiles a program from an explicit set of module
-// files (`files` maps a `<name>.fern` filename to its source, and MUST
-// include "main.fern" as the entry) with the file-based driver. The
-// general counterpart of CompileSourceModload for
-// programs built from specific self-host modules (e.g. lexer + parser).
-// Returns the emitted asm and the program dir.
-//
-// A local import that `files` does not carry is filled in from
-// compiler, transitively — so a caller names the modules its
-// program is ABOUT and cannot go stale when one of them gains an import.
-// That staleness is what broke every hand-listed bundle here at once when
-// parser.fern gained `import "./ast"` (#6993), in four different spellings.
-// An import that resolves nowhere is still left for the driver to report,
-// so a test asserting a genuinely missing module still sees it fail.
 func CompileFilesModload(t *testing.T, runner []string, driverBin string, files map[string]string, extraArgs ...string) (asm string, progDir string) {
 	t.Helper()
 	progDir = t.TempDir()
@@ -80,9 +43,6 @@ func CompileFilesModload(t *testing.T, runner []string, driverBin string, files 
 	return string(RunDriverFile(t, runner, driverBin, filepath.Join(progDir, "main.fern"), extraArgs...)), progDir
 }
 
-// fillSelfHostImports copies into progDir every self-host module the written
-// files import but did not supply, following each copied module's own imports
-// in turn, and the stdlib tree when any of them imports from it.
 func fillSelfHostImports(t *testing.T, progDir string, files map[string]string) {
 	t.Helper()
 	have := map[string]bool{"builtins.fern": true}
@@ -106,8 +66,6 @@ func fillSelfHostImports(t *testing.T, progDir string, files map[string]string) 
 			}
 			sh, err := os.ReadFile(filepath.Join(selfHostSrcDir(), name))
 			if err != nil {
-				// Not a self-host module. Leave it: the driver names the
-				// unresolved import, which is what a negative test wants.
 				continue
 			}
 			have[name] = true
@@ -122,22 +80,12 @@ func fillSelfHostImports(t *testing.T, progDir string, files map[string]string) 
 	}
 }
 
-// CompileSourceModload compiles `entrySrc` and its FULL transitive stdlib
-// closure (resolved by the real Go modload, exactly like selfHostBundleFor)
-// with the file-based driver. Stdlib modules retain their std/ or core/ path
-// so the loader can distinguish them from user files with the same basename.
-// Returns the emitted asm and the program dir.
 func CompileSourceModload(t *testing.T, runner []string, driverBin, entrySrc string, extraArgs ...string) (asm string, progDir string) {
 	t.Helper()
 	progDir = WriteSourceModloadProject(t, entrySrc)
 	return string(RunDriverFile(t, runner, driverBin, filepath.Join(progDir, "main.fern"), extraArgs...)), progDir
 }
 
-// WriteSourceModloadProject lays out the program CompileSourceModload
-// compiles: main.fern, builtins.fern and the transitive stdlib closure,
-// in a fresh temp dir and returns it, for a caller that runs the driver itself
-// (one that expects a refusal, say). A program with no imports gets only the
-// entry and builtins.
 func WriteSourceModloadProject(t *testing.T, entrySrc string) (progDir string) {
 	t.Helper()
 	_, srcs, err := modload.LoadSource(entrySrc)

@@ -7,13 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostWasmShimCore gates the generative suffix builder's shim-core
-// generators (watbin.fern's shim_trampoline_core / shim_tablefill_core).
-// A self-test compiled and run through the self-host asserts that, for the
-// stdout blocking-write-and-flush signature (i32 i32 i32 i32) -> (), the two
-// generated shim core modules match pinned reference bytes (the first two
-// sections of the stdout component suffix). Returns 0 on pass, a check id on
-// failure.
 func TestSelfHostWasmShimCore(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host shim-core e2e")
@@ -45,9 +38,6 @@ func TestSelfHostWasmShimCore(t *testing.T) {
 	}
 }
 
-// shimCoreSelfTestMain compares the two generated shim cores for the stdout
-// bwf signature against the pinned bytes. Check ids: 1 = trampoline length,
-// 2 = trampoline bytes, 3 = tablefill length, 4 = tablefill bytes.
 const shimCoreSelfTestMain = `
 function shim_eq(got: i32[], want: i32[]): boolean {
     if (got.len() != want.len()) { return false; }
@@ -73,13 +63,6 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostWasmComponentSuffixStdout gates the data-driven CLI-component
-// suffix generator (watbin.fern's component_suffix, which builds the
-// component framing and cli/run finish over an import list). A self-test
-// asserts the generated suffixes for three shapes — stdout (534B), eprint
-// (600B), exit (586B) — match pinned reference bytes exactly. Check ids: 1/2
-// stdout, 3/4 eprint, 5/6 exit (len/bytes). (The fs-read component is
-// byte-compared whole by TestSelfHostWasmComponentFullIOFS.)
 func TestSelfHostWasmComponentSuffixStdout(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host component-suffix e2e")
@@ -111,11 +94,6 @@ func TestSelfHostWasmComponentSuffixStdout(t *testing.T) {
 	}
 }
 
-// suffixStdoutSelfTestMain compares the generated suffixes against the pinned
-// bytes for stdout / eprint / exit. (The fs-read component's larger byte
-// array is verified via the whole-component compare in
-// TestSelfHostWasmComponentFullIOFS instead, to keep this self-host compile
-// within memory.)
 const suffixStdoutSelfTestMain = `
 function suffix_eq(got: i32[], want: i32[]): boolean {
     if (got.len() != want.len()) { return false; }
@@ -149,7 +127,6 @@ function main(): i32 {
 }
 `
 
-// suffixStdoutBytes is the pinned 534-byte stdout-component suffix.
 const suffixStdoutBytes = `		1, 66, 0, 97, 115, 109, 1, 0, 0, 0, 1, 8, 1, 96, 4, 127, 127, 127, 127, 0,
 		3, 2, 1, 0, 4, 5, 1, 112, 1, 1, 1, 7, 16, 2, 1, 48, 0, 0, 8, 36,
 		105, 109, 112, 111, 114, 116, 115, 1, 0, 10, 17, 1, 15, 0, 32, 0, 32, 1, 32, 2,
@@ -178,8 +155,6 @@ const suffixStdoutBytes = `		1, 66, 0, 97, 115, 109, 1, 0, 0, 0, 1, 8, 1, 96, 4,
 		1, 0, 3, 114, 117, 110, 1, 2, 11, 24, 1, 0, 18, 119, 97, 115, 105, 58, 99, 108,
 		105, 47, 114, 117, 110, 64, 48, 46, 50, 46, 48, 5, 3, 0`
 
-// suffixEprintBytes / suffixExitBytes: pinned bytes for the eprint
-// (stdout + get-stderr) and exit (stdout + cli/exit) shapes.
 const suffixEprintBytes = `		1, 66, 0, 97, 115, 109, 1, 0, 0, 0, 1, 8, 1, 96, 4, 127, 127, 127, 127, 0,
 		3, 2, 1, 0, 4, 5, 1, 112, 1, 1, 1, 7, 16, 2, 1, 48, 0, 0, 8, 36,
 		105, 109, 112, 111, 114, 116, 115, 1, 0, 10, 17, 1, 15, 0, 32, 0, 32, 1, 32, 2,

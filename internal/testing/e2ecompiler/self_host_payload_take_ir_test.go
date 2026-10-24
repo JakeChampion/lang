@@ -8,40 +8,11 @@ import (
 	"testing"
 )
 
-// payloadTakeIRCases pin the enum payload TAKE: a variant read whose box this
-// frame owns and reads no further moves the payload out of the box rather than
-// borrowing it, so the consuming use downstream updates in place.
-//
-// Before, every payload read was a borrow, and a borrow owes a retain to
-// whatever consumes it. The retain landed BEFORE the uniqueness test the
-// update makes, so the test read a count of two on a box nobody else held and
-// answered "shared" every time: `Full(xs.with(i, x))` cloned the whole buffer
-// on every call, for the lifetime of the program. `std/pvec`'s write path made
-// 476,160 of those copies over one bench run against native's none, which is
-// the whole of its 3.69x (#9891).
-//
-// The take is native's shape (`emitOwnedConsumingArmDrop`): the box is asked
-// `__fern_rc_is_unique` at the read, the payload slot is nulled when the answer
-// is yes and the payload retained when it is no, and the box's own drop — which
-// runs in the same step, since the read is its last use — walks past the null
-// and releases the box. A shared box therefore still behaves exactly as the
-// borrow did.
-//
-// The census is what these cases are for: a loop of N updates that allocated N
-// buffers is the volume this removes. Each case is oracle-checked against the
-// interpreter under FERN_STRICT_IR, and a wrong uniqueness answer shows up as a
-// wrong exit code rather than a census reading. `maxAllocs` is the count AFTER
-// the change; every case exceeds it before.
 var payloadTakeIRCases = []struct {
 	name      string
 	src       string
 	maxAllocs int64
 }{
-	// A buffer in a record held in a list, read through `list[i]`, joined onto,
-	// and put back with `.with(i, ...)` after an update of the holder that
-	// keeps the list — `std/quic/streams.write`'s shape. The element's take
-	// survives the update, so the three rebuilds and the join run in place:
-	// 200 updates cost a handful of boxes where they cost three each.
 	{"element-take-survives-a-keeping-update", `import "std/array";
 struct Send { buf: u8[], fin: boolean }
 struct St { id: i64, send: Send }
@@ -68,10 +39,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 20},
-	// The same with borrowed receivers, which the leaf inliner splices and
-	// takes the intermediate record apart: the copies it leaves unread are
-	// dropped, so the store-back is on the array the element was read out of.
-	// `keep` shares the first holder, which the take leaves as it was.
 	{"element-take-through-spliced-update", `import "std/array";
 struct Send { buf: u8[], fin: boolean }
 struct St { id: i64, send: Send }
@@ -98,12 +65,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 20},
-	// `std/http/h3.__on_request`'s shape: the element read, a branch between
-	// the read and the store-back (`r.fin || fin`), and the store-back made by
-	// an updater. The updater is spliced (seminline.updater), its read of the
-	// list is the first read (semsink.reuse), and the join block does not read
-	// the element again, since the join under it updates a buffer of it in
-	// place (child_used_above).
 	{"element-take-across-a-branch", `import "std/array";
 struct Frames { buf: u8[], left: i64 }
 struct Req { id: i64, frames: Frames, fin: boolean }
@@ -127,10 +88,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 20},
-	// The same across a branch with the list one record deeper: the join
-	// block reads `h.st` again as the donor of the update that stores the
-	// element back. That read is the first read (semsink.reuse), the donor
-	// named through it, so the buffer joins in place.
 	{"element-take-through-a-reused-donor", `import "std/array";
 struct Req { buf: u8[], fin: boolean }
 struct St { reqs: Req[], n: i32 }
@@ -153,8 +110,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 20},
-	// The headline: an owned box destructured and rebuilt every round. Thirty
-	// updates used to clone thirty buffers.
 	{"owned-box-updates-in-place", `enum Box { Full(i32[]), Empty }
 @noinline
 function put(own b: Box, i: i32, x: i32): Box {
@@ -174,11 +129,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 32},
-	// `std/pvec.__pv_with_in`'s shape: an element read out of the payload that
-	// outlives the update of the payload, over two levels of trie. This is the
-	// case the ordering carries — the element takes a unit of its own only if
-	// the array it came out of is already known to be owned, which is true only
-	// once the payload take is folded in first.
 	{"element-read-outlives-the-update", `enum Node { Branch(Node[]), Leaf(i32), Nil }
 @noinline
 function swap(own n: Node, at: i32, v: i32): Node {
@@ -212,9 +162,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 105},
-	// Two payload slots, one taken and the other read after it: the take must
-	// null only the slot it read. `b` coming back wrong, or at all, is the
-	// assertion.
 	{"sibling-slot-survives-the-take", `enum Pair { Both(i32[], i32[]), Neither }
 @noinline
 function left(own p: Pair, x: i32): Pair {
@@ -234,10 +181,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 23},
-	// A BORROWED box must not be taken from: its caller still names it and
-	// reads it back. Nulling the slot here would hand the caller an empty
-	// payload, so this case's census is deliberately unchanged by the take —
-	// `bump` copies, as a borrow always did.
 	{"borrowed-box-is-not-taken", `enum Box { Full(i32[]), Empty }
 @noinline
 function bump(b: Box, i: i32): Box {
@@ -254,10 +197,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 4},
-	// A map field of an owned record, rebuilt through a spread (#11119): the
-	// field read takes the map, so the insert finds it sole-held and updates
-	// in place. A borrowed read held it at two counts and copied every entry
-	// on every update.
 	{"map-field-of-owned-record-updates-in-place", `import "core/map";
 struct Db { entries: Map[i64, i64], n: i32 }
 @noinline
@@ -272,8 +211,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 450},
-	// A BORROWED record keeps its map: the insert copies, and the caller reads
-	// its own map back unchanged.
 	{"map-field-of-borrowed-record-is-not-taken", `import "core/map";
 struct Db { entries: Map[i64, i64], n: i32 }
 @noinline
@@ -291,8 +228,6 @@ function main(): i32 {
 }`, 16},
 }
 
-// censusWithin holds a run's leakcheck summary to a case's contract: balanced
-// at live 0, and no more allocations than the bound.
 func censusWithin(t *testing.T, name, stderr string, maxAllocs int64) {
 	t.Helper()
 	summary := leakSummaryLine(stderr)
@@ -311,8 +246,6 @@ func censusWithin(t *testing.T, name, stderr string, maxAllocs int64) {
 	}
 }
 
-// selfHostCLIRun compiles src for target through the production CLI with the
-// leak census on, runs it, and hands back the exit code and the run's stderr.
 func selfHostCLIRun(t *testing.T, fernBin, stdlibRoot, src, target string) (int, string) {
 	t.Helper()
 	dir := t.TempDir()

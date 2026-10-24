@@ -7,11 +7,6 @@ import (
 	"testing"
 )
 
-// DarwinAccountAnswers is what the account-entry gates' program must print
-// on Darwin, from Go's os/user and the system logname: this user's name, none
-// for a uid no account has, root's home, gid 0's name, staff's gid, and the
-// session's login name (none when there is none), then this user's primary
-// gid (the first getgrouplist gives), EINVAL's text and that __error answers.
 func DarwinAccountAnswers(t *testing.T) string {
 	t.Helper()
 	me, err := user.Current()

@@ -12,9 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// A TCP listener advertising h3 must be reachable on IPv6 too. Under
-// supervise, each worker must own a UDP socket; a connection stays on its
-// worker while independent connections can reach both workers.
 func TestServeH3SocketX86_64(t *testing.T) {
 	w := newServeH3World(t)
 	base, err := os.ReadFile(w.src)
@@ -67,8 +64,6 @@ func TestServeH3SocketX86_64(t *testing.T) {
 		}
 	})
 	t.Run("two_workers", func(t *testing.T) {
-		// State is created before fork, so create each worker's identity
-		// lazily on its first request and retain it for every later one.
 		src := string(base)
 		start := strings.Index(src, "function handle(")
 		if start < 0 {
@@ -108,7 +103,6 @@ func TestServeH3SocketX86_64(t *testing.T) {
 	})
 }
 
-// Two sequential requests on one connection must reach the same worker.
 const serveH3SocketClient = `import "std/net";
 import "std/quic/conn";
 import "std/http/h3";

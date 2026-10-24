@@ -4,20 +4,10 @@ import "std/http/cache";
 import "std/headers";
 import "std/time";
 
-// tests/stdlib/http_cache_test.fern — std/http/cache: entity tags written,
-// read and compared as RFC 9110 §8.8.3 does (its comparison table among
-// them); the preconditions of §13 in §13.2.2's order, each date field in
-// all three HTTP-date forms and ignored when invalid or repeated; If-Range;
-// the 304 and 412 a response becomes and the fields a 304 keeps;
-// Cache-Control written in its fixed order and read back with the first of
-// a repeated directive counting, quoted values, bad and oversized
-// delta-seconds; and Vary folded, deduplicated and absorbed by `*`.
-
 function at(sec: i64): Instant {
   return time.instant_from_unix(sec);
 }
 
-// 1994-11-06T08:49:37Z, the RFC's example date.
 function changed(): Instant {
   return at(784111777 as i64);
 }
@@ -107,7 +97,6 @@ function test_etag_read(): test.TestOutcome {
   return test.assert_eq(out, "<\"xyzzy\"><W/\"xyzzy\"><\"\"><\"a,b\"><-><-><-><-><->");
 }
 
-// RFC 9110 §8.8.3.2's table: strong, then weak.
 function test_etag_compared(): test.TestOutcome {
   let w1: cache.ETag = cache.weak("1");
   let w2: cache.ETag = cache.weak("2");
@@ -120,8 +109,6 @@ function test_etag_compared(): test.TestOutcome {
   return test.assert_eq(rows, "falsetrue falsefalse falsetrue truetrue");
 }
 
-// If-None-Match compares weakly; a match is a 304 for GET or HEAD and a
-// 412 otherwise; a comma inside a tag does not split it.
 function test_if_none_match(): test.TestOutcome {
   let out: string = eval("GET", ["If-None-Match", "W/\"v1\""]) + " ";
   out = out + eval("HEAD", ["If-None-Match", "\"x\", \"v1\""]) + " ";
@@ -132,8 +119,6 @@ function test_if_none_match(): test.TestOutcome {
   return test.assert_eq(out, "NotModified NotModified PreconditionFailed Proceed NotModified Proceed");
 }
 
-// If-Match compares strongly, `*` matches what exists, and nothing matches
-// a representation without a tag.
 function test_if_match(): test.TestOutcome {
   let out: string = eval("PUT", ["If-Match", "\"v1\""]) + " ";
   out = out + eval("PUT", ["If-Match", "W/\"v1\""]) + " ";
@@ -144,8 +129,6 @@ function test_if_match(): test.TestOutcome {
   return test.assert_eq(out, "Proceed PreconditionFailed Proceed PreconditionFailed PreconditionFailed");
 }
 
-// If-Unmodified-Since holds while the representation is no newer than the
-// date, is ignored beside If-Match, and is ignored when not a date.
 function test_if_unmodified_since(): test.TestOutcome {
   let out: string = eval("PUT", ["If-Unmodified-Since", "Sun, 06 Nov 1994 08:49:37 GMT"]) + " ";
   out = out + eval("PUT", ["If-Unmodified-Since", "Sun, 06 Nov 1994 08:49:36 GMT"]) + " ";
@@ -154,9 +137,6 @@ function test_if_unmodified_since(): test.TestOutcome {
   return test.assert_eq(out, "Proceed PreconditionFailed Proceed Proceed");
 }
 
-// If-Modified-Since: a 304 when unchanged since, in any HTTP-date form,
-// only for GET and HEAD, not beside If-None-Match, not when repeated, and
-// not when the modification time is unknown.
 function test_if_modified_since(): test.TestOutcome {
   let out: string = eval("GET", ["If-Modified-Since", "Sun, 06 Nov 1994 08:49:37 GMT"]) + " ";
   out = out + eval("GET", ["If-Modified-Since", "Sun, 06 Nov 1994 08:49:36 GMT"]) + " ";
@@ -176,7 +156,6 @@ function test_evaluate_absent(): test.TestOutcome {
   return test.assert_eq(a + " " + b, "PreconditionFailed Proceed");
 }
 
-// If-Range: a strong tag or the exact modification time keeps the range.
 function test_if_range(): test.TestOutcome {
   let v: cache.Validators = current();
   let n: Instant = now();
@@ -193,8 +172,6 @@ function page(): HttpResponse {
   return http.ok("body").with_content_type("text/plain").with_header("Cache-Control", "max-age=60").with_header("Vary", "Accept");
 }
 
-// The 304 keeps the fields a 304 repeats and drops the body and the rest;
-// Last-Modified only goes when there is no ETag.
 function test_respond_not_modified(): test.TestOutcome {
   let r: HttpResponse = cache.respond(req("GET", ["If-None-Match", "\"v1\""]), current(), now(), page());
   let out: string = r.status.to_string() + "|" + r.body_string() + "|" + field(r, "ETag") + "|" + field(r, "Cache-Control") + "|" + field(r, "Vary") + "|" + field(r, "Content-Type") + "|" + field(r, "Last-Modified");
@@ -204,9 +181,6 @@ function test_respond_not_modified(): test.TestOutcome {
   return test.assert_eq(out, "304||\"v1\"|max-age=60|Accept|-|- 304|Sun, 06 Nov 1994 08:49:37 GMT");
 }
 
-// A failed precondition is a bodiless 412; a response that is not a 2xx
-// goes untouched; one that proceeds carries its validators, a modification
-// time in the future sent as now.
 function test_respond_otherwise(): test.TestOutcome {
   let failed: HttpResponse = cache.respond(req("PUT", ["If-Match", "\"x\""]), current(), now(), page());
   let missing: HttpResponse = cache.respond(req("GET", ["If-None-Match", "\"v1\""]), current(), now(), http.not_found());
@@ -228,9 +202,6 @@ function test_cache_control_written(): test.TestOutcome {
   return test.assert_eq(a.to_string() + "|" + b.to_string() + "|" + c.to_string() + "|" + cache.cache_control().to_string(), "public, immutable, max-age=31536000|no-cache=\"Set-Cookie, X-Id\", private, must-revalidate|only-if-cached, max-stale, min-fresh=5|");
 }
 
-// Read across lines, names in any case, the first of a repeat counting, a
-// quoted value, a qualified no-cache whose list holds a comma, a bad
-// delta-seconds dropped and an oversized one capped, an extension ignored.
 function test_cache_control_read(): test.TestOutcome {
   let h: HeaderMap = headers.header_map_new().append("Cache-Control", "Max-Age=60, PUBLIC").append("cache-control", "no-cache=\"set-cookie, x-id\", max-age=10, s-maxage=\"30\", min-fresh=1x, stale-if-error=99999999999, ext=\"a,b\", max-stale");
   let c: cache.CacheControl = cache.parse_cache_control(h);
@@ -250,8 +221,6 @@ function test_with_cache_control(): test.TestOutcome {
   return test.assert_eq(field(none, "Cache-Control") + "|" + field(some, "Cache-Control"), "-|no-store");
 }
 
-// Vary folds its lines into one, names a field once whatever its case,
-// and `*` absorbs everything.
 function test_with_vary(): test.TestOutcome {
   let r: HttpResponse = http.ok("x").with_appended_header("Vary", "Accept").with_appended_header("vary", "Origin");
   let out: string = field(r.with_vary("Accept-Encoding"), "Vary") + "|";

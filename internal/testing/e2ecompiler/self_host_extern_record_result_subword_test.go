@@ -11,27 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestSelfHostExternRecordResultSubwordCustomProvider is the self-host port of
-// the record-field *result* test (docs/WIT-BRING-YOUR-OWN.md, Go-side
-// TestExternRecordResultSubwordCustomProvider). The canonical return-area lays
-// fields out at their natural offsets, which the wrapper reads and stores into
-// the self-host struct's own (matching) slots via extern_canon_top_off /
-// extern_field_load_op; the return area is sized by
-// extern_canon_record_size_nested.
-//
-// Historically this test exercised the sub-word (s8/u16) result path — the
-// canonical return-area packed sub-word fields tightly (a@0, b@2, c@4, 1-/2-
-// byte natural size), which differed from the self-host struct's uniform
-// 4-byte slots (a@0, b@4, c@8), so the wrapper needed a width+sign-aware load
-// (i32.load8_s / i32.load16_u) to bridge the two layouts. i8/i16/u16 were
-// removed from the language (#4408) — a self-host struct can no longer
-// declare a field narrower than u8/i32 — so that dual-layout bridging is gone
-// and this test now uses i32/u32 fields (offsets a@0, b@4, c@8 on both
-// sides), still exercising multi-field record-result marshalling end to end.
-//
-// The provider exports `make-mix: func() -> record { a: s32, b: u32, c: s32
-// }` returning fixed {a: -5, b: 300, c: 1000} at canonical offsets. The
-// self-host program checks p.a + (p.b as i32) + p.c == 1295.
 func TestSelfHostExternRecordResultSubwordCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -59,9 +38,6 @@ func TestSelfHostExternRecordResultSubwordCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export src; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// make-mix returns the record indirectly: alloc a 12-byte area via
-	// cabi_realloc, write the fields at the canonical layout (a:s32@0,
-	// b:u32@4, c:s32@8), return the pointer.
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)
   (global $h (mut i32) (i32.const 1024))

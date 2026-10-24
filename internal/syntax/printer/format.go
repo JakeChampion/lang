@@ -1,34 +1,3 @@
-// Format produces idiomatic, multi-line lang source from a parsed
-// AST. Unlike Print, which is fully parenthesised at every binary /
-// unary / assignment boundary so the output round-trips through the
-// parser unconditionally, Format outputs human-readable source —
-// minimal parentheses (just enough to preserve operator precedence),
-// two-space indentation per nesting level, one statement per line,
-// and a trailing newline at end of file.
-//
-// Comments captured by the lexer (prog.Comments) are interleaved
-// with the AST during emit:
-//
-//   - A comment whose source line is BEFORE the next statement's
-//     line emits as a separate leading line at the statement's
-//     indent level.
-//   - A comment whose source line equals the just-emitted single-
-//     line statement's line emits inline as `  // text`.
-//   - Comments after the last statement of a block emit before the
-//     closing brace at the block's indent.
-//   - Comments at end-of-file (after the last declaration) emit at
-//     depth zero.
-//
-// Blank lines between statements are preserved as a single separator:
-// the parser records whitespace-only source lines on prog.BlankLines,
-// and formatBlock emits one blank line before a statement whose source
-// had a blank immediately above it (runs collapse to one; a leading
-// blank just inside `{` is dropped). Top-level declarations are always
-// blank-separated.
-//
-// Format → parse → Format is byte-stable: a second pass produces
-// identical output (the blank-line rule is local and idempotent).
-// parse → Format → parse round-trips the AST shape.
 package printer
 
 import (
@@ -41,44 +10,18 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/ast"
 )
 
-// Format returns idiomatic source text for prog.
 func Format(prog *ast.Program) string {
 	blanks := make(map[int]bool, len(prog.BlankLines))
 	for _, ln := range prog.BlankLines {
 		blanks[ln] = true
 	}
 	f := &formatter{comments: prog.Comments, blanks: blanks}
-	// Impl methods are also present in prog.Funcs (the parser flattens
-	// them there for the checker). Collect them so the funcs below are
-	// skipped — they render inside their `impl { … }` block.
 	implMethods := map[*ast.FuncDecl]bool{}
 	for _, id := range prog.Impls {
 		for _, m := range id.Methods {
 			implMethods[m] = true
 		}
 	}
-	// Declarations, imports included, emit in SOURCE ORDER, not grouped by
-	// kind.
-	//
-	// The kind-grouped form (every struct, then every enum, then …)
-	// silently RELOCATED COMMENTS, because the comment cursor is monotonic
-	// over source-ordered comments while the emission order was not: a
-	// declaration printed first but positioned later in the source drained
-	// every pending comment above it, including comments documenting the
-	// declarations that had not been printed yet. So a comment trailing an
-	// enum variant reappeared above a struct written after the enum,
-	// attached to something it says nothing true about — and `-fmt -w` put
-	// that on disk (#6335). Emitting in source order keeps the cursor in
-	// step with the text, which fixes the attachment at its cause instead
-	// of teaching each element printer to carry its own trailing comments.
-	//
-	// It also drops the reordering itself, which was never a stated
-	// contract — the syntax reference promises only that the formatter
-	// "preserves their original position" for comments — and which made a
-	// `-fmt -d` diff on an unformatted file far larger than the change it
-	// was reporting. Hoisting an import written below a declaration had the
-	// same effect: it drained every doc comment above it into the import
-	// block (#10870).
 	type topDecl struct {
 		p        ast.Position
 		emit     func()
@@ -121,17 +64,12 @@ func Format(prog *ast.Program) string {
 		}
 		decls = append(decls, topDecl{fn.P, func() { f.formatFunc(fn, 0) }, false})
 	}
-	// Stable, so two declarations the parser gave the same position (a
-	// desugar that synthesises one from another) keep the order the
-	// per-kind slices had rather than swapping run to run.
 	sort.SliceStable(decls, func(i, j int) bool {
 		if decls[i].p.Line != decls[j].p.Line {
 			return decls[i].p.Line < decls[j].p.Line
 		}
 		return decls[i].p.Col < decls[j].p.Col
 	})
-	// Consecutive imports cluster with no blank line between them; every
-	// other pair of top-level items is blank-separated.
 	for i, d := range decls {
 		if i > 0 && !(d.isImport && decls[i-1].isImport) {
 			f.b.WriteByte('\n')
@@ -139,7 +77,6 @@ func Format(prog *ast.Program) string {
 		f.drainDeclLeading(d.p.Line)
 		d.emit()
 	}
-	// Trailing comments past the last declaration emit at depth 0.
 	f.drainAll(0)
 	return f.b.String()
 }
@@ -174,26 +111,14 @@ func (f *formatter) formatPubUse(pu *ast.PubUse) {
 	f.b.WriteByte('\n')
 }
 
-// formatter bundles the output buffer and the comment cursor so
-// helpers can drain leading / inline trailing comments without
-// each one having to thread two extra arguments.
 type formatter struct {
 	b        strings.Builder
 	comments []ast.Comment
-	ci       int          // index of the next un-emitted comment in comments
-	blanks   map[int]bool // 1-based source lines that were blank
-	// depth is the nesting level of the statement being formatted. formatExpr
-	// takes no depth of its own — an expression is normally one line — but a
-	// braced arrow-lambda body is a block inside an expression, and it has to
-	// indent against the statement it sits in.
-	depth int
+	ci       int
+	blanks   map[int]bool
+	depth    int
 }
 
-// blankBefore reports whether the source had a blank line immediately
-// above the construct at source line `line` (accounting for any leading
-// comment block, whose first line is `topLine`). The rule is local —
-// "is the line directly above blank?" — so it collapses runs of blank
-// lines to one and stays idempotent across Format passes.
 func (f *formatter) blankBefore(line int) bool {
 	top := line
 	if f.ci < len(f.comments) && f.comments[f.ci].Pos.Line < line {
@@ -202,11 +127,6 @@ func (f *formatter) blankBefore(line int) bool {
 	return f.blanks[top-1]
 }
 
-// drainLeading emits every still-pending comment whose source line
-// is strictly before `line` as its own indented line, keeping a blank
-// line the source had between two of them. Used before each statement /
-// declaration to cover comments written above it in the source.
-// Same-line comments stay queued for emitTrailing.
 func (f *formatter) drainLeading(line, depth int) {
 	last := 0
 	for f.ci < len(f.comments) && f.comments[f.ci].Pos.Line < line {
@@ -222,9 +142,6 @@ func (f *formatter) drainLeading(line, depth int) {
 	}
 }
 
-// drainDeclLeading is drainLeading for a top-level declaration, keeping a
-// blank line the source had between two of its comments or after the last
-// one: a section header stays apart from the doc comment below it.
 func (f *formatter) drainDeclLeading(line int) {
 	last := 0
 	for f.ci < len(f.comments) && f.comments[f.ci].Pos.Line < line {
@@ -237,18 +154,11 @@ func (f *formatter) drainDeclLeading(line int) {
 		f.b.WriteByte('\n')
 		f.ci++
 	}
-	// The line after the last comment, not the one above `line`: an
-	// attribute can sit between them.
 	if last > 0 && f.blanks[last+1] {
 		f.b.WriteByte('\n')
 	}
 }
 
-// emitTrailing emits a comment that lives on the same source line
-// as the statement we just finished writing — `putchar(70);  // F`
-// style. Caller passes the statement's source line; if the next
-// queued comment matches, we emit `  //` + text (no newline; the
-// surrounding loop's `\n` follows).
 func (f *formatter) emitTrailing(line int) {
 	if f.ci < len(f.comments) && f.comments[f.ci].Pos.Line == line && f.comments[f.ci].Trailing {
 		f.b.WriteString("  //")
@@ -257,15 +167,6 @@ func (f *formatter) emitTrailing(line int) {
 	}
 }
 
-// innerCommentPending reports whether a pending comment falls INSIDE a
-// declaration's source span — after its opening line, at or before `last`
-// (the last element's line). It is the signal that the one-line rendering
-// would strand the comment: nothing inside that rendering can emit it, so
-// it survives in the queue and is drained by whatever is printed next,
-// reappearing attached to an unrelated declaration (#6335).
-//
-// The scan starts at the cursor and stops at the first comment past `last`,
-// so it is O(comments in the span) rather than O(all comments).
 func (f *formatter) innerCommentPending(declLine, last int) bool {
 	for i := f.ci; i < len(f.comments); i++ {
 		ln := f.comments[i].Pos.Line
@@ -279,19 +180,10 @@ func (f *formatter) innerCommentPending(declLine, last int) bool {
 	return false
 }
 
-// keepListLines reports whether a list opened on line open, whose last element
-// is on line last, prints as it was written rather than on one line: when it
-// was written across lines, or when a comment sits inside it. The one-line
-// rendering has nowhere to put such a comment, so it would be stranded for the
-// next statement to pick up (#6335, #10143). A desugared list has no opener
-// line and no written layout to keep.
 func (f *formatter) keepListLines(open, last int) bool {
 	return open > 0 && last > open || f.innerCommentPending(open, last)
 }
 
-// writtenBreak reports whether the source broke the line between a binary's
-// operands, before its operator or after it. The formatter keeps that break,
-// printing the operator at the start of the continuation line.
 func writtenBreak(b *ast.Binary) bool {
 	op := b.P.Line
 	if op == 0 {
@@ -302,8 +194,6 @@ func writtenBreak(b *ast.Binary) bool {
 	return left > 0 && op > left || right > op
 }
 
-// firstLine is the line of an expression's first token, as far as the AST
-// records one: a postfix or infix node starts where its leftmost operand does.
 func firstLine(e ast.Expr) int {
 	switch x := e.(type) {
 	case *ast.Binary:
@@ -327,11 +217,6 @@ func firstLine(e ast.Expr) int {
 	return e.Pos().Line
 }
 
-// lastLine is the line an expression ends on, as far as the AST records it. A
-// closing bracket carries no position, so a list ends at its last element, or on
-// the line below it when the list prints as written (keepListLines), since that
-// form puts the closer on a line of its own. A lambda, block or conditional
-// counts as its first line: its body is laid out by the statement printer.
 func lastLine(e ast.Expr) int {
 	ln := e.Pos().Line
 	more := func(es ...ast.Expr) {
@@ -394,11 +279,6 @@ func lastLine(e ast.Expr) int {
 	return ln
 }
 
-// writeListLines prints the n elements of a bracketed list one SOURCE line per
-// output line: elements that shared a line in the source share one here, each
-// line's leading comments go above it and its trailing comment after its comma.
-// It is the form a list takes when keepListLines holds. The caller has written
-// the opener.
 func (f *formatter) writeListLines(n int, line func(int) int, write func(int), closer string) {
 	f.b.WriteByte('\n')
 	f.depth++
@@ -423,9 +303,6 @@ func (f *formatter) writeListLines(n int, line func(int) int, write func(int), c
 	f.b.WriteString(closer)
 }
 
-// drainAll flushes every remaining comment at the supplied indent: the
-// comments past the last declaration at end-of-file. A blank line the
-// source had above one of them is kept, unless nothing precedes it.
 func (f *formatter) drainAll(depth int) {
 	last := 0
 	for f.ci < len(f.comments) {
@@ -441,17 +318,12 @@ func (f *formatter) drainAll(depth int) {
 	}
 }
 
-// indent writes n levels of two-space indentation.
 func (f *formatter) indent(n int) {
 	for i := 0; i < n; i++ {
 		f.b.WriteString(formatIndent)
 	}
 }
 
-// formatConstDecl emits a top-level `const NAME[: T] = expr;` on a
-// single line. The type annotation is preserved when the source had
-// one and elided when it didn't, matching the parser's optional
-// shape so format → parse → format stays stable.
 func (f *formatter) formatConstDecl(cd *ast.ConstDecl) {
 	if cd.PackageScoped {
 		f.b.WriteString("pub(package) ")
@@ -469,10 +341,6 @@ func (f *formatter) formatConstDecl(cd *ast.ConstDecl) {
 	f.b.WriteString(";\n")
 }
 
-// formatEnumDecl emits `enum Foo { Bar, Baz(T1, T2), … }` on a
-// single line (one variant per `,`). The block-style multi-line
-// form is a follow-up; for now this matches the parser-accepted
-// shape and keeps round-trips byte-stable for short enums.
 func (f *formatter) formatEnumDecl(ed *ast.EnumDecl) {
 	f.writeDeriveAttr(ed.Derives)
 	f.writeMustConsumeAttr(ed.MustConsume)
@@ -493,10 +361,6 @@ func (f *formatter) formatEnumDecl(ed *ast.EnumDecl) {
 		}
 		f.b.WriteByte(']')
 	}
-	// Written across lines, or with a comment inside the braces, the enum
-	// prints one variant per line (keepListLines). One variant per line gives
-	// each its own drainLeading / emitTrailing pair, which is what keeps
-	// `Unclosed(i32),  // opener never closed` on `Unclosed`.
 	if len(ed.Variants) > 0 && f.keepListLines(ed.P.Line, ed.Variants[len(ed.Variants)-1].P.Line) {
 		f.b.WriteString(" {\n")
 		for _, v := range ed.Variants {
@@ -520,9 +384,6 @@ func (f *formatter) formatEnumDecl(ed *ast.EnumDecl) {
 	f.b.WriteString(" }\n")
 }
 
-// writeEnumVariant emits one variant — `Name`, `Name(T, U)` or the
-// record form `Name { f: T }` — with no separator or indent of its own,
-// so the one-line and multi-line enum renderings share it.
 func (f *formatter) writeEnumVariant(v ast.EnumVariant) {
 	f.b.WriteString(v.Name)
 	if len(v.FieldNames) > 0 {
@@ -548,10 +409,6 @@ func (f *formatter) writeEnumVariant(v ast.EnumVariant) {
 	}
 }
 
-// formatUnionDecl emits `type Name = A | B | C;`, members in declaration
-// order (the checker desugar stamps variant tags by member index). A union
-// written across lines keeps its lines: members that shared a source line
-// share an output line, and each later line continues with a leading `|`.
 func (f *formatter) formatUnionDecl(ud *ast.UnionDecl) {
 	if ud.PackageScoped {
 		f.b.WriteString("pub(package) ")
@@ -580,9 +437,6 @@ func (f *formatter) formatUnionDecl(ud *ast.UnionDecl) {
 	f.b.WriteString(";\n")
 }
 
-// writeDeriveAttr emits `@derive(Trait, …)` on its own line when the decl
-// carries derives. Dropping it (the pre-existing default) silently removed the
-// derived trait impls — a semantics change `fern -fmt` would bake in.
 func (f *formatter) writeDeriveAttr(derives []string) {
 	if len(derives) == 0 {
 		return
@@ -597,10 +451,6 @@ func (f *formatter) writeDeriveAttr(derives []string) {
 	f.b.WriteString(")\n")
 }
 
-// writeMustConsumeAttr emits `@must_consume` on its own line. Dropping it (the
-// pre-existing default) disarmed E067: the obligation walk keys on the
-// attribute, so a formatted file type-checked CLEAN where the original was
-// rejected — the same class of semantics change writeDeriveAttr exists to stop.
 func (f *formatter) writeMustConsumeAttr(mustConsume bool) {
 	if !mustConsume {
 		return
@@ -608,14 +458,6 @@ func (f *formatter) writeMustConsumeAttr(mustConsume bool) {
 	f.b.WriteString("@must_consume\n")
 }
 
-// writeTypeParams emits a generic parameter list `[A, B: Trait + Other,
-// C: From[i32]]`. `bounds` maps a parameter name to its trait bounds
-// (nil / absent for an unbounded param), and `boundArgs` carries the
-// type arguments of a generic-trait bound (`From[i32]`), parallel to
-// `bounds`. Structs pass nil for both (struct params are never bounded).
-// `consts` names the const parameters (`const N: i32`), which only a function
-// declares. Emitting nothing for an empty list keeps non-generic decls
-// unchanged.
 func (f *formatter) writeTypeParams(names []string, bounds map[string][]string, boundArgs map[string][][]ast.Type, consts []string) {
 	if len(names) == 0 {
 		return
@@ -671,9 +513,6 @@ func (f *formatter) formatStructDecl(sd *ast.StructDecl) {
 	f.b.WriteString("struct ")
 	f.b.WriteString(sd.Name)
 	f.writeTypeParams(sd.TypeParams, nil, nil, nil)
-	// Written across lines, or with a comment inside the braces, the struct
-	// prints one field per line, as the enum printer does. A synthetic field (NamePos zero) has no line to attach to, so a struct
-	// carrying one keeps the one-liner.
 	if n := len(sd.Fields); n > 0 && sd.Fields[n-1].NamePos.Line > 0 &&
 		f.keepListLines(sd.P.Line, sd.Fields[n-1].NamePos.Line) {
 		f.b.WriteString(" {\n")
@@ -702,11 +541,6 @@ func (f *formatter) formatStructDecl(sd *ast.StructDecl) {
 	f.b.WriteString(" }\n")
 }
 
-// formatTraitDecl emits `trait Name[T]: Super { type Assoc; method sigs }`
-// across multiple lines. Associated types are emitted before methods
-// (source interleaving isn't retained on TraitDecl); the ordering is
-// stable, so Format stays idempotent. A method with a default body
-// renders that body; an abstract one ends at `;`.
 func (f *formatter) formatTraitDecl(td *ast.TraitDecl) {
 	if td.PackageScoped {
 		f.b.WriteString("pub(package) ")
@@ -739,8 +573,6 @@ func (f *formatter) formatTraitDecl(td *ast.TraitDecl) {
 		f.b.WriteString(at)
 		f.b.WriteString(";\n")
 	}
-	// A comment written above a member stays above it, and a blank line the
-	// source had between two members is kept, as between statements.
 	for i, m := range td.Methods {
 		if i > 0 && f.blankBefore(m.P.Line) {
 			f.b.WriteByte('\n')
@@ -751,10 +583,6 @@ func (f *formatter) formatTraitDecl(td *ast.TraitDecl) {
 	f.b.WriteString("}\n")
 }
 
-// formatTraitMethod emits one trait method signature at one indent
-// level: `function name(self: Self, …): R;` for an abstract method, or
-// with a `{ … }` body for a default method. An associated function
-// (Assoc) has no `self` receiver — its params are emitted verbatim.
 func (f *formatter) formatTraitMethod(m ast.TraitMethod) {
 	f.indent(1)
 	if m.Const {
@@ -802,9 +630,6 @@ func (f *formatter) formatTraitMethod(m ast.TraitMethod) {
 	f.b.WriteByte('\n')
 }
 
-// formatImplDecl emits `impl[T] Trait[Args] for Type { … }`, with
-// associated-type bindings first (sorted for a stable, idempotent order)
-// then the methods.
 func (f *formatter) formatImplDecl(id *ast.ImplDecl) {
 	f.b.WriteString("impl")
 	f.writeTypeParams(id.TypeParams, id.Bounds, id.BoundArgs, nil)
@@ -827,7 +652,6 @@ func (f *formatter) formatImplDecl(id *ast.ImplDecl) {
 		return
 	}
 	f.b.WriteString(" {\n")
-	// Sorted keys keep the emit order stable across passes.
 	names := make([]string, 0, len(id.AssocTypeBindings))
 	for name := range id.AssocTypeBindings {
 		names = append(names, name)
@@ -841,9 +665,6 @@ func (f *formatter) formatImplDecl(id *ast.ImplDecl) {
 		f.b.WriteString(formatType(id.AssocTypeBindings[name]))
 		f.b.WriteString(";\n")
 	}
-	// A parametric impl (`impl[T] …`) shares its type params with every
-	// method, so the methods must NOT respell them; a plain impl's method
-	// keeps its own.
 	parametric := len(id.TypeParams) > 0
 	for i, m := range id.Methods {
 		if i > 0 && f.blankBefore(m.P.Line) {
@@ -855,12 +676,6 @@ func (f *formatter) formatImplDecl(id *ast.ImplDecl) {
 	f.b.WriteString("}\n")
 }
 
-// formatImplMethod emits one impl method inside its block with the types
-// it was written with: an ordinary method's receiver is its first
-// parameter again. Type params are respelled only for a non-parametric
-// impl.
-// constBodyValue is the value an associated constant's one-return body
-// holds, or nil for an abstract declaration.
 func constBodyValue(b *ast.Block) ast.Expr {
 	if b == nil || len(b.Stmts) != 1 {
 		return nil
@@ -928,9 +743,6 @@ func (f *formatter) formatImplMethod(fn *ast.FuncDecl, parametric bool) {
 	f.b.WriteByte('\n')
 }
 
-// formatResourceDecl emits a `resource Name;` declaration (P5 WIT
-// resource-handle type), with its optional `@import(iface, wit-name)` binding
-// on the line above — mirroring the body-less `@import` extern rendering.
 func (f *formatter) formatResourceDecl(rd *ast.ResourceDecl) {
 	if rd.ImportIface != "" {
 		f.b.WriteString("@import(\"")
@@ -944,14 +756,7 @@ func (f *formatter) formatResourceDecl(rd *ast.ResourceDecl) {
 	f.b.WriteString(";\n")
 }
 
-// formatFunc emits a top-level or nested function declaration.
-// Receiver clauses go between `function` and the name; the body
-// uses multi-line block formatting at the supplied indent level.
 func (f *formatter) formatFunc(fn *ast.FuncDecl, depth int) {
-	// A body-less `@import` extern (bring-your-own WIT, P4) renders the
-	// attribute on its own line above the signature, which ends with `;`.
-	// Dropping it (the pre-P4 default) silently turned an extern into an
-	// empty-body function — a semantics change.
 	if fn.ImportIface != "" {
 		f.indent(depth)
 		f.b.WriteString("@import(\"")
@@ -960,8 +765,6 @@ func (f *formatter) formatFunc(fn *ast.FuncDecl, depth int) {
 		f.b.WriteString(fn.ImportWITName)
 		f.b.WriteString("\")\n")
 	}
-	// An `@export` function (P6) renders its binding on its own line above the
-	// signature, like `@import` but the function keeps its body.
 	if fn.ExportIface != "" {
 		f.indent(depth)
 		f.b.WriteString("@export(\"")
@@ -970,8 +773,6 @@ func (f *formatter) formatFunc(fn *ast.FuncDecl, depth int) {
 		f.b.WriteString(fn.ExportWITName)
 		f.b.WriteString("\")\n")
 	}
-	// `@inline` / `@noinline` (#4412 Rec §14) render on their own line —
-	// dropping one would silently change the release build's inlining.
 	switch fn.InlineHint {
 	case ast.InlineHintAlways:
 		f.indent(depth)
@@ -986,9 +787,6 @@ func (f *formatter) formatFunc(fn *ast.FuncDecl, depth int) {
 	} else if fn.Public {
 		f.b.WriteString("pub ")
 	}
-	// Contextual modifiers: `fip` / `fbip` (with an optional graded
-	// allowance) and `async`. Dropping one silently changes semantics —
-	// the checked in-place guarantee (E053/E068) or the P3 async export.
 	if fn.Fip || fn.Fbip {
 		if fn.Fbip {
 			f.b.WriteString("fbip")
@@ -1017,24 +815,15 @@ func (f *formatter) formatFunc(fn *ast.FuncDecl, depth int) {
 		f.b.WriteString(") ")
 	}
 	f.b.WriteString(fn.Name)
-	// Type parameters follow the name for free functions and methods alike
-	// (`function name[T](x: T)`, `function (b: Box[T]) has[T: Eq](x: T)`) —
-	// the form spec/grammar.ebnf derives; the receiver's own variables are
-	// bound by the receiver type.
 	f.writeTypeParams(fn.TypeParams, fn.Bounds, fn.BoundArgs, fn.ConstParams)
 	f.b.WriteByte('(')
 	for i, p := range fn.Params {
 		if i > 0 {
 			f.b.WriteString(", ")
 		}
-		// `own` is checked, not decorative: dropping it made E053 fire on the
-		// formatted `fip` sort helpers, which pass their array `own` precisely
-		// so `with` is in-place.
 		if p.Own {
 			f.b.WriteString("own ")
 		}
-		// A destructuring parameter prints the pattern it was written with,
-		// not the holder the desugar minted (#7338).
 		if p.Pattern != nil {
 			f.formatParamPattern(p)
 		} else {
@@ -1043,10 +832,6 @@ func (f *formatter) formatFunc(fn *ast.FuncDecl, depth int) {
 		f.b.WriteString(": ")
 		f.b.WriteString(formatType(p.Type))
 		if p.Default != nil {
-			// An optional parameter's default is part of the signature: without
-			// it the formatted function requires an argument every existing
-			// caller omits, so `-fmt` turns a compiling program into one that
-			// does not.
 			f.b.WriteString(" = ")
 			f.formatExpr(p.Default, precLowest)
 		}
@@ -1061,8 +846,6 @@ func (f *formatter) formatFunc(fn *ast.FuncDecl, depth int) {
 		return
 	}
 	f.b.WriteByte(' ')
-	// The parameter list carries the patterns now, so the prelude `let`s that
-	// bind them would be a second, redundant binding of the same names.
 	if n, ok := desugarPreludeLen(fn.Params, fn.Body); ok && n > 0 {
 		f.formatBlockFrom(fn.Body, depth, n)
 	} else {
@@ -1071,14 +854,6 @@ func (f *formatter) formatFunc(fn *ast.FuncDecl, depth int) {
 	f.b.WriteByte('\n')
 }
 
-// formatBlock emits `{` on the current line, then each statement on
-// its own line at depth+1, then `}` indented to depth. Empty blocks
-// stay one-liners. Pending comments that fall inside the block but
-// before its statements get drained at the right indent.
-// formatBlockFrom is formatBlock starting at statement `skip`, for a body whose
-// leading statements are the parameter desugar's prelude and are already
-// spelled in the parameter list (#7338). A block that is nothing BUT prelude
-// prints empty, which is correct: the bindings live in the parameters.
 func (f *formatter) formatBlockFrom(blk *ast.Block, depth, skip int) {
 	if blk == nil || skip >= len(blk.Stmts) {
 		f.b.WriteString("{}")
@@ -1090,27 +865,16 @@ func (f *formatter) formatBlockFrom(blk *ast.Block, depth, skip int) {
 
 func (f *formatter) formatBlock(blk *ast.Block, depth int) {
 	if blk == nil || len(blk.Stmts) == 0 {
-		// Even an empty block can host comments — but supporting
-		// `{ /* comment */ }` would force a multi-line empty block
-		// in cases where comments have nothing to attach to.
-		// Keep the one-liner for now; standalone comments inside
-		// empty blocks fall through to the parent's drain.
 		f.b.WriteString("{}")
 		return
 	}
 	f.b.WriteByte('{')
-	// A comment on the opening brace's line stays there: on a one-line block
-	// it annotated the whole block, not the statement the expanded form puts
-	// first (#10154).
 	if blk.End.Line > 0 {
 		f.emitTrailing(blk.P.Line)
 	}
 	f.b.WriteByte('\n')
 	f.formatStmtLines(blk.Stmts, depth+1, false)
 	f.b.WriteByte('\n')
-	// A comment above the closing brace is the block's own last line, at the
-	// inner indent; left queued it drained into whatever followed the brace,
-	// an `else` branch included (#10154).
 	if blk.End.Line > 0 {
 		f.drainLeading(blk.End.Line, depth+1)
 	}
@@ -1118,14 +882,6 @@ func (f *formatter) formatBlock(blk *ast.Block, depth int) {
 	f.b.WriteByte('}')
 }
 
-// formatStmtLines emits stmts one per line, newline-separated, keeping an
-// author's blank-line separator between them. blankFirst allows one ahead of
-// the first statement too: a continuation after a `let … else` or `use` line
-// may keep the blank that followed it, a block never keeps one just inside
-// its opening brace.
-//
-// The pair a `use` desugars to — the synthesised callback and the return that
-// passes it — re-renders as the one `use` line the source spelled.
 func (f *formatter) formatStmtLines(stmts []ast.Stmt, depth int, blankFirst bool) {
 	for i := 0; i < len(stmts); i++ {
 		s := stmts[i]
@@ -1144,17 +900,11 @@ func (f *formatter) formatStmtLines(stmts []ast.Stmt, depth int, blankFirst bool
 	}
 }
 
-// returnsCall reports whether s is `return call;` for that very call.
 func returnsCall(s ast.Stmt, call *ast.Call) bool {
 	r, ok := s.(*ast.Return)
 	return ok && r.Value == ast.Expr(call)
 }
 
-// formatUse re-renders a `use` callback as `use NAME[: T] <- CALL;` — CALL
-// without the callback the desugar appended — followed by the callback body's
-// statements, which are the rest of the enclosing block and re-emit as the
-// siblings they were written as. The type prints only when it is there: the
-// source may have left it for the checker to infer.
 func (f *formatter) formatUse(fd *ast.FuncDecl, depth int) {
 	f.drainLeading(fd.P.Line, depth)
 	f.indent(depth)
@@ -1176,25 +926,16 @@ func (f *formatter) formatUse(fd *ast.FuncDecl, depth int) {
 	}
 }
 
-// formatStmtLine emits one statement's line content — leading comments,
-// indentation, the statement itself, and any inline trailing comment —
-// without a terminating newline, so the caller decides how lines join.
-// Shared by formatBlock and the `let … else` continuation, whose
-// statements are siblings of the binding rather than a nested block.
 func (f *formatter) formatStmtLine(s ast.Stmt, depth int) {
 	f.drainLeading(s.Pos().Line, depth)
 	f.indent(depth)
 	f.formatStmt(s, depth)
-	// If the statement just emitted is a single-line shape and the next
-	// queued comment shares its source line, emit it inline.
 	if isSingleLineStmt(s) {
 		f.emitTrailing(s.Pos().Line)
 		f.emitTrailing(stmtLastLine(s))
 	}
 }
 
-// stmtLastLine is the line a single-line statement's expression ends on, which
-// is where a comment trailing a statement written across lines sits.
 func stmtLastLine(s ast.Stmt) int {
 	switch x := s.(type) {
 	case *ast.Return:
@@ -1215,12 +956,6 @@ func stmtLastLine(s ast.Stmt) int {
 	return s.Pos().Line
 }
 
-// isSingleLineStmt reports whether s emits as a single source line
-// — only those are eligible for an inline trailing comment.
-// Compound statements (if / while / for / switch / function /
-// nested block) span multiple lines and any same-line comment is
-// against their opening header rather than their body, which the
-// formatter doesn't attach yet.
 func isSingleLineStmt(s ast.Stmt) bool {
 	switch s.(type) {
 	case *ast.Return, *ast.Var, *ast.Destructure, *ast.ExprStmt, *ast.Break, *ast.Continue, *ast.Defer:
@@ -1229,11 +964,6 @@ func isSingleLineStmt(s ast.Stmt) bool {
 	return false
 }
 
-// formatBranch renders an `if`-expression branch — always brace-wrapped
-// (`{ … }`), since an `if`-expr branch is syntactically a block. A bare
-// expression branch renders `{ e }` (byte-identical to the pre-block-expr
-// formatter, which wrote the braces itself); a BlockExpr renders its
-// statements + trailing value compactly via formatBlockExpr.
 func (f *formatter) formatBranch(e ast.Expr) {
 	if be, ok := e.(*ast.BlockExpr); ok {
 		f.formatBlockExpr(be)
@@ -1244,9 +974,6 @@ func (f *formatter) formatBranch(e ast.Expr) {
 	f.b.WriteString(" }")
 }
 
-// formatArmBody renders a `match`-expression arm body. A BlockExpr body
-// is brace-wrapped (`{ stmts; tail }`); a bare expression body stays
-// unbraced — keeping existing single-expr arms byte-identical.
 func (f *formatter) formatArmBody(e ast.Expr) {
 	if be, ok := e.(*ast.BlockExpr); ok {
 		f.formatBlockExpr(be)
@@ -1255,11 +982,6 @@ func (f *formatter) formatArmBody(e ast.Expr) {
 	f.formatExpr(e, precLowest)
 }
 
-// formatBlockExpr renders a block-expression `{ stmt; …; tail }` in a
-// compact one-line shape: each statement followed by `;`, then the
-// trailing value expression with no `;`. Used for `if`/`match`
-// expression branches. A statement that spans lines (a loop, an `if`, a
-// nested block) puts the whole block on lines of its own, one level in.
 func (f *formatter) formatBlockExpr(be *ast.BlockExpr) {
 	if f.spansLines(be.Stmts) {
 		f.formatBlockExprLines(be)
@@ -1277,9 +999,6 @@ func (f *formatter) formatBlockExpr(be *ast.BlockExpr) {
 	f.b.WriteByte('}')
 }
 
-// formatBlockExprLines renders a block-expression one statement per line,
-// indented against the statement it sits in, the closing brace at that
-// statement's own level.
 func (f *formatter) formatBlockExprLines(be *ast.BlockExpr) {
 	depth := f.depth
 	f.b.WriteString("{\n")
@@ -1299,9 +1018,6 @@ func (f *formatter) formatBlockExprLines(be *ast.BlockExpr) {
 	f.b.WriteByte('}')
 }
 
-// spansLines reports whether any of stmts prints across more than one line.
-// It renders each into a scratch buffer and leaves the output and the
-// comment cursor where they were.
 func (f *formatter) spansLines(stmts []ast.Stmt) bool {
 	saved, ci := f.b, f.ci
 	defer func() { f.b, f.ci = saved, ci }()
@@ -1315,9 +1031,6 @@ func (f *formatter) spansLines(stmts []ast.Stmt) bool {
 	return false
 }
 
-// formatLoopLabel emits `name: ` ahead of a loop header. Dropping it also
-// strips the `break name` / `continue name` that target it, so the reformatted
-// program jumps out of a different loop than the one written.
 func (f *formatter) formatLoopLabel(label string) {
 	if label == "" {
 		return
@@ -1326,7 +1039,6 @@ func (f *formatter) formatLoopLabel(label string) {
 	f.b.WriteString(": ")
 }
 
-// formatJumpLabel closes a `break` / `continue`, with the label it targets.
 func (f *formatter) formatJumpLabel(label string) {
 	if label != "" {
 		f.b.WriteByte(' ')
@@ -1335,13 +1047,6 @@ func (f *formatter) formatJumpLabel(label string) {
 	f.b.WriteByte(';')
 }
 
-// formatForEach emits the three `for … in …` surface forms: the plain
-// iterator `for x in xs`, the range `for i in lo..hi` (`..=` when inclusive),
-// and the map destructuring `for (k, v) in m`.
-// formatAssert re-prints a parseAssert desugar as the `assert(cond[, msg]);`
-// it came from: the If's condition is `!cond`, and its then-block's eprint
-// carries the message as `"assertion failed: " + msg`. Printing the
-// desugared `if` would drop IsAssert, so `-O` could no longer elide it.
 func (f *formatter) formatAssert(x *ast.If) {
 	f.b.WriteString("assert(")
 	f.formatExpr(x.Cond.(*ast.Unary).Operand, precLowest)
@@ -1357,9 +1062,6 @@ func (f *formatter) formatForEach(fe *ast.ForEach, depth int) {
 	f.formatLoopLabel(fe.Label)
 	f.b.WriteString("for ")
 	if fe.Pattern != nil {
-		// An `@` binding names the element variable, exactly as it names a
-		// destructured parameter's holder; a synthetic element name is the
-		// desugar's and belongs to no source.
 		at := ""
 		if fe.Var != ast.ForEachElemName(fe.ID) {
 			at = fe.Var
@@ -1388,18 +1090,12 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 	defer func() { f.depth = prev }()
 	switch x := s.(type) {
 	case *ast.Block:
-		// A Block the parser built to scope a `for … in …` desugar reprints
-		// as that loop: its statements are synthetic bindings whose names
-		// (`__foreach_iter_1`, `__range_hi_1`) would otherwise be written
-		// into the user's source, and `-fmt -w` makes that permanent.
 		if x.Sugar != nil {
 			f.formatForEach(x.Sugar, depth)
 			return
 		}
 		f.formatBlock(x, depth)
 	case *ast.ForEach:
-		// A lazy `Stream[T]` foreach is left undesugared for the checker, so
-		// this form does reach the printer directly.
 		f.formatForEach(x, depth)
 	case *ast.If:
 		if x.IsAssert {
@@ -1421,10 +1117,6 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 		f.b.WriteString(") ")
 		f.formatStmt(x.Body, depth)
 	case *ast.Loop:
-		// A parser-synthesised `todo` stub re-prints as its sugar
-		// (`todo;` / `todo("msg");`), not the desugared
-		// `loop { eprint(...); exit(101); }` body. TodoMsg is the
-		// original message expression.
 		if x.IsTodo {
 			if x.TodoMsg != nil {
 				f.b.WriteString("todo(")
@@ -1496,9 +1188,6 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 		} else {
 			f.b.WriteString("defer ")
 		}
-		// A block-shaped action `defer { … }` (#5153) prints as the block
-		// with no trailing `;` (matching the parse form); a plain expression
-		// action keeps its `;`.
 		if be, ok := x.Expr.(*ast.BlockExpr); ok {
 			f.formatBlockExpr(be)
 		} else {
@@ -1506,13 +1195,6 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 			f.b.WriteByte(';')
 		}
 	case *ast.Match:
-		// A match the parser synthesised from `if let` re-renders as the
-		// `if let` the source spelled — the pattern arm is the
-		// then-branch, the trailing wildcard arm the else.
-		// A match the parser synthesised from `if let` / `let … else`
-		// re-renders as the binding form the source spelled: the leading
-		// arms are the pattern alternatives, the trailing wildcard arm is
-		// the else.
 		arms := x.Arms
 		if x.Origin != "" && len(arms) >= 2 {
 			success, els := arms[0].Body, arms[len(arms)-1].Body
@@ -1533,9 +1215,6 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 				f.b.WriteString(" else ")
 				f.formatBlock(els, depth)
 				f.b.WriteByte(';')
-				// The success arm holds the rest of the enclosing block —
-				// where the bindings are live — so its statements re-emit
-				// as the siblings they were written as.
 				if len(success.Stmts) > 0 {
 					f.b.WriteByte('\n')
 					f.formatStmtLines(success.Stmts, depth, true)
@@ -1557,8 +1236,6 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 			arm := arms[i]
 			f.indent(depth + 1)
 			f.formatArmPattern(arm)
-			// `A | B => …` parsed to one arm per alternative with the body
-			// cloned into each; the continuations rejoin their head here.
 			for i+1 < len(arms) && arms[i+1].AltCont {
 				i++
 				f.b.WriteString(" | ")
@@ -1606,9 +1283,6 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 	}
 }
 
-// formatArmPattern renders one arm's pattern — every shape
-// parseMatchPattern accepts, so it serves both `match` arms and the
-// `if let` head that shares the grammar.
 func (f *formatter) formatArmPattern(arm *ast.MatchArm) {
 	if arm.AtBinding != "" {
 		f.b.WriteString(arm.AtBinding)
@@ -1641,8 +1315,6 @@ func (f *formatter) formatArmPattern(arm *ast.MatchArm) {
 				if i > 0 {
 					f.b.WriteString(", ")
 				}
-				// A field carrying a SUB-PATTERN prints `field: <pat>`; the
-				// slot's Bindings entry is empty, the pattern binds instead.
 				if i < len(arm.Payloads) && arm.Payloads[i] != nil {
 					if i < len(arm.FieldNames) {
 						f.b.WriteString(arm.FieldNames[i])
@@ -1651,8 +1323,6 @@ func (f *formatter) formatArmPattern(arm *ast.MatchArm) {
 					f.formatTuplePatElem(*arm.Payloads[i])
 					continue
 				}
-				// `S { field: local }` renames; the shorthand `S { x }`
-				// has FieldNames[i] == Bindings[i].
 				if i < len(arm.FieldNames) && arm.FieldNames[i] != "" && arm.FieldNames[i] != b {
 					f.b.WriteString(arm.FieldNames[i])
 					f.b.WriteString(": ")
@@ -1683,7 +1353,6 @@ func (f *formatter) formatArmPattern(arm *ast.MatchArm) {
 	}
 }
 
-// formatTuplePatElems renders a tuple pattern `(p0, p1, …)`.
 func (f *formatter) formatTuplePatElems(elems []ast.TuplePatElem) {
 	f.b.WriteByte('(')
 	for i, el := range elems {
@@ -1695,9 +1364,6 @@ func (f *formatter) formatTuplePatElems(elems []ast.TuplePatElem) {
 	f.b.WriteByte(')')
 }
 
-// formatTuplePatElem renders ONE pattern position. A nested tuple element and
-// a variant's payload slot are both the same grammar, so `(a, (b, c))` and
-// `(A(Ok(n)), y)` round-trip at any depth.
 func (f *formatter) formatTuplePatElem(el ast.TuplePatElem) {
 	if el.AtBinding != "" {
 		f.b.WriteString(el.AtBinding)
@@ -1724,9 +1390,6 @@ func (f *formatter) formatTuplePatElem(el ast.TuplePatElem) {
 		}
 		f.b.WriteString(el.VariantName)
 		open, close := "(", ")"
-		// A trailing `..` is only spellable in the named-field form, so it
-		// selects the braces on its own: `P { .. }` lists no field, which
-		// leaves VariantFieldNames nil.
 		if el.VariantFieldNames != nil || el.RestWritten {
 			open, close = " { ", " }"
 		}
@@ -1738,8 +1401,6 @@ func (f *formatter) formatTuplePatElem(el ast.TuplePatElem) {
 			hasSub := j < len(el.VariantPayloads) && el.VariantPayloads[j] != nil
 			if j < len(el.VariantFieldNames) {
 				f.b.WriteString(el.VariantFieldNames[j])
-				// A named field carrying a sub-pattern spells it after the
-				// colon, the same place a rename's local goes.
 				if hasSub {
 					f.b.WriteString(": ")
 					f.formatTuplePatElem(*el.VariantPayloads[j])
@@ -1767,18 +1428,10 @@ func (f *formatter) formatTuplePatElem(el ast.TuplePatElem) {
 	}
 }
 
-// formatExprArmPattern renders a match-EXPRESSION arm's pattern. MatchExprArm
-// carries the same pattern fields as MatchArm and differs only in its body
-// type, so it borrows the one renderer rather than keeping a second copy —
-// the copy it used to keep silently dropped `@` bindings, range high bounds,
-// tuple patterns and field renames, rewriting `3..=4 => …` to `3 => …`.
 func (f *formatter) formatExprArmPattern(arm *ast.MatchExprArm) {
 	f.formatArmPattern(stmtShapedArm(arm))
 }
 
-// stmtShapedArm adapts an expression-form arm's PATTERN half to the statement
-// shape the one renderer takes. Payloads needs no translation: a payload slot
-// is a TuplePatElem in both forms.
 func stmtShapedArm(arm *ast.MatchExprArm) *ast.MatchArm {
 	if arm == nil {
 		return nil
@@ -1801,38 +1454,22 @@ func stmtShapedArm(arm *ast.MatchExprArm) *ast.MatchArm {
 	}
 }
 
-// Precedence levels mirror the parser's. Higher value binds
-// tighter — formatExpr emits parentheses around an operand only
-// when its outer operator binds strictly less tightly than the
-// surrounding context (or, for left-associative right-children,
-// less-than-or-equal).
 const (
-	precLowest = 0
-	precAssign = 1 // = += -= …
-	precPipe   = 2 // |>  (above assignment, below ternary)
-	precIfExpr = 3 // if (c) { e } else { e } in expression position
-	precOr     = 4 // ||
-	precAnd    = 5 // &&
-	// Bitwise (|, ^, &) sit BELOW the comparison family in Fern's
-	// grammar — the parser hierarchy is parseLogicalAnd →
-	// parseBitOr → parseBitXor → parseBitAnd → parseEquality →
-	// parseRelational (parser.go:2520-2533), so `==` binds tighter
-	// than `&`. The printer order has to match the parser or
-	// round-trip drops semantically-required parens (e.g.
-	// `(n & (n - 1)) == 0` formats to `n & n - 1 == 0`, then
-	// re-parses as `n & ((n - 1) == 0)` — the "is power of 2"
-	// idiom silently turns into ANDing a number with a boolean).
-	// Surfaced by the formatter corpus sweep against
-	// internal/stdlib/std/i32.fern's is_power_of_2.
-	precBitOr   = 6  // |
-	precBitXor  = 7  // ^
-	precBitAnd  = 8  // &
-	precEq      = 9  // == !=
-	precCmp     = 10 // < <= > >=
-	precShift   = 11 // << >>
-	precAdd     = 12 // + -
-	precMul     = 13 // * / %
-	precCast    = 14 // expr as Type
+	precLowest  = 0
+	precAssign  = 1
+	precPipe    = 2
+	precIfExpr  = 3
+	precOr      = 4
+	precAnd     = 5
+	precBitOr   = 6
+	precBitXor  = 7
+	precBitAnd  = 8
+	precEq      = 9
+	precCmp     = 10
+	precShift   = 11
+	precAdd     = 12
+	precMul     = 13
+	precCast    = 14
 	precUnary   = 15
 	precPrimary = 16
 )
@@ -1863,9 +1500,6 @@ func binaryPrec(op string) int {
 	return precLowest
 }
 
-// writeStringBody re-escapes a string or f-string literal segment, which the
-// lexer guarantees is valid UTF-8. A control byte stays an escape so the
-// source stays text (a raw NUL makes git treat the file as binary).
 func (f *formatter) writeStringBody(lit string, fstring bool) {
 	for i := 0; i < len(lit); i++ {
 		c := lit[i]
@@ -1892,8 +1526,6 @@ func (f *formatter) writeStringBody(lit string, fstring bool) {
 	}
 }
 
-// formatExpr emits e, wrapping in parens when the outer context
-// (parentPrec) binds tighter than e's outermost operator.
 func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 	switch x := e.(type) {
 	case *ast.CastExpr:
@@ -1919,10 +1551,6 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 			f.b.WriteByte(')')
 		}
 	case *ast.NumberLit:
-		// A non-zero Width on a NumberLit in formatter input means
-		// the parser saw a typed suffix (`42i64`, `7u8`). Preserve
-		// it on round-trip — the format pass runs pre-checker, so
-		// the only source of Width here is user authorship.
 		suffix := ""
 		if x.Width == ast.WidthPtr {
 			suffix = "usize"
@@ -1934,22 +1562,9 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 			}
 		}
 		if x.Raw != "" {
-			// A base the author chose is part of what they wrote: the arm64
-			// and x86 encoders spell every literal as the instruction
-			// encoding it is, and decimal makes those unreadable.
 			f.b.WriteString(x.Raw)
 			f.b.WriteString(suffix)
 		} else if x.Value < 0 {
-			// A negative Value in formatter input can only be an unsigned
-			// literal whose magnitude exceeds i64::MAX: the parser stored the
-			// bit pattern via `int64(strconv.ParseUint(...))`. (Source
-			// negatives like `-5` are `ast.Unary` nodes wrapping a positive
-			// NumberLit, handled by the Unary case — they never reach here.)
-			// So emit the unsigned decimal. The old `-%d` with `-x.Value`
-			// overflowed for math.MinInt64 (== 2^63, e.g.
-			// `9223372036854775808 as u64`), leaving it negative and emitting
-			// a spurious `--` that grew another `-` on every format pass and
-			// broke idempotency.
 			fmt.Fprintf(&f.b, "%s%s", strconv.FormatUint(uint64(x.Value), 10), suffix)
 		} else {
 			fmt.Fprintf(&f.b, "%d%s", x.Value, suffix)
@@ -1972,15 +1587,9 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		if !strings.ContainsAny(s, ".eE") {
 			s += ".0"
 		}
-		// The written spelling wins where the parser recorded one: %g is a
-		// re-rendering, not the author's text.
 		if x.Raw != "" && !neg {
 			s = x.Raw
 		}
-		// Preserve typed-suffix authorship the parser stamped:
-		// non-zero Width on input means the user wrote `1.5f64`
-		// (or `42f32` — float-suffixed integer text) and we
-		// should round-trip the suffix.
 		suffix := ""
 		if x.Width != 0 {
 			suffix = fmt.Sprintf("f%d", x.Width)
@@ -2001,22 +1610,12 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 			f.b.WriteString(suffix)
 		}
 	case *ast.CharLit:
-		// Raw is the spelling as written: an escape the author chose
-		// (`'\u{1F600}'`, `b'\x1B'`) is part of what they wrote, the
-		// same contract NumberLit.Raw carries for a hex literal.
 		f.b.WriteString(x.Raw)
 	case *ast.StringLit:
 		f.b.WriteByte('"')
 		f.writeStringBody(x.Value, false)
 		f.b.WriteByte('"')
 	case *ast.FString:
-		// Reconstruct the f"..." surface syntax. Literal segments
-		// re-escape via the same rules as a regular string literal,
-		// plus `{` / `}` doubled to `{{` / `}}` so the body
-		// re-lexes back into the same parts. Interpolant parts
-		// re-emit as `{<expr>}` via formatExpr at the lowest
-		// precedence (inside the braces, the interpolant is its
-		// own context so no parens needed at the surface).
 		f.b.WriteString(`f"`)
 		for _, part := range x.Parts {
 			if part.Expr != nil {
@@ -2050,7 +1649,6 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		if writtenBreak(x) {
 			f.emitTrailing(lastLine(x.Left))
 			f.b.WriteByte('\n')
-			// Only a comment written inside the expression belongs at its break.
 			if f.ci < len(f.comments) && f.comments[f.ci].Pos.Line > firstLine(x.Left) {
 				f.drainLeading(x.P.Line, f.depth+1)
 			}
@@ -2065,20 +1663,11 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 			f.b.WriteByte(')')
 		}
 	case *ast.Call:
-		// Pipe-synthesised calls re-render as `LHS |> Callee(rest)`.
-		// Args[0] is the original LHS; Args[1:] are the original
-		// explicit args.
 		if x.IsPipe && len(x.Args) >= 1 {
 			needsParens := parentPrec > precPipe
 			if needsParens {
 				f.b.WriteByte('(')
 			}
-			// PipeHole > 0: the LHS was substituted at the `_`
-			// placeholder (1-based index) instead of prepended —
-			// re-render it as the LHS and put the `_` back in its
-			// slot. Parens are always printed in this form (`x |>
-			// f(_)`), since the hole is only expressible inside an
-			// arg list.
 			if x.PipeHole > 0 && x.PipeHole <= len(x.Args) {
 				lhs := x.PipeHole - 1
 				f.formatExpr(x.Args[lhs], precPipe)
@@ -2091,11 +1680,6 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 						f.b.WriteString(", ")
 					}
 					if i == lhs {
-						// The hole can itself be a NAMED argument's value
-						// (`9 |> f(b = _)`): the name lives in ArgNames[i] and
-						// has to come back with it, or the re-parsed call binds
-						// the piped value to a different parameter — the same
-						// silent change of meaning as dropping it anywhere else.
 						if i < len(x.ArgNames) && x.ArgNames[i] != "" {
 							f.b.WriteString(x.ArgNames[i])
 							f.b.WriteString(" = ")
@@ -2201,16 +1785,9 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 			f.b.WriteByte(')')
 		}
 	case *ast.TryOp:
-		// Postfix `?` binds tighter than any binary operator —
-		// emit it directly without precedence-based parens.
 		f.formatExpr(x.Inner, precUnary)
 		f.b.WriteByte('?')
 	case *ast.MatchExpr:
-		// Compact one-line form: arms separated by `,`, each arm
-		// body emitted as an inline expression. The statement-form
-		// match uses block-bodies on separate lines, but in
-		// expression position arms are usually short and the
-		// inline shape composes inside larger expressions.
 		f.b.WriteString("match (")
 		f.formatExpr(x.Tag, precLowest)
 		f.b.WriteString(") { ")
@@ -2221,7 +1798,6 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 				f.b.WriteString(", ")
 			}
 			f.formatExprArmPattern(arm)
-			// See the statement form: or-pattern alternatives rejoin here.
 			for i+1 < len(exprArms) && exprArms[i+1].AltCont {
 				i++
 				f.b.WriteString(" | ")
@@ -2240,7 +1816,6 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		if x.TypeArgsWritten {
 			f.writeTypeArgs(x.TypeArgs)
 		}
-		// The spread base, when there is one, is the list's first element.
 		nb := 0
 		if x.Base != nil {
 			nb = 1
@@ -2267,7 +1842,6 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 			break
 		}
 		f.b.WriteString(" { ")
-		// Struct-update literal: leading `...base`, then overrides.
 		if x.Base != nil {
 			f.b.WriteString("...")
 			f.formatExpr(x.Base, precLowest)
@@ -2310,16 +1884,6 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		f.b.WriteByte('.')
 		f.b.WriteString(x.Field)
 	case *ast.Lambda:
-		// A lambda: `(p: T): R => …`. Without this case formatExpr fell
-		// through to the empty default and silently dropped the lambda —
-		// leaving a dangling comma when it was the last call argument
-		// (`f(xs, )`, which then fails to re-parse). An expression body is
-		// recovered from the one-statement `return` it desugars to; anything
-		// else stays braced, and a single-statement braced body renders inline
-		// so short predicate lambdas stay on one line.
-		// The body runs as far right as it can, so any context
-		// that continues with a tighter operator needs parens.
-		// An assignment's RHS is terminal, hence `>` not `>=`.
 		needsParens := parentPrec > precAssign
 		if needsParens {
 			f.b.WriteByte('(')
@@ -2332,8 +1896,6 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 			if p.Own {
 				f.b.WriteString("own ")
 			}
-			// A destructuring parameter prints the pattern it was
-			// written with, not the holder the desugar minted.
 			if p.Pattern != nil {
 				f.formatParamPattern(p)
 			} else {
@@ -2357,19 +1919,10 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 			f.b.WriteByte(')')
 		}
 	case *ast.BlockExpr:
-		// Reached only if a BlockExpr appears outside an if/match branch
-		// (the dedicated formatBranch / formatArmBody paths handle those).
-		// Slice 1 doesn't produce that, but render it compactly so the
-		// formatter never silently drops the node.
 		f.formatBlockExpr(x)
 	}
 }
 
-// writtenName undoes the parser's `_` renaming, so a discarded binding
-// prints as the `_` the author typed rather than the internal
-// `__discard_<line>_<col>_<n>` the parser substituted (parser.discardName).
-// The renaming is total over `_` and its output is reserved, so this is its
-// exact inverse — nothing else can produce a name of that shape.
 func writtenName(name string) string {
 	if strings.HasPrefix(name, "__discard_") {
 		return "_"
@@ -2377,31 +1930,6 @@ func writtenName(name string) string {
 	return name
 }
 
-// arrowReturn reports whether x can be reprinted in the arrow form, and if so
-// yields the `return expr` that becomes the arrow's body.
-//
-// An arrow lambda parses to a one-statement body wrapping its expression in a
-// return — except when a parameter was DESTRUCTURED. The parser desugars each
-// such parameter into a holder plus a leading `let` in the body, so the shape
-// becomes k prelude destructures followed by the return, and the arrow form was
-// unreachable: the printer fell back to `function(…)`, which needs a return type
-// nobody wrote and the printer (running before the checker) cannot infer. Native
-// wrote `: void` and the self-host wrote nothing; both make the formatted
-// program fail to compile, which is #7338.
-//
-// The prelude is matched by HOLDER NAME rather than by counting, so a body whose
-// leading statements are the user's own destructuring — not the desugar's —
-// keeps the verbose spelling instead of having those statements silently
-// swallowed into a parameter list.
-// desugarPreludeLen reports how many leading statements of body are the `let`s
-// the parser minted for destructuring parameters, and whether every such
-// parameter was accounted for.
-//
-// Matched by HOLDER NAME rather than by counting, so a body whose leading
-// statements are the USER's own destructuring is not mistaken for the
-// desugar's and silently swallowed into a parameter list. `ok` is false when
-// any pattern parameter's prelude is missing, which leaves the caller printing
-// the desugared form rather than a program that drops a binding.
 func desugarPreludeLen(params []ast.Param, body *ast.Block) (n int, ok bool) {
 	holders := map[string]bool{}
 	for _, p := range params {
@@ -2427,14 +1955,6 @@ func desugarPreludeLen(params []ast.Param, body *ast.Block) (n int, ok bool) {
 	return n, len(holders) == 0
 }
 
-// arrowReturn reports whether x has an EXPRESSION body, and if so yields the
-// `return expr` that carries it — so `(x) => e` reprints that way rather than
-// as the braced body it parses to.
-//
-// The body is one statement wrapping the expression in a return, except when a
-// parameter was DESTRUCTURED, where the desugar's prelude sits in front of it.
-// Without accounting for that prelude the expression form was unreachable and
-// every lambda reprinted braced (#7338).
 func arrowReturn(x *ast.Lambda) (ret *ast.Return, prelude int, ok bool) {
 	if x.Body == nil {
 		return nil, 0, false
@@ -2450,16 +1970,9 @@ func arrowReturn(x *ast.Lambda) (ret *ast.Return, prelude int, ok bool) {
 	return r, n, true
 }
 
-// formatArrowBody prints an arrow lambda's BRACED body — the shape whose
-// statements are the lambda's own, rather than the single `return expr` an
-// expression body desugars to. It must stay braced and stay an arrow: the
-// `function(…)` rendering has to state a return type nobody wrote, and `void`
-// is a lie for every body that yields a value (#7338).
 func (f *formatter) formatArrowBody(x *ast.Lambda) {
 	stmts := x.Body
 	if n, ok := desugarPreludeLen(x.Params, x.Body); ok && n > 0 && x.Body != nil {
-		// The parameter list carries the patterns now, so the prelude `let`s
-		// would bind the same names a second time.
 		stmts = &ast.Block{Stmts: x.Body.Stmts[n:]}
 	}
 	if stmts != nil && len(stmts.Stmts) == 1 && isSingleLineStmt(stmts.Stmts[0]) {
@@ -2471,15 +1984,7 @@ func (f *formatter) formatArrowBody(x *ast.Lambda) {
 	f.formatBlock(stmts, f.depth)
 }
 
-// formatParamPattern renders a destructuring PARAMETER's written pattern —
-// `(p, q)` for a tuple, `Point { x: a, y }` for a struct. The tuple spelling is
-// formatDestructurePattern's; the struct one is the parameter position's own,
-// since a struct pattern never appears as a bare `let` target.
 func (f *formatter) formatParamPattern(p ast.Param) {
-	// An `@` binding names the WHOLE value beside the pattern — `v @ P { x, y }`
-	// — and the parser uses that name as the holder instead of minting one. It
-	// is a real binding the body may read, so printing the pattern alone drops
-	// it and the formatted program stops compiling.
 	at := ""
 	if !strings.HasPrefix(p.Name, "__ptuple_") {
 		at = p.Name
@@ -2487,19 +1992,6 @@ func (f *formatter) formatParamPattern(p ast.Param) {
 	f.formatDestructurePattern(p.Pattern, at)
 }
 
-// formatDestructurePattern renders a destructuring pattern — `(a, (b, c))`
-// for a tuple, `Point { x: a, y }` for a struct — prefixed by `w @ ` when an
-// `@` binding names the whole value. `at` overrides the node's own AtName for
-// the parameter site, whose binding is carried on the holder parameter instead.
-//
-// Every binding site renders through here. A site-local copy is how a struct
-// pattern came to reprint as the positional tuple form, silently rebinding by
-// position (#6374) — so the tuple/struct choice is made once, off the Fields
-// discriminator the node documents.
-//
-// A nested position prints as its own pattern rather than as the synthesised
-// binder the parser put in Names — that binder is an implementation detail of
-// the lowering, and printing it would re-parse to a different program.
 func (f *formatter) formatDestructurePattern(x *ast.Destructure, at string) {
 	if at == "" {
 		at = x.AtName
@@ -2519,8 +2011,6 @@ func (f *formatter) formatDestructurePattern(x *ast.Destructure, at string) {
 			if i < len(x.Fields) {
 				field = x.Fields[i]
 			}
-			// `Point { x }` when the binder matches the field, `Point { x: a }`
-			// when it was renamed — the shorthand is what the source wrote.
 			if field == n {
 				f.b.WriteString(writtenName(n))
 				continue
@@ -2552,12 +2042,6 @@ func (f *formatter) formatDestructurePattern(x *ast.Destructure, at string) {
 	f.b.WriteByte(')')
 }
 
-// formatType returns the textual form of t. Unchanged from the
-// pre-comment-retention version.
-// writeTypeArgs emits a `[T1, T2]` type-argument list. Callers gate on
-// the node's TypeArgsWritten: reprinting checker-inferred args would put
-// an instantiation into source that never named one, and for a call it
-// would also turn every ordinary generic call into an explicit one.
 func (f *formatter) writeTypeArgs(args []ast.Type) {
 	if len(args) == 0 {
 		return
@@ -2578,10 +2062,6 @@ func (f *formatter) writeCallTypeArgs(c *ast.Call) {
 	}
 }
 
-// arrowReturnType renders an arrow lambda's return annotation. The lambda's own
-// `=>` follows it, so the type parser reserves the top-level function-type arrow
-// there: a function-typed return needs its grouping parens back, or
-// `(p: i32): (i32) => (i32, i32) => …` re-parses with the wrong split.
 func arrowReturnType(t ast.Type) string {
 	if _, isFn := t.(*ast.FuncType); isFn {
 		return "(" + formatType(t) + ")"
@@ -2592,10 +2072,6 @@ func arrowReturnType(t ast.Type) string {
 func formatType(t ast.Type) string {
 	switch x := t.(type) {
 	case ast.NumberType:
-		// Preserve the user's source spelling when the parser
-		// captured one (`number` vs `i32`). Falls back to the
-		// canonical name for synthesised types (e.g. inferred
-		// in the checker).
 		if x.Spelling != "" {
 			return x.Spelling
 		}
@@ -2609,7 +2085,6 @@ func formatType(t ast.Type) string {
 	case ast.CharType:
 		return "char"
 	case ast.StrType:
-		// The borrowed-string view type (#4813).
 		return "str"
 	case ast.FloatType:
 		if x.Spelling != "" {
@@ -2640,8 +2115,6 @@ func formatType(t ast.Type) string {
 	case ast.ParamType:
 		return x.Name
 	case ast.ArrayType:
-		// A function-typed element needs its parens back: `((string) => string)[]`
-		// printed bare reads as one function RETURNING `string[]`.
 		if _, isFn := x.Elem.(*ast.FuncType); isFn {
 			return "(" + formatType(x.Elem) + ")[]"
 		}
@@ -2665,9 +2138,6 @@ func formatType(t ast.Type) string {
 			if i > 0 {
 				out += ", "
 			}
-			// A consuming slot spells its `own`: it is part of the type, so a
-			// reformatted signature that dropped it would say the opposite of
-			// what the source said.
 			if x.OwnAt(i) {
 				out += "own "
 			}
@@ -2677,9 +2147,6 @@ func formatType(t ast.Type) string {
 	case ast.SelfType:
 		return "Self"
 	case ast.ProjType:
-		// An associated-type projection (`Self::Item`). Without this arm the
-		// switch fell through to "" and `-fmt` wrote `function get(self: Self): ;`
-		// — output that does not parse. See docs/ASSOCIATED-TYPES.md.
 		return formatType(x.Base) + "::" + x.Name
 	case ast.DynTraitType:
 		return x.String()
@@ -2692,12 +2159,6 @@ func formatType(t ast.Type) string {
 	return ""
 }
 
-// writeCallArg emits one call argument, restoring the `name = ` prefix of a
-// NAMED argument. Args carries them in source order with the names alongside in
-// ArgNames; dropping the names rewrote `mk(b = 1, a = 9)` as `mk(1, 9)`, which
-// binds the values to the OTHER parameters — `-fmt` silently changed what the
-// program computed. (defaultargs reorders and clears ArgNames before the
-// checker, so only the printer ever sees them.)
 func (f *formatter) writeCallArg(x *ast.Call, i int, a ast.Expr) {
 	if i < len(x.ArgNames) && x.ArgNames[i] != "" {
 		f.b.WriteString(x.ArgNames[i])

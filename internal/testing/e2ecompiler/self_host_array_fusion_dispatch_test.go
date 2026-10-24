@@ -5,11 +5,8 @@ import (
 	"testing"
 )
 
-// Fusion already proves each callback's identity. Losing that identity at
-// physical lowering leaves a closure-slot lookup and indirect call per element.
 func TestSelfHostArrayFusionUsesKnownCallbackBodies(t *testing.T) {
 	gcc, runner, driver := buildModloadDriverX86(t)
-	// Callback preparation must expose a chain of ordinary scalar helpers.
 	src := strings.Replace(selfHostArrayFusionSrc, "=> x * (3 as i64)", "=> fusion_scale(x)", 1)
 	if src == selfHostArrayFusionSrc {
 		t.Fatal("helper callback fixture was not inserted")
@@ -18,14 +15,11 @@ func TestSelfHostArrayFusionUsesKnownCallbackBodies(t *testing.T) {
 function fusion_three(): i64 { return 3 as i64; }
 function fusion_scale(x: i64): i64 { return x * fusion_three(); }
 `
-	// Sharing the helper prevents the general single-use pass from hiding a
-	// stale leaf table in callback preparation.
 	src = strings.Replace(src, "function main(): i32 {", "function main(): i32 { if (fusion_scale(2 as i64) != (6 as i64)) { return 99; }", 1)
 	names := []string{
 		"via_map_fold", "via_filter_map_fold", "via_map_map_reduce",
 		"via_order_sensitive", "via_filter_reduce", "via_capture",
 	}
-	// Keep each assembly subject separate while allowing its callbacks to inline.
 	for _, name := range names {
 		src = strings.Replace(src, "function "+name+"(", "@noinline function "+name+"(", 1)
 	}
@@ -39,8 +33,6 @@ function fusion_scale(x: i64): i64 { return x * fusion_three(); }
 			if name != "via_capture" && strings.Contains(body, "call __fn_"+name+"$wrap") {
 				t.Fatalf("tiny capture-free callback still calls its wrapper:\n%s", body)
 			}
-			// This fixture's callbacks use i64. The only i32 arithmetic is
-			// the fused cursor, whose increment is dominated by i < len.
 			if name == "via_map_fold" && strings.Contains(body, "movslq ") {
 				t.Fatalf("bounded fused cursor still sign-extends each increment:\n%s", body)
 			}
@@ -58,9 +50,6 @@ function fusion_scale(x: i64): i64 { return x * fusion_three(); }
 	}
 }
 
-// The map-only reduction must have one loop with only its bound test. A
-// per-element first-arrival flag adds a second conditional branch; a call to
-// the unfused combinator leaves no loop here. Check both to avoid a vacuous pass.
 func assertSeededReductionLoop(t *testing.T, body string) {
 	t.Helper()
 	lines := strings.Split(body, "\n")

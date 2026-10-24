@@ -5,10 +5,6 @@ import (
 	"testing"
 )
 
-// targetBranchHandlerSrc branches on the target: the wasi-http arm answers
-// from the request alone, the other reads a file, which the proxy world
-// does not grant. The capability gate judges the arm the target takes, so
-// the handler compiles for wasm32-wasi-http and answers the hosted arm.
 const targetBranchHandlerSrc = `import "std/http";
 import "std/serve";
 import "std/platform";
@@ -24,10 +20,6 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 }
 `
 
-// indexingHandlerSrc indexes a byte array the request decides, so its
-// bounds trap is in the core. A proxy-world core has no wasi:cli/exit to
-// end a process with, so the trap is a plain `unreachable` and the
-// component still composes against the proxy world.
 const indexingHandlerSrc = `import "std/http";
 import "std/serve";
 import "std/platform";
@@ -37,9 +29,6 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 }
 `
 
-// TestSelfHostWasiHttpTargetBranchGate: a branch on target_os() is pruned
-// before the capability gate (E066) and the shake, so the dead arm's
-// `read_file` never reaches either, and the live arm is what serves.
 func TestSelfHostWasiHttpTargetBranchGate(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -53,9 +42,6 @@ func TestSelfHostWasiHttpTargetBranchGate(t *testing.T) {
 	}
 }
 
-// TestSelfHostWasiHttpCoreTrapsOnExit: a handler whose core would exit (the
-// bounds trap of an index) composes against the proxy world, which declares
-// no wasi:cli/exit, and serves; the in-range request answers.
 func TestSelfHostWasiHttpCoreTrapsOnExit(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {

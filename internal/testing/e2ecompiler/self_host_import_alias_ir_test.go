@@ -8,22 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostImportAliasIR pins import-alias support in the self-host compiler:
-// `import "std/io_buffered" as io;` then `io.bytes_writer_new()`. The qualifier
-// `io` differs from the module's mangle prefix (the path basename `io_buffered`),
-// so the bundler must map alias -> prefix when flattening qualified references.
-// Before this, the self-host parser dropped the `as` clause entirely, so flatten
-// didn't recognise `io` as a module qualifier and `io.bytes_writer_new()`
-// mis-lowered (`i32.bytes_writer_new` / `const_func[io]`), bailing the whole
-// module. Now `parse_import` captures the alias and flatten's
-// resolve_prefix maps `io` -> `io_buffered`.
-//
-// Asserts the program compiles, which needs every call resolved, and runs to
-// exit 0. The emit inlines the small constructor, so its mangled symbol need
-// not appear in the asm.
-//
-// Native only: the file-loading driver reads stdlib modules by host path from
-// argv (mirrors TestSelfHostStdTestE2E).
 func TestSelfHostImportAliasIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -38,8 +22,6 @@ func TestSelfHostImportAliasIR(t *testing.T) {
 		t.Fatalf("abs stdlib root: %v", err)
 	}
 
-	// Alias `io` != basename `io_buffered` — the case the redundant `as <basename>`
-	// form (already working) doesn't exercise.
 	src := `import "std/io_buffered" as io;
 function main(): i32 {
     let w = io.bytes_writer_new().write_string("ok");
@@ -71,8 +53,6 @@ function main(): i32 {
 	}
 }
 
-// runDriverDecide runs the asm_load_run driver with -decide and returns its
-// stdout ("ir" / "refused").
 func runDriverDecide(t *testing.T, mmc, prog, stdlibRoot string) string {
 	t.Helper()
 	out, err := exec.Command(mmc, prog, stdlibRoot, "-decide").Output()

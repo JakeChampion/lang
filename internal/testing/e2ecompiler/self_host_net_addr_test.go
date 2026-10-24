@@ -10,9 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The self-host twin of internal/testing/e2e's TestNetAddr*: std/net's address
-// and error layer compiled by the production self-host driver on every
-// target it serves here, with complete semantic lowering required.
 func TestSelfHostNetAddr(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("requires Linux native targets")

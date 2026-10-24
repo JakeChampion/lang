@@ -10,12 +10,6 @@ import (
 	"testing"
 )
 
-// A module that matches on a builtin enum's variants lowers in a per-module
-// wasm build. The builtin enums are declared by no module, and the wasm
-// per-module driver built its struct table from the modules alone, so any
-// `match` on IoError's variants bailed with no emitter to fall back to — found
-// when the self-host compiler's own modloader first matched one, which failed
-// TestSelfHostWasmWholeCompilerShardedLink.
 const perModuleBuiltinEnumLib = `pub function code(e: IoError): i32 {
     match (e) {
         NotFound(_) => { return 1; },

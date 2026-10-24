@@ -8,18 +8,6 @@ import (
 	"testing"
 )
 
-// std/sim is the deterministic-simulation driver for std/async
-// (docs/DST-PLATFORM-BRIEF.md slice 1): a virtual-clock, seeded-PRNG
-// implementation of the async.Driver seam, driven through the
-// gather_on / race_on / with_deadline_on combinator siblings. These
-// gates pin the main benefit: deadline-based async is testable under
-// `-interp` — where fd-backed Pending futures never resolve on the
-// real driver — with EXACT virtual-time assertions instead of sleeps.
-
-// `tests/stdlib/sim_driver_test.fern` is the TAP suite: with_deadline
-// winners/losers at exact virtual times, seed-deterministic race
-// tie-breaks (incl. a 20-seed sweep), gather over out-of-order
-// readiness, and the re-suspending chain shape. Passing → exit 0.
 func TestRunnerSimDriverExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "tests/stdlib/sim_driver_test.fern")
@@ -34,11 +22,6 @@ func TestRunnerSimDriverExamplePasses(t *testing.T) {
 	}
 }
 
-// simDriverNativeProgram exercises the same virtual-clock contracts as
-// the TAP suite without std/test (whose fs assertion helpers reference
-// `remove_dir_all` and so keep every TAP file interp/self-host-gated —
-// no tests/stdlib file compiles through the native CLI pipeline
-// today). Exit 42 iff every check holds.
 const simDriverNativeProgram = `import "std/async";
 import "std/time";
 import "std/sim";
@@ -90,10 +73,6 @@ function main(): i32 {
 }
 `
 
-// The sim programs are pure computation (no fds, no clock syscalls), so
-// the identical program must produce the identical run on every
-// backend — the determinism contract is cross-backend, not just
-// cross-run.
 func TestSimDriverNativeX86_64(t *testing.T) {
 	bin := buildFernCLI(t)
 	qemu := x86QemuOrEmpty(t)
@@ -119,10 +98,6 @@ func TestWASMSimDriver(t *testing.T) {
 	}
 }
 
-// gatherAbandonProgram stops a gather whose wait fails: the second future's
-// token is negative, so the sim driver has nothing to wait on and answers -1.
-// gather fills that slot with on_incomplete and must cancel the future it
-// abandons, resuming it with cancelled(). Exit 0 iff it did.
 const gatherAbandonProgram = `import "std/async";
 import "std/sim";
 

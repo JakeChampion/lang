@@ -8,17 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostArm64UnsignedDivIR pins the arm64 emitter's signed-vs-unsigned
-// division selection: a u64 `/` and `%` take `udiv` and a signed i32 `/`
-// keeps `sdiv`, read off the operand types. The bug it guards printed a
-// single "/" for umax() = (0 as u64) - (1 as u64): a bare `sdiv` for every
-// division treated a u64 with bit 63 set as a negative i64, so
-// 18446744073709551615 / 10 gave 0 and the digit loop produced '0' + (-1 % 10).
-//
-// The program imports std/test so that it routes through the per-module
-// driver (asm_load_run.fern) the way the u64 std-test that exposed the bug
-// did. It is a pure emission check (the driver runs on the x86 host and
-// prints aarch64 asm), so it needs no qemu and runs on every x86 CI lane.
 func TestSelfHostArm64UnsignedDivIR(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
 	if len(x86runner) != 0 {
@@ -33,11 +22,6 @@ func TestSelfHostArm64UnsignedDivIR(t *testing.T) {
 		t.Fatalf("abs stdlib root: %v", err)
 	}
 
-	// The `import "std/test"` reproduces the program shape that exposed the
-	// bug. The u64 helpers give named symbols to anchor the asm scan; the
-	// i32 helper is the signed control. main references all three so the
-	// default stdlib-root treeshake prune keeps them reachable (an
-	// unreferenced helper is pruned before codegen).
 	prog := "import \"std/test\";\n" +
 		"@noinline function udiv_probe(a: u64, b: u64): u64 { return a / b; }\n" +
 		"@noinline function umod_probe(a: u64, b: u64): u64 { return a % b; }\n" +
@@ -75,7 +59,6 @@ func TestSelfHostArm64UnsignedDivIR(t *testing.T) {
 		t.Errorf("u64 `%%` did not emit udiv; body:\n%s", umodBody)
 	}
 
-	// Signed control: an i32 `/` must still take the signed sdiv path.
 	sdivBody := arm64FnBody(t, asm, "__fn_sdiv_probe")
 	if !matchShape(sdivBody, `sdiv x[0-9]+, x[0-9]+, x[0-9]+`) {
 		t.Errorf("i32 `/` should still emit sdiv; body:\n%s", sdivBody)
@@ -85,9 +68,6 @@ func TestSelfHostArm64UnsignedDivIR(t *testing.T) {
 	}
 }
 
-// arm64FnBody returns the emitted lines of the function labelled `label` (up to
-// the next `__fn_` label or `.weak` directive) so an assertion scans one
-// function's body rather than the whole module.
 func arm64FnBody(t *testing.T, asm, label string) string {
 	t.Helper()
 	lines := strings.Split(asm, "\n")

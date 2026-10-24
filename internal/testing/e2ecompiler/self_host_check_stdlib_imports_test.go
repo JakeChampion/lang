@@ -10,12 +10,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostCheckAcceptsEveryStdlibImport runs `-check` on a program that
-// only imports one stdlib module, for every module. The self-host marks a
-// module ill-typed when any statement in it types unknown, and it checks
-// every bundled stdlib body, so one inference gap in a module failed `-check`
-// for every program importing it: `buf_new` in std/array's `join` did that to
-// anything importing std/string (#10132).
 func TestSelfHostCheckAcceptsEveryStdlibImport(t *testing.T) {
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "fern.fern")

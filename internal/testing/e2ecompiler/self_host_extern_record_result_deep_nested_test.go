@@ -11,20 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestSelfHostExternRecordResultDeepNestedCustomProvider is the self-host port of
-// the deeper-nesting (arbitrary depth) record `@import` *result* gate
-// (docs/WIT-BRING-YOUR-OWN.md, Go-side TestExternRecordResultDeepNestedCustomProvider).
-// An extern returns a record whose field is a record whose field is itself a
-// record, lifted into a self-host struct tree. The canonical ABI inlines every
-// nested record's leaves into the return area at each level's alignment;
-// extern_record_nestable/extern_record_leaf_count recurse the gate,
-// extern_canon_* recurse the layout, and extern_emit_record_fill recurses the
-// materialization (one $inner local per nesting level via extern_record_depth).
-//
-// Shape: `record outer { l: mid, r: mid }`, `record mid { p: point, n: s32 }`,
-// `record point { x: s32, y: s32 }` — three levels (outer→mid→point). The
-// provider fills eight s32 leaves; the Fern side reads them through `o.l.p.x` …
-// `o.r.n` and forms a checkable weighted sum.
 func TestSelfHostExternRecordResultDeepNestedCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -43,7 +29,6 @@ func TestSelfHostExternRecordResultDeepNestedCustomProvider(t *testing.T) {
 		}
 	}
 
-	// --- Provider component exporting local:test/src@0.1.0 make-outer. ---
 	provWit := filepath.Join(dir, "provwit")
 	if err := os.MkdirAll(provWit, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -53,9 +38,6 @@ func TestSelfHostExternRecordResultDeepNestedCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export src; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// make-outer returns the nested record indirectly: a 24-byte area, the eight
-	// s32 leaves inlined in declaration order (l.p.x@0, l.p.y@4, l.n@8, r.p.x@12,
-	// r.p.y@16, r.n@20) via cabi_realloc, returning its pointer.
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)
   (global $h (mut i32) (i32.const 1024))
@@ -81,7 +63,6 @@ func TestSelfHostExternRecordResultDeepNestedCustomProvider(t *testing.T) {
 	run(wasmtools, "component", "embed", provWit, "-w", "provider", filepath.Join(dir, "prov_core.wasm"), "-o", filepath.Join(dir, "prov_embed.wasm"))
 	run(wasmtools, "component", "new", filepath.Join(dir, "prov_embed.wasm"), "-o", provider)
 
-	// --- User world (custom src iface + wasi stdout). ---
 	userWit := filepath.Join(dir, "userwit")
 	if out, err := exec.Command("cp", "-r", "../../../cmd/fern/wit/deps", filepath.Join(userWit, "deps")).CombinedOutput(); err != nil {
 		_ = os.MkdirAll(userWit, 0o755)
@@ -110,7 +91,6 @@ func TestSelfHostExternRecordResultDeepNestedCustomProvider(t *testing.T) {
 		t.Fatalf("DecodeWorldBytes: %v", err)
 	}
 
-	// --- Self-host backend: emit the core from the deep-nested-result program. ---
 	copySelfHostDriver(t, dir, "drivers/wasm_runio_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_runio_run.fern", "wasm_runio_run")
 

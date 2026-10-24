@@ -1,7 +1,5 @@
 import "./util";
 import "./sourcepos";
-// The native allocator and emitter consume this same prepared body. This is
-// not a certificate: target-specific release entry paths also have effects.
 import "./irtables";
 import "./physicalbody";
 import "./ssa";
@@ -16,8 +14,6 @@ pub struct Body {
   source: SourceLines,
 }
 
-// The pre-emission context needed to interpret target-specific entry paths.
-// These records describe emitted bodies; they do not certify their effects.
 pub struct Context {
   architecture: string,
   reg_entries: irtables.SigReg,
@@ -30,16 +26,11 @@ pub struct Context {
   needed: string[],
 }
 
-// Selection of the native entry template, not a proof of its effects.
-// Counted entries return for low/static pointers and shared decrements;
-// zero counts reach the body. Only x86 can shortcut count-one through Drop.
 pub struct ReleaseEntry {
   counted: boolean,
   unique_drop: string,
 }
 
-// Actual backend choices consumed during emission, not independently checked
-// facts. Fusions correspond positionally to the formed body's blocks.
 pub struct Fusion {
   n: i32,
   tag: i32,
@@ -63,8 +54,6 @@ pub struct Allocation {
   fusions: Fusion[],
 }
 
-// Observed text-mode occurrence, not an instruction or alignment proof.
-// A rotated loop test has its own join label and pre-emission cache state.
 pub struct UniqueSite {
   input: i32,
   result: i32,
@@ -84,7 +73,6 @@ pub struct Emitted {
   context: Context,
   release_entry: ReleaseEntry,
   allocation: Allocation,
-  // Empty for binary-record emission, whose instructions are not text.
   assembly: string,
   sites: UniqueSite[],
 }
@@ -94,23 +82,14 @@ pub struct Output {
   bodies: Emitted[],
 }
 
-// Called after the backend's lift checks, with that actual lift and its
-// current unit leaves. Never relower or look up an old body by symbol here.
 pub function finish(lowered: irtables.LowerResult, selected: physicalbody.Selected, lifted: ssa_lift.LResult, leaves: ssa.Leaves): Body {
   return finish_formed(lowered, selected, lifted, ssa.register_form(ssa.inline_leaves(lifted.func, leaves)));
 }
 
-// finish_formed is finish for a lift whose register form is already made:
-// one that calls no leaf, so inlining the leaves would not change it.
 pub function finish_formed(lowered: irtables.LowerResult, selected: physicalbody.Selected, lifted: ssa_lift.LResult, formed: ssa.Formed): Body {
   return Body { lowered: lowered, selected: selected, formed: formed, seen_vals: lifted.seen_vals, seen_slots: lifted.seen_slots, source: source_lines(lowered, lifted, formed) };
 }
 
-// with_selects is the certified body with its small branches turned into
-// selects (ssa.select_branches) and its branch-free carries fused
-// (ssa.fuse_carries), then full inversions folded into and-not, the form
-// the emitter allocates. These rewrites do not move a
-// reference count operation.
 pub function with_selects(b: Body): Body {
   return Body { ...b, formed: ssa.Formed { ...b.formed, f: ssa.fuse_and_not(ssa.fuse_carries(ssa.select_branches(b.formed.f))) } };
 }
@@ -169,8 +148,6 @@ function source_value(own out: SourceLines, value: i32, repl: i32[], pos: source
   if (value < 0 || value >= out.values.len()) {
     return out;
   }
-  // An eliminated alias must not move its surviving definition to a later
-  // statement: a breakpoint there would precede the definition itself.
   if (value != original && out.values[value].line > 0) {
     return out;
   }

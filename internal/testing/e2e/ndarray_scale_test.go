@@ -4,17 +4,6 @@ import (
 	"testing"
 )
 
-// The first kernel an std/ndarray shape lowers to (#9735): `a.map(x => x * k)`
-// over a PACKED handle becomes `from_flat(__fern_scale_f64(a.data, k),
-// a.shape)`, gated on #9734's layout analysis.
-//
-// What this holds is the gate, not the speed. A packed receiver's `data` IS
-// the reading order, so the kernel reads the elements `map` would have
-// walked; a STRIDED one's is not, and the same rewrite over a transpose
-// produces different numbers rather than slower ones. Case 30 is that
-// case, and it is the reason the layout has to be proved rather than
-// assumed: scaling a transpose's storage in order and keeping its shape
-// reads `[[10,20],[30,40]]` where the answer is `[[10,30],[20,40]]`.
 const ndarrayScaleSrc = `import "std/ndarray";
 
 function main(): i32 {
@@ -86,8 +75,6 @@ func TestWASMNdarrayScaleKernelMatchesTheScalarWalk(t *testing.T) {
 	}
 }
 
-// The interpreter never sees the rewrite — it is an IR pass — so this leg is
-// the oracle the three compiled ones are differenced against.
 func TestInterpNdarrayScaleValuesCorrect(t *testing.T) {
 	if got := runInterpExit(t, ndarrayScaleSrc); got != 0 {
 		t.Errorf("ndarray scale on interp: got %d, want 0", got)

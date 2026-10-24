@@ -12,16 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExternBoolArrayResultCustomProvider is the boolean[] result gate
-// (docs/WIT-BRING-YOUR-OWN.md): an `@import` extern returns a canonical
-// `list<bool>`, lifted into a Fern `boolean[]`. Unlike a numeric array (straight
-// memory.copy), the canonical bool element is 1 byte while a Fern bool array slot
-// is 4 bytes, so the wrapper byte-EXPANDS each host byte into a 4-byte i32 element
-// (buildExternBoolListResultWrapper). Composed via ComposeFromWorldAuto + a custom
-// provider, run under wasmtime.
-//
-// The provider exports `bits: func(n: u32) -> list<bool>` with element i =
-// (i % 2 == 0); the Fern side requests 4 -> [true,false,true,false] and checks them.
 func TestExternBoolArrayResultCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {

@@ -10,8 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// optBisectSrc rebuilds a 20-cell list five times. With reuse, incr builds
-// each cell in the box of the one it consumes, so only build allocates.
 const optBisectSrc = `enum L { Nil, Cons(i32, L) }
 
 function build(n: i32): L {
@@ -54,10 +52,6 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostOptBisectFindsTheDecision pins the decision bisect end to end:
-// FERN_OPT_TRACE lists the reuse decision for incr, declining decisions
-// leaves the answer alone, and bisecting on "incr's cells are reused" names
-// `reuse incr` and nothing else.
 func TestSelfHostOptBisectFindsTheDecision(t *testing.T) {
 	target := e2eharness.HostSelfHostTarget()
 	if target == "" {

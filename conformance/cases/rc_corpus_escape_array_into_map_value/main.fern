@@ -1,12 +1,12 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Escape into a map value: an owned array built inside a
-// helper escapes into the map the helper returns, so it must
-// NOT be freed at the helper's exit. The churn loop reclaims same-size blocks — if `arr`
-// were wrongly freed, a junk array would reuse its block and
-// corrupt the value the map still points at. Mirrors
-// std/url's __query_pair, the case that blocked the flip.
+
+
+
+
+
+
+
+
+
 import "core/int";
 import "core/map";
 import "std/string";

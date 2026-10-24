@@ -15,9 +15,6 @@ func list(t *testing.T) []byte {
 	return data
 }
 
-// The committed module must be what the generator produces from the
-// committed list: generated code, where a hand edit or a stale
-// regeneration would otherwise go unseen.
 func TestCommittedFileIsUpToDate(t *testing.T) {
 	const path = "../../" + outputPath
 	want, err := os.ReadFile(path)
@@ -33,8 +30,6 @@ func TestCommittedFileIsUpToDate(t *testing.T) {
 	}
 }
 
-// RFC 3492 §7.1's samples and the labels the list's own test file spells
-// both ways.
 func TestPunycode(t *testing.T) {
 	cases := map[string]string{
 		"bücher":            "xn--bcher-kva",
@@ -59,8 +54,6 @@ func TestPunycode(t *testing.T) {
 	}
 }
 
-// Only the ICANN section is taken, in A-labels, with the wildcard and
-// exception markers kept.
 func TestRules(t *testing.T) {
 	rules, err := icannRules(list(t))
 	if err != nil {

@@ -2,7 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// TestSelfHostCsvParseLineIR tests the public parser and its errors on both targets.
 func TestSelfHostCsvParseLineIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	interpBin := buildLangBinForInterp(t)

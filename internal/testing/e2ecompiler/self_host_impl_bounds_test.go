@@ -6,41 +6,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostImplBounds pins the trait bounds an impl block contributes to the
-// methods parsed out of it (#7224).
-//
-// `bound_traits` runs PARALLEL to `type_params` — parser.fern states it on the
-// field. finalize_impl_method merges an impl block's bounded type params into
-// every method it desugars, and used to write `bound_traits: []` while doing so,
-// which dropped BOTH halves: the impl's bound on the merged param, and the
-// method's own bound on the params it already had. Every type param of an
-// `impl[T: Ord] Boxy for Box[T]` method then read back unbounded, and the checker's E021
-// conformance walk reads exactly that field (checker.fern's with_tparams).
-//
-// The loss was silent rather than a crash because tp_bound_for guards its read
-// (`if (k < bound_traits.len())`), so a short list answers "unbounded" for every
-// index past its end. That is what the driver renders as <missing>.
-//
-// The corpus is built so each row fails for a distinct reason:
-//
-//	Box[T].make   the associated-function arm (no `self` to peel)
-//	Box[T].rank   the receiver arm
-//	Box[T].tag    a method with its OWN [U: Show] on top of the impl's [T: Ord].
-//	              Its own bounds must be padded out to its own type_params
-//	              before the impl's are appended, or the impl's bound lands on
-//	              the method's parameter — a wrong bound instead of a missing one.
-//	Box[T].hello  a trait DEFAULT method, synthesised onto the impl by
-//	              parse_module rather than written in the block. It reaches
-//	              finalize_impl_method through ImplInfo, which is why the bounds
-//	              have to be stored on that struct and not just on the local.
-//	Box[T].show   a second impl block on the same type
-//
-// The unbounded rows are the controls: free_plain and Plain.* have no type
-// params at all, and free_bounded keeps its bound without going through
-// finalize_impl_method, so a driver that simply printed <missing> everywhere
-// would not reproduce them.
-//
-// The driver is built natively via the Go x86-64 backend; its stdout is the map.
 func TestSelfHostImplBounds(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {

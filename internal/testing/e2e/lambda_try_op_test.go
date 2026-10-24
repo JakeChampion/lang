@@ -5,12 +5,6 @@ import (
 	"testing"
 )
 
-// `?` inside a lambda propagates to the lambda's own return type (#9515). The
-// checker used to read the ENCLOSING function's return type, so every such
-// lambda drew E042 ("got void"). Both spellings are here: an unannotated
-// binding, where the lambda's type is inferred from its returns with the
-// failure edge among them, and a binding annotated with the function type.
-// Each exercises Option's build-a-None edge and Result's forward-the-Err one.
 const lambdaTryHelpers = `function g(v: i32): Option[i32] {
     if (v < 100) { return Some(v + 1); }
     return None;
@@ -40,7 +34,6 @@ const lambdaTryAnnotatedSrc = lambdaTryHelpers + `function main(): i32 {
     let r: (i32) => Result[i32, string] = (x: i32) => { let y: i32 = h(x)?; return Ok(y + 1); };
 ` + lambdaTryBody
 
-// 12 (Some(2) + 10), then +100 for g(500)'s None, +7 for Ok(6) + 1, +3 for "big".
 const lambdaTryWant = 122
 
 func TestLambdaTryOpPropagatesToTheLambda(t *testing.T) {

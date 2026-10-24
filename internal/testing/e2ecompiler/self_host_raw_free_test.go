@@ -5,23 +5,9 @@ import (
 	"testing"
 )
 
-// `__free(p, n)` returns a raw block — one `__alloc` handed out with no rc
-// header — to the size class `__fern_alloc` pops from. It used to be a no-op in
-// every backend ("safe-leak mode"), so a program that allocated and freed in a
-// loop grew without bound while native stayed flat: 5000 rounds of a 64-byte
-// block moved the bump allocator, and every buffer `core/map` frees leaked.
-//
-// The bound is the gate, and there is no interpreter leg: `__alloc` / `__free`
-// are the raw-memory floor `core/map` is written against, and the AST
-// interpreter has no such heap — it answers `undefined function "__alloc"`. So
-// each case is self-checking, returning a distinct code per way of being wrong
-// rather than being compared against an oracle. Native, which has the same
-// floor, answers 0 on all four.
 var rawFreeCases = []struct {
 	name, src string
 }{
-	// The block is bigger than the freelist link it has to hold, and small
-	// enough to land in the word-indexed small tier.
 	{"small-blocks-are-recycled", `function main(): i32 {
     let w: i32 = 0;
     while (w < 200) { let p: usize = __alloc(64); __free(p, 64); w = w + 1; }
@@ -33,9 +19,6 @@ var rawFreeCases = []struct {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`},
-	// A size that is not a multiple of 8 must round to the same class the
-	// allocator rounded the request to, or the block returns to a class whose
-	// next request is bigger than it is.
 	{"an-unrounded-size-returns-to-its-own-class", `function main(): i32 {
     let w: i32 = 0;
     while (w < 200) { let p: usize = __alloc(52); __free(p, 52); w = w + 1; }
@@ -46,13 +29,6 @@ var rawFreeCases = []struct {
     if (b2 - b1 >= 1024) { return 98; }
     return 0;
 }`},
-	// A recycled block must still be usable: write through it after the free
-	// and read the value back, so a push that corrupted the block's own words
-	// past the link shows up as a wrong answer rather than a quiet leak.
-	//
-	// This one is a GUARD, not a bound: without the change there is no push to
-	// corrupt anything, so it answers 0 either way. It earns its place only
-	// once op_free pushes.
 	{"a-recycled-block-still-stores", `function main(): i32 {
     let i: i32 = 0;
     let acc: i32 = 0;
@@ -67,8 +43,6 @@ var rawFreeCases = []struct {
     if (acc != 374250) { return 1; }
     return 0;
 }`},
-	// The large tier (>= 512 KiB) has its own class array and its own push;
-	// this is the only case that reaches it.
 	{"large-blocks-are-recycled", `function main(): i32 {
     let w: i32 = 0;
     while (w < 4) { let p: usize = __alloc(600000); __free(p, 600000); w = w + 1; }

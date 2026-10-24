@@ -1,20 +1,3 @@
-// sync.fern — GNU-compatible `sync`.
-//
-//   sync [OPTION] [FILE]...
-//
-// With no operand it is sync(2), which cannot fail. With operands each
-// FILE is opened and flushed through the descriptor: fsync by default,
-// fdatasync under -d, and syncfs — the whole file system the FILE lives
-// on — under -f. A FILE that cannot be opened, cannot be flushed, or
-// cannot be closed costs the status and not the run, and each of those
-// three has its own diagnostic.
-//
-// GNU opens `O_RDONLY | O_NONBLOCK`, falling back to `O_WRONLY |
-// O_NONBLOCK` and reporting the read-only errno when both fail; the
-// non-blocking bit is what lets it open a FIFO that has no writer, and
-// the flush then answers whatever the kernel says of a FIFO's
-// descriptor. This does the same through `open_reader_with` and
-// `open_writer_with`.
 import "std/string";
 import "./lib/gnu";
 
@@ -26,7 +9,6 @@ function opt_file_system(): i32 {
   return 2;
 }
 
-// fsync, fdatasync, syncfs.
 function mode_file(): i32 {
   return 0;
 }
@@ -54,9 +36,6 @@ function help_text(): string {
   return out;
 }
 
-// `flush_reader` / `flush_writer(h, mode)` — the flush the mode names,
-// on an open handle. Reader and Writer carry the same three methods but
-// are two types, hence two functions.
 function flush_reader(r: Reader, mode: i32): Result[void, IoError] {
   if (mode == mode_data()) {
     return r.fdatasync();
@@ -77,8 +56,6 @@ function flush_writer(w: Writer, mode: i32): Result[void, IoError] {
   return w.fsync();
 }
 
-// `report(name, flushed, closed)` — the two per-operand diagnostics
-// after an open, each costing the status.
 function report(name: string, flushed: Result[void, IoError], closed: Result[void, IoError]): boolean {
   let ok: boolean = true;
   if let Err(e) = flushed {
@@ -92,9 +69,6 @@ function report(name: string, flushed: Result[void, IoError], closed: Result[voi
   return ok;
 }
 
-// `sync_arg(name, mode)` — open the operand read-only and non-blocking,
-// then write-only and non-blocking, flush it, close it. Both opens
-// failing reports the first errno.
 function sync_arg(name: string, mode: i32): boolean {
   match (open_reader_with(name, 2)) {
     Ok(r) => {
@@ -116,8 +90,6 @@ function sync_arg(name: string, mode: i32): boolean {
 
 pub function main(): i32 {
   let opts: gnu.Opt[] = [];
-  // Declaration order is visible in the ambiguity list: `sync --=x`
-  // names these two, then help and version.
   opts = opts.append(gnu.flag("d", "data", opt_data()));
   opts = opts.append(gnu.flag("f", "file-system", opt_file_system()));
   let data: boolean = false;
@@ -148,11 +120,6 @@ pub function main(): i32 {
     gnu.error("--data needs at least one argument");
     exit(1);
   }
-  // No operand is sync(2). So is -f on a target without syncfs: GNU
-  // degrades the whole run to one sync(2) there and never opens the
-  // operands, so a missing one is not an error. XNU has no per-filesystem
-  // flush; a Fern `.syncfs()` on Darwin is F_FULLFSYNC per descriptor,
-  // which is a different and far costlier thing than GNU does.
   if (operands.len() == 0 || file_system && target_os() == "darwin") {
     sync();
     return 0;

@@ -9,8 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/envflag"
 )
 
-// Z3 returns z3's path, skipping the test when it is not on PATH.
-// FERN_REQUIRE_Z3=1 turns the skip into a failure, for a lane that installs it.
 func Z3(t testing.TB) string {
 	t.Helper()
 	p, err := exec.LookPath("z3")
@@ -24,12 +22,8 @@ func Z3(t testing.TB) string {
 	return ""
 }
 
-// timeoutMs bounds each query; a query the solver gives up on is reported as
-// unknown, never as proved.
 const timeoutMs = 30000
 
-// Prove runs every query through one z3 process and returns each one's
-// answer: "unsat" (proved), "sat" (a counterexample exists) or "unknown".
 func Prove(z3 string, queries []string) ([]string, error) {
 	if len(queries) == 0 {
 		return nil, nil
@@ -55,8 +49,6 @@ func Prove(z3 string, queries []string) ([]string, error) {
 	return answers, nil
 }
 
-// Counterexample re-runs a sat query and returns the solver's model: the
-// entry stack and locals on which the two sides disagree.
 func Counterexample(z3, query string) (string, error) {
 	return run(z3, "(set-logic QF_BV)\n"+query+"(get-model)\n")
 }

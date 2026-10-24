@@ -10,11 +10,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostWasmModloadTypedLowering pins wasm_modload_run's typed build:
-// every emit and link lowers the whole program through the typed lowering and
-// keeps the units it asked for. The functions no module declares (the generic
-// instances, a lifted closure) are the entry's and are emitted once, by the
-// unit that ends the entry module. A refusal fails the emit.
 func TestSelfHostWasmModloadTypedLowering(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -77,8 +72,6 @@ function main(): i32 {
     return leaf.pick(4, 5, true) + s.len() + leaf.apply((x: i32): i32 => x * k, 2);
 }
 `)
-		// The entry declares main alone; the lifted closure is the second
-		// function its units cover.
 		counts, se, code := drive(t, entry, nil, "-per-module-func-counts")
 		if code != 0 || strings.Fields(counts)[len(strings.Fields(counts))-1] != "2" {
 			t.Fatalf("-per-module-func-counts: exit %d, %q, want the entry's count 2\n%s", code, counts, se)
@@ -100,8 +93,6 @@ function main(): i32 {
 			}
 			planText.WriteString(strconv.Itoa(u[0]) + " " + strconv.Itoa(u[1]) + " " + strconv.Itoa(u[2]) + "\n")
 		}
-		// Window 0:2 is the whole of leaf, so the whole-module emit is the
-		// same unit and is served from it.
 		if _, se, code := drive(t, entry, nil, "-per-module-emit", "0", "-cache-dir", cacheDir); code != 0 || !strings.Contains(se, "cache-hit leaf") {
 			t.Fatalf("whole-module emit of leaf after its full window: exit %d, want a cache hit\n%s", code, se)
 		}
@@ -128,9 +119,6 @@ function main(): i32 {
 		}
 	})
 
-	// The record an instance builds at its binding has no declaration in any
-	// module, so the units read it from the declarations the typed lowering
-	// appends; an i64 field is stored at 8 bytes through it (#10827).
 	t.Run("instance_records_link_and_run", func(t *testing.T) {
 		proj := t.TempDir()
 		write(t, filepath.Join(proj, "leaf.fern"), `pub struct Slot[T] { v: T }
@@ -184,8 +172,6 @@ function main(): i32 {
 		}
 	})
 
-	// A dyn holding a view merged past its source now takes a copy. Keep the
-	// former refusal fixture as a linked execution test of that ownership path.
 	t.Run("dyn_view_merged_past_source_runs", func(t *testing.T) {
 		proj := t.TempDir()
 		entry := filepath.Join(proj, "main.fern")
@@ -235,8 +221,6 @@ function main(): i32 { return g(3) + g(0); }
 		}
 	})
 
-	// An instance bound to a view would retain a view it was lent, which the
-	// typed lowering refuses; the refusal fails the emit.
 	t.Run("view_template_refusal_fails_the_emit", func(t *testing.T) {
 		proj := t.TempDir()
 		entry := filepath.Join(proj, "main.fern")
@@ -256,8 +240,6 @@ function main(): i32 {
 		}
 	})
 
-	// Recursive view-bearing types now copy through helpers. Keep the
-	// former refusal as a linked execution test of the copied list.
 	t.Run("recursive_view_merged_past_source_runs", func(t *testing.T) {
 		proj := t.TempDir()
 		entry := filepath.Join(proj, "main.fern")

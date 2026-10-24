@@ -5,42 +5,16 @@ import (
 	"testing"
 )
 
-// --- The arm64 census (#5362's arm64 half, in the self-host) -----------------
-//
-// FERN_LEAKCHECK is read by the self-host compiler at EMIT time and, until
-// this port, only the x86-64 backend acted on it — the reason the leak matrix
-// and the sanitize instruments are x86-only (docs/SELFHOST-RC-PLAN-PROMOTION.md
-// names porting this emitter as what extends that gate). The port counts at
-// the allocator's own 8-byte-word granularity on both sides — __fern_alloc's
-// rounded request and each free site's class index are the same number for
-// the same block — and reports through __fern_lc_report from both exit paths
-// (the _start epilogue and the exit() builtin), OUTSIDE the heap gate, so a
-// heap-free program still links and reports zeros.
-//
-// Deliberately NOT ported here: the sanitizer (over-release trap, quarantine,
-// leak verdict). On arm64 FERN_SANITIZE stays inert rather than becoming a
-// census-only mode that would misreport what "sanitize" checks.
-//
-// Counts are asserted as PROPERTIES (balanced/unbalanced, zero/non-zero), not
-// exact numbers: the x86 legs pin exact counts per shape elsewhere, and this
-// suite gates the instrument, not the reclaim behavior.
-
 type arm64LcCase struct {
-	name string
-	src  string
-	want int
-	// balanced: allocs == frees and live == 0 (a clean program).
-	// leaky: allocs > frees and live > 0 (memory still live at exit).
-	// zero: allocs == 0 && frees == 0 (a heap-free program).
+	name    string
+	src     string
+	want    int
 	verdict string
 }
 
 func arm64LcCases() []arm64LcCase {
 	return []arm64LcCase{
 		{
-			// String churn, fully reclaimed: the fresh-string credit fires per
-			// round and the census balances. Exit oracle-confirmed (21, the
-			// x86 alias-suite family's number for this shape).
 			name: "clean_string_churn",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 { let t: string = w("ab"); return t.len() + i; }
@@ -48,24 +22,17 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 			want: 21, verdict: "balanced",
 		},
 		{
-			// A structural leak: `keep` is still live in main when bail calls
-			// exit(), so its blocks are never freed and the census must say so
-			// — the half a green exit code cannot.
 			name: "leak_live_at_exit",
 			src: `function bail(n: i32): i32 { exit(n); return 0; }
 function main(): i32 { let keep: i32[][] = []; let i: i32 = 0; while (i < 3) { keep = keep.append([i, 2, 3, 4]); i = i + 1; } let r: i32 = bail(keep.len()); return r + keep.len(); }`,
 			want: 3, verdict: "leaky",
 		},
 		{
-			// HEAP-FREE, returning main: the report runs in the _start epilogue
-			// and must link with no allocator emitted — the reason the
-			// counters and report live outside the heap gate.
 			name: "heapfree_return",
 			src:  `function main(): i32 { return 7; }`,
 			want: 7, verdict: "zero",
 		},
 		{
-			// HEAP-FREE through the exit() builtin — the other report site.
 			name: "heapfree_exit_builtin",
 			src:  `function main(): i32 { exit(9); return 0; }`,
 			want: 9, verdict: "zero",
@@ -131,9 +98,6 @@ func TestSelfHostArm64Leakcheck(t *testing.T) {
 	}
 }
 
-// Flag off, nothing reaches the emitted asm and the run is silent — the cheap
-// proxy for byte-identical, in both directions (the markers DO appear when
-// asked for, so this tests a gate rather than a typo).
 func TestSelfHostArm64LeakcheckOffEmitsNothing(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -170,8 +134,6 @@ func TestSelfHostArm64LeakcheckOffEmitsNothing(t *testing.T) {
 	}
 }
 
-// arm64CensusRun compiles src for arm64 through the asm_ir_run driver with the
-// census on and hands the result to arm64Census.
 func arm64CensusRun(t *testing.T, x86runner []string, driverBin, gcc, qemu, name, src string) int {
 	t.Helper()
 	asm := runCaptureEnv(t, x86runner, driverBin, []byte(src),
@@ -179,9 +141,6 @@ func arm64CensusRun(t *testing.T, x86runner []string, driverBin, gcc, qemu, name
 	return arm64Census(t, gcc, qemu, name, string(asm))
 }
 
-// arm64Census runs arm64 assembly built with FERN_LEAKCHECK under qemu and
-// returns its exit code. It fails the test unless the census balances at
-// live_bytes 0 with something allocated.
 func arm64Census(t *testing.T, gcc, qemu, name, asm string) int {
 	t.Helper()
 	cmd := runArm64Bin(qemu, buildBinArm64(t, gcc, t.TempDir(), name, asm))

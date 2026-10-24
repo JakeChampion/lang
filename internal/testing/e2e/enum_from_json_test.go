@@ -6,9 +6,6 @@ import (
 	"testing"
 )
 
-// enumFromJsonSrc round-trips each payload shape a derived enum encodes, unit,
-// one payload, positional, record, an array and an Option, through
-// `@derive(json.FromJson)` (#6792), and decodes each shape error.
 const enumFromJsonSrc = `import "std/json" as json;
 @derive(json.Json, json.FromJson)
 enum Shape { Empty, Circle(f64), Pair(i32, i32), Rect { w: i32, h: i32 }, Tagged(string[]) }

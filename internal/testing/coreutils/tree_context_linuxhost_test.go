@@ -7,8 +7,6 @@ import (
 	"unsafe"
 )
 
-// entryContext is the raw `security.selinux` value on path itself, a final
-// symlink not followed, or "" when it carries none.
 func entryContext(path string) string {
 	p, err := syscall.BytePtrFromString(path)
 	if err != nil {
@@ -27,7 +25,6 @@ func entryContext(path string) string {
 	return string(buf[:r])
 }
 
-// setEntryContext labels path the way setfilecon(3) does, NUL included.
 func setEntryContext(path, ctx string) error {
 	return syscall.Setxattr(path, "security.selinux", append([]byte(ctx), 0), 0)
 }

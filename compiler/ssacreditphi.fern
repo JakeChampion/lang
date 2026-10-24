@@ -1,14 +1,9 @@
-// Acyclic physical phi identities. This does not certify credits or liveness.
-// Callers prove CFG edges, predicate provenance and the incoming value facts.
-// Positive identities distinguish obligations, not unequal runtime pointers.
 import "./ssa";
 import "./ssacreditguard" as guard;
 import "./util";
 
 pub struct Value { kind: i32, identity: i32, available: i32 }
 
-// kind 0 is a scalar, 1 a reference (identity 0 is null), -1 unreadable.
-// All guarded handles belong to the supplied arena and its immutable ancestors.
 pub struct Edge { predecessor: i32, path: i32, values: Value[] }
 
 pub struct Binding { result: i32, value: Value }
@@ -29,15 +24,10 @@ function implies(a: guard.Arena, path: i32, condition: i32): guard.Built {
   return guard.combine(inverse.arena, 4, path, inverse.id);
 }
 
-// Read every operand from its predecessor snapshot. Newly produced bindings
-// never feed another phi in the same block. Cyclic phi facts require a separate
-// invariant proof and are deliberately outside this interface.
 pub function merge(a: guard.Arena, block: ssa.SBlock, edges: Edge[], nvals: i32): Joined {
   return merge_values(a, block, edges, nvals, [], nvals);
 }
 
-// Edge rows use compact slots in ids; bindings retain the physical SSA IDs.
-// Validate this public mapping independently of the caller's graph checker.
 pub function merge_mapped(a: guard.Arena, block: ssa.SBlock, edges: Edge[], nvals: i32, ids: i32[]): Joined {
   if (nvals < 1 || ids.len() == 0) {
     return failed(a, "invalid phi value mapping");
@@ -123,8 +113,6 @@ function merge_values(a: guard.Arena, block: ssa.SBlock, edges: Edge[], nvals: i
         if (slot < 0 || util.index_of_i32(definitions, arg) >= 0) {
           return failed(arena, "invalid acyclic phi operand");
         }
-        // Structurally valid but infeasible edges carry no availability or
-        // identity obligations. They cannot manufacture a readable result.
         if (!guard.is_constant(arena, e.path, 0)) {
           let value = e.values[slot];
           if (value.kind != 0 && value.kind != 1) {
@@ -165,8 +153,6 @@ function merge_values(a: guard.Arena, block: ssa.SBlock, edges: Edge[], nvals: i
           identity = sum.id;
         }
       }
-      // Mixing scalar and reference edges admits only proven null scalars.
-      // Disjoint masks prevent nonzero scalar contributions from cancelling.
       if (kind == 1 && !guard.is_constant(arena, scalar, 0)) {
         return failed(arena, "non-null scalar phi reference");
       }
@@ -176,8 +162,6 @@ function merge_values(a: guard.Arena, block: ssa.SBlock, edges: Edge[], nvals: i
   return Joined { arena: arena, bindings: bindings, path: path, error: "" };
 }
 
-// Abstract identities must never be compared to infer pointer inequality.
-// Nullness alone is justified for the admitted physical reference facts.
 pub function is_null(a: guard.Arena, value: Value, path: i32): guard.Built {
   if (value.kind != 1) {
     return guard.Built { arena: a, id: -1, error: "reference null test required" };

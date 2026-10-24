@@ -32,8 +32,6 @@ func TestSelfHostArm64DarwinComponentPreopens(t *testing.T) {
 func testComponentPreopens(t *testing.T, compiler string, runner []string, stdlib string) {
 	t.Helper()
 	testPackedBytesComponent(t, compiler, runner, stdlib)
-	// stat needs a preopen but never opens a descriptor. Compiling it also
-	// checks that descriptor-drop is imported for all preopen consumers.
 	source := `function main(): i32 {
   let i = 0;
   while (i < 3) {
@@ -79,8 +77,6 @@ func testComponentPreopens(t *testing.T, compiler string, runner []string, stdli
 		})
 	}
 
-	// The real host cannot report which unused descriptors were dropped.
-	// Run the emitted helper against a host that checks ownership and caching.
 	project := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, project, "wasm_ir.fern")
 	src := filepath.Join(project, "preopens.fern")

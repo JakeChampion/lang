@@ -5,32 +5,15 @@ import (
 	"testing"
 )
 
-// Perceus precise drops — slice 3: string[] arrays. Completes the array
-// element scope (primitive in slice 1, rc-element in slice 2). A dead string[]
-// is dropped at its last use via __fern_drop_arr_str (two-word wasm/arm64) /
-// __fern_drop_arr_ptr (native single-word) — str_dec'ing each element string
-// then freeing the buffer — so the whole structure (buffer + heap strings)
-// reclaims early, not just the outer buffer. (emitOwnedSlotDrop gained the
-// string-element branch, which also fixes loop-reinit string[] drops.)
-//
-// Soundness is the same invariant + alias gates as slices 1/2: each element's
-// str_dec is is_unique-gated, so a string element aliased into a live local
-// only DECs (the alias keeps its buffer). Heap strings need >15 bytes to
-// escape SSO-inline, so these use 17-char literals. The first element of each
-// array goes through `ids`, which hides it from the static-box plan, so every
-// array is a heap box.
-
 func strArrLit(n int) string {
 	p := make([]string, n)
 	for i := range p {
-		p[i] = `"aaaaaaaaaaaaaaaaa"` // 17 chars -> heap (past the SSO threshold)
+		p[i] = `"aaaaaaaaaaaaaaaaa"`
 	}
 	p[0] = "ids(" + p[0] + ")"
 	return "[" + strings.Join(p, ", ") + "]"
 }
 
-// strArrDead4Src: 4 sequentially-dead string[] arrays — each fully reclaimed
-// (buffer + element strings) before the next allocates.
 func strArrDead4Src() string {
 	l := strArrLit(40)
 	return `@noinline function ids(s: string): string { return s; }
@@ -55,9 +38,6 @@ function main(): i32 {
 }`
 }
 
-// strArrAliasSrc: a string element aliased into `keep` and read AFTER the
-// array's precise drop, with a forced interleaved allocation (junk). The
-// per-element str_dec must only DEC the aliased string (keep survives).
 const strArrAliasSrc = `@noinline function ids(s: string): string { return s; }
 function main(): i32 {
     let acc: i32 = 0;

@@ -1,10 +1,10 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// A receiver read inside the `.with`'s own value argument
-// (`a.with(0, a[0] + 1)`) is evaluated before the store, so an owned
-// receiver takes the in-place path; a receiver read AFTER the call
-// (`b`) must still copy. (6-6) + (2-2) + (1-1) + (8-8) = 0.
+
+
+
+
+
+
+
 function bump(own a: i32[]): i32[] { return a.with(0, a[0] + 1); }
 function main(): i32 {
     let a: i32[] = [5, 2];

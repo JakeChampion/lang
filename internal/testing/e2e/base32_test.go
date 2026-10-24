@@ -2,10 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/base32 across backends: the RFC 4648
-// §10 encode vectors (every padding length), decode, and an
-// arbitrary-byte round-trip. Returns 42 iff every check holds. Each leg
-// skips itself when its toolchain is absent.
 const base32Prog = `
 import "std/base32" as b32;
 import "std/codec";

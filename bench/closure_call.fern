@@ -1,7 +1,3 @@
-// closure_call — closures and lambdas: environment allocation, the capture
-// retain, and the indirect call. Defunctionalisation and zero-capture inlining
-// are supposed to collapse the easy cases; nothing in the corpus watched
-// whether they still do.
 function apply_n(f: (i32) => i32, n: i32): i64 {
   let total: i64 = 0i64;
   let i: i32 = 0;
@@ -16,9 +12,7 @@ function main(): i32 {
   let total: i64 = 0i64;
   let r: i32 = 0;
   while (r < 6000) {
-    // Zero-capture: should defunctionalise to a direct call.
     total = total + apply_n((x: i32) => x * 3 - 1, 400);
-    // Capturing: allocates an environment, retains the capture.
     let bias: i32 = r;
     total = total + apply_n((x: i32) => x + bias, 400);
     r = r + 1;

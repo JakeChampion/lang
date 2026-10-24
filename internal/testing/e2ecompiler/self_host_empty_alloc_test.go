@@ -8,12 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// `__alloc_u8(0)` is one shared immortal empty array on the self-host
-// compiler, as it is on the Go compiler, so a zero-length buffer costs no
-// allocation (#11507). The array behaves as any empty one: a push grows it
-// into a box of its own, a later zero-length allocation is still empty, and
-// a map, which starts from two of them, fills and reads back. x86-64's
-// leakcheck stays balanced.
 func TestSelfHostEmptyAllocIsStatic(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := filepath.Join(t.TempDir(), "empty_u8.fern")

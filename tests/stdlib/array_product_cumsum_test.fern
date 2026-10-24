@@ -1,14 +1,6 @@
 import "std/test";
 import "std/array";
 
-// tests/stdlib/array_product_cumsum_test.fern — pure-Fern coverage of
-// std/array's `product` at an f64 element (product of all elements, empty = 1)
-// and `cumsum` (running prefix sum, same length as input). Both are bounded
-// generics (`[T: Mul + One]`, `[T: Add + Zero]`), so these exercise the f64
-// instantiation of one verb rather than an `_f64` sibling — which is why the
-// empty cases have to name their element type. The Go-side
-// TestArrayProductCumsum pins the same behaviour.
-
 function near(a: f64, b: f64): boolean {
   let d: f64 = a - b;
   if (d < 0.0) {
@@ -18,18 +10,15 @@ function near(a: f64, b: f64): boolean {
 }
 
 function test_product(): test.TestOutcome {
-  // 1*2*3*4 = 24
   let xs: f64[] = [1.0, 2.0, 3.0, 4.0];
   if (!near(xs.product(), 24.0)) {
     return test.fail("1..4");
   }
-  // 2 * -3 = -6
   let neg: f64[] = [2.0, 0.0 - 3.0];
   return test.assert_eq_f64_near(neg.product(), 0.0 - 6.0, 0.0001);
 }
 
 function test_product_empty(): test.TestOutcome {
-  // empty product is the multiplicative identity.
   let empty: f64[] = [];
   return test.assert_eq_f64_near(empty.product(), 1.0, 0.0001);
 }
@@ -42,7 +31,6 @@ function test_cumsum(): test.TestOutcome {
   if (!near(cs[2], 6.0)) {
     return test.fail("prefix 2");
   }
-  // last prefix sum is the total.
   return test.assert_eq_f64_near(cs[3], 10.0, 0.0001);
 }
 

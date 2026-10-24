@@ -9,8 +9,6 @@ import (
 	"time"
 )
 
-// PerIPCapServerSource is a supervised server with one worker that lets a
-// client hold two connections (`max_connections_per_ip: 2`).
 func PerIPCapServerSource() string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
@@ -24,11 +22,6 @@ function main(): i32 {
 `)
 }
 
-// CheckPerIPCap drives PerIPCapServerSource: two idle connections from
-// this host fill its cap, a third is closed as it is accepted with no
-// response, and once one of the two closes the next connection is
-// served; the other of the two still answers, since the cap counted
-// rather than closed it.
 func CheckPerIPCap(t *testing.T, addr string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
@@ -41,8 +34,6 @@ func CheckPerIPCap(t *testing.T, addr string) {
 		defer conn.Close()
 		held = append(held, conn)
 	}
-	// The loop accepts each before the next is dialled only in order;
-	// a short wait lets both land in its table.
 	time.Sleep(200 * time.Millisecond)
 
 	third, err := net.DialTimeout("tcp", addr, 5*time.Second)

@@ -1,44 +1,3 @@
-// install.fern — GNU-compatible `install`.
-//
-//   install [OPTION]... [-T] SOURCE DEST
-//   install [OPTION]... SOURCE... DIRECTORY
-//   install [OPTION]... -t DIRECTORY SOURCE...
-//   install [OPTION]... -d DIRECTORY...
-//
-// The copying is `lib/copy.fern`, the engine `cp` drives and `mv`'s
-// cross-device fallback reuses; this is its third caller. What install
-// adds is a mode rule of its own, the two directory-creating forms, the
-// `-C` comparison, and `-s`, which hands the destination to another
-// program.
-//
-// THE UMASK IS NOT CONSULTED. This is the thing to get right and the
-// thing `cp` would mislead you about. `cp` has three mode states — the
-// source's bits through the umask, its bits verbatim under `-p`, and the
-// type's default under `--no-preserve=mode` — and install's is a fourth
-// that is not a variation on any of them: measured, the default is 0755
-// under `umask 077`, and `-m u=rw,g=r` lands 0640, so the mask is never
-// applied rather than applied to something else. `copy.Cfg.forced_mode`
-// is how the engine is told.
-//
-// Two more measured rules that do not follow from the first:
-//
-//   - `-m` with `-d` reaches only the LAST component. `install -d -m 700
-//     a/b/c` leaves `a` and `a/b` at 0755 and only `a/b/c` at 0700.
-//   - a directory's `-v` line is `install: creating directory 'X'`, on
-//     STDOUT and carrying the program prefix, where the file line
-//     `'src' -> 'dest'` has none. Both streams are stdout; only one is
-//     prefixed. That is the third verbose style the engine carries.
-//
-// `-C` compares content, ownership and mode. On a match it does NOTHING
-// — not even touching the destination's mtime, checked across a second
-// run — and on a mismatch it removes the destination, says `removed 'X'`
-// under `-v`, and copies. That removal line is the engine's, the same one
-// `cp -v --remove-destination` prints.
-//
-// A symlink source is DEREFERENCED: `deref_always`, not `cp`'s
-// command-line-only default. A directory source is refused outright with
-// `omitting directory 'X'` rather than needing `-r`, which install has no
-// equivalent of.
 import "std/string";
 import "std/array";
 import "std/io_buffered";
@@ -49,15 +8,6 @@ import "./lib/mode";
 import "./lib/owner";
 import "./lib/fts";
 
-// ---- options ---------------------------------------------------------------
-//
-// Declared in the order GNU's own longopts array has, because the
-// ambiguity lists print candidates in it. Measured: `--s` names
-// '--strip' '--strip-program' '--suffix' in that order, `--p` names
-// '--preserve-timestamps' before '--preserve-context', `--c` '--compare'
-// before '--context', `--d` '--debug' before '--directory', and `--v`
-// '--verbose' before '--version'. That is alphabetical but for the
-// preserve pair, which is the one place GNU's array is not.
 function opt_backup(): i32 {
   return 1;
 }
@@ -122,7 +72,6 @@ function opt_verbose(): i32 {
   return 16;
 }
 
-// The short-only spellings, which no long name reaches.
 function opt_backup_short(): i32 {
   return 17;
 }
@@ -157,7 +106,6 @@ function option_table(): gnu.Opt[] {
   opts = opts.append(gnu.valued("S", "suffix", opt_suffix()));
   opts = opts.append(gnu.valued("t", "target-directory", opt_target_directory()));
   opts = opts.append(gnu.flag("v", "verbose", opt_verbose()));
-  // After every long name, so the ambiguity lists keep the measured order.
   opts = opts.append(gnu.flag("b", "", opt_backup_short()));
   opts = opts.append(gnu.flag("c", "", opt_ignored()));
   opts = opts.append(gnu.flag("D", "", opt_create_leading()));
@@ -222,12 +170,6 @@ function help_text(): string {
   return out;
 }
 
-// ---- what the scan decided --------------------------------------------------
-//
-// `mode_spec` is kept as TEXT rather than parsed on sight, because `-m`'s
-// symbolic form adjusts a base mode and the base differs between a file
-// (0755) and a directory under `-d`. The parse happens where the base is
-// known.
 struct Scan { target_dir: string, have_target_dir: boolean, no_target_dir: boolean, directory: boolean, create_leading: boolean, compare: boolean, mode_spec: string, have_mode: boolean, owner_spec: string, have_owner: boolean, group_spec: string, have_group: boolean, preserve_timestamps: boolean, strip: boolean, strip_program: string, verbose: boolean, debug: boolean, backups: boolean, control: i32, suffix: string, backup_given: boolean, control_given: boolean, control_text: string, suffix_given: boolean, warn_context: boolean, warn_preserve_context: boolean, warn_strip_program: boolean }
 
 function scan_new(): Scan {
@@ -248,14 +190,12 @@ function apply_option(s: Scan, m: gnu.OptMatch): Scan {
     return Scan { ...s, compare: true };
   }
   if (m.id == opt_context()) {
-    // A VALUE warns and the bare form does not, exactly as `cp`'s does.
     if (m.has_value) {
       return Scan { ...s, warn_context: true };
     }
     return s;
   }
   if (m.id == opt_context_short()) {
-    // `-Z` alone is silent, and so is a bare `--context`.
     return s;
   }
   if (m.id == opt_preserve_context()) {
@@ -300,7 +240,6 @@ function apply_option(s: Scan, m: gnu.OptMatch): Scan {
   if (m.id == opt_verbose()) {
     return Scan { ...s, verbose: true };
   }
-  // `-c` is accepted and does nothing, which is what its help line says.
   return s;
 }
 
@@ -322,27 +261,10 @@ function scan_options(argv: string[]): (Scan, string[]) {
   return (s, g.operands());
 }
 
-// ---- the mode ---------------------------------------------------------------
-//
-// `default_mode(is_dir)` — what install uses when `-m` says nothing:
-// 0755 for both a file and a directory, and NOT filtered by the umask.
 function default_mode(): i32 {
   return 493;
 }
 
-// `resolve_mode(spec, is_dir)` — `-m`'s value, resolved against a base of
-// ZERO. `None` is `invalid mode 'SPEC'`, which is the whole of that
-// diagnostic: no `Try …` line follows it.
-//
-// The base is the thing to get right, and 0755 is the wrong guess: it is
-// what install uses when `-m` is ABSENT, not what `-m`'s symbolic form
-// adjusts. Measured — `-m u=rw,g=r` is 0640 and not 0645, `-m +x` is
-// 0111 and not 0755, `-m go-w` is 0 and not 0755, `-m o=` is 0. So `-m`
-// is a full specification of the mode rather than an edit to a default.
-//
-// The mask is 0 for the same reason the default is unfiltered: `-m +w` is
-// 0222 under `umask 022`, `077` and `000` alike, so even the bare form
-// that POSIX lets consult the umask does not.
 function resolve_mode(spec: string, is_dir: boolean): Option[i32] {
   match (mode.compile(spec)) {
     None => {
@@ -355,13 +277,6 @@ function resolve_mode(spec: string, is_dir: boolean): Option[i32] {
   }
 }
 
-// ---- ownership --------------------------------------------------------------
-//
-// `-o` and `-g` are looked up through `lib/owner.fern`, which `chown` and
-// `chgrp` already use, but the DIAGNOSTIC is install's own: measured,
-// `chown` says `invalid user: 'x'` with a colon and install says
-// `invalid user 'x'` without one, so `owner.Parsed.message` cannot be
-// reused even though the lookup can.
 struct Ids { uid: i64, gid: i64, err: string }
 
 function lookup_ids(s: Scan): Ids {
@@ -385,12 +300,6 @@ function lookup_ids(s: Scan): Ids {
   return Ids { uid: uid, gid: gid, err: "" };
 }
 
-// ---- the verbose lines ------------------------------------------------------
-//
-// The file line is the engine's, under `vstyle_copy()` — install's is
-// `'src' -> 'dest'`, the same wording `cp` uses. The DIRECTORY line is
-// install's own and is not the engine's under any style: it names only
-// the destination, carries the program prefix, and still goes to stdout.
 function created_directory(s: Scan, path: string, o: io_buffered.BufWriter): io_buffered.BufWriter {
   if (!s.verbose) {
     return o;
@@ -398,15 +307,6 @@ function created_directory(s: Scan, path: string, o: io_buffered.BufWriter): io_
   return gnu.put(o, gnu.prog() + ": creating directory " + gnu.quotea(path) + "\n");
 }
 
-// ---- -d and -D: making directories -----------------------------------------
-//
-// Every component is created, and only the ones actually CREATED are
-// announced — measured, `-v -d` on a directory that is already there
-// prints nothing at all.
-//
-// `last_mode` is the mode for the FINAL component alone. `-m` reaches no
-// further than that: measured, `install -d -m 700 a/b/c` leaves `a` and
-// `a/b` at 0755.
 struct DirOut { status: i32, out: io_buffered.BufWriter }
 
 function make_one_dir(s: Scan, path: string, want: i32, ids: Ids, o: io_buffered.BufWriter): DirOut {
@@ -423,8 +323,7 @@ function make_one_dir(s: Scan, path: string, want: i32, ids: Ids, o: io_buffered
   }
   let initial: i32 = want;
   if (ids.uid >= 0 || ids.gid >= 0) {
-    // Keep other users out until ownership and final permissions agree.
-    initial = want & 448;  // 0700
+    initial = want & 448;
   }
   match (create_dir(path, initial)) {
     Ok(_) => {},
@@ -437,8 +336,6 @@ function make_one_dir(s: Scan, path: string, want: i32, ids: Ids, o: io_buffered
   return apply_attributes(path, want, ids, true, w);
 }
 
-// Ownership must succeed before final permissions are exposed. chown can
-// also clear set-id bits, so chmod belongs last even on the success path.
 function apply_attributes(path: string, want: i32, ids: Ids, directory: boolean, o: io_buffered.BufWriter): DirOut {
   let w: io_buffered.BufWriter = o;
   let mode_error: string = "cannot change permissions of ";
@@ -466,18 +363,10 @@ function apply_attributes(path: string, want: i32, ids: Ids, directory: boolean,
   return DirOut { status: 0, out: w };
 }
 
-// `make_path(s, path, last_mode, ids, o)` — `path` and every component
-// above it, the last one with `last_mode` and the rest with install's
-// default.
 function make_path(s: Scan, path: string, last_mode: i32, ids: Ids, o: io_buffered.BufWriter): DirOut {
   let w: io_buffered.BufWriter = o;
-  // The components come from `lib/fts.fern`, which `mkdir -p` walks the
-  // same way: `.` and `..` and an empty component (a doubled slash) are
-  // stepped through rather than created, and `last` marks the final name
-  // so `-m` can reach it and nothing above it.
   let last: i32 = fts.last_component_end(path);
   if (last < 0) {
-    // Nothing but slashes, which is a root that already exists.
     return DirOut { status: 0, out: w };
   }
   let start: i32 = 0;
@@ -489,9 +378,6 @@ function make_path(s: Scan, path: string, last_mode: i32, ids: Ids, o: io_buffer
         if (i == last) {
           want = last_mode;
         }
-        // The final component is named as the operand was WRITTEN:
-        // measured, `-d a/b/` says `creating directory 'a/b/'` with the
-        // slash, where every component above it is a bare prefix.
         let name: string = slice_unchecked(path, 0, i) + "";
         if (i == last) {
           name = path;
@@ -513,9 +399,6 @@ function make_path(s: Scan, path: string, last_mode: i32, ids: Ids, o: io_buffer
   return DirOut { status: 0, out: w };
 }
 
-// `make_leading(s, dest, ids, o)` — `-D`'s job: every component of
-// `dest` EXCEPT the last. Its directories get install's default mode,
-// never `-m`'s, because `-m` is the file's.
 function make_leading(s: Scan, dest: string, ids: Ids, o: io_buffered.BufWriter): DirOut {
   let parent: string = gnu.dir_name(dest);
   if (parent == "." || parent == "/") {
@@ -524,13 +407,6 @@ function make_leading(s: Scan, dest: string, ids: Ids, o: io_buffered.BufWriter)
   return make_path(s, parent, default_mode(), Ids { uid: 0 - 1, gid: 0 - 1, err: "" }, o);
 }
 
-// ---- -C: the comparison -----------------------------------------------------
-//
-// True when the destination already holds exactly what installing would
-// put there, so nothing is done at all. Content, mode and ownership, per
-// the option's own help text; a match leaves even the mtime untouched,
-// which is how the option is observed to be a no-op rather than a
-// cheaper copy.
 function same_already(src: string, dest: string, want: i32, ids: Ids): boolean {
   match (stat(src)) {
     Ok(si) => {
@@ -552,11 +428,6 @@ function same_already(src: string, dest: string, want: i32, ids: Ids): boolean {
   }
 }
 
-// Everything but the bytes: both must be regular files of one size, the
-// destination already at the mode install would set, and already owned by
-// whatever `-o` / `-g` asked for. An id that was not asked for is not
-// compared, which is why they are checked against the resolved Ids rather
-// than against the source.
 function same_metadata(si: FileStat, di: FileStat, want: i32, ids: Ids): boolean {
   if (!si.is_file || !di.is_file) {
     return false;
@@ -576,8 +447,6 @@ function same_metadata(si: FileStat, di: FileStat, want: i32, ids: Ids): boolean
   return true;
 }
 
-// The content half. Both handles are closed on every path, which matters
-// because a run with many operands asks this once per operand.
 function same_bytes(a: string, b: string): boolean {
   match (open_reader(a)) {
     Ok(ra) => {
@@ -600,10 +469,6 @@ function same_bytes(a: string, b: string): boolean {
   }
 }
 
-// Read in blocks rather than whole, so a large pair costs no more memory
-// than a small one. An unequal block, a short read on one side, or a
-// failure on either is a mismatch; two simultaneous empty reads are the
-// end and the only way to true.
 function compare_streams(ra: Reader, rb: Reader): boolean {
   while (true) {
     match (ra.read_chunk_bytes(131072)) {
@@ -633,31 +498,8 @@ function compare_streams(ra: Reader, rb: Reader): boolean {
   return true;
 }
 
-// ---- -s: handing the destination to another program -------------------------
-//
-// GNU runs `PROGRAM DEST` after the copy. A program that cannot be run
-// gives TWO lines, measured: the exec failure and then the abnormal-exit
-// report.
 struct StripOut { status: i32, out: io_buffered.BufWriter }
 
-// 9.5 replaced install's fork+exec with posix_spawnp, which reports a
-// program it could not START from the PARENT and never reaches a wait —
-// so the diagnostic is one line, and the `-v` line is not duplicated
-// across a fork the way 9.4's was.
-//
-// Fern has no spawn primitive, so the parent asks the same question
-// posix_spawnp answers before it forks: resolve the name the way execvp
-// does and see whether it can be executed. What that leaves uncovered is
-// a program that IS executable and still fails to exec (ENOEXEC,
-// ETXTBSY), which lands on the abnormal-termination line instead.
-//
-// On Darwin GNU's posix_spawnp is gnulib's fork-and-exec replacement, and
-// a program it cannot start is the child exiting 127, which the parent
-// reports as the abnormal-termination line; nothing there names the
-// program. So the question is not asked first there: the fork below asks
-// it the way GNU does. Measured on the macos-15 lane against the 9.12
-// oracle: `--strip-program=/nosuch/prog` and `/bin/true`, which macOS does
-// not have, both print "strip process terminated abnormally".
 function run_strip(s: Scan, dest: string, o: io_buffered.BufWriter): StripOut {
   let w: io_buffered.BufWriter = o;
   if (target_os() != "darwin") {
@@ -691,10 +533,6 @@ function run_strip(s: Scan, dest: string, o: io_buffered.BufWriter): StripOut {
   return strip_failed(dest, w);
 }
 
-// A strip that did not happen, however it failed. The destination does
-// not survive either way: measured, GNU leaves no `out` at all, having
-// made it and taken it away again, so a half-installed file is never
-// left behind.
 function strip_failed(dest: string, w: io_buffered.BufWriter): StripOut {
   match (remove_file(dest)) {
     Ok(_) => {},
@@ -703,10 +541,6 @@ function strip_failed(dest: string, w: io_buffered.BufWriter): StripOut {
   return StripOut { status: 1, out: w };
 }
 
-// Why `name` could not be started, or None when it can be. A name
-// holding a slash is used as it stands; one without is searched for
-// along PATH, and an empty PATH entry means the working directory, both
-// of which is what execvp does.
 function spawnable(name: string): Option[string] {
   if (name.contains("/")) {
     match (executable(name)) {
@@ -724,7 +558,6 @@ function spawnable(name: string): Option[string] {
       path = v;
     },
     None => {
-      // execvp falls back to confstr(_CS_PATH), which is this on glibc.
       path = "/bin:/usr/bin";
     }
   }
@@ -741,8 +574,6 @@ function spawnable(name: string): Option[string] {
     }
     match (executable(gnu.join_path(dir, name))) {
       Some(e) => {
-        // execvp keeps looking, and remembers EACCES over ENOENT so a
-        // directory holding an unreadable match is what it reports.
         if (errno.of(e) == errno.EACCES) {
           why = gnu.io_error_text(e);
         }
@@ -770,11 +601,6 @@ function executable(path: string): Option[IoError] {
   }
 }
 
-// ---- installing one file ----------------------------------------------------
-//
-// The engine does the copying, told three things install decides and `cp`
-// does not: a private staging mode, that a symlink source is followed, and that a
-// directory source is not a recursion to allow but a refusal.
 struct FileOut { status: i32, out: io_buffered.BufWriter }
 
 function engine_cfg(s: Scan): copy.Cfg {
@@ -790,8 +616,6 @@ function install_file(s: Scan, src: string, dest: string, want: i32, ids: Ids, o
   match (lstat(src)) {
     Ok(info) => {
       if (info.is_dir) {
-        // Not `cp`'s "-r not specified": install has no recursion to ask
-        // for, so a directory source is simply omitted.
         w = gnu.error_out(w, "omitting directory " + gnu.quotea(src));
         return FileOut { status: 1, out: w };
       }
@@ -802,7 +626,6 @@ function install_file(s: Scan, src: string, dest: string, want: i32, ids: Ids, o
     }
   }
   if (s.compare && same_already(src, dest, want, ids)) {
-    // Nothing at all, not even a timestamp: measured across a second run.
     return FileOut { status: 0, out: w };
   }
   let cst: copy.State = copy.copy_one(engine_cfg(s), copy.state_new(w), src, dest, true);
@@ -821,9 +644,6 @@ function install_file(s: Scan, src: string, dest: string, want: i32, ids: Ids, o
   return FileOut { status: changed.status, out: changed.out };
 }
 
-// `from_environment(s)` — what no option said, filled in from
-// SIMPLE_BACKUP_SUFFIX and VERSION_CONTROL, exactly as `cp` reads them.
-// Both are consulted only when backups were asked for at all.
 function from_environment(s0: Scan): Scan {
   let s: Scan = s0;
   if (!s.backups) {
@@ -860,7 +680,6 @@ function from_environment(s0: Scan): Scan {
   return Scan { ...s, control: control };
 }
 
-// ---- main -------------------------------------------------------------------
 function finish(status: i32, o: io_buffered.BufWriter): i32 {
   gnu.finish(o);
   return status;
@@ -871,10 +690,6 @@ pub function main(): i32 {
   let s: Scan = scanned.0;
   let operands: string[] = scanned.1;
   s = from_environment(s);
-  // The warnings are the option scan's, not an operand's, so they come
-  // before anything is copied. The two casings are GNU's own and not a
-  // slip: `--context=VALUE` is a lowercase `warning:` and
-  // `--preserve-context` an uppercase `WARNING:`.
   if (s.warn_context) {
     gnu.error("warning: ignoring --context; it requires an SELinux-enabled kernel");
   }
@@ -885,7 +700,6 @@ pub function main(): i32 {
     gnu.error("WARNING: ignoring --strip-program option as -s option was not specified");
   }
   if (s.have_target_dir && s.no_target_dir) {
-    // No `Try …` line on this one, as `cp`'s twin has none either.
     gnu.error("cannot combine --target-directory (-t) and --no-target-directory (-T)");
     return 1;
   }
@@ -895,13 +709,10 @@ pub function main(): i32 {
   }
   let ids: Ids = lookup_ids(s);
   if (ids.err.len() > 0) {
-    // No `Try …` line, unlike the operand-count errors above.
     gnu.error(ids.err);
     return 1;
   }
 
-  // `-d` is its own form: every operand is a directory to create, and
-  // `-m` reaches the last component of each.
   if (s.directory) {
     let dir_mode: i32 = default_mode();
     if (s.have_mode) {

@@ -5,38 +5,17 @@ import (
 	"sort"
 )
 
-// Selected is one resolved package: the exact version MVS chose and its
-// source. The full set is what gets written to fern.lock.
 type Selected struct {
 	Name    string
 	Version Version
 	Source  Source
 }
 
-// DepsOf returns the version-dependencies (name → min version string) of
-// a specific package version, given its source. The caller materializes
-// the source (a local dir, or a store dir after fetching a url) and
-// reads its manifest's version deps. Returning the source lets internal/
-// mvs stay free of manifest/pkgcache.
 type DepsOf func(pkg string, v Version, src Source) (map[string]string, error)
 
-// Resolve runs Minimum Version Selection: starting from rootDeps
-// (name → declared minimum), keep per package the MAXIMUM of the minimums
-// demanded anywhere in the transitive graph, expanding each selected
-// version's own requirements to a fixpoint. The result is deterministic
-// and lockfile-ready. A demanded version absent from the index is a
-// hard, precisely-located error (never a silent round-up).
-//
-// excludes (name → banned versions) is the top-level manifest's
-// [exclude] table — MVS's escape hatch for "1.9 is broken", since the
-// minimum-only constraint language cannot express upper bounds. A demand
-// for an excluded version rounds up to the NEXT higher non-excluded
-// indexed version (Go's exclude semantics); no higher version is a
-// precise error. Only the root's excludes reach here — a dependency's
-// [exclude] is ignored, preserving determinism.
 func Resolve(rootDeps map[string]string, excludes map[string][]string, ix *Index, depsOf DepsOf) ([]Selected, error) {
 	selected := map[string]Version{}
-	var queue []string // packages whose selected version's deps need expanding
+	var queue []string
 
 	excluded := func(pkg string, v Version) bool {
 		for _, s := range excludes[pkg] {
@@ -92,8 +71,6 @@ func Resolve(rootDeps map[string]string, excludes map[string][]string, ix *Index
 			return nil, fmt.Errorf("reading deps of %s@%s: %w", pkg, v, err)
 		}
 		for _, d := range sortedKeys(deps) {
-			// A version raised above v since we enqueued it supersedes this
-			// pass; the higher version is (or will be) its own queue entry.
 			if cur, ok := selected[pkg]; ok && cur.Compare(v) != 0 {
 				break
 			}

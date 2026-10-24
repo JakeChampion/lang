@@ -1,22 +1,12 @@
-// Guarded containment pilot over actual physical SSA. One owned parent with
-// a selected flat child slot, no allocations, parent retains or cycles. The
-// one phi admitted is the uniqueness token: the parent where it is unique and
-// zero where it is shared. Each sibling slot carries its own credit, released
-// inline or by the independently checked helper. No compile gate.
 import "./ssa";
 import "./ssacreditguard" as guard;
 import "./ssacredithelper" as helper;
 import "./util";
 
-// kind: -1 unreadable, 0 scalar, 1 parent, 2 selected child, 3 uniqueness
-// token (number: whether it holds the parent), 4 sibling child (number: its
-// index in `others`).
 struct Value { kind: i32, number: i32, available: i32 }
 
-// `rest` is each sibling slot's credit, parallel to Context.others.
 struct State { path: i32, parent: i32, child: i32, slot: i32, rest: i32[] }
 
-// The path each edge `from -> to` is taken on, recorded as blocks finish.
 struct Edge { from: i32, to: i32, path: i32 }
 
 struct Context { arena: guard.Arena, values: Value[], state: State, unique: i32, temp: i32, error: string, others: i32[], edges: Edge[] }
@@ -76,7 +66,6 @@ function with_rest(c: Context, k: i32, credit: i32): Context {
   return Context { ...c, state: State { ...c.state, rest: c.state.rest.with(k, credit) } };
 }
 
-// The path edge `from -> to` was taken on, or -1 before it was.
 function edge_path(c: Context, from: i32, to: i32): i32 {
   for e in c.edges {
     if (e.from == from && e.to == to) {
@@ -86,9 +75,6 @@ function edge_path(c: Context, from: i32, to: i32): i32 {
   return -1;
 }
 
-// A phi joins one operand per predecessor, each of which must be defined
-// wherever its edge is taken. Scalars join to a scalar; the parent and a
-// zero join to the uniqueness token, true on the edges that carry the parent.
 function phi(c: Context, op: ssa.SInst, preds: i32[], block: i32): Context {
   if (op.args.len() != preds.len() || preds.len() == 0) {
     return failed(c, "unsupported containment phi");
@@ -142,8 +128,6 @@ function phi(c: Context, op: ssa.SInst, preds: i32[], block: i32): Context {
   return Context { ...out, values: out.values.with(op.result, Value { kind: kind, number: number, available: out.state.path }) };
 }
 
-// A comparison of two scalars, or of the uniqueness token with zero, which
-// asks whether the token holds the parent.
 function compare(c: Context, op: ssa.SInst): Context {
   let a = c.values[op.args[0]];
   let b = c.values[op.args[1]];
@@ -209,8 +193,6 @@ function transfer(c: Context, op: ssa.SInst, offset: i32, release: string, preds
     out = equal(out, out.state.path, out.state.rest[number], 1, "load from released sibling slot");
     kind = 4;
   } else if (op.kind_tag == 41 && op.args.len() == 2 && op.imm == offset && out.values[op.args[0]].kind == 1 && out.values[op.args[1]].kind == 0) {
-    // Physical stores have no readable result. Do not invent a scalar zero
-    // that a later condition could use to discard a feasible bad path.
     kind = -1;
     out = live(out, 1, 0);
     out = equal(out, out.state.path, out.values[op.args[1]].number, 0, "only child-slot clearing admitted");
@@ -228,8 +210,6 @@ function transfer(c: Context, op: ssa.SInst, offset: i32, release: string, preds
     let which = out.values[op.args[0]].number;
     out = live(out, subject, which);
     if (op.str == "__fern_rc_is_unique" && subject == 1) {
-      // No admitted effect changes the parent's count except consuming its
-      // final local credit. Liveness rejects any subsequent use on that path.
       number = out.unique;
     } else if (op.str == "__fern_rc_inc" && subject == 2) {
       kind = 2;
@@ -241,16 +221,11 @@ function transfer(c: Context, op: ssa.SInst, offset: i32, release: string, preds
       out = calc(out, 1, out.state.child, out.state.path);
       out = Context { ...out, state: State { ...out.state, child: out.temp } };
     } else if (op.str == "__fern_rc_dec" && subject == 4) {
-      // A sibling's slot credit is the unique parent's to spend; a shared
-      // parent's children are not this frame's to release.
       kind = -1;
       out = equal(out, out.state.path, out.unique, 1, "releasing a shared parent's child");
       out = calc(out, 1, out.state.rest[which], out.state.path);
       out = with_rest(out, which, out.temp);
     } else if (op.str == "__fern_rc_dec" && subject == 1) {
-      // Frees the unique parent's box without visiting its slots: every
-      // sibling must already be released, and the selected slot's credit
-      // passes to the child loaded from it.
       kind = -1;
       out = equal(out, out.state.path, out.unique, 1, "freeing a shared parent");
       let k: i32 = 0;
@@ -274,8 +249,6 @@ function transfer(c: Context, op: ssa.SInst, offset: i32, release: string, preds
       out = calc(out, 4, dropped, out.state.slot);
       out = calc(out, 1, out.state.slot, out.temp);
       out = Context { ...out, state: State { ...out.state, slot: out.temp } };
-      // The helper releases every sibling slot of a unique parent, so one the
-      // frame already released would be released twice.
       let k: i32 = 0;
       while (k < out.state.rest.len()) {
         out = equal(out, dropped, out.state.rest[k], 1, "sibling released twice");
@@ -396,7 +369,7 @@ function merged(c: Context, old: State, path: i32): Context {
   }
   out = calc(out, 0, old.path, path);
   let joined = out.temp;
-  out = calc(out, 4, joined, 1);  // Refuse overlapping path contributions.
+  out = calc(out, 4, joined, 1);
   return Context { ...out, state: State { path: joined, parent: parent, child: child, slot: slot, rest: rest } };
 }
 

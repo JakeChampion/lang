@@ -9,10 +9,6 @@ import (
 	"time"
 )
 
-// startTcpPongServer opens a loopback TCP listener that, for each connection,
-// reads the request and writes a fixed 6-byte reply ("pong!!"), then closes.
-// Returns the port and registers cleanup. Used by the self-host tcp-client IR
-// tests (the self-host-compiled client connects + sends + recvs against it).
 func startTcpPongServer(t *testing.T) int {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -38,9 +34,6 @@ func startTcpPongServer(t *testing.T) int {
 	return ln.Addr().(*net.TCPAddr).Port
 }
 
-// tcpClientIRProgram builds a self-host program that connects to 127.0.0.1:port,
-// checks tcp_pollable identity, sends "ping", recvs the reply, and returns its
-// length (the server replies with 6 bytes, so a healthy round-trip exits 6).
 func tcpClientIRProgram(port int) string {
 	return fmt.Sprintf(`function main(): i32 {
     let c: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], %d, false);
@@ -54,10 +47,6 @@ func tcpClientIRProgram(port int) string {
 }`, port)
 }
 
-// The TCP operations use the self-host IR path and its Fern runtime helpers.
-// Native pollable conversion preserves the descriptor directly. A loopback
-// round-trip checks connect, identity, send and recv, returning the six-byte
-// reply length.
 func TestSelfHostTcpClientIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	port := startTcpPongServer(t)

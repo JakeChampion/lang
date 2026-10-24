@@ -1,11 +1,5 @@
 import "std/test";
 
-// tests/stdlib/wide_numerics_test.fern — i64 / u32 / u64
-// assertion family. The corresponding i32 helpers are
-// covered by `arithmetic_test.fern`; this file specifically
-// exercises the wider widths so a regression in the interp's
-// `__int_to_string_u64` override would surface here.
-
 function test_i64_addition(): test.TestOutcome {
   let a: i64 = 5000000000;
   let b: i64 = 3000000000;

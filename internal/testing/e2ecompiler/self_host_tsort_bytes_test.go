@@ -20,7 +20,6 @@ func TestSelfHostTsortBytes(t *testing.T) {
 		code                            int
 	}{
 		{"binary names", "a\xff b\xfe\n", "a\xff\nb\xfe\n", "", 0},
-		// Both names hash to FNV-1a 0x5e4daa9d; they must remain distinct.
 		{"hash collision", "costarring liquid liquid zz", "costarring\nliquid\nzz\n", "", 0},
 		{"binary cycle", "a\xff b\xfe b\xfe a\xff\n", "a\xff\nb\xfe\n", "-: input contains a loop:\na\xff\nb\xfe\n", 1},
 		{"unsigned ordering", "\xff \xff \x80 \x80 a a", "a\n\x80\n\xff\n", "", 0},

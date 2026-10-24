@@ -1,9 +1,9 @@
-// usize is unsigned, so a negative literal never fits it, and no target's
-// usize is wider than 64 bits. Every literal from 0 to u64::MAX is accepted
-// (usize_wraps_at_64_bits).
+
+
+
 function main(): i32 {
-    let below: usize = -1;                     // error[E047]
-    let above: usize = 18446744073709551616;   // error[E047]
+    let below: usize = -1;
+    let above: usize = 18446744073709551616;
     let max: usize = 18446744073709551615;
     if (below > above || max == 0) {
         return 1;

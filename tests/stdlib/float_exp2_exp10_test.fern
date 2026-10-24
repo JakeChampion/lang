@@ -1,15 +1,6 @@
 import "std/test";
 import "std/f64";
 
-// tests/stdlib/float_exp2_exp10_test.fern — pure-Fern coverage of
-// std/f64.exp2 / exp10: base-2 and base-10 exponentials (inverses of
-// log2 / log10), built on the natural exp via 2^x = e^(x·ln2), 10^x = e^(x·ln10).
-// Whole exponents land on the exact power up to rounding and both round-trip
-// against their logs, so the checks are tolerance-banded with assert_eq_f64_near.
-// Both f64 and f32. The Go-side TestFloatExp2Exp10 pins these across interp /
-// x86-64 / arm64 (wasmbin skips libm transcendentals, the same known gap
-// exp/log/sin already carry); this is the migration-shaped companion.
-
 function test_exp2_pow2(): test.TestOutcome {
   return test.assert_eq_f64_near(3.0.exp2(), 8.0, 0.0001);
 }
@@ -35,7 +26,6 @@ function test_exp10_hundred(): test.TestOutcome {
 }
 
 function test_roundtrip(): test.TestOutcome {
-  // exp2 and log2 invert each other; likewise exp10 / log10.
   if (!float_near(8.0.log2().exp2(), 8.0)) {
     return test.fail("log2->exp2");
   }

@@ -5,13 +5,6 @@ import (
 	"testing"
 )
 
-// --- Rebound rc-tuple reclaim (#6127 tuple_churn, rc half) -------------------
-//
-// A rebound rc-tuple must release every chain it supersedes and its final value.
-//
-// This is a DEEP drop — the rc children as well as the box — so a wrongly-granted
-// release frees a payload something else still reads, not merely a box.
-
 const rcTupleRebindSrc = `function round(): i32 {
     let p: (i32, string) = (0, "hello");
     let i: i32 = 0;
@@ -26,10 +19,6 @@ function main(): i32 {
     return t % 7;
 }`
 
-// TestSelfHostRcTupleRebindReclaimX86_64 — a rebound rc-tuple frees every chain it
-// supersedes AND its final value. allocs == frees is essential: frees short of
-// allocs is the leak this closes, frees ABOVE allocs would mean the assign-site
-// deep drop and the scope-exit sweep both claimed one chain (a double free).
 func TestSelfHostRcTupleRebindReclaimX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
@@ -40,8 +29,6 @@ func TestSelfHostRcTupleRebindReclaimX86_64(t *testing.T) {
 	asm := hevCompile(t, runner, driverBin, rcTupleRebindSrc, []string{"FERN_LEAKCHECK=1"})
 	progBin := buildBin(t, gcc, dir, "rctuple_rebind", asm)
 	stderr, exit := hevRun(t, runner, progBin)
-	// 300 % 7 = 6, confirmed against both oracles (bin/fern -interp and native
-	// -target x86-64-linux), not read off the self-host run this test exists to check.
 	if exit != 6 {
 		t.Fatalf("exited %d, want 6", exit)
 	}
@@ -72,11 +59,6 @@ func TestSelfHostRcTupleRebindReclaimX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostRcTupleRebindHazardsX86_64 — shapes where the old chain is still
-// referenced at the rebind. Because the deep drop releases the rc CHILD as well as
-// the box, dropping there frees a payload something else still points at, so the
-// first failure is a wrong answer or a crash; the census must balance as well.
-// Every `want` came from the interpreter and native x86-64 agreeing.
 func TestSelfHostRcTupleRebindHazardsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -89,9 +71,6 @@ func TestSelfHostRcTupleRebindHazardsX86_64(t *testing.T) {
 		want int
 	}{
 		{
-			// The rc element is extracted whole into a local that outlives the
-			// rebind. Deep-dropping the old chain would free the buffer `keep`
-			// still points at.
 			name: "rc_element_extracted_to_local",
 			src: `function round(i: i32): i32 {
     let p: (i32, i32[]) = (i, [i, i + 1]);
@@ -103,9 +82,6 @@ function main(): i32 { let t: i32 = 0; let r: i32 = 0; while (r < 100) { t = t +
 			want: 18,
 		},
 		{
-			// One non-fresh rebind, whose rc position is a LIVE local's buffer.
-			// This is the shape the all-assignments gate exists for: judging only
-			// the assignment at hand would deep-drop `xs` underneath its owner.
 			name: "nonfresh_rebind_disqualifies",
 			src: `function round(i: i32): i32 {
     let xs: i32[] = [i, i + 1];
@@ -117,8 +93,6 @@ function main(): i32 { let t: i32 = 0; let r: i32 = 0; while (r < 100) { t = t +
 			want: 9,
 		},
 		{
-			// The tuple is stored into a container before each rebind, so the old
-			// chain is still reachable through the array.
 			name: "escapes_to_container",
 			src: `function round(i: i32): i32 {
     let keep: (i32, i32[])[] = [];
@@ -134,8 +108,6 @@ function main(): i32 { let t: i32 = 0; let r: i32 = 0; while (r < 100) { t = t +
 			want: 27,
 		},
 		{
-			// Rebound inside a callee and then returned: the value is moved out, so
-			// the callee must not drop the chain it hands back.
 			name: "returned_to_caller",
 			src: `function mk(n: i32): (i32, i32[]) {
     let p: (i32, i32[]) = (0, [0, 0]);
@@ -148,10 +120,6 @@ function main(): i32 { let t: i32 = 0; let r: i32 = 0; while (r < 100) { t = t +
 			want: 8,
 		},
 		{
-			// The string element is compared and measured after the last rebind.
-			// Whatever the gate decides, the reads must still see the original
-			// bytes — this is the assertion that a granted drop never reaches a
-			// live payload.
 			name: "string_element_read_after_rebind",
 			src: `function round(): i32 {
     let p: (i32, string) = (0, "hello_there_world");

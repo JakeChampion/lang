@@ -13,24 +13,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// --- The wasm census (#5362's wasm half, in the self-host) -------------------
-//
-// The last backend without the leak census. FERN_LEAKCHECK reaches the wasm
-// emitter (mode 0, the command core the harness runs under wasmtime): counter
-// globals outside the heap gate, bumps in $__fern_alloc (before the freelist
-// pop — a pop is an alloc too), in $__fern_arr_dec's rc==1 free and
-// $__fern_alloc_reuse's mispaired-donor free (each before the bsz slot is
-// overwritten by the freelist next-pointer), and a $__fern_lc_report on
-// stderr: the exit() op reaches it through a flag-gated reporting
-// $__fern_proc_exit, whose line ends ` from=exit`, and $__fern_start on
-// main's return before it exits through the raw preview1 import.
-//
-// Counts are asserted as properties (balanced / unbalanced / zero), matching
-// the arm64 suite: the x86 legs pin exact counts per shape, and this suite
-// gates the instrument. Note the wasm reclaim differs from the register
-// backends (rc-headered strings, one shared $__fern_arr_dec), so a shape's
-// balance here is its own fact, not a transcription of the x86 row.
-
 func wasmLcCompile(t *testing.T, runner []string, driverBin, src string, env []string) string {
 	t.Helper()
 	var cmd *exec.Cmd
@@ -77,12 +59,9 @@ func TestSelfHostWasmLeakcheck(t *testing.T) {
 		name    string
 		src     string
 		want    int
-		verdict string // balanced | leaky | zero
+		verdict string
 	}{
 		{
-			// String churn, reclaimed: rc-headered wasm strings free through
-			// the shared $__fern_arr_dec, so the census balances. Exit 21 is
-			// the family's oracle-confirmed number for this shape.
 			name: "clean_string_churn",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 { let t: string = w("ab"); return t.len() + i; }
@@ -90,8 +69,6 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 			want: 21, verdict: "balanced",
 		},
 		{
-			// A reassigned alias: the typed lowering releases the superseded
-			// string, so the census balances.
 			name: "alias_reassign_balanced",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 { let t: string = w("ab"); let v: string = t; v = w("cd"); return v.len() + i; }
@@ -99,23 +76,17 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 			want: 21, verdict: "balanced",
 		},
 		{
-			// A leak, and the census must SAY so — the half a green exit cannot.
-			// A raw __alloc block is never released, so every round leaks one.
 			name: "leak_raw_alloc",
 			src: `function round(i: i32): i32 { let p: usize = __alloc(24); return i; }
 function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } return x % 83; }`,
 			want: 53, verdict: "leaky",
 		},
 		{
-			// HEAP-FREE, returning main: $__fern_start reports, with no
-			// ` from=exit`, and must link with no allocator emitted.
 			name: "heapfree_return",
 			src:  `function main(): i32 { return 7; }`,
 			want: 7, verdict: "zero",
 		},
 		{
-			// HEAP-FREE through the exit() op and the reporting
-			// $__fern_proc_exit, whose line ends ` from=exit`.
 			name: "heapfree_exit_builtin",
 			src:  `function main(): i32 { exit(9); return 0; }`,
 			want: 9, verdict: "zero",
@@ -162,8 +133,6 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 	}
 }
 
-// wasmLcInvoke runs the core with `--invoke main`, the way the e2e harness
-// reads a result: wasmtime prints main's result on stdout and exits 0.
 func wasmLcInvoke(t *testing.T, dir, name, wat string) (stdout, stderr string, exit int) {
 	t.Helper()
 	watFile := filepath.Join(dir, name+".wat")
@@ -180,9 +149,6 @@ func wasmLcInvoke(t *testing.T, dir, name, wat string) (stdout, stderr string, e
 	return outBuf.String(), errBuf.String(), cmd.ProcessState.ExitCode()
 }
 
-// Under FERN_SANITIZE the census is on and gains the register backends'
-// verdict line, `fern-sanitizer: leak <K> bytes in <N> blocks`, for a positive
-// balance only; a balanced run is silent beyond the summary.
 func TestSelfHostWasmSanitizeLeakVerdict(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm sanitize e2e")
@@ -226,9 +192,6 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 	}
 }
 
-// `--invoke main` calls the export and never reaches $__fern_proc_exit, so the export
-// reports on its return — once, with the result still printed. A main that
-// leaves through exit() reports through $__fern_proc_exit instead, and only there.
 func TestSelfHostWasmLeakcheckReportsOnInvoke(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm leakcheck invoke e2e")
@@ -264,8 +227,6 @@ func TestSelfHostWasmLeakcheckReportsOnInvoke(t *testing.T) {
 	}
 }
 
-// Flag off, nothing reaches the emitted wat and the run is silent — with the
-// flag-on companion assertions, a gate test rather than a typo test.
 func TestSelfHostWasmLeakcheckOffEmitsNothing(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm leakcheck off e2e")
@@ -301,11 +262,6 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 	}
 }
 
-// A wasi:cli/run component reports the census too, the form `fern -target
-// wasm32-wasi` writes by default: from its run entry when main returns, and
-// from its exit shim when the program exits. Its stderr is a preview-2 stream
-// whose $__fern_fd_write shim allocates, so the line also checks that the report's
-// own writes are not counted in it.
 func TestSelfHostWasmLeakcheckComponent(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm leakcheck component e2e")
@@ -314,8 +270,7 @@ func TestSelfHostWasmLeakcheckComponent(t *testing.T) {
 		name, src            string
 		exit                 int
 		allocs, frees, bytes int64
-		// fromExit: the line says the exit shim printed it.
-		fromExit bool
+		fromExit             bool
 	}{
 		{"returning", `function main(): i32 { let p: usize = __alloc(24); return 0; }`, 0, 1, 0, 24, false},
 		{"exiting", `function main(): i32 { let p: usize = __alloc(24); exit(9); return 1; }`, 1, 1, 0, 24, true},

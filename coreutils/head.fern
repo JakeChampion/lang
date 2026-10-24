@@ -1,50 +1,9 @@
-// head.fern — GNU-compatible `head`.
-//
-//   head [-c NUM | -n NUM] [-qvz] [FILE]...
-//
-// The first NUM lines (10 by default) or bytes of each FILE, `-` and
-// no operand both meaning stdin. A LEADING MINUS on the count inverts
-// it: `-n -3` prints all but the last three lines, `-c -3` all but the
-// last three bytes. With more than one FILE each is introduced by
-// `==> NAME <==`, and every header after the first is preceded by a
-// blank line; -v forces the header for one file and -q suppresses it.
-//
-// Two pieces of this are older than the option syntax and are still
-// exactly reproduced:
-//
-//   - The obsolete `-NUM[bkmclqvz]` form, accepted ONLY as argv[1]:
-//     `head -5c f` is five bytes. The suffix letters are read left to
-//     right, each one re-deriving the count from the digits, so `-1bc`
-//     is one byte and `-1cb` is 512 (`b` multiplies AND selects bytes).
-//     A digit reached anywhere else — `head f -5`, `head -q5` — is
-//     `invalid trailing option -- 5`, which is why the ten digits are
-//     declared as options here.
-//   - The count itself is glibc's strtoumax plus gnulib's suffixes, so
-//     leading blanks and a `+` are accepted, `1b` is 512, `1kB` is
-//     1000 and `1KiB` is 1024, and an out-of-range value reports
-//     `Value too large for defined data type`. The ceiling differs by
-//     mode: elided BYTES must fit in off_t, everything else in
-//     uintmax_t.
-//
-// A count error prints one line and exits 1 with NO `Try …` line —
-// unlike an option error, which prints one.
-//
-// Either elision over a regular file is answered by seeking rather
-// than by streaming the whole input: the byte cut is arithmetic on the
-// size, and the line cut is found by reading blocks backwards from the
-// end, so the cost is the elision's size and not the file's. Anything
-// that cannot seek — a pipe, a terminal, `---presume-input-pipe` —
-// streams as before.
 import "std/string";
 import "std/array";
 import "std/io_buffered";
 import "./lib/gnu";
 import "./lib/lines";
 
-// Option ids. The declaration order below is GNU's, because the
-// ambiguity list prints candidates in it — `head --=x` names
-// `---presume-input-pipe`, the hidden option whose long name starts
-// with a dash of its own.
 function opt_bytes(): i32 {
   return 1;
 }
@@ -69,8 +28,6 @@ function opt_zero(): i32 {
   return 6;
 }
 
-// The ten digits share one id; `next()` reports only the id, so the
-// digit itself is read back off the argv token by gnu.digit_option().
 function opt_digit(): i32 {
   return 7;
 }
@@ -102,22 +59,12 @@ function help_text(): string {
   return out;
 }
 
-// ---- counts ---------------------------------------------------------------
-// `Count` — one parsed `-c` / `-n` value: `n` units, `elide` when the
-// operand carried a leading minus.
 struct Count { n: u64, elide: boolean }
 
-// OFF_T_MAX: the ceiling gnulib puts on an ELIDED byte count, because
-// the elision is computed as a file offset. Every other count is held
-// to uintmax_t, which parse_units already enforces.
 function off_t_max(): u64 {
   return 9223372036854775807 as u64;
 }
 
-// `count_of(value, lines)` — the value of a `-n` / `-c` operand, or the
-// diagnostic and exit(1) GNU gives it. Note the leading minus is read
-// off the FIRST byte, before blanks: `-n ' -3'` is malformed, not an
-// elision.
 function count_of(value: string, lines: boolean): Count {
   let body: string = value;
   let elide: boolean = false;
@@ -138,17 +85,12 @@ function count_of(value: string, lines: boolean): Count {
     gnu.error("invalid number of " + noun + ": " + gnu.quote(body));
     exit(1);
   }
-  // A count past the ceiling saturates in silence: 9.12 passes
-  // XTOINT_MAX_QUIET, so `head -n 1Y` reads the whole file rather than
-  // refusing the number.
   if (status != 0) {
     return Count { n: off_t_max_or_all(elide, lines), elide: elide };
   }
   return Count { n: r.0, elide: elide };
 }
 
-// What a saturated count becomes: the elided-bytes ceiling is an
-// offset, everything else is uintmax.
 function off_t_max_or_all(elide: boolean, lines: boolean): u64 {
   if (elide && !lines) {
     return off_t_max();
@@ -156,11 +98,8 @@ function off_t_max_or_all(elide: boolean, lines: boolean): u64 {
   return 18446744073709551615 as u64;
 }
 
-// ---- the obsolete -NUM form ------------------------------------------------
-// `Settings` — everything the option scan decides.
 struct Settings { count: Count, lines: boolean, header: i32, term: i32, presume: boolean }
 
-// header: 0 auto (one file bare, several with headers), 1 never, 2 always.
 function header_auto(): i32 {
   return 0;
 }
@@ -173,9 +112,6 @@ function header_always(): i32 {
   return 2;
 }
 
-// `obsolete(tok, s)` — apply `-NUM[bkmclqvz]`. Each letter re-derives
-// the count from the digits, so the LAST unit letter wins outright
-// rather than compounding with an earlier multiplier.
 function obsolete(tok: string, s: Settings): Settings {
   let i: i32 = 1;
   let digits: i32 = i;
@@ -213,14 +149,10 @@ function obsolete(tok: string, s: Settings): Settings {
   return out;
 }
 
-// `read_size()` — bytes per read(2). GNU's head reads its input in
-// BUFSIZ-sized pieces; this is the block that measured fastest through
-// a pipe on the same sweep yes.fern records.
 function read_size(): i32 {
   return 65536;
 }
 
-// `copy_head(r, o, s, name)` — the first `n` lines or bytes.
 function copy_head(r: Reader, o: gnu.Stream, s: Settings, name: string): gnu.Stream {
   let out: gnu.Stream = o;
   let left: u64 = s.count.n;
@@ -241,10 +173,6 @@ function copy_head(r: Reader, o: gnu.Stream, s: Settings, name: string): gnu.Str
           out = gnu.stream_put_bytes(out, chunk);
           left = left - chunk.len() as u64;
         } else {
-          // One SIMD tally decides the whole chunk: fewer terminators
-          // in it than are still wanted and it goes out unsplit, so
-          // only the chunk that reaches the count is walked line by
-          // line.
           let here: u64 = __count_byte_bytes(chunk, s.term) as u64;
           if (here < left) {
             out = gnu.stream_put_bytes(out, chunk);
@@ -268,26 +196,12 @@ function copy_head(r: Reader, o: gnu.Stream, s: Settings, name: string): gnu.Str
   return out;
 }
 
-// ---- the seekable elision --------------------------------------------------
-// `Region` — the span of a seekable input an elision works over: the
-// descriptor's current offset and the size fstat reports.
 struct Region { ok: boolean, start: i64, end: i64 }
 
 function no_region(): Region {
   return Region { ok: false, start: 0 as i64, end: 0 as i64 };
 }
 
-// `seekable_region(r, s)` — the span an elision may seek over, or
-// ok=false for an input that has to be streamed.
-//
-// A size is only usable when it is a regular file's AND larger than one
-// block (`is_file` is S_ISREG, and the one field of the record every
-// backend fills): that second half is what keeps a /proc or /sys file — regular,
-// and reporting 0 or a bare block while holding other content — on the
-// streaming path, where the bytes it actually yields are the answer.
-// `---presume-input-pipe` refuses the seek outright, and a descriptor
-// that cannot report its offset (a pipe answers `Illegal seek`) is not
-// one either.
 function seekable_region(r: Reader, s: Settings): Region {
   if (s.presume) {
     return no_region();
@@ -306,8 +220,6 @@ function seekable_region(r: Reader, s: Settings): Region {
       return no_region();
     }
   }
-  // gnulib's ST_BLKSIZE: a descriptor reporting nothing usable is read
-  // in DEV_BSIZE blocks.
   if (blk <= 0 as i64) {
     blk = 512 as i64;
   }
@@ -323,16 +235,12 @@ function seekable_region(r: Reader, s: Settings): Region {
       return no_region();
     }
   }
-  // Already at or past the end: the streaming path reaches EOF at once
-  // and writes the same nothing.
   if (cur >= size) {
     return no_region();
   }
   return Region { ok: true, start: cur, end: size };
 }
 
-// `copy_span(r, o, name, at, n)` — `n` bytes of the input from offset
-// `at`, which is where a seekable elision writes its prefix.
 function copy_span(r: Reader, o: gnu.Stream, name: string, at: i64, n: i64): gnu.Stream {
   let out: gnu.Stream = o;
   match (r.seek(at, 0)) {
@@ -363,8 +271,6 @@ function copy_span(r: Reader, o: gnu.Stream, name: string, at: i64, n: i64): gnu
   return out;
 }
 
-// `read_at(r, o, name, at, n)` — `n` bytes at offset `at`, short only
-// at end of input, as (stream, bytes, ok).
 function read_at(r: Reader, o: gnu.Stream, name: string, at: i64, n: i32): (gnu.Stream, u8[], boolean) {
   match (r.seek(at, 0)) {
     Ok(_) => {},
@@ -407,10 +313,6 @@ function read_at(r: Reader, o: gnu.Stream, name: string, at: i64, n: i32): (gnu.
   return (o, got, true);
 }
 
-// `elide_bytes_seekable(r, o, s, name, reg)` — everything but the last
-// `n` bytes of a seekable input: the cut is arithmetic on the size, so
-// the bytes that are kept are copied once and the elided ones are never
-// read at all.
 function elide_bytes_seekable(r: Reader, o: gnu.Stream, s: Settings, name: string, reg: Region): gnu.Stream {
   let span: i64 = reg.end - reg.start;
   if (s.count.n >= span as u64) {
@@ -419,31 +321,14 @@ function elide_bytes_seekable(r: Reader, o: gnu.Stream, s: Settings, name: strin
   return copy_span(r, o, name, reg.start, span - s.count.n as i64);
 }
 
-// `elide_lines_seekable(r, o, s, name, reg)` — everything but the last
-// `n` lines of a seekable input: blocks are read BACKWARDS from the end
-// and their terminators counted until the one that ends the last kept
-// line is found, then the prefix is copied. Only the elided tail is
-// scanned, where the streaming path tallies every byte of the input.
-//
-// `skip` is how many terminators lie between the cut and the end: one
-// per elided line, less the one an unterminated final line does not
-// carry. Below zero the cut is the end itself (`-n -0` over an input
-// that does not end in a terminator); running out of terminators with
-// `skip` still positive means the input holds no more lines than were
-// to be elided, and nothing is written.
 function elide_lines_seekable(r: Reader, o: gnu.Stream, s: Settings, name: string, reg: Region): gnu.Stream {
   let out: gnu.Stream = o;
   let span: i64 = reg.end - reg.start;
-  // A line is at least one byte, so an elision of the span's own size
-  // takes every line with it — which is also what holds the count, a
-  // uintmax, inside an offset below.
   if (s.count.n >= span as u64) {
     return out;
   }
   let skip: i64 = s.count.n as i64;
   let block: i64 = read_size() as i64;
-  // The first block read is the short one, so every later read lands on
-  // a block boundary measured from the start of the span.
   let want: i64 = span % block;
   if (want == 0 as i64) {
     want = block;
@@ -487,9 +372,6 @@ function elide_lines_seekable(r: Reader, o: gnu.Stream, s: Settings, name: strin
   return out;
 }
 
-// `copy_elide_bytes(r, o, s, name)` — everything but the last `n`
-// bytes. The tail is held back in `hold`, which stays `n` bytes long
-// once the stream is longer than that.
 function copy_elide_bytes(r: Reader, o: gnu.Stream, s: Settings, name: string): gnu.Stream {
   let out: gnu.Stream = o;
   let hold = lines.hold_empty();
@@ -514,10 +396,6 @@ function copy_elide_bytes(r: Reader, o: gnu.Stream, s: Settings, name: string): 
   return out;
 }
 
-// `copy_elide_lines(r, o, s, name)` — everything but the last `n`
-// lines. `hold` keeps every byte after the last released terminator
-// plus the `n` withheld lines, and `pending` counts the terminators in
-// it, so the release scan runs once per chunk rather than once per line.
 function copy_elide_lines(r: Reader, o: gnu.Stream, s: Settings, name: string): gnu.Stream {
   let out: gnu.Stream = o;
   let hold = lines.hold_empty();
@@ -526,8 +404,6 @@ function copy_elide_lines(r: Reader, o: gnu.Stream, s: Settings, name: string): 
     match (r.read_chunk_bytes(read_size())) {
       Ok(chunk) => {
         if (chunk.len() == 0) {
-          // An unterminated tail is a line of its own, so it joins the
-          // count only once the input has ended.
           let total: u64 = pending;
           if (hold.n > 0 as u64 && hold.last as i32 != s.term) {
             total = total + 1 as u64;
@@ -543,10 +419,6 @@ function copy_elide_lines(r: Reader, o: gnu.Stream, s: Settings, name: string): 
           start = lines.tail_start(chunk, s.count.n, s.term);
         }
         if (start >= 0) {
-          // The chunk alone carries every line that has to be withheld,
-          // so everything before them goes out and none of it is
-          // scanned forward: the boundary is n + 1 terminators back
-          // from the end.
           out = lines.hold_write(hold, out, hold.n);
           out = gnu.stream_put_bytes_range(out, chunk, 0, start);
           hold = lines.hold_from(chunk, start);
@@ -570,8 +442,6 @@ function copy_elide_lines(r: Reader, o: gnu.Stream, s: Settings, name: string): 
   return out;
 }
 
-// `head_file(path, o, s, show)` — one operand: its header when `show`,
-// then its content. `-` is stdin, whose header names it `standard input`.
 function head_file(path: string, o: gnu.Stream, s: Settings, show: boolean): gnu.Stream {
   let out: gnu.Stream = o;
   let stdin_input: boolean = path == "-";
@@ -631,8 +501,6 @@ pub function main(): i32 {
 
   let s: Settings = Settings { count: Count { n: 10 as u64, elide: false }, lines: true, header: header_auto(), term: 10, presume: false };
 
-  // The obsolete form is argv[1] and nowhere else; the rest of the
-  // scan then runs over argv with that token removed.
   let scan: string[] = argv;
   if (argv.len() > 1 && argv[1].len() >= 2 && argv[1][0] as i32 == 45 && gnu.is_digit(argv[1][1] as i32)) {
     s = obsolete(argv[1], s);

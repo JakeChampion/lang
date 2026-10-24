@@ -1,39 +1,10 @@
 import "std/test";
 
-// tests/stdlib/quiet_mode_test.fern — exercises the
-// new --quiet mode added to std/test:
-//   * `test.test_new_quiet(suite)` — constructor that enables
-//     quiet mode from the start.
-//   * `(r).with_quiet()` — flip the mode on an existing
-//     runner.
-//   * `test.parse_quiet_from_args(argv)` — pull the boolean
-//     off `--quiet` in `args()`.
-//
-// Quiet mode contract:
-//   * `ok N - name` lines are suppressed for passes and
-//     skips.
-//   * `not ok N - name` lines + their YAML-ish diagnostic
-//     block STILL print (the whole point of quiet mode
-//     is to surface failures).
-//   * The `1..N` plan line and the summary footer still
-//     print so TAP consumers reconstruct the count.
-//   * Counters (passed / failed / skipped) are unaffected
-//     — quiet only changes what gets printed, not what
-//     gets recorded.
-//
-// We exercise these via an isolated child runner whose
-// post-run counters we inspect, same pattern as
-// `fail_fast_test.fern` — keeps the outer suite's exit
-// code clean while still pinning the behaviour.
-
 function trivial_pass(): test.TestOutcome {
   return test.pass();
 }
 
 function test_quiet_preserves_counters(): test.TestOutcome {
-  // Build a quiet runner with 3 passes; counters
-  // should reflect the work even though no per-case
-  // lines were printed.
   let sub: test.TestRunner = test.test_new_quiet("quiet-counters");
   sub = sub.it("p1", trivial_pass);
   sub = sub.it("p2", trivial_pass);
@@ -47,8 +18,6 @@ function test_quiet_preserves_counters(): test.TestOutcome {
 }
 
 function test_quiet_skip_still_counted(): test.TestOutcome {
-  // A skip in quiet mode still increments `skipped`
-  // even though the SKIP line is suppressed.
   let sub: test.TestRunner = test.test_new_quiet("quiet-skip");
   sub = sub.skip("p1", "manual skip");
   if (sub.skipped == 1 && sub.passed == 0) {
@@ -83,8 +52,6 @@ function test_with_quiet_preserves_filter(): test.TestOutcome {
 }
 
 function test_with_quiet_preserves_fail_fast(): test.TestOutcome {
-  // Quiet + fail-fast should be orthogonal — setting one
-  // must not affect the other.
   let r0: test.TestRunner = test.test_new_fail_fast("with-q-ff");
   let r1: test.TestRunner = r0.with_quiet();
   if (r1.fail_fast && r1.quiet) {

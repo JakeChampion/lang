@@ -5,11 +5,6 @@ import (
 	"testing"
 )
 
-// TestDanglingLocalLabels pins the matcher behind assertNoDanglingLocalLabels.
-// It reported a false positive the moment parser.fern grew its first capturing
-// lambda: a hoisted closure is named `<fn>$cloN`, and the label character class
-// stopped at the `$`, so `jz .Lssa_f$clo0_11` was recorded as a reference to
-// `.Lssa_f` while the definition line kept the whole name.
 func TestDanglingLocalLabels(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -38,9 +33,6 @@ func TestDanglingLocalLabels(t *testing.T) {
 	}
 }
 
-// TestDuplicateLocalLabels pins the matcher behind
-// assertNoDuplicateLocalLabels: a label defined twice is reported once, a label
-// merely REFERENCED twice is not, and every local label prefix counts alike.
 func TestDuplicateLocalLabels(t *testing.T) {
 	for _, tc := range []struct {
 		name string

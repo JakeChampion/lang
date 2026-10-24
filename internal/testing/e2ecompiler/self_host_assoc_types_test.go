@@ -7,23 +7,11 @@ import (
 	"testing"
 )
 
-// Associated types (docs/ASSOCIATED-TYPES.md) were native-only until this
-// port: the self-host lexer folded `::` into `.`, its trait body accepted only
-// `function`, and nothing resolved a projection. This gate holds the two
-// checkers in step on the whole feature — every case asserts the SAME
-// diagnostics from both, in both directions, so a divergence fails whichever
-// side drifts.
-//
-// The corpus is the semantics the doc states, one case each: resolution,
-// conformance (bind every one, bind nothing else), a projection through a
-// bounded generic, and object safety with and without the `dyn` pin.
 var assocTypeCases = []struct {
 	name string
 	src  string
 }{
 	{
-		// The happy path. `Self::Item` in the impl method resolves to the
-		// bound `i32`, so the whole program type-checks clean.
 		name: "resolves to the impl's binding",
 		src: `trait Holder {
     type Item;
@@ -40,10 +28,6 @@ function main(): i32 {
 }`,
 	},
 	{
-		// Resolution is load-bearing, not decorative: the binding makes
-		// `b.get()` an i32, so a string destination is a type error. A
-		// checker that merely SKIPPED the projection would be silent here,
-		// which is what the self-host did before the port.
 		name: "resolution is observable at a use site",
 		src: `trait Holder {
     type Item;
@@ -87,11 +71,6 @@ impl Holder for IntBox {
 function main(): i32 { return 0; }`,
 	},
 	{
-		// `H::Item` through a bounded type parameter. Also the regression
-		// guard for the conformance comparison: the impl method's projection
-		// is resolved by the parser, so the TRAIT's requirement has to be
-		// resolved the same way or every associated-type impl reads as a
-		// signature mismatch.
 		name: "projection through a bounded generic",
 		src: `trait Holder {
     type Item;
@@ -137,7 +116,6 @@ function take(h: dyn Holder[Item = i32]): i32 { return 0; }
 function main(): i32 { return 0; }`,
 	},
 	{
-		// The pin survives an array suffix: `[]` is not the pin list (#11848).
 		name: "a pinned dyn array element is object-safe",
 		src: `trait Holder {
     type Item;
@@ -171,9 +149,6 @@ function main(): i32 {
 }`,
 	},
 	{
-		// A PARAMETRIC impl binding the associated type to its OWN type
-		// parameter. Every case above binds a concrete type on a non-generic
-		// impl, which is how this shape shipped broken in both compilers.
 		name: "parametric impl binds its own type parameter",
 		src: `trait Carrier {
     type Ok;
@@ -190,10 +165,6 @@ function main(): i32 {
 }`,
 	},
 	{
-		// And it resolves to the BASE's type argument, not to a free `T`:
-		// `Box[i32]::Ok` is i32, so a string destination is a type error in
-		// both checkers. A compiler that left the projection unresolved is
-		// silent here, which is what the self-host was.
 		name: "parametric binding is observable at a use site",
 		src: `trait Carrier {
     type Ok;
@@ -211,8 +182,6 @@ function main(): i32 {
 }`,
 	},
 	{
-		// The conformance rule still applies, and names the impl by its BASE
-		// type — `Box`, not the `Box[T]` spelling the self-host carries.
 		name: "parametric impl must bind the trait's associated type",
 		src: `trait Carrier {
     type Ok;
@@ -248,8 +217,6 @@ func TestSelfHostAssocTypesDifferential(t *testing.T) {
 				shMsgs = append(shMsgs, d.code+": "+d.msg)
 			}
 
-			// Both must agree on the associated-type rules themselves, and
-			// neither may be silent where the other rejects.
 			if !equalStrings(assocOnly(goMsgs), assocOnly(shMsgs)) {
 				t.Errorf("the two checkers disagree on the associated-type diagnostics.\nnative:    %s\nself-host: %s",
 					joinOrNone(assocOnly(goMsgs)), joinOrNone(assocOnly(shMsgs)))
@@ -258,14 +225,6 @@ func TestSelfHostAssocTypesDifferential(t *testing.T) {
 				t.Errorf("one checker accepts this program and the other rejects it.\nnative:    %s\nself-host: %s",
 					joinOrNone(goMsgs), joinOrNone(shMsgs))
 			}
-			// Full equality is asserted everywhere it holds. Where it does
-			// not, the surplus is native's CASCADE off an unresolvable
-			// projection — an `E002 return type mismatch` against a declared
-			// type that does not resolve. That gap is not this feature's: the
-			// self-host declines the same E002 for any unknown nominal return
-			// (`function f(): Nope { return 1; }`), which is its documented
-			// zero-false-positive conservatism and a separate convergence
-			// item. It is asserted here so a NEW divergence still fails.
 			if !equalStrings(goMsgs, shMsgs) && !onlyCascadeSurplus(goMsgs, shMsgs) {
 				t.Errorf("the two checkers disagree beyond the known unknown-nominal cascade.\nnative:    %s\nself-host: %s",
 					joinOrNone(goMsgs), joinOrNone(shMsgs))
@@ -281,8 +240,6 @@ func joinOrNone(ms []string) string {
 	return strings.Join(ms, "\n           ")
 }
 
-// assocOnly keeps the diagnostics about the associated-type rules — what this
-// port owns and what both checkers must say identically.
 func assocOnly(ms []string) []string {
 	var out []string
 	for _, m := range ms {
@@ -293,10 +250,6 @@ func assocOnly(ms []string) []string {
 	return out
 }
 
-// onlyCascadeSurplus reports whether the self-host's diagnostics are native's
-// with only `E002 return type mismatch` entries missing — the cascade the
-// self-host declines for ANY unresolvable declared return type, associated or
-// not. Anything else missing, or anything extra, is a real divergence.
 func onlyCascadeSurplus(goMsgs, shMsgs []string) bool {
 	have := map[string]int{}
 	for _, m := range shMsgs {

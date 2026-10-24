@@ -6,13 +6,6 @@ import (
 	"testing"
 )
 
-// A struct local lent to a callee that stores it into its result. The callee's
-// borrowed parameter is inc'd where the struct literal takes it, so the caller's
-// box ends the call shared, and the caller's exit sweep must walk its fields
-// only on finding rc 1. Walking them unconditionally frees the enum and array
-// the returned value still holds: a segfault once the loop reuses the memory.
-// The shape is the parser's literal-match desugar,
-// `let sugar = …; return with_match_sugar(chain, sugar);`.
 const structLentRetainedSrc = `enum Expr { EIdent(string), ENum(i32) }
 struct Arm { n: i32 }
 struct Sugar { scrut: Expr, lits: Arm[] }

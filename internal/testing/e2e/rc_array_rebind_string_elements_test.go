@@ -6,12 +6,6 @@ import (
 	"testing"
 )
 
-// A local rebound from a call that mentions it, `pg = emit(pg, inner)`, frees
-// the buffer it gave up when that buffer holds counted elements. The array
-// rebind has an identity guard, so an element type that reaches a string no
-// longer drops it to the flat dec, which never frees. Two shapes: the one
-// std/regex's program emitter has, and one whose callee sometimes returns its
-// argument unchanged, which is the case the guard is for.
 func TestArrayRebindWithStringElementsFreesTheOldBuffer(t *testing.T) {
 	cases := []struct {
 		name, src string

@@ -1,18 +1,5 @@
 package e2e
 
-// Differential coverage for the integer division-rounding helpers —
-// std/i32, std/i64, std/u32, std/u64: `div_ceil` (round toward +inf),
-// `div_floor` (round toward -inf), `next_multiple_of`, and the unsigned
-// `is_multiple_of` (completing the family std/i32 + std/i64 already had).
-// `/` truncates toward zero, so ceil/floor differ from it for signed
-// operands whenever the division is inexact; the signed forms adjust the
-// truncated quotient by the sign of the remainder relative to the divisor.
-// A zero divisor returns 0 (Fern's division is total, never traps). Checks
-// all four sign quadrants for div_ceil/div_floor, the exact and zero-divisor
-// cases, and next_multiple_of / is_multiple_of. Returns 42 iff every check
-// holds across interp / x86-64 / wasm / arm64; each leg skips itself when
-// its toolchain is absent.
-
 import "testing"
 
 const intDivRoundingProg = `

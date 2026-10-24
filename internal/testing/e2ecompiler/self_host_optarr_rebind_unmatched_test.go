@@ -4,24 +4,6 @@ import (
 	"testing"
 )
 
-// --- A rebound Option[i32[]] with nothing consuming it -----------------------
-//
-// `let x: Option[i32[]] = Some([i, i+1]); x = Some([i+2, i+3, i+4]);` must
-// release both payloads although no match consumes the local; left uncredited
-// it is 400 allocs / **0 frees**. It is `opt_arr__rebind__unused` on both
-// leak-matrix arches (#5338). `rebind_matched_unchanged` is the matched control.
-//
-// A rebound local is bound more than once, so whether it escapes cannot be read
-// off one binding: `refused_option_escapes` returns it out of a callee, and
-// admitting it there gives a WRONG ANSWER rather than a leak (25 where the
-// interpreter says 42). That row is the one below worth reading twice.
-//
-// Five shapes could over-release — two matches on the name, a payload bound out
-// of the match, the option escaping, an alias bound before the rebind, and a
-// match placed BEFORE the rebind. Each reads its value back after 200 rounds of
-// churn have recycled the freelist and must answer as `bin/fern -interp` does.
-// Every row balances.
-
 const optarrRebindChurn = `function churn(i: i32): i32 { let a: i32[] = [i, i + 1, i + 2]; let b: i32[] = [i, i + 1]; return a[0] + b[1]; }
 `
 
@@ -45,7 +27,6 @@ function main(): i32 {
 func optarrRebindCases() []arrenumShareCase {
 	return []arrenumShareCase{
 		{
-			// THE CELL, in the matrix's own spelling. 400/0 before.
 			name: "rebind_unmatched",
 			src: `function round(i: i32): i32 {
     let t: i32 = 0;
@@ -57,8 +38,6 @@ func optarrRebindCases() []arrenumShareCase {
 			want: 17,
 		},
 		{
-			// Control: the same rebind WITH a consuming match, clean before this
-			// change. It is what says the release was never the missing half.
 			name: "rebind_matched_unchanged",
 			src: `function round(i: i32): i32 {
     let t: i32 = 0;
@@ -71,8 +50,6 @@ func optarrRebindCases() []arrenumShareCase {
 			want: 68,
 		},
 		{
-			// Control: the never-reassigned sibling, credited by the other
-			// collector. If it moves, the quadrant fill reached past its axis.
 			name: "single_bind_unchanged",
 			src: `function round(i: i32): i32 {
     let t: i32 = 0;
@@ -106,9 +83,6 @@ func optarrRebindCases() []arrenumShareCase {
 			want: 25,
 		},
 		{
-			// THE SOUNDNESS ROW. The rebound local is RETURNED out of the
-			// callee, so the frame must not release it; a release here
-			// answered 25 where native and interp say 42.
 			name: "refused_option_escapes",
 			src: optarrRebindChurn + `function grab(i: i32): Option[i32[]] {
     let x: Option[i32[]] = Some([i, i + 1]);
@@ -125,8 +99,6 @@ function round(i: i32): i32 {
 			want: 42,
 		},
 		{
-			// Two matches on the name: neither is the sole consumer, and each
-			// must read its own payload.
 			name: "refused_two_matches",
 			src: optarrRebindChurn + `function round(i: i32): i32 {
     let t: i32 = 0;
@@ -141,7 +113,6 @@ function round(i: i32): i32 {
 			want: 51,
 		},
 		{
-			// The payload is bound out of the match and outlives it.
 			name: "refused_payload_escapes",
 			src: optarrRebindChurn + `function round(i: i32): i32 {
     let t: i32 = 0;
@@ -156,7 +127,6 @@ function round(i: i32): i32 {
 			want: 42,
 		},
 		{
-			// An alias is bound before the rebind and matched after.
 			name: "refused_alias_bind",
 			src: optarrRebindChurn + `function round(i: i32): i32 {
     let t: i32 = 0;
@@ -170,8 +140,6 @@ function round(i: i32): i32 {
 			want: 28,
 		},
 		{
-			// The match precedes the rebind, so it consumes a value
-			// the later store replaces.
 			name: "refused_match_before_rebind",
 			src: optarrRebindChurn + `function round(i: i32): i32 {
     let t: i32 = 0;
@@ -187,8 +155,6 @@ function round(i: i32): i32 {
 	}
 }
 
-// TestSelfHostOptArrRebindUnmatchedX86_64 — a rebound Option[i32[]] with no
-// consuming match is swept, and the escape it can still reach is refused.
 func TestSelfHostOptArrRebindUnmatchedX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

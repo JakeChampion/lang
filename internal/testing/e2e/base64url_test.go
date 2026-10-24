@@ -2,11 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/base64's URL-safe variant
-// (encode_url / decode_url) across backends. Returns 42 iff
-// the url-safe alphabet is used (no + / =), padding is dropped on encode
-// but tolerated on decode, and encode/decode round-trips arbitrary
-// bytes. Each leg skips itself when its toolchain is absent.
 const base64urlProg = `
 import "std/base64" as b64;
 import "std/codec";

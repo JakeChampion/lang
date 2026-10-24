@@ -1,6 +1,6 @@
-// Two imported modules declare a variant named X. An arm's bare `X` names
-// the variant of the scrutinee's enum, whichever module declared it first
-// (#10922).
+
+
+
 import "./ae";
 import "./be";
 

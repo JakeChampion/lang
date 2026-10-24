@@ -1,7 +1,3 @@
-// Package printer turns an *ast.Program back into source text. The
-// output is fully parenthesised at every binary, unary, and assignment
-// boundary so it round-trips through the parser without depending on
-// precedence rules.
 package printer
 
 import (
@@ -12,7 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/ast"
 )
 
-// Print serialises prog as lang source.
 func Print(prog *ast.Program) string {
 	var b strings.Builder
 	for _, sd := range prog.Structs {
@@ -55,9 +50,6 @@ func printStructDecl(b *strings.Builder, sd *ast.StructDecl) {
 		}
 		b.WriteString(")\n")
 	}
-	// Without this the formatter disarms E067: the attribute is what the
-	// must-consume obligation walk keys on, so a formatted file type-checks
-	// clean where the original was rejected.
 	if sd.MustConsume {
 		b.WriteString("@must_consume\n")
 	}
@@ -85,8 +77,6 @@ func printStructDecl(b *strings.Builder, sd *ast.StructDecl) {
 }
 
 func printFunc(b *strings.Builder, fn *ast.FuncDecl) {
-	// A body-less `@import` extern (bring-your-own WIT, P4) renders as the
-	// attribute on its own line; the signature ends with `;` (no block).
 	if fn.ImportIface != "" {
 		b.WriteString("@import(\"")
 		b.WriteString(fn.ImportIface)
@@ -99,8 +89,6 @@ func printFunc(b *strings.Builder, fn *ast.FuncDecl) {
 	} else if fn.Public {
 		b.WriteString("pub ")
 	}
-	// Contextual modifiers (`fip` / `fbip` / graded / `async`) carry checked
-	// semantics — re-emit them (mirrors formatFunc).
 	if fn.Fip || fn.Fbip {
 		if fn.Fbip {
 			b.WriteString("fbip")
@@ -219,7 +207,6 @@ func printStmt(b *strings.Builder, s ast.Stmt) {
 		printExpr(b, x.Init)
 		b.WriteByte(';')
 	case *ast.Destructure:
-		// Struct mode (Fields set) binds by field name, not by position.
 		if x.Fields != nil {
 			b.WriteString("let ")
 			b.WriteString(x.StructName)
@@ -248,9 +235,6 @@ func printStmt(b *strings.Builder, s ast.Stmt) {
 		printExpr(b, x.Expr)
 		b.WriteByte(';')
 	case *ast.FuncDecl:
-		// Nested function declaration. Re-emits in the same shape
-		// the parser accepts: `function name(...): T { ... }` as a
-		// statement.
 		b.WriteString("function ")
 		b.WriteString(x.Name)
 		b.WriteByte('(')
@@ -278,11 +262,6 @@ func printStmt(b *strings.Builder, s ast.Stmt) {
 func printExpr(b *strings.Builder, e ast.Expr) {
 	switch x := e.(type) {
 	case *ast.NumberLit:
-		// Negative literals don't exist as direct tokens in source — the
-		// parser models them as `unary -` + a positive literal. Emit the
-		// same shape on the way out so re-parsing produces an identical
-		// tree (modulo the negative-int64-min edge, which can't be
-		// produced by the parser anyway).
 		if x.Value < 0 {
 			b.WriteString("(- ")
 			fmt.Fprintf(b, "%d", -x.Value)
@@ -299,10 +278,6 @@ func printExpr(b *strings.Builder, e ast.Expr) {
 			b.WriteString("false")
 		}
 	case *ast.FloatLit:
-		// Float literals never appear with a leading `-` in source — the
-		// parser models negation as `unary -` over a positive literal.
-		// Emit at least one fractional digit so the lexer treats this
-		// as a Float on the way back in.
 		v := x.Value
 		neg := false
 		if v < 0 {
@@ -409,7 +384,6 @@ func printExpr(b *strings.Builder, e ast.Expr) {
 		}
 		b.WriteByte(']')
 	case *ast.Assign:
-		// A statement, so never parenthesised: `(x = 1)` does not parse.
 		printExpr(b, x.Target)
 		b.WriteString(" = ")
 		printExpr(b, x.Value)
@@ -508,16 +482,10 @@ func printExpr(b *strings.Builder, e ast.Expr) {
 	}
 }
 
-// printForInit emits the init slot of a `for`. A Var keeps its trailing
-// `;`; an ExprStmt's `;` is printed as well so the for-header parses
-// the same way on the way back in.
 func printForInit(b *strings.Builder, s ast.Stmt) {
 	printStmt(b, s)
 }
 
-// printForStep emits the step slot of a `for`. Steps are syntactically
-// expressions (no trailing `;`), but our AST stores them as ExprStmts;
-// strip the semicolon when emitting.
 func printForStep(b *strings.Builder, s ast.Stmt) {
 	if es, ok := s.(*ast.ExprStmt); ok {
 		printExpr(b, es.Expr)
@@ -526,9 +494,6 @@ func printForStep(b *strings.Builder, s ast.Stmt) {
 	printStmt(b, s)
 }
 
-// writeDeclTypeParams emits a declaration's generic parameter list
-// `[A, B]`. Bounds are not rendered here — this printer is the plain
-// AST dump, not the formatter.
 func writeDeclTypeParams(b *strings.Builder, names []string) {
 	if len(names) == 0 {
 		return
@@ -543,9 +508,6 @@ func writeDeclTypeParams(b *strings.Builder, names []string) {
 	b.WriteByte(']')
 }
 
-// writeTypeArgs emits a `[T1, T2]` type-argument list. Callers gate on
-// the node's TypeArgsWritten: reprinting checker-inferred args would put
-// an instantiation into source that never named one.
 func writeTypeArgs(b *strings.Builder, args []ast.Type) {
 	if len(args) == 0 {
 		return
@@ -563,9 +525,6 @@ func writeTypeArgs(b *strings.Builder, args []ast.Type) {
 func printType(t ast.Type) string {
 	switch x := t.(type) {
 	case ast.NumberType:
-		// Match the canonical i32 / u32 / i64 / u64 / u8
-		// spellings the parser now requires; the historical
-		// `number` alias was removed.
 		if x.Spelling != "" {
 			return x.Spelling
 		}
@@ -592,7 +551,6 @@ func printType(t ast.Type) string {
 	case ast.CharType:
 		return "char"
 	case ast.StrType:
-		// The borrowed-string view type (#4813).
 		return "str"
 	case ast.FloatType:
 		if x.Spelling != "" {
@@ -626,9 +584,6 @@ func printType(t ast.Type) string {
 	return ""
 }
 
-// printDestructurePattern renders a tuple destructure's pattern `(a, (b, c))`.
-// A nested position prints as its own pattern, not as the synthesised binder
-// the parser put in Names — that binder is a lowering detail.
 func printDestructurePattern(b *strings.Builder, x *ast.Destructure) {
 	b.WriteByte('(')
 	for i, n := range x.Names {

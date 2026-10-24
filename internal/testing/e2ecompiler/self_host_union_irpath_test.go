@@ -7,21 +7,6 @@ import (
 	"testing"
 )
 
-// unionIRPathCases are UNION-type (`type Node = A | B`) programs whose value/
-// statement `match` binds a variant payload (#3179). A union variant is a
-// pre-existing struct with its REAL fields and NO synthetic `__ev` payload
-// field, so the lowering's match-arm bind discriminates it from a true enum variant
-// (`enum E { V(T) }`, whose desugaring HAS `__ev`): for the union member it
-// binds the WHOLE scrutinee box pointer typed with the variant's struct name
-// (no offset-8 payload read), so a later field read (`Num(x) => x.value`)
-// resolves: a union member binds the box itself.
-//
-// This gate pins them at "ir" so a regression off the IR path shows up.
-// Pairs with the differential `union-*` cases in TestSelfHostAsmIRPath,
-// which prove the chosen route produces the right exit code.
-//
-// The probe reuses asm_pathprobe_run (semlower.verdict_ok, the production
-// decision) and prints "ir"/"refused" without emitting assembly.
 var unionIRPathCases = []struct {
 	name string
 	src  string
@@ -34,8 +19,6 @@ var unionIRPathCases = []struct {
 	{"union-wildcard-bind", `struct On { } struct Off { } type Sw = On | Off; function f(s: Sw): i32 { match (s) { On(_) => { return 1; }, Off(_) => { return 0; } } return 9; } function main(): i32 { return f(On { }) * 10 + f(Off { }); }`},
 }
 
-// TestSelfHostUnionIRPathX86_64 asserts each union-variant payload-bind program
-// routes through the IR path ("ir") (#3179).
 func TestSelfHostUnionIRPathX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

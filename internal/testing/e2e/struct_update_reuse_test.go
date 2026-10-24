@@ -1,30 +1,9 @@
-// Runtime contract for the struct-update spread `p = T{ ...p, f: v }`,
-// which reuses p's box in place. Reuse is gated on a runtime is_unique check, so the
-// two branches are BOTH live and each needs its own proof:
-//
-//   - unique p (rc==1): the box is repurposed. The un-listed fields are
-//     already in it and are left alone.
-//   - ALIASED p (rc>1): a fresh box is allocated and the alias must keep the
-//     old value intact — which means the un-listed fields have to be COPIED
-//     into the new box. Those fields are exactly what the old lowering
-//     refused this shape over ("the fresh-alloc branch's un-listed fields
-//     are left uninitialised, read back as 0"), so an alias reading 0 out of
-//     a field nobody listed is the specific regression these cases catch.
 package e2e
 
 import (
 	"testing"
 )
 
-// Both branches in one program, so a single exit code covers them.
-//
-// `keep` aliases `s` before the update, forcing the fresh-alloc branch: it
-// must still read m=7 and its 3-element xs afterwards. `s` then takes the
-// unique branch on the next update (the alias is gone by then only if the
-// compiler says so — either way the value must be right). The exit code sums
-// values that are each wrong in a different way if a field is dropped:
-//
-//	keep.m (7) + keep.xs.len() (3) + s.m (7) + s.xs.len() (3) + s.n (2) = 22
 const structUpdateSpreadSrc = `struct S { xs: i32[], n: i32, m: i32 }
 function main(): i32 {
     let s: S = S { xs: [1, 2, 3], n: 0, m: 7 };
@@ -35,13 +14,6 @@ function main(): i32 {
     return keep.m + keep.xs.len() + s.m + s.xs.len() + s.n;
 }`
 
-// The record-update idiom must not cross the append cliff: threading an
-// accumulator through `p = T{ ...p, xs: p.xs.append(v) }` is how a Fern
-// program builds an array inside a struct, and every crossing there copies
-// the whole buffer. `own` on the parameter is what makes the callee's box
-// uniquely owned; without it the caller's borrow keeps the array at rc>1 and
-// each append copies. 20 appends over 10 calls, so a regression reads as 20,
-// not as a rounding difference.
 const structUpdateSpreadCliffSrc = `struct S { xs: i32[], n: i32 }
 function push(own s: S, v: i32): S {
     s = S { ...s, xs: s.xs.append(v) };
@@ -92,8 +64,6 @@ func TestWASMStructUpdateSpreadReuse(t *testing.T) {
 	checkStructUpdateSpread(t, "wasm32-wasi", runWasm(t, structUpdateSpreadSrc), runWasm(t, structUpdateSpreadCliffSrc))
 }
 
-// The interpreter has no refcounts, so it reuses nothing and crosses nothing —
-// it is the oracle for the VALUE half and a constant 0 for the cliff half.
 func TestInterpStructUpdateSpreadReuse(t *testing.T) {
 	checkStructUpdateSpread(t, "interp",
 		runInterpExit(t, structUpdateSpreadSrc), runInterpExit(t, structUpdateSpreadCliffSrc))

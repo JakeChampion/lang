@@ -1,9 +1,9 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// A LIVE `break` before the declaration: the loop leaves with the slot
-// holding the last stored element, which the buffer owns. 3 stored,
-// kinds 0 + 1 + 2 = 3, so 3 + 3 = 6.
+
+
+
+
+
+
 import "core/int";
 struct Val { kind: i32, kids: i32[] }
 function build(n: i32): i32 {

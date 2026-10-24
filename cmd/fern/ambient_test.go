@@ -5,9 +5,6 @@ import (
 	"testing"
 )
 
-// The ambient-effect rule (E080) is target-independent, so a bare `-check`
-// runs it: a handler reaching a host effect around its bag is refused with
-// the chain that reaches it and the bag method to call instead.
 func TestCheckRefusesAmbientEffectInHandler(t *testing.T) {
 	entry := writeFern(t, `import "std/http";
 import "std/platform";
@@ -30,8 +27,6 @@ function main(): i32 { return 0; }
 	}
 }
 
-// The complement: the same effect through the bag checks clean, so the rule
-// sends a handler somewhere it can go.
 func TestCheckAllowsEffectsThroughTheBag(t *testing.T) {
 	entry := writeFern(t, `import "std/http";
 import "std/platform";

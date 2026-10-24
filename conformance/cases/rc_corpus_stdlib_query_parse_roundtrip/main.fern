@@ -1,10 +1,10 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Real stdlib hot path: query_parse builds a
-// Map[string, string[]] (map-structural reclamation + the
-// escape-out path + string[] values). Round-trips a few keys
-// and checks the underflow counter stays 0 under free.
+
+
+
+
+
+
+
 import "core/int";
 import "core/map";
 import "std/string";

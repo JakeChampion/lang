@@ -13,8 +13,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/diag"
 )
 
-// Consuming positions belong to the callable type. A caller's choice of
-// function and unrelated owned declarations must not change the contract.
 func TestSelfHostIndirectOwnContracts(t *testing.T) {
 	cases := []struct {
 		name, source string

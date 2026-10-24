@@ -4,15 +4,6 @@ import (
 	"strings"
 )
 
-// The exhaustion convention needs a spent corpus to take the SMALLEST
-// expression of a type, and that is not always its literal: a projection out
-// of a value already in scope (`v0.f1`) or a call to a helper with few
-// parameters can be smaller, and a program-declared type's literal spells
-// every field. leafMin picks by size. Sizes are in parsed AST nodes, what
-// TestGenBytesShrinkIsMonotonicAndValid counts.
-
-// leafMin writes the smallest expression of type t that needs no var of type
-// t in scope. Called only on an exhausted stream.
 func (g *Generator) leafMin(b *strings.Builder, sc *scope, t gtype, depth int) {
 	lit := g.literalCost(t, 0)
 	path, pathCost := g.cheapestPath(sc, t)
@@ -27,7 +18,6 @@ func (g *Generator) leafMin(b *strings.Builder, sc *scope, t gtype, depth int) {
 	}
 }
 
-// cheapestPath is the smallest access path of type t, and its size.
 func (g *Generator) cheapestPath(sc *scope, t gtype) (string, int) {
 	best, cost := "", 0
 	for _, p := range g.accessPaths(sc, t) {
@@ -38,17 +28,10 @@ func (g *Generator) cheapestPath(sc *scope, t gtype) (string, int) {
 	return best, cost
 }
 
-// pathCost is an access path's size: the root, plus one node per field read
-// and two per `[0i32]` (the index node and its literal).
 func pathCost(p string) int {
 	return 1 + strings.Count(p, ".") + 2*strings.Count(p, "[")
 }
 
-// cheapestCall is the helper returning t whose call is smallest when every
-// argument is itself a smallest expression, and that size. A recursive
-// helper's own self-call is a candidate wherever emitCall would place one:
-// with a byte to spare its body may open with that call and return it, so
-// a spent stream must be able to return it directly.
 func (g *Generator) cheapestCall(sc *scope, t gtype) (*helperSig, int) {
 	var best *helperSig
 	cost := 0
@@ -67,13 +50,11 @@ func (g *Generator) cheapestCall(sc *scope, t gtype) (*helperSig, int) {
 	return best, cost
 }
 
-// callCost is the size of a call to h whose arguments are each a smallest
-// expression.
 func (g *Generator) callCost(sc *scope, h helperSig) int {
-	c := 2 // the call and its callee
+	c := 2
 	switch {
 	case g.self != nil && h.name == g.self.name:
-		c += 3 // (__fuel - 1i32)
+		c += 3
 	case h.fueled:
 		c++
 	}
@@ -83,7 +64,6 @@ func (g *Generator) callCost(sc *scope, h helperSig) int {
 	return c
 }
 
-// minCost is the size of the smallest expression of type t at a leaf.
 func (g *Generator) minCost(sc *scope, t gtype, depth int) int {
 	if len(sc.inScope(t)) > 0 {
 		return 1
@@ -91,7 +71,6 @@ func (g *Generator) minCost(sc *scope, t gtype, depth int) int {
 	return g.literalCost(t, depth)
 }
 
-// literalCost is the size of the literal an exhausted stream writes for t.
 func (g *Generator) literalCost(t gtype, depth int) int {
 	if depth > 4 {
 		return 1
@@ -124,9 +103,9 @@ func (g *Generator) literalCost(t gtype, depth int) int {
 	case tXyz:
 		return 3
 	case tOptI32:
-		return 1 // None
+		return 1
 	case tResI32I32:
-		return 3 // Ok(0i32)
+		return 3
 	case tFnI32I32:
 		return 4
 	}

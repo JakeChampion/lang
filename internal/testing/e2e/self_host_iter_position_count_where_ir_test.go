@@ -9,11 +9,6 @@ import (
 	"testing"
 )
 
-// Closure-predicate index/count adapters `position` / `count_where` in core/iter
-// — the predicate counterparts to `index_of` / `count`. `position` returns the
-// index of the first match as an Option; `count_where` counts the matches. The
-// closure is applied inside an `if` the #2686 condition-lift fix covers, so they
-// lower on the self-host IR path.
 const iterPositionCountWherePrelude = `pub trait Iterator[T] { function next(self: Self): Option[(T, Self)]; }
 pub struct Range { lo: i32, hi: i32 }
 pub function range(lo: i32, hi: i32): Range { return Range { lo: lo, hi: hi }; }
@@ -40,13 +35,9 @@ var iterPositionCountWhereCases = []struct {
 	main string
 	want int
 }{
-	// position: first x with x*x > 8 over [0,10) is 3.
 	{"position-hit", `function main(): i32 { match (position(range(0, 10), (x: i32): boolean => { return x * x > 8; })) { Some(i) => { return i; }, None => { return 9; } } }`, 3},
-	// position: no match → None.
 	{"position-miss", `function main(): i32 { match (position(range(0, 4), (x: i32): boolean => { return x > 99; })) { Some(i) => { return i; }, None => { return 5; } } }`, 5},
-	// count_where: multiples of 3 in [0,10): 0,3,6,9 → 4.
 	{"count", `function main(): i32 { return count_where(range(0, 10), (x: i32): boolean => { return x % 3 == 0; }); }`, 4},
-	// count_where: none match → 0; +7 = 7.
 	{"count-none", `function main(): i32 { return count_where(range(0, 5), (x: i32): boolean => { return x > 99; }) + 7; }`, 7},
 }
 
@@ -54,8 +45,6 @@ func iterPositionCountWhereProg(mainBody string) string {
 	return iterPositionCountWherePrelude + mainBody + "\n"
 }
 
-// TestNativeIterPositionCountWhere runs the inline programs on the native interp /
-// x86-64 / wasm backends, oracle-checked.
 func TestNativeIterPositionCountWhere(t *testing.T) {
 	for _, tc := range iterPositionCountWhereCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -73,7 +62,6 @@ func TestNativeIterPositionCountWhere(t *testing.T) {
 	}
 }
 
-// TestNativeIterPositionCountWhereArm64 is the arm64 leg (CI-gated; qemu).
 func TestNativeIterPositionCountWhereArm64(t *testing.T) {
 	for _, tc := range iterPositionCountWhereCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -85,8 +73,6 @@ func TestNativeIterPositionCountWhereArm64(t *testing.T) {
 	}
 }
 
-// TestNativeIterPositionCountWhereModule exercises the shipped `import "core/iter"`
-// module's position / count_where over real `range` iterators.
 func TestNativeIterPositionCountWhereModule(t *testing.T) {
 	src := `import "core/iter" as iter;
 function main(): i32 {
@@ -109,8 +95,6 @@ function main(): i32 {
 	}
 }
 
-// TestSelfHostIterPositionCountWhereIRX86_64 routes each inline case through the
-// self-hosted x86-64 IR driver, pins routing to "ir", and oracle-checks it.
 func TestSelfHostIterPositionCountWhereIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -144,7 +128,6 @@ func TestSelfHostIterPositionCountWhereIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostIterPositionCountWhereIRWasm runs the same cases through the wasm IR backend.
 func TestSelfHostIterPositionCountWhereIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host iter position/count_where wasm IR e2e")

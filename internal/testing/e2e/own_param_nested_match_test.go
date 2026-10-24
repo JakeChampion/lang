@@ -2,13 +2,6 @@ package e2e
 
 import "testing"
 
-// A consuming match over one `own` parameter nested in an arm of another's
-// (#10944). The inner match frees its box on the paths that reach it, but the
-// moved-locals claim only sees matches every path evaluates, so the exit sweep
-// deep-dropped the inner parameter a second time: the native binary hung or
-// crashed by the seventh call. Every path here frees each box and array once:
-// the inner payload arm, its payloadless arm, a guard that holds and one that
-// fails, and the outer arm that never reaches the inner match.
 const ownParamNestedMatchSrc = `enum Box { Arr(i32[]), Nil }
 enum Other { Thing(i32[]), Nothing }
 

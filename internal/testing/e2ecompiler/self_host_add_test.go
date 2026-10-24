@@ -8,20 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostAddDifferentialX86_64 is the parity gate for `-add` (#6640):
-// given the same manifest and the same dependency spec, native and the
-// self-host must produce the same manifest bytes, or refuse for the same
-// reason.
-//
-// The manifest is edited textually by both, so this pins more than the
-// dependency line: where the line lands relative to an existing table, that
-// comments and blank lines survive, and that a manifest with no
-// `[dependencies]` table grows one in the same shape.
-//
-// The `url:` spec is deliberately absent. Recording an archive's sha256 means
-// downloading it, which the self-host driver has no fetcher for and which a
-// test must not do — the self-host refuses it with a diagnostic instead, and
-// that refusal has no native counterpart to compare against offline.
 func TestSelfHostAddDifferentialX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -38,29 +24,22 @@ func TestSelfHostAddDifferentialX86_64(t *testing.T) {
 
 	for _, c := range []struct {
 		name     string
-		manifest string // "" = no manifest at all
+		manifest string
 		dep      string
 		spec     string
 		wantOK   bool
-		grant    string // the -grant value, "" for none
+		grant    string
 	}{
-		// The line goes directly under an existing table header, and the
-		// comment and the dependency already there are untouched.
 		{"path-into-existing-table", withTable, "helper", "path:../helper", true, ""},
-		// A trailing comment on the header still names the table (#11841).
 		{"path-into-commented-table", "[package]\nname = \"app\"\n[dependencies]  # deps\n", "helper", "path:../helper", true, ""},
-		// No table yet: one is appended, with the same separating blank line.
 		{"path-creates-table", noTable, "helper", "path:../helper", true, ""},
-		// A manifest whose last line has no newline must not gain a joined line.
 		{"path-no-trailing-newline", noTrailingNewline, "helper", "path:../helper", true, ""},
 		{"workspace-spec", noTable, "member", "workspace", true, ""},
 		{"name-with-punctuation", noTable, "my_dep-2", "path:../x", true, ""},
-		// A version alone is the bare form; with a grant, an inline table.
 		{"version-spec", noTable, "json", "version:1.2.0", true, ""},
 		{"version-with-grant", noTable, "json", "version:1.2.0", true, "time,net"},
 		{"path-with-grant", withTable, "kv", "path:../kv", true, "fs"},
 		{"workspace-grant-none", noTable, "member", "workspace", true, "none"},
-		// Refusals: each must be the same refusal, not merely a shared failure.
 		{"already-declared", withTable, "existing", "path:../elsewhere", false, ""},
 		{"version-not-semver", noTable, "json", "version:1.2", false, ""},
 		{"grant-unknown-capability", noTable, "kv", "path:../kv", false, "net,teleport"},
@@ -125,15 +104,11 @@ func TestSelfHostAddDifferentialX86_64(t *testing.T) {
 			if string(nativeMan) != string(shMan) {
 				t.Errorf("fern.toml differs:\n--- native ---\n%q\n--- self-host ---\n%q", nativeMan, shMan)
 			}
-			// A refused add must leave the manifest exactly as it was — a
-			// half-applied edit is worse than no edit.
 			if !c.wantOK && string(shMan) != c.manifest {
 				t.Errorf("refused add still rewrote the manifest:\n%q", shMan)
 			}
 		})
 	}
-	// Too few or too many arguments is a usage refusal: exit 2, as an
-	// unknown flag is.
 	t.Run("argument-count", func(t *testing.T) {
 		for _, argv := range [][]string{{"-add", "helper"}, {"-add", "helper", "path:../h", t.TempDir(), "extra"}} {
 			for _, bin := range []string{nativeBin, driverBin} {
@@ -145,8 +120,6 @@ func TestSelfHostAddDifferentialX86_64(t *testing.T) {
 			}
 		}
 	})
-	// A -grant after the arguments is a driver flag past the point flags are
-	// parsed: both refuse it rather than write the dependency without it.
 	t.Run("grant-after-arguments", func(t *testing.T) {
 		for _, bin := range []string{nativeBin, driverBin} {
 			dir := t.TempDir()
@@ -166,9 +139,6 @@ func TestSelfHostAddDifferentialX86_64(t *testing.T) {
 	})
 }
 
-// TestSelfHostAddWritesEveryForm pins the line `-add` writes for each source
-// and grant, so every dependency form the manifest accepts can be written
-// without editing it by hand.
 func TestSelfHostAddWritesEveryForm(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -205,7 +175,6 @@ func TestSelfHostAddWritesEveryForm(t *testing.T) {
 			t.Errorf("%s -grant %q: fern.toml\n%q\nwant\n%q", c.spec, c.grant, man, want)
 		}
 	}
-	// A refusal says `fern:` and names the flag, as every other CLI refusal does.
 	out, _ := runX86_64Bin(runner, bin, "-add", "9bad", "path:../x", t.TempDir()).CombinedOutput()
 	if !strings.HasPrefix(string(out), "fern: -add: invalid dependency name") {
 		t.Errorf("refusal %q does not start with \"fern: -add:\"", out)

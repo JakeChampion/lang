@@ -1,15 +1,3 @@
-// compiler/impl_bounds_run.fern — stdin-driven driver that prints
-// each parsed function's type parameters beside their trait bounds, one
-// `name<TAB>T=bound,U=bound` line per function.
-//
-// bound_traits runs PARALLEL to type_params (parser.fern's FuncDecl), so the
-// pairing is the invariant worth showing: a type param that reads back with an
-// empty bound is one the parser believes is unbounded. finalize_impl_method
-// merges an impl block's bounded params into each method's type_params, which
-// is the merge this driver exists to pin (#7224).
-//
-// Reads a module from stdin so the companion Go test supplies the corpus.
-
 import "../lexer";
 import "../parser";
 import "./rundriver";
@@ -19,7 +7,6 @@ function bound_at(bt: string[], i: i32): string {
   if (i < bt.len()) {
     return bt[i];
   }
-  // Short of type_params: the parser dropped this param's bound entirely.
   return "<missing>";
 }
 

@@ -1,5 +1,3 @@
-// Scoped continuation proof over actual retained native rows. This does not
-// certify runtime implementations, startup, WASI or an entire compilation.
 import "./ssaprepare";
 import "./ssacreditbound" as bound;
 import "./ssacreditselected" as selected;
@@ -72,8 +70,6 @@ function helpers(rows: ssaprepare.Emitted[], names: string[], architecture: stri
       return Functions { bodies: [], error: name + ": " + binding.error };
     }
     let row = binding.rows[0];
-    // Generated helpers have no source declaration contract. Their own
-    // selected schema must agree, and continuation checks their real effects.
     if (!selected.compatible(selected.metadata(row), selected.metadata(consumer), d.params[0], 1)) {
       return Functions { bodies: [], error: name + ": incompatible retained helper schema" };
     }
@@ -113,8 +109,6 @@ function checked_helpers(rows: ssaprepare.Emitted[], drop: string, release: stri
       return Functions { bodies: [], error: row.label_name + ": incompatible retained helper schema" };
     }
   }
-  // The checked pair is release/Drop; continuation consumes Drop/release.
-  // Use these exact proved bodies, without an unchecked second resolution.
   return Functions { bodies: [pair.rows[1].body.formed.f, pair.rows[0].body.formed.f], error: "" };
 }
 
@@ -138,9 +132,6 @@ pub function check_wrapper(rows: ssaprepare.Emitted[], name: string, consumer: s
   return wrapper(rows, name, consumer, drop, release, calls, architecture, false);
 }
 
-// Compose the independently checked native release entry with this same
-// retained continuation. Runtime implementations and whole-module coverage
-// remain separate obligations; the legacy API keeps its entry refusal.
 pub function check_wrapper_native(rows: ssaprepare.Emitted[], name: string, consumer: string, drop: string, release: string, calls: string[], architecture: string): helper.Proof {
   return wrapper(rows, name, consumer, drop, release, calls, architecture, true);
 }

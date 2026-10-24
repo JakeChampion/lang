@@ -1,5 +1,5 @@
-// std/array's dedup: collapse each run of consecutive equal elements to one.
-// The shipped module's free and method forms.
+
+
 import "std/array" as arr;
 function same(a: i32[], b: i32[]): boolean { if (a.len() != b.len()) { return false; } let i = 0; while (i < a.len()) { if (a[i] != b[i]) { return false; } i = i + 1; } return true; }
 function main(): i32 {

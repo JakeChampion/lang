@@ -10,14 +10,6 @@ import "std/tls/server";
 import "std/tls/verify";
 import "std/time";
 
-// tests/stdlib/tls_server_test.fern — std/tls/server: keys read from PKCS #8
-// and SEC 1, an identity checked against its leaf, and the session against
-// std/tls/client over P-256, P-384 and Ed25519 leaves: ALPN, the name the
-// client asked for, data both ways, close_notify, and the refusals. The
-// certificates are under an Ed25519 root, valid from 2020 to 2100, made
-// with Python's `cryptography`; the keys are the fixed scalars 0x33, 0x44
-// and 0x22 repeated.
-
 const ROOT: string = "3082011c3081cfa00302010202020201300506032b657030243122302006035504030c194665726e20544c5320536572766572205465737420526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a30243122302006035504030c194665726e20544c5320536572766572205465737420526f6f74302a300506032b6570032100d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737a3233021300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106300506032b65700341007353a91b5ad2e713d51d2fa08f3e800b99afa9e5725cfd746269d03210b1faadccfc942258bb8151da41be07943a4e8a14bd615e96692c8b896872460e827c0a";
 
 const P256_LEAF: string = "3082016e30820120a00302010202020202300506032b657030243122302006035504030c194665726e20544c5320536572766572205465737420526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a30163114301206035504030c0b746c732e6578616d706c653059301306072a8648ce3d020106082a8648ce3d0301070342000451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1a3533051300c0603551d130101ff04023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b06010505070301301c0603551d1104153013820b746c732e6578616d706c658704c0000207300506032b65700341002aa51d9e7ebbabda2407971bedb6799f3b6e56cc126dc876310e47342f19f0d0902e1173373fdb0ba17ebc39f3324667b06162300c7b9873eb31123c89ca500c";
@@ -165,7 +157,6 @@ function test_key_refusals(): test.TestOutcome {
   if (key_outcome(identity.sec1([0x30 as u8, 3 as u8, 2 as u8, 1 as u8, 1 as u8])) != "tls identity: malformed ECPrivateKey") {
     return test.fail("sec1: " + key_outcome(identity.sec1([0x30 as u8, 3 as u8, 2 as u8, 1 as u8, 1 as u8])));
   }
-  // A scalar of zeros is out of range.
   let zero_scalar: u8[] = __codec_bytes(hex.decode("303102010104200000000000000000000000000000000000000000000000000000000000000000a00a06082a8648ce3d030107"));
   return test.assert_eq(key_outcome(identity.sec1(zero_scalar)), "tls identity: ecdsa: the private scalar is not in [1, n) at the curve's size");
 }
@@ -195,8 +186,6 @@ function test_identity(): test.TestOutcome {
   return test.assert_eq(identity_outcome(identity.from_pem(ED_LEAF_PEM, "")), "tls identity: no PRIVATE KEY or EC PRIVATE KEY block");
 }
 
-// identity_of is the test identity for a leaf and its key; the test fails
-// loudly through the handshake if it cannot be made.
 function identity_of(leaf: string, key_pem: string): identity.Identity {
   match (identity.private_key_from_pem(key_pem)) {
     Ok(k) => {
@@ -216,8 +205,6 @@ function identity_of(leaf: string, key_pem: string): identity.Identity {
   return identity.Identity { chain: [], key: identity.Ed25519Seed([]) };
 }
 
-// The wall clock the sessions run at, in Unix milliseconds: inside the test
-// chains' validity (2020-01-01 to 2100-01-01), and the bounds of it.
 const WALL_MS: i64 = 1700000000000;
 
 const NOT_BEFORE_MS: i64 = 1577836800000;
@@ -278,12 +265,10 @@ function listening(cfg: server.Config): Result[server.Session, string] {
   return Err("server");
 }
 
-// connect runs a handshake between a client session and a server session.
 function connect(cc: client.Config, sc: server.Config): Result[Pair, string] {
   return connect_at(cc, sc, WALL_MS);
 }
 
-// connect_at is `connect` with the server's wall clock at `now`.
 function connect_at(cc: client.Config, sc: server.Config, now: i64): Result[Pair, string] {
   let c0: client.Step = started(cc)?;
   let s0: server.Session = listening(sc)?;
@@ -293,7 +278,6 @@ function connect_at(cc: client.Config, sc: server.Config, now: i64): Result[Pair
   if (!c1.session.connected() || !s2.session.connected()) {
     return Err("not connected");
   }
-  // What the server sends on connecting is its ticket, if it issues one.
   let c2: client.Step = crd(c1.session, s2.output)?;
   return Ok(Pair { client: c2.session, server: s2.session, tickets: c2.tickets });
 }
@@ -330,9 +314,6 @@ function swrite(s: server.Session, text: string): Result[server.Step, string] {
   return Err("server");
 }
 
-// served connects with the given leaf and key and reports what both sides
-// saw: the name and protocol the server has, the protocol the client has,
-// and the data exchanged.
 function served(leaf: string, key_pem: string): string {
   let cc: client.Config = client.config("tls.example", roots()).with_alpn(["h2", "http/1.1"]);
   let sc: server.Config = server.config(identity_of(leaf, key_pem)).with_alpn(["http/1.1"]);
@@ -377,9 +358,6 @@ function outcome(r: Result[Pair, string]): string {
   return "";
 }
 
-// An address is checked against the certificate and sent as no SNI; a
-// client offering no protocol gets none; a client naming another host
-// refuses the certificate, and the server reads its bad_certificate alert.
 function test_names_and_protocols(): test.TestOutcome {
   let sc: server.Config = server.config(identity_of(ED_LEAF, ED_PKCS8));
   if (outcome(connect(client.config("192.0.2.7", roots()), sc)) != "connected [] []") {
@@ -399,8 +377,6 @@ function test_names_and_protocols(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
-// refusal_alert is what the client makes of the server's flight and what
-// the server then makes of the client's alert.
 function refusal_alert(cc: client.Config, sc: server.Config): Result[string, string] {
   let c0: client.Step = started(cc)?;
   let s0: server.Session = listening(sc)?;
@@ -423,8 +399,6 @@ function refusal_alert(cc: client.Config, sc: server.Config): Result[string, str
   return Ok("");
 }
 
-// A client that accepts only RSA signatures gets handshake_failure in the
-// clear, before any key is in force.
 function test_no_common_scheme(): test.TestOutcome {
   let cc: handshake.ClientConfig = handshake.ClientConfig { ...handshake.client_config("tls.example"), schemes: [0x0804] };
   match (handshake.client_start(cc, random_bytes(handshake.client_entropy(cc)))) {
@@ -452,9 +426,6 @@ function test_no_common_scheme(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
-// A key that is not the chain's is refused by `identity`; a chain handed
-// to `start` without that check fails when the client checks the
-// CertificateVerify.
 function test_wrong_key(): test.TestOutcome {
   let id: identity.Identity = identity.Identity { chain: [__codec_bytes(hex.decode(P256_LEAF))], key: identity_of(P384_LEAF, P384_PKCS8).key };
   let cc: client.Config = client.config("tls.example", roots());
@@ -488,8 +459,6 @@ function test_close(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
-// Records arrive however the reads cut them: two whole records in one read
-// and a third split across two are each opened once and in order.
 function test_records_across_reads(): test.TestOutcome {
   match (connect(client.config("tls.example", roots()), server.config(identity_of(ED_LEAF, ED_PKCS8)))) {
     Ok(p) => {
@@ -555,8 +524,6 @@ function cclose(s: client.Session): Result[client.Step, string] {
   return Err("client");
 }
 
-// how is whether a pair resumed, and how many tickets the client was
-// issued.
 function how(r: Result[Pair, string]): string {
   match (r) {
     Ok(p) => {
@@ -582,10 +549,6 @@ function how(r: Result[Pair, string]): string {
   return "";
 }
 
-// The ticket a connection is issued resumes the next, and that one is
-// issued a ticket too; a ticket under another server's key, or one whose
-// lifetime is over, makes a full handshake; a server without tickets
-// issues none.
 function test_resumption(): test.TestOutcome {
   let sc: server.Config = server.config(identity_of(ED_LEAF, ED_PKCS8)).with_alpn(["http/1.1"]);
   let cc: client.Config = client.config("tls.example", roots()).with_alpn(["h2", "http/1.1"]);
@@ -629,14 +592,10 @@ function client_identity(leaf: string): identity.Identity {
   return identity_of(leaf, CLIENT_PKCS8);
 }
 
-// presented is how a server requiring a client certificate takes a client:
-// what each side ends with, and the client's chain length the server kept.
 function presented(cc: client.Config, sc: server.Config): string {
   return presented_at(cc, sc, WALL_MS);
 }
 
-// presented_at is `presented` with the server judging the client's chain at
-// `now`.
 function presented_at(cc: client.Config, sc: server.Config, now: i64): string {
   match (connect_at(cc, sc, now)) {
     Ok(p) => {
@@ -656,8 +615,6 @@ function presented_at(cc: client.Config, sc: server.Config, now: i64): string {
   return "";
 }
 
-// refused_with runs a handshake the server is expected to refuse and
-// reports the server's reason with the alert the client then reads.
 function refused_with(cc: client.Config, sc: server.Config): string {
   match (started(cc)) {
     Ok(c0) => {
@@ -705,10 +662,6 @@ function refused_with(cc: client.Config, sc: server.Config): string {
   return "";
 }
 
-// A client whose CertificateVerify does not verify under its leaf's key is
-// refused with decrypt_error, and one signing under a scheme its leaf's key
-// cannot make with illegal_parameter (§4.4.3, §4.2.3): identities put
-// together from the client's chain and a key that is not its own.
 function test_client_signature_refused(): test.TestOutcome {
   let cc: client.Config = client.config("tls.example", roots());
   let sc: server.Config = server.config(identity_of(ED_LEAF, ED_PKCS8)).with_client_roots(roots());
@@ -720,10 +673,6 @@ function test_client_signature_refused(): test.TestOutcome {
   return test.assert_eq(refused_with(cc.with_identity(p256), sc), "server: the peer's CertificateVerify names a scheme its key cannot make / client: tls handshake: the peer sent alert 47");
 }
 
-// A server with client roots takes a client whose chain reaches them and
-// whose CertificateVerify verifies, and refuses one sending nothing (the
-// client reads certificate_required), one under another root, and one
-// whose leaf is not for TLS clients; a server without roots asks nothing.
 function test_client_certificate(): test.TestOutcome {
   let sc: server.Config = server.config(identity_of(ED_LEAF, ED_PKCS8)).with_client_roots(roots());
   let cc: client.Config = client.config("tls.example", roots());
@@ -745,9 +694,6 @@ function test_client_certificate(): test.TestOutcome {
   return test.assert_eq(client_refusal(cc, sc), "client: tls handshake: the peer sent alert 116");
 }
 
-// The server judges a client's chain at the time its session is given, not
-// the machine's: a second outside either bound of its validity it is
-// refused, and a second inside either bound it is taken.
 function test_client_certificate_validity(): test.TestOutcome {
   let sc: server.Config = server.config(identity_of(ED_LEAF, ED_PKCS8)).with_client_roots(roots());
   let cc: client.Config = client.config("tls.example", roots()).with_identity(client_identity(CLIENT_LEAF));
@@ -760,7 +706,6 @@ function test_client_certificate_validity(): test.TestOutcome {
   return test.assert_eq(presented_at(cc, sc, NOT_BEFORE_MS + 1000) + "; " + presented_at(cc, sc, NOT_AFTER_MS - 1000), "ping pong chain 1; ping pong chain 1");
 }
 
-// client_refusal is what the client reads of the server's refusal.
 function client_refusal(cc: client.Config, sc: server.Config): string {
   match (started(cc)) {
     Ok(c0) => {
@@ -808,8 +753,6 @@ function client_refusal(cc: client.Config, sc: server.Config): string {
   return "";
 }
 
-// A session resumed at a server with client roots shows no certificate
-// again: the ticket stands for the one shown when it was issued.
 function test_client_certificate_resumed(): test.TestOutcome {
   let sc: server.Config = server.config(identity_of(ED_LEAF, ED_PKCS8)).with_client_roots(roots());
   let cc: client.Config = client.config("tls.example", roots()).with_identity(client_identity(CLIENT_LEAF));
@@ -827,9 +770,6 @@ function test_client_certificate_resumed(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
-// update_keys both ways between sessions sealing their own records: the
-// server asks the client to update too, the client answers with its own
-// KeyUpdate, and data still flows; then the client updates alone.
 function test_key_update(): test.TestOutcome {
   match (connect(client.config("tls.example", roots()), server.config(identity_of(ED_LEAF, ED_PKCS8)))) {
     Ok(p) => {
@@ -890,11 +830,6 @@ function updated(p: Pair): Result[string, string] {
   return Ok(first + " / " + second);
 }
 
-// offload: both sessions hand the kernel the same keys from their two
-// ends, then frame records in the clear (application data, close_notify),
-// take records framed as the kernel opened them, and report the keys a
-// KeyUpdate sets on both ends. A session already offloaded, or holding part
-// of a record, is not offloaded.
 function test_offload(): test.TestOutcome {
   match (connect(client.config("tls.example", roots()), server.config(identity_of(ED_LEAF, ED_PKCS8)))) {
     Ok(p) => {
@@ -1027,7 +962,6 @@ function main(): i32 {
   return r.finish();
 }
 
-// Decode a valid fixture. Report a malformed fixture before the test exits.
 function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
   match (value) {
     Ok(bytes) => {

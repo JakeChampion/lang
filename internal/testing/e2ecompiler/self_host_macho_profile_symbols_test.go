@@ -33,8 +33,6 @@ function main(): i32 { print(rtprofilemacho.source()); return 0; }`
 	for _, name := range []string{"native-layout", "extra-bss", "invalid-symbol-offset"} {
 		t.Run(name, func(t *testing.T) {
 			raw := bytes.Clone(file)
-			// Moving __LINKEDIT by another page models the native writer's
-			// file/VM offset difference when zero-initialized data grows.
 			for at, n := 32, binary.LittleEndian.Uint32(raw[16:]); n > 0; n-- {
 				kind := binary.LittleEndian.Uint32(raw[at:])
 				length := int(binary.LittleEndian.Uint32(raw[at+4:]))

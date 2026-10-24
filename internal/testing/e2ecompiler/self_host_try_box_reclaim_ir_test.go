@@ -7,17 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostTryBoxReclaimIRX86_64 pins the #4355 `?`-consumed source-box
-// reclaim on the self-host IR path: `mk(pre)?` over a producer whose every
-// return is a direct Ok/Err/Some/None constructor frees the dead source box at
-// both consume edges (success after the payload read; the Option failure edge
-// before the fresh None), and a FRESH string success payload's sole reference
-// MOVES to the `let s: string = ...?` binding, which the exit sweep frees.
-//
-// Each churn case pins the try path's residual at zero: the caller's own match
-// frees the outer `let r = innerT(pre)` box as well. The hand-desugared
-// baseline innerB is the value cross-check (w != x); over-release is caught by
-// the __rc_underflow_count detector.
 func TestSelfHostTryBoxReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -49,8 +38,6 @@ func TestSelfHostTryBoxReclaimIRX86_64(t *testing.T) {
 		}
 	}
 
-	// SCALAR Result payload: the residual is the outer box alone — mk's
-	// source box dies at the `?` success consume edge.
 	run(t, `function mk(pre: string): Result[i32, i32] { return Ok(pre.len()); }
 function innerT(pre: string): Result[i32, i32] { let v: i32 = mk(pre)?; return Ok(v + 1); }
 function innerB(pre: string): Result[i32, i32] { let t: i32 = 0; match (mk(pre)) { Ok(v) => { t = v + 1; }, Err(e) => { t = e; }, } return Ok(t); }
@@ -68,9 +55,6 @@ function main(): i32 {
     return 0;
 }`, "try-box-scalar-pin", 0)
 
-	// STRING success payload: the `?` edge frees the box AND the binding
-	// frees the moved concat payload, so the residual is the same outer box
-	// as the scalar leg's.
 	run(t, `function mk(pre: string): Result[string, i32] { return Ok(pre + "abc"); }
 function innerT(pre: string): Result[i32, i32] { let s: string = mk(pre)?; return Ok(s.len()); }
 function innerB(pre: string): Result[i32, i32] { let t: i32 = 0; match (mk(pre)) { Ok(s) => { t = s.len(); }, Err(e) => { t = e; }, } return Ok(t); }
@@ -88,8 +72,6 @@ function main(): i32 {
     return 0;
 }`, "try-box-string-pin", 0)
 
-	// OPTION with failure alternation: the failure edge frees the fresh None
-	// source box before propagating a new None.
 	run(t, `function mko(pre: string, k: i32): Option[i32] { if (k > 0) { return None; } return Some(pre.len()); }
 function innerT(pre: string, k: i32): Option[i32] { let v: i32 = mko(pre, k)?; return Some(v + 1); }
 function innerB(pre: string, k: i32): Option[i32] { let t: i32 = 0; let got: i32 = 0; match (mko(pre, k)) { Some(v) => { t = v + 1; got = 1; }, None => {}, } if (got == 0) { return None; } return Some(t); }
@@ -107,19 +89,12 @@ function main(): i32 {
     return 0;
 }`, "try-box-option-failure-pin", 0)
 
-	// ALIASED payload excluded: mk forwards its param (`Ok(pre)`) — a
-	// non-fresh payload, so the producer is flagged "a": the box still frees
-	// but the binding takes NO string ownership. keep must stay readable and
-	// nothing double-frees.
 	run(t, `function mk(pre: string): Result[string, i32] { return Ok(pre); }
 function inner(pre: string): Result[i32, i32] { let s: string = mk(pre)?; return Ok(s.len()); }
 function go(pre: string): i32 { let r: i32 = 0; match (inner(pre)) { Ok(k) => { r = k; }, Err(e) => { r = e; }, } return r; }
 function main(): i32 { let keep: string = "abc" + "def"; let bad: i32 = 0; let i: i32 = 0; while (i < 1000) { if (go(keep) != 6) { bad = 1; } i = i + 1; } if (keep.len() != 6) { return 88; } if (__rc_underflow_count() != 0) { return 99; } return bad; }`,
 		"try-aliased-payload-excluded", 0)
 
-	// NON-CTOR return excluded: pass() forwards a live box (`return r`), so
-	// it is not OPT-FRESH — the `?` edge must NOT free it (b stays valid and
-	// re-readable after every call). Correctness + detector only.
 	run(t, `function pass(r: Result[string, i32]): Result[string, i32] { return r; }
 function inner(b: Result[string, i32]): Result[i32, i32] { let s: string = pass(b)?; return Ok(s.len()); }
 function main(): i32 {
@@ -134,9 +109,6 @@ function main(): i32 {
     return bad;
 }`, "try-nonfresh-callee-excluded", 0)
 
-	// ESCAPING binding: s escapes via `return Ok(s)`, so the returned string
-	// must stay valid at the caller. Box still freed; correctness + detector
-	// only.
 	run(t, `function mk(pre: string): Result[string, i32] { return Ok(pre + "abc"); }
 function inner(pre: string): Result[string, i32] { let s: string = mk(pre)?; return Ok(s); }
 function main(): i32 {

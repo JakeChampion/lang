@@ -10,13 +10,9 @@ import (
 	"testing"
 )
 
-// A file-backed mmap makes all six operands observable, especially the last:
-// offset zero maps different bytes. Anonymous mmap would ignore that operand.
-// The negative-fd call also pins the signed errno result on Darwin and Linux.
-// This is the internal runtime floor, not a new public builtin (#9853, #4451).
 func syscall6Source(t *testing.T, dir, target string) string {
 	t.Helper()
-	const page = 65536 // aligned on both 4 KiB and 16 KiB page hosts
+	const page = 65536
 	data := make([]byte, page*2)
 	data[page], data[len(data)-1] = 91, 37
 	path := filepath.Join(dir, "mapped.bin")

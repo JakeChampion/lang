@@ -1,6 +1,3 @@
-// Structural validation only: acyclic CFG, unique definitions and SSA availability.
-// Call bindings here establish names and arity, not callee effects or ownership.
-// A proof consumer must independently validate each selected ABI and actual body.
 import "./ssa";
 import "./util";
 
@@ -36,8 +33,6 @@ function value_ids(f: ssa.SFunc): i32[] {
   return values;
 }
 
-// Check every block, including infeasible continuations. Index by block position,
-// never by external block or value ID. Values maps physical IDs to bounded slots.
 pub function check(f: ssa.SFunc, producers: ssa.SFunc[], parameter_count: i32): Graph {
   let bad = Graph { order: [], values: [], error: "invalid caller origin graph" };
   if (f.name == "" || util.str_has_prefix(f.name, "__fern_") || f.nparams != parameter_count || f.takes_env || f.nvals < parameter_count || block_index(f, f.entry) < 0) {
@@ -54,8 +49,6 @@ pub function check(f: ssa.SFunc, producers: ssa.SFunc[], parameter_count: i32): 
       last = value;
     }
   }
-  // Unused trailing value capacity is outside this scoped boundary; the
-  // highest-numbered definition must survive, as ssacreditorigin requires.
   if (last < f.nvals - 1) {
     return bad;
   }

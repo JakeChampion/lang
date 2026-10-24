@@ -1,15 +1,15 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Iterating while the LOOP'S OWN iterand is consumed by an in-place
-// `.with`: the synthetic iter local's retain is the only thing
-// holding the buffer at rc 2, forcing __fern_arr_cow_inplace to
-// copy. The loop must keep reading the ORIGINAL elements (snapshot
-// semantics) while the rebound xs sees the replacement. If the
-// element borrow ever cancelled the ITERAND's retain as well, the
-// mutation would become visible mid-loop and the overwritten
-// element would be deep-dropped under the borrow.
-// 11 + 1 = 12 from the snapshot, 3 from the replacement.
+
+
+
+
+
+
+
+
+
+
+
+
 function mkstr(p: string): string { return p + "!"; }
 function snap(): i32 {
     let xs: string[] = [mkstr("aaaaaaaaaa"), mkstr("")];

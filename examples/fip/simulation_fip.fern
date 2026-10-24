@@ -19,7 +19,6 @@ pub struct World {
   refused: i32,
 }
 
-// Refuse unsupported capacity before allocating any world storage.
 pub function new_world(count: i32, clustered: boolean): Option[World] {
   if (count < 0 || count > 4096) {
     return None;
@@ -56,7 +55,6 @@ pub function new_world(count: i32, clustered: boolean): Option[World] {
   return Some(w);
 }
 
-// Positions stay unchanged throughout AI, so target reads are phase-consistent.
 pub fip function input_ai(own w: World): World {
   let i: i32 = 0;
   while (i < w.count) {
@@ -172,7 +170,6 @@ pub fip function checksum(w: World): i64 {
   return hash;
 }
 
-// The tick limit bounds all deterministic input arithmetic.
 pub fip function step(own w: World): World {
   if (w.tick >= 1000000) {
     return World { ...w, refused: 1 };

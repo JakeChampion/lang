@@ -8,37 +8,6 @@ import (
 	"testing"
 )
 
-// --- A BLOCK-SCOPED fresh string local is swept (#7292) ----------------------
-//
-// The "STR:" credit was keyed on the source NAME, and `retire_locals` renames a
-// block-scoped local's slot to "!retired!<name>" once its block ends. The exit
-// sweep's string loop looked the name up with an exact match, so it missed every
-// such slot and released nothing at all:
-//
-//	`{ let s: string = w("ab"); … }`   allocs=200 frees=0     3200 / 100 rounds
-//	the same in a `while` body         allocs=600 frees=400   3200 / 100 rounds
-//	the same at FUNCTION scope         allocs=200 frees=200   0
-//
-// against 0 on native and interp for all three. The loop row is the same defect:
-// its rebind store supersedes each iteration's box, so only the FINAL one strands
-// and it reads as the n-1-of-n signature. The plain block is what shows the shape
-// — nothing is released, so the count is not "one short", it is all of them.
-//
-// The obvious fix — resolve through `reclaim_slot_name`, as #6127 did for the
-// struct class — closes every row above and OVER-RELEASES: a second `let s` in a
-// sibling block shares the one name-keyed credit while holding a bare alias, and
-// the exact-match miss was accidentally shielding that collision. The two are one
-// defect seen from opposite ends, so no lookup change alone can be correct.
-//
-// What works is keying the credit on the BINDING SITE (`name@line:col`, #7298's
-// mechanism): the key lives on the slot, so the rename cannot hide it, and two
-// same-named bindings resolve to their own credit. Entry-zeroing needs no part in
-// it — the prologue zeroes the whole body slot range on every backend — but
-// untaken_branch below pins that a never-written slot stays safe to sweep.
-//
-// Every want was confirmed against BOTH oracles — bin/fern -interp and the native
-// x86-64 backend agreed on each — never read off the self-host run under test.
-
 const strBlockW = "function w(a: string): string { return a + \"!\"; }\n"
 
 const strBlockMain = "\nfunction main(): i32 { let x: i32 = 0; let r: i32 = 0; " +
@@ -54,7 +23,6 @@ type strBlockCase struct {
 func strBlockCases() []strBlockCase {
 	return []strBlockCase{
 		{
-			// A plain `{ }` block — the clearest form. Released by nothing before.
 			name: "plain_block",
 			src: strBlockW + `function round(i: i32): i32 {
     let acc: i32 = 0;
@@ -64,8 +32,6 @@ func strBlockCases() []strBlockCase {
 			want: 21,
 		},
 		{
-			// A `while` body, the issue's own repro. The rebind store already freed
-			// the superseded boxes, so this row moves from n-1-of-n to n-of-n.
 			name: "loop_body",
 			src: strBlockW + `function round(i: i32): i32 {
     let acc: i32 = 0;
@@ -76,7 +42,6 @@ func strBlockCases() []strBlockCase {
 			want: 40,
 		},
 		{
-			// An `if` arm — the same rename, reached through different control flow.
 			name: "if_arm",
 			src: strBlockW + `function round(i: i32): i32 {
     let acc: i32 = 0;
@@ -87,9 +52,6 @@ func strBlockCases() []strBlockCase {
 			want: 55,
 		},
 		{
-			// FUNCTION scope — never renamed, so it was always swept. Pinned because
-			// a fix that changed the exact-match lookup itself, rather than adding a
-			// scoped variant beside it, would move this row too.
 			name: "function_scope_unchanged",
 			src: strBlockW + `function round(i: i32): i32 {
     let s: string = w("ab");
@@ -98,11 +60,6 @@ func strBlockCases() []strBlockCase {
 			want: 21,
 		},
 		{
-			// The block does not run on every call, so on the other calls the slot
-			// never holds a string. The sweep now considers that slot, so it must
-			// read null rather than stack garbage — which the prologue's zeroing of
-			// the whole body range gives it. A crash or an underflow here, not a
-			// leak, is what a regression in that looks like.
 			name: "untaken_branch",
 			src: strBlockW + `function round(i: i32): i32 {
     let acc: i32 = 0;
@@ -112,10 +69,6 @@ func strBlockCases() []strBlockCase {
 			want: 37,
 		},
 		{
-			// A returned accumulator is MOVED OUT to the caller and must NOT be
-			// swept. The move-on-return keeps set resolves a slot from a live AST
-			// name reference, so a retired slot can never appear in it. Sweeping it
-			// here would free the box just handed back.
 			name: "move_on_return_not_swept",
 			src: strBlockW + `function build(n: i32): string { let acc: string = w("a"); return acc; }
 function round(i: i32): i32 { let s: string = build(i); return s.len() + i; }` + strBlockMain,
@@ -124,13 +77,6 @@ function round(i: i32): i32 { let s: string = build(i); return s.len() + i; }` +
 	}
 }
 
-// TestSelfHostStrBlockScopeSweepX86_64 — a block-scoped string local is released
-// exactly once.
-//
-// `allocs == frees` at `live_bytes == 0` is the leak assertion. The exit code
-// carries the two over-release directions, which no byte count would show: a
-// swept-but-returned box (the caller reads freed memory) and a swept-but-never-
-// assigned slot (stack garbage handed to __fern_str_free).
 func TestSelfHostStrBlockScopeSweepX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -166,7 +112,6 @@ func TestSelfHostStrBlockScopeSweepX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrBlockScopeSweepWasmIR — the wasm sibling. Exit codes only.
 func TestSelfHostStrBlockScopeSweepWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping block-scoped string sweep wasm IR e2e")
@@ -205,7 +150,6 @@ func TestSelfHostStrBlockScopeSweepWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrBlockScopeSweepIRArm64 — the arm64 sibling under qemu.
 func TestSelfHostStrBlockScopeSweepIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

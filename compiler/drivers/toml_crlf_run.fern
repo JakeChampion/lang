@@ -1,21 +1,3 @@
-// compiler/toml_crlf_run.fern — golden driver for the manifest
-// reader's line handling on CRLF input (fern_toml.fern via util.trim —
-// docs/SELF-HOST-AUDIT.md T1 / SH-020).
-//
-// fern_toml splits its input on '\n' alone, so on a CRLF file every line
-// arrives with a trailing '\r' and it is trim's job to remove it. It did not:
-// fern_toml carried a private trim stripping only space and tab, where the
-// tree's other two copies also stripped '\r'. The lock reader compares a line
-// for exact equality against "[[package]]", so on CRLF that header never
-// matched and EVERY entry was dropped — a CRLF fern.lock parsed to zero
-// packages and the loader saw an empty lock rather than an error.
-//
-// This driver parses the same manifest and lock text twice, once LF and once
-// CRLF, and prints what each yields. Both carry comments after values, and a
-// `#` inside a quoted string, which is part of the value (#11841). The two halves must agree line for line;
-// the companion Go test pins the exact output, so a trim that stops handling
-// '\r' fails here rather than silently emptying a lock file.
-
 import "../fern_toml";
 import "../util";
 
@@ -51,8 +33,6 @@ function render_lock(label: string, src: string): string {
   return out;
 }
 
-// crlf rewrites every '\n' in `s` as "\r\n", producing the same document as
-// written by a CRLF editor.
 function crlf(s: string): string {
   let out: string = "";
   let i: i32 = 0;

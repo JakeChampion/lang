@@ -9,23 +9,6 @@ import (
 	"testing"
 )
 
-// --- Binding an rc-tuple ELEMENT to a local keeps the tuple's release (#7766) --
-//
-// `let e: T = t.1` where the frame KEEPS `e`: at the exit sweep `e` is dead, so
-// the tuple box and its element buffer are both released rather than leaked
-// (80 B/round, unbounded). An element that is returned, stored, or rebound
-// hands its reference to a NEW owner instead, and the deep free must not
-// release it under that owner — `return t.1` exits 99 when it does.
-//
-// The `refuses_*` rows bind an element that is returned, stored, or rebound;
-// each must exit its oracle answer and stay sanitizer-clean. Every row
-// balances.
-//
-// Every row is gated on `__rc_underflow_count()` and runs a second leg under
-// FERN_SANITIZE=1: a deep free is the shape that double-frees, and the census
-// cannot see an over-release into a freelist.
-//
-// Every want was confirmed against `bin/fern -interp`.
 type tupleElemBindCase struct {
 	name string
 	src  string
@@ -46,22 +29,16 @@ func tupleElemBindCases() []tupleElemBindCase {
 }`
 	return []tupleElemBindCase{
 		{
-			// THE REPRO. Was 200/0 live 8000 — box and buffer both stranded.
 			name: "elem_bound_to_a_local",
 			src:  bindElem + tupleElemBindMain("100"),
 			want: 4,
 		},
 		{
-			// The same shape at 4x the rounds. Was 800/0 live 32000 — the row that
-			// makes the unboundedness a fact rather than an inference, which a
-			// single count cannot show.
 			name: "elem_bound_400_rounds",
 			src:  bindElem + tupleElemBindMain("400"),
 			want: 7,
 		},
 		{
-			// A STRING element: a different release from the flat buffer dec, so
-			// it needs its own row. Was 300/0 live 7200.
 			name: "string_elem_bound",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
@@ -72,9 +49,6 @@ function round(i: i32): i32 {
 			want: 21,
 		},
 		{
-			// The element is read after binding and then dead, which is the shape
-			// the narrowing is actually about: `e` is live across statements and
-			// still finished before the exit sweep.
 			name: "elem_bound_used_then_dead",
 			src: `function round(i: i32): i32 {
     let t: (i32, i32[]) = (i, [i, i + 1]);
@@ -85,9 +59,6 @@ function round(i: i32): i32 {
 			want: 57,
 		},
 		{
-			// A THREE-element tuple with a second rc element the bind does not
-			// touch: the deep free still has to reach the one that was not bound.
-			// Was 400/0 live 12000.
 			name: "three_elem_tuple_one_bound",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
@@ -98,9 +69,6 @@ function round(i: i32): i32 {
 			want: 4,
 		},
 		{
-			// LOOP-RESIDENT: tuple and bind both re-made each iteration, so the
-			// release has to land per round rather than once at function exit.
-			// Was 600/0 live 24000.
 			name: "elem_bound_in_a_loop",
 			src: `function round(i: i32): i32 {
     let n: i32 = 0;
@@ -111,7 +79,6 @@ function round(i: i32): i32 {
 			want: 72,
 		},
 		{
-			// The bind is in an IF ARM while the tuple outlives it.
 			name: "elem_bound_in_a_conditional",
 			src: `function round(i: i32): i32 {
     let t: (i32, i32[]) = (i, [i, i + 1]);
@@ -122,16 +89,12 @@ function round(i: i32): i32 {
 			want: 70,
 		},
 		{
-			// The element is RETURNED, so it outlives the frame and a deep
-			// free would release it under the caller.
 			name: "refuses_elem_returned",
 			src: `function esc(i: i32): i32[] { let t: (i32, i32[]) = (i, [i, i + 1]); return t.1; }
 function round(i: i32): i32 { return esc(i).len() + i; }` + tupleElemBindMain("100"),
 			want: 4,
 		},
 		{
-			// The element is STORED into a container that outlives the
-			// bind.
 			name: "refuses_elem_stored",
 			src: `function sink(xs: i32[][]): i32 { return xs.len(); }
 function round(i: i32): i32 {
@@ -143,8 +106,6 @@ function round(i: i32): i32 {
 			want: 70,
 		},
 		{
-			// The target is REASSIGNED, so its final value is not the
-			// element bound.
 			name: "refuses_elem_reassigned",
 			src: `function round(i: i32): i32 {
     let t: (i32, i32[]) = (i, [i, i + 1]);
@@ -155,10 +116,6 @@ function round(i: i32): i32 {
 			want: 70,
 		},
 		{
-			// The ALIAS side (#7466): the same element bind reached through a
-			// plain alias of the tuple. `v.1` is a borrow, so the release stays
-			// with `t` and the bind balances — the element's own accounting is
-			// independent of the box pair. Pinned as CLEAN.
 			name: "elem_bound_through_alias",
 			src: `function round(i: i32): i32 {
     let t: (i32, i32[]) = (i, [i, i + 1]);
@@ -169,17 +126,12 @@ function round(i: i32): i32 {
 			want: 4,
 		},
 		{
-			// Through the alias: the element escapes the frame by the
-			// alias's own return.
 			name: "refuses_elem_returned_through_alias",
 			src: `function esc(i: i32): i32[] { let t: (i32, i32[]) = (i, [i, i + 1]); let v: (i32, i32[]) = t; return v.1; }
 function round(i: i32): i32 { return esc(i).len() + i; }` + tupleElemBindMain("100"),
 			want: 4,
 		},
 		{
-			// Controls that were already clean and must stay so: a BORROW of the
-			// element rather than a bind, and a SCALAR element bind, neither of
-			// which the gate ever refused.
 			name: "elem_borrow_unchanged",
 			src: `function round(i: i32): i32 {
     let t: (i32, i32[]) = (i, [i, i + 1]);
@@ -199,9 +151,6 @@ function round(i: i32): i32 { return esc(i).len() + i; }` + tupleElemBindMain("1
 	}
 }
 
-// TestSelfHostTupleElemBindX86_64 — every admitted row balances at live_bytes 0
-// with no rc underflow, on the census leg and again under the quarantining
-// allocator.
 func TestSelfHostTupleElemBindX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -247,8 +196,6 @@ func TestSelfHostTupleElemBindX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostTupleElemBindWasmIR — the wasm sibling. Exit codes only: an
-// over-release moves no byte count on any backend.
 func TestSelfHostTupleElemBindWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping tuple element-bind wasm IR e2e")
@@ -287,7 +234,6 @@ func TestSelfHostTupleElemBindWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostTupleElemBindIRArm64 — the arm64 sibling under qemu.
 func TestSelfHostTupleElemBindIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

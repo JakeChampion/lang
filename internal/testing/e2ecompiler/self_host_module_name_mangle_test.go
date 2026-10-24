@@ -8,18 +8,6 @@ import (
 	"testing"
 )
 
-// The self-host half of #9684: a module whose FILE NAME is not an identifier.
-//
-// Both compilers derive a non-entry module's mangle prefix from its basename,
-// and both used it verbatim, so `[.fern` produced `__fn_[__help_text` and the
-// assembler refused it. The two have to agree about the sanitised form as well
-// as about the raw one — a disagreement is an unresolved symbol rather than a
-// diagnostic — which is why this leg exists beside the native one in
-// internal/testing/e2e rather than instead of it.
-//
-// The helper is deliberately big: a one-line private function is inlined away
-// and never emitted, which is how three smaller reductions of this bug all
-// built cleanly.
 const selfHostMangleBracket = `function help_text(): string {
     let out: string = "";
     out = out + "line 00\n"; out = out + "line 01\n"; out = out + "line 02\n";
@@ -49,13 +37,6 @@ function main(): i32 { return bracket.answer(); }
 
 const selfHostMangleWant = 40
 
-// The self-host leg of the native collision fixture.
-//
-// Sanitising is not injective: `[.fern` and `_.fern` both reduce to `_`. Native
-// has had a collision loop in assignManglePrefixes all along; the self-host
-// bundler had none, so sanitising alone would have made these two modules
-// mangle their decls to the same symbol — a divergence introduced by the fix
-// rather than by the input. Both compilers now suffix the second one.
 const selfHostMangleCollisionMain = `import "./[" as bracket;
 import "./_" as under;
 
@@ -86,8 +67,6 @@ func TestSelfHostModuleNameMangleCollision(t *testing.T) {
 				cmd = exec.Command(tg.runner[0], append(append([]string{}, tg.runner[1:]...), out)...)
 			}
 			_, _ = cmd.CombinedOutput()
-			// Both modules' answer(), so a collision that lost one definition
-			// would not reach this number even if it linked.
 			if got, want := cmd.ProcessState.ExitCode(), 2*selfHostMangleWant; got != want {
 				t.Errorf("exit code: got %d, want %d", got, want)
 			}
@@ -125,17 +104,6 @@ func TestSelfHostModuleNameMangle(t *testing.T) {
 	}
 }
 
-// #9762: two modules whose FILE NAMES collide but whose FILES do not.
-//
-// The self-host bundler identified a module by its basename, so `sort.fern`
-// beside the entry and `sub/sort.fern` beside its importer were one module
-// with one prefix. Whichever lost emitted nothing under the prefix its own
-// importer referenced, and every call into it was an undefined symbol. That
-// is not a contrived shape: the coreutils multicall imports `coreutils/base64`
-// while other utilities import `std/base64`.
-//
-// The two answers differ so a collapse is caught even if it links: taking
-// either module for both gives 2 or 80, never 41.
 const selfHostDupBasenameLib = `function pad(n: i32): string {
     let out: string = "";
     let i: i32 = 0;

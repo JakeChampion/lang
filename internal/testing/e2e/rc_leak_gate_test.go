@@ -9,12 +9,8 @@ import (
 	"testing"
 )
 
-// rcCase is one case of the rc-correctness corpus: the conformance cases named
-// rc_corpus_*, each of which tears its values down and folds
-// `__rc_underflow_count()` into an exit code of 0.
 type rcCase struct{ name, src string }
 
-// rcCorpusCases reads the corpus. Names drop the rc_corpus_ prefix.
 func rcCorpusCases(t *testing.T) []rcCase {
 	t.Helper()
 	dirs, err := filepath.Glob("../../../conformance/cases/rc_corpus_*")
@@ -35,59 +31,17 @@ func rcCorpusCases(t *testing.T) []rcCase {
 	return cases
 }
 
-// The rc corpus's LEAK leg (#7790).
-//
-// The conformance legs run every corpus case for its exit code, which catches
-// an over-release: `__rc_underflow_count()` is folded into the result, so a
-// stray dec shows up as a non-zero exit. A drop handler that only LEAKS does
-// not bump the underflow counter, so it reads 0 too.
-//
-// So the corpus already runs the shapes that leak and is structurally
-// blind to the leaking. `FERN_LEAKCHECK=1` has reported the live-byte
-// balance at exit since #5362 and nothing consumed it; this leg does.
-//
-// # Why a pinned baseline rather than a flat zero
-//
-// Each leaking case is pinned at its exact byte count and everything else
-// must be zero. What that buys:
-//
-//   - every clean case is GATED. A change that starts leaking in any of
-//     them fails here.
-//   - a new corpus case that leaks fails, because absent from the table
-//     means zero. Joining the leaking set is a deliberate act.
-//   - a pinned case that leaks MORE fails.
-//   - a pinned case that leaks LESS fails too, asking for the number to
-//     be banked, so a fix cannot silently leave the table stale. Same
-//     discipline as the complexity ratchet (self_host_lint_ratchet_test.go).
-//
-// Deliberately NOT a total byte budget: one number over the whole corpus
-// hides a new leak behind a fixed one, and the point of the leg is that
-// leaks stop being invisible.
-//
-// The x86-64 and arm64 legs compile with the self-host compiler, and no case
-// leaks on either, so their tables are empty: a case that starts leaking
-// fails until it is fixed or pinned here on purpose.
 var rcCorpusLeakBaselineX86_64 = map[string]int64{}
 
 var rcCorpusLeakBaselineArm64 = map[string]int64{}
 
-// The wasm table (#7912). Empty too: the closure drop paths and the json
-// stdlib, which leaked on the native wasm backend, reclaim completely on the
-// self-host's. The `m.without(k)` shapes were split out of one case so a fix
-// to one could bank its own zero (#8276), and the call-argument projection
-// joined them as a case rather than a pin.
 var rcCorpusLeakBaselineWasm = map[string]int64{}
 
-// checkCorpusLeaks runs every corpus case under the leak detector and
-// holds each one at its baseline.
 func checkCorpusLeaks(t *testing.T, backend string, baseline map[string]int64,
 	run func(*testing.T, string) (string, string, int)) {
 	for _, c := range rcCorpusCases(t) {
 		t.Run(c.name, func(t *testing.T) {
 			_, stderr, code := run(t, c.src)
-			// The natives own their stderr, so the report is the whole
-			// of it and the anchored pattern says so. Under wasmtime it
-			// is not: the host is free to write there too.
 			re := leakCheckLineRe
 			if backend == "wasm" {
 				re = wasmLeakCheckLineRe
@@ -128,9 +82,6 @@ func TestArm64RcCorpusLeakGate(t *testing.T) {
 	checkCorpusLeaks(t, "arm64", rcCorpusLeakBaselineArm64, runLeakCheckArm64)
 }
 
-// The wasm leg (#7912). Until the census reached this backend the corpus
-// ran here for its exit code only, so every leaking case on the list
-// above was invisible on the one target with no detector at all.
 func TestWASMRcCorpusLeakGate(t *testing.T) {
 	checkCorpusLeaks(t, "wasm", rcCorpusLeakBaselineWasm,
 		func(t *testing.T, src string) (string, string, int) {
@@ -138,9 +89,6 @@ func TestWASMRcCorpusLeakGate(t *testing.T) {
 		})
 }
 
-// TestRcCorpusLeakBaselinesNameRealCases keeps the two tables from
-// rotting: an entry naming a case the corpus no longer has would sit
-// there forever, unreachable and unfalsifiable.
 func TestRcCorpusLeakBaselinesNameRealCases(t *testing.T) {
 	have := map[string]bool{}
 	for _, c := range rcCorpusCases(t) {

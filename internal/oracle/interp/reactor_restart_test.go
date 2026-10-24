@@ -7,9 +7,6 @@ import (
 	"time"
 )
 
-// An interrupted wait is waited again for what is left of its deadline,
-// never for the whole timeout again, and an interruption past the deadline
-// is a timeout (#11646).
 func TestWaitRestartingKeepsTheDeadline(t *testing.T) {
 	t.Run("interrupted then ready", func(t *testing.T) {
 		var asked []int

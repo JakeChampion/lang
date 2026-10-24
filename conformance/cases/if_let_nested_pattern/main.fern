@@ -1,10 +1,10 @@
-// `if let` reads the shared pattern grammar (#5356): every pattern form a
-// `match` accepts works in its head.
-//
-// Nested pattern: the else branch doubles as the outer fallthrough,
-// so a `Some(Err(_))` payload runs it rather than falling off the
-// merged inner match.
-// exit: 3*10 + 1*2 + 1
+
+
+
+
+
+
+
 enum Inner { Ok2(i32), Err2 }
 enum Outer { Wrap(Inner), Bare }
 function f(o: Outer): i32 {

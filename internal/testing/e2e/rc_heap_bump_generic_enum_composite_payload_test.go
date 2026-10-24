@@ -4,25 +4,6 @@ import (
 	"testing"
 )
 
-// Composite-of-ParamType generic-enum payload reclamation (#2704 class 2
-// residual). A payload like `W(T[])` slipped past enumVariantDropPlan's
-// top-level-ParamType bail and was classified from the still-generic
-// shape, so a `Wrap[string]`'s drop glue freed the box and the OUTER
-// buffer only (`__fern_arr_dec`) and leaked every element string —
-// pre-fix this bump grows ~32 B/iteration. substituteEnumDecl now
-// substitutes ParamTypes recursively (substituteTypeParamsDeep), so the
-// plan sees `string[]` and routes the payload through the element-aware
-// `__fern_drop_arr_str`. These pin the bounded high-water +
-// value-correctness + 0-over-release contract on all three backends.
-//
-// The payload is a FRESH array literal (moved into the box, sole owner
-// rc==1) so the glue's unique path actually reaches the elements. A
-// NAMED local stored as a payload is a different, pre-existing
-// conservatism: the construction inc makes the box co-own it, but
-// computeFreeEligible's escape taint keeps the local from ever freeing
-// its own reference (a safe leak, deliberately over-conservative) —
-// that shape can't observe this fix.
-
 func genEnumCompositeBumpSrc(n string) string {
 	return `enum Wrap[T] { W(T[]), Empty }
 function main(): i32 {
@@ -43,10 +24,6 @@ function main(): i32 {
 }`
 }
 
-// Shares the payload array with a live local `a` (adversarial double-free /
-// UAF shape) and uses it after the enum is built — 0 iff value-correct AND
-// no over-release. This shape leaks by design (escape taint), so only the
-// value + underflow contracts are asserted, not the bump.
 const genEnumCompositeUnderflowSrc = `enum Wrap[T] { W(T[]), Empty }
 function main(): i32 {
     let i: i32 = 0;
@@ -87,9 +64,6 @@ func TestArm64GenericEnumCompositePayloadReclaim(t *testing.T) {
 }
 
 func TestWASMGenericEnumCompositePayloadReclaim(t *testing.T) {
-	// The wasm allocator's high-water stabilises late (~a page), so
-	// compare N=5000 vs N=50000 like the field-of-fresh wasm leg — the
-	// pre-fix leak (~96 B/iter) still separates them by megabytes.
 	small := runWasm(t, genEnumCompositeBumpSrc("5000"))
 	large := runWasm(t, genEnumCompositeBumpSrc("50000"))
 	if small != large {

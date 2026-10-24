@@ -5,46 +5,19 @@ import (
 	"testing"
 )
 
-// cloArrayFieldBindCases pin the BIND-then-call and for-loop shapes of a
-// closure-array element loaded from a struct field — issue #5160 defect #2
-// (the segfault sibling of the direct-call defect #1 that
-// TestSelfHostCloArrayFieldCallIR* covers). The field `r.hs` is `fn[]`, whose
-// element is a closure BOX, so a call through a local bound from it (element or
-// whole-array alias) or through a for-loop variable over it must dispatch
-// env-first (box[0] = fn_addr, box passed as __env). A bare `call *reg` on the
-// box POINTER jumps into the box's data and segfaults.
-//
-// The bound element and the loop variable BORROW the struct-owned closure box,
-// which the struct's field reclaim frees. The `rc-soundness` churn probe
-// (__rc_underflow_count / __heap_bump_bytes) pins that element bind, direct
-// foreach, and whole-field-alias foreach each reclaim their boxes exactly once.
-//
-// Exit codes cross-checked against the interpreter.
 var cloArrayFieldBindCases = []struct {
 	name string
 	src  string
 	exit int
 }{
-	// let f = r.hs[0]; f() — the canonical repro B.
 	{"bind", "struct Reg { hs: (() => i32)[] } function main(): i32 { let n: i32 = 40; let r = Reg { hs: [() => n] }; let f = r.hs[0]; return f(); }", 40},
-	// let fns = r.hs; fns[0]() — whole-array alias, then indexed call.
 	{"alias", "struct Reg { hs: (() => i32)[] } function main(): i32 { let n: i32 = 40; let r = Reg { hs: [() => n] }; let fns = r.hs; return fns[0](); }", 40},
-	// for h in r.hs { acc += h() } — the for-loop idiom, two capturing elements.
 	{"for", "struct Reg { hs: (() => i32)[] } function main(): i32 { let n: i32 = 2; let r = Reg { hs: [() => n, () => n + 1] }; let acc: i32 = 0; for h in r.hs { acc = acc + h(); } return acc; }", 5},
-	// Bind of an element from a closure taking an argument.
 	{"bind-arg", "struct Reg { hs: ((i32) => i32)[] } function main(): i32 { let n: i32 = 5; let r = Reg { hs: [(x: i32) => x + n] }; let f = r.hs[0]; return f(10); }", 15},
-	// alias then for-loop over the aliased local (both fixes together).
 	{"alias-for", "struct Reg { hs: (() => i32)[] } function main(): i32 { let n: i32 = 3; let r = Reg { hs: [() => n, () => n * 2] }; let fns = r.hs; let acc: i32 = 0; for h in fns { acc = acc + h(); } return acc; }", 9},
-	// RC soundness: run the element-bind / direct-foreach / whole-field-alias
-	// shapes N times and probe for over-release (__rc_underflow_count) and unbounded
-	// heap growth (__heap_bump_bytes) — the borrowed element boxes must be
-	// reclaimed by the owning struct exactly once, never dec'd a second time by
-	// the binding's / loop var's exit-sweep.
 	{"rc-soundness", "struct Reg { hs: (() => i32)[] } function one(k: i32): i32 { let r = Reg { hs: [() => k, () => k + 1] }; let f = r.hs[0]; let acc: i32 = f(); for h in r.hs { acc = acc + h(); } let fns = r.hs; for g in fns { acc = acc + g(); } return acc; } function churn(n: i32): i32 { let i: i32 = 0; let s: i32 = 0; while (i < n) { s = one(i); i = i + 1; } return s; } function main(): i32 { let w: i32 = churn(3000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(3000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 4096) { return 98; } if (w != x) { return 97; } return 0; }", 0},
 }
 
-// TestSelfHostCloArrayFieldBindIRX86_64 — the x86-64 fix, through the
-// production driver (asm_ir_run).
 func TestSelfHostCloArrayFieldBindIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -72,9 +45,6 @@ func TestSelfHostCloArrayFieldBindIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostCloArrayFieldBindIRArm64 — CI-gated arm64 counterpart. The fix is
-// in the shared lowering, so the arm64 IR backend picks it up for free;
-// this pins that. Mirrors TestSelfHostCloArrayFieldCallIRArm64.
 func TestSelfHostCloArrayFieldBindIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

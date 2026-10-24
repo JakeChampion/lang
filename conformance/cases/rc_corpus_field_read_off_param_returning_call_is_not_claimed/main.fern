@@ -1,20 +1,20 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// The fresh-container field read (#6401) applied to a container the
-// caller still owns: `pick` RETURNS ITS OWN PARAMETER, so
-// `pick(bx).items` hands back the struct `bx` holds, and `bx` is read
-// again after every extraction.
-//
-// What this pins is the RUNTIME backstop, not the static predicate.
-// Measured: deliberately breaking the static gate so it claims this
-// container leaves the case passing on all three backends, because
-// `return <param>` emits the return-transfer inc and the container
-// arrives at rc 2 — emitOwnedSlotDrop's is_unique gate then declines
-// and only decs. That is the safety argument the lowering rests on,
-// so it is worth a case; it is NOT evidence that the static gate is
-// correct, and a change that removed the is_unique gate is what this
-// would catch.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import "core/int";
 import "std/i32";
 struct P { a: i32, b: i32 }

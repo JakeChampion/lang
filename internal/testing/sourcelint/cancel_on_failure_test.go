@@ -6,7 +6,6 @@ import (
 	"testing"
 )
 
-// workflowName returns a workflow's top-level `name:`.
 func workflowName(src string) (string, bool) {
 	for _, l := range strings.Split(src, "\n") {
 		if rest, ok := strings.CutPrefix(l, "name: "); ok {
@@ -16,8 +15,6 @@ func workflowName(src string) (string, bool) {
 	return "", false
 }
 
-// watchedWorkflows returns the `workflows:` filter of a `workflow_run`
-// trigger.
 func watchedWorkflows(on string) []string {
 	var out []string
 	inList := false
@@ -35,16 +32,6 @@ func watchedWorkflows(on string) []string {
 	return out
 }
 
-// ci.yml calls the reaper once per lane, from a job that waits on that lane
-// alone. That is what cancels the run the moment ANY lane concludes failure
-// rather than when all of them have — and every lane needs its own, because a
-// job can wait on all of a set or on one of it, never on the first of it.
-//
-// A lane missing here is silent in both directions: its own failure reaps
-// nothing, and it holds the PR-wide lock while a sibling is already red. That
-// is the shape of drift this repo has paid for repeatedly — a list maintained
-// by hand beside the thing it describes (scripts/unit-test-packages, and
-// TestPRLanesShareOneDocOnlyFilter next door).
 func TestCancelOnFailureWatchesEveryPRLane(t *testing.T) {
 	lanes := ciLanes(t)
 	reapers := map[string]ciJob{}
@@ -101,11 +88,6 @@ func TestCancelOnFailureWatchesEveryPRLane(t *testing.T) {
 	}
 }
 
-// The reaper cancels the run it is part of, so every guard that decides
-// WHETHER is a correctness boundary — and all of them live in an inline
-// `github-script` body where nothing type-checks them. The failure mode is a
-// cancelled run somebody was relying on, visible only as CI that never
-// finished. Same reasoning as TestCancelOnMergeReapsSafely next door.
 func TestCancelOnFailureReapsSafely(t *testing.T) {
 	src := workflowSource(t, reaperFile)
 

@@ -41,8 +41,6 @@ function main(): i32 {
 }
 `
 
-// usize is the host's pointer width under the interpreter, as target_arch()
-// is the host: it wraps there, reads unsigned, and masks a shift count to it.
 func TestUsizeWrapsAtTheHostPointerWidth(t *testing.T) {
 	cases := []struct {
 		fn     string

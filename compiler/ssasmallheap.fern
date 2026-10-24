@@ -1,23 +1,16 @@
-// Finite initialized heap interpretation for one selected scalar record class.
 import "./ssaallocationchain" as allocation;
 import "./ssaconstructorbound" as constructor;
 import "./ssaprepare";
 import "./ssasmallarraymachine" as release;
 
-// These records are input data, not ownership or instruction certificates.
-// The header is the SAME word: capacity while live, next address while free.
-// Generation is ghost state for this trace, not an emitted runtime tag.
 pub struct Block { address: i64, header: i64, rc: i32, generation: i32, live: boolean }
 
 pub struct Heap { base: i64, cursor: i64, end: i64, head: i64, blocks: Block[] }
 
-// kind0 constructs and kind1 releases. Address/generation identify the expected
-// result or consumed credit. Copies of this data never create another credit.
 pub struct Action { kind: i32, address: i64, generation: i32 }
 
 struct Next { heap: Heap, ok: boolean }
 
-// Transition data, never an accepted instruction or ownership certificate.
 pub struct Transition { heap: Heap, address: i64, generation: i32, ok: boolean }
 
 pub function construct(capacity: i32, h: Heap): Transition {
@@ -61,7 +54,6 @@ function bounds(capacity: i32, h: Heap): boolean {
   if (capacity != 2 && capacity != 3 || h.base < 65536 || h.base % 8 != 0) {
     return false;
   }
-  // Positive low canonical addresses; subtraction is safe after these bounds.
   if (h.end <= h.base || h.end >= 140737488355328 as i64) {
     return false;
   }
@@ -121,9 +113,6 @@ function members(h: Heap): boolean {
   return true;
 }
 
-// Checks the finite representation only. Linked storage, mapping permissions
-// and exclusive ownership of each represented credit remain external premises.
-// Unrepresented prefix gaps are opaque and are never allocated by this model.
 pub function valid(capacity: i32, heap: Heap): boolean {
   return bounds(capacity, heap) && separated(capacity, heap) && members(heap);
 }
@@ -173,8 +162,6 @@ function step(capacity: i32, h: Heap, a: Action): Next {
   return Next { heap: h, ok: false };
 }
 
-// Computes every successor privately. Invariant checking cannot authenticate
-// that an actual caller executes this supplied trace or owns its initial data.
 pub function trace(capacity: i32, initial: Heap, actions: Action[]): boolean {
   if (!valid(capacity, initial)) {
     return false;
@@ -190,15 +177,6 @@ pub function trace(capacity: i32, initial: Heap, actions: Action[]): boolean {
   return true;
 }
 
-// Conditional finite trace: derive the selected C, constructor/allocator and
-// count-one release effects from this SAME output. P=B+16 and class=C+3 bind
-// the allocator block/link to the release's P-16 word. A pop consumes the
-// current link; construction restores C/RC1 before a later release reads them.
-// Scalar fields require no child credits. The initial mapping, linked globals,
-// disjoint writable stack/shape storage and exclusive initial credits are
-// premises. The mapping and other classes are not established by this data.
-// No shared counts, caller-to-trace binding, initialization invariant, general
-// sizes, terminal/debug/other-target or default admission is claimed here.
 pub function check(output: ssaprepare.Output, name: string, initial: Heap, actions: Action[]): boolean {
   let bound = constructor.resolve(output, name);
   return bound.error == "" && allocation.record(output, name) && release.check_native_record(output.text) && trace(bound.words, initial, actions);

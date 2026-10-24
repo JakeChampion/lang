@@ -5,34 +5,6 @@ import (
 	"testing"
 )
 
-// --- `own` struct params: released at exit, donated with string / enum fields
-// (#5342) -------------------------------------------------------------------
-//
-// The shape family, measured on x86-64 at 100 rounds:
-//
-//	bump(p: P): P { return P { ...p, n: p.n + 1 }; }     P { s: string, n: i32 }
-//	  called as bump(P { s: w(i), n: i })
-//	bump(own p: P): P { … the same … }
-//	bumpq(own p: Q): Q { … }, Q { e: E, n: i32 }
-//	bump(own p: N): N { … }, N { m: i32, n: i32 }        (reuse fires)
-//
-// A call result built by a functional update `T { ...base, … }` is fresh when
-// every field the spread CARRIES reaches the new box counted, so the caller
-// releases it; and an `own` struct param the frame still holds at exit is the
-// callee's to release.
-//
-// Two hazards are pinned too:
-//
-//   - An `own` position is a move: the caller must not stash and free a fresh
-//     argument the callee has taken.
-//   - A string override in an own-update must not free the old string where
-//     the caller's construction took no share of it.
-//     `unrouted_string_own_update_refused` reads the value back after
-//     allocation churn between the free and the read. FERN_SANITIZE cannot see
-//     this one: the quarantine stops the recycling that exposes it.
-//
-// Every row is gated on `__rc_underflow_count()` and runs a second leg under
-// FERN_SANITIZE=1. Each want is the `bin/fern -interp` answer.
 type ownParamReleaseCase struct {
 	name string
 	src  string
@@ -54,18 +26,6 @@ func ownParamReleaseMain(body string) string {
 func ownParamReleaseCases() []ownParamReleaseCase {
 	return []ownParamReleaseCase{
 		{
-			// #8628: one exit returns the param bare, a sibling exit supersedes
-			// it with a spread that OVERRIDES an rc field. The superseding exit
-			// must release the param, or the overridden field's old buffer leaks
-			// once per call — 10002/5000, 360,080 bytes on the issue's own
-			// reproducer.
-			//
-			// Only the BARE exit elides its release, which is the move: there is
-			// no return-transfer retain for structs, so eliding the dec is the
-			// whole hand-off. A LOWER free count here is that elision spreading
-			// to the superseding exit; a HIGHER one is the bare exit releasing a
-			// box it just handed the caller, which the underflow check catches
-			// as exit 99.
 			name: "own_bare_ret_sibling_supersedes",
 			src: ownParamReleaseHead + `@noinline
 function flush(own p: P, k: i32): P {
@@ -76,8 +36,6 @@ function flush(own p: P, k: i32): P {
 			want: 63,
 		},
 		{
-			// THE BORROWED ROW: the argument temp and the call result are both
-			// released.
 			name: "borrowed_spread_string",
 			src: ownParamReleaseHead + `@noinline
 function bump(p: P): P { return P { ...p, n: p.n + 1 }; }` +
@@ -85,8 +43,6 @@ function bump(p: P): P { return P { ...p, n: p.n + 1 }; }` +
 			want: 78,
 		},
 		{
-			// THE OWN STRING ROW. Was 300/100 live 12000. The callee reused
-			// the param's box already (the own-update family); `q` leaked.
 			name: "own_spread_string",
 			src: ownParamReleaseHead + `@noinline
 function bump(own p: P): P { return P { ...p, n: p.n + 1 }; }` +
@@ -94,8 +50,6 @@ function bump(own p: P): P { return P { ...p, n: p.n + 1 }; }` +
 			want: 78,
 		},
 		{
-			// THE OWN ENUM ROW. Was 300/0 live 13600: reuse refused for the
-			// enum field, the param never released, `q` never released.
 			name: "own_spread_enum",
 			src: `enum E { A(i32), B(i32) }
 struct Q { e: E, n: i32 }
@@ -105,9 +59,6 @@ function bumpq(own p: Q): Q { return Q { ...p, n: p.n + 1 }; }` +
 			want: 40,
 		},
 		{
-			// The scalar control, which read 100/100 on the parent by accident:
-			// the caller freed the argument the callee had reused as its
-			// result, and the result was then read after the free.
 			name: "own_scalar_control",
 			src: `struct N { m: i32, n: i32 }
 @noinline
@@ -116,8 +67,6 @@ function bump(own p: N): N { return N { ...p, n: p.n + 1 }; }` +
 			want: 40,
 		},
 		{
-			// The borrowed scalar control. Was 200/100: the argument temp was
-			// released, `q` was not.
 			name: "borrowed_scalar_control",
 			src: `struct N { m: i32, n: i32 }
 @noinline
@@ -126,8 +75,6 @@ function bump(p: N): N { return N { ...p, n: p.n + 1 }; }` +
 			want: 40,
 		},
 		{
-			// An `own` param the callee only READS: nothing donated, so the
-			// exit release is the only thing that frees it.
 			name: "own_read_only",
 			src: ownParamReleaseHead + `@noinline
 function sink(own p: P): i32 { return p.n + p.s.len(); }` +
@@ -135,9 +82,6 @@ function sink(own p: P): i32 { return p.n + p.s.len(); }` +
 			want: 61,
 		},
 		{
-			// Passed on to another `own` position: the first frame's credit is
-			// refused (a non-borrowable argument is a move) and the second
-			// frame releases. One owner at every point.
 			name: "own_passed_on",
 			src: ownParamReleaseHead + `@noinline
 function sink(own p: P): i32 { return p.n + p.s.len(); }
@@ -147,9 +91,6 @@ function pass_on(own p: P): i32 { let k: i32 = p.n; return sink(p) + k; }` +
 			want: 31,
 		},
 		{
-			// A VOID callee that falls off its end. The implicit exit went
-			// through the backend's default epilogue with no sweep at all —
-			// void functions leaked every local there, own params included.
 			name: "own_void_fallthrough",
 			src: ownParamReleaseHead + `@noinline
 function sink_void(own p: P): void { let k: i32 = p.n; if (k < 0) { return; } }` +
@@ -157,8 +98,6 @@ function sink_void(own p: P): void { let k: i32 = p.n; if (k < 0) { return; } }`
 			want: 53,
 		},
 		{
-			// `return p` hands the moved-in box straight back, so the callee
-			// does not release it and the caller's binding does instead.
 			name: "own_returned_bare",
 			src: ownParamReleaseHead + `@noinline
 function id(own p: P): P { if (p.n < 0) { return P { ...p, n: 0 }; } return p; }` +
@@ -166,10 +105,6 @@ function id(own p: P): P { if (p.n < 0) { return P { ...p, n: 0 }; } return p; }
 			want: 61,
 		},
 		{
-			// REFUSED reuse (a borrowed string as the override) over a type
-			// with an ARRAY field: the spread copies `xs` into the result
-			// COUNTED, so the param's exit release stays deep ("OWNREL:") and
-			// the result's own drop releases its share — every box balances.
 			name: "own_array_spread_refused_reuse",
 			src: `import "std/i32";
 struct A { xs: i32[], s: string, n: i32 }
@@ -181,9 +116,6 @@ function relabel(own p: A, t: string): A { return A { ...p, s: t }; }` +
 			want: 60,
 		},
 		{
-			// The own-update string override over a COUNTED share: the
-			// argument literal took `h.s` with a retain, so the reuse arm's
-			// rc-aware free only decs and `h` keeps its string.
 			name: "field_read_share_own_override",
 			src: ownParamReleaseHead + `struct H { s: string, k: i32 }
 @noinline
@@ -192,10 +124,6 @@ function bump(own p: P): P { return P { ...p, s: "override-payload-wide-enough-t
 			want: 51,
 		},
 		{
-			// The same with the call result SPREAD again in the caller —
-			// the shape that first exposed the bogus post-call free of an
-			// `own` argument (exit 99 with the type gate alone widened). The
-			// spread copy `z` holds its own count of `s`.
 			name: "call_result_spread_again",
 			src: ownParamReleaseHead + `struct H { s: string, k: i32 }
 @noinline
@@ -204,12 +132,6 @@ function bump(own p: P): P { return P { ...p, s: "override-payload-wide-enough-t
 			want: 51,
 		},
 		{
-			// THE USE-AFTER-FREE. `get` returns a field named `s`, which the
-			// routing scan reads as unsafe for EVERY `s` field, so neither P
-			// nor H routes and the argument literal takes no retain on `h.s`.
-			// The parent still admitted `bump` to the own-update family and
-			// freed `h.s` under `h`; `churn` recycles the box before the read.
-			// Parent: exit 77 (h.s.len() moved). Native: 12.
 			name: "unrouted_string_own_update_refused",
 			src: ownParamReleaseHead + `struct H { s: string, k: i32 }
 @noinline
@@ -222,10 +144,6 @@ function churn(i: i32): i32 { let a: string = w(i) + w(i + 1); let b: string = w
 			want: 12,
 		},
 		{
-			// A self-update followed by a return-position update, with a
-			// field bound out before either: the bind is counted, so the
-			// first update's free only decs, and `s2` releases its own
-			// count (#10371).
 			name: "self_update_then_return_update",
 			src: ownParamReleaseHead + `@noinline
 function bump(own p: P): P {
@@ -237,9 +155,6 @@ function bump(own p: P): P {
 			want: 34,
 		},
 		{
-			// The LOCAL self-overwrite family with an enum field bound out
-			// first: the same counted-bind argument the own admission rests
-			// on, witnessed on the family that already shipped.
 			name: "enum_field_bind_then_local_override",
 			src: `enum E { A(i32), B(i32) }
 struct Q { e: E, n: i32 }
@@ -257,12 +172,6 @@ function round(i: i32): i32 {
 			want: 67,
 		},
 		{
-			// A fresh literal at a COUNTED-RETAIN position: the callee appends
-			// it into a container it returns, so the box is shared after the
-			// call and the temp's release must skip the field walk (the
-			// rc==1 gate) and dec the box only. `churn` recycles any block
-			// freed early, so a premature release reads back as exit 77 or
-			// a crash rather than as a moved count.
 			name: "counted_position_array_field_temp",
 			src: `struct H { id: i32, xs: i32[] }
 struct Hold { items: H[], n: i32 }
@@ -274,9 +183,6 @@ function churn(i: i32): H { return H { id: i, xs: [900, 901, 902] }; }` +
 			want: 76,
 		},
 		{
-			// A callee that RETURNS a field of its param is not borrowable,
-			// so the widened temp stash must not fire on its argument: `g`
-			// aliases the literal's string and reads it after churn.
 			name: "borrowed_field_returning_callee_temp",
 			src: ownParamReleaseHead + `@noinline
 function get(x: P): string { return x.s; }
@@ -288,8 +194,6 @@ function churn(i: i32): i32 { let a: string = w(i) + w(i + 1); let b: string = w
 	}
 }
 
-// TestSelfHostOwnParamReleaseX86_64 — every row balances at live_bytes 0 with
-// no rc underflow, on the census leg and again under the quarantining allocator.
 func TestSelfHostOwnParamReleaseX86_64(t *testing.T) {
 	boxedProbes(t)
 	cli := newStrictCLI(t)
@@ -331,8 +235,6 @@ func TestSelfHostOwnParamReleaseX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostOwnParamReleaseWasmIR — the wasm sibling. Exit codes only: an
-// over-release moves no byte count on any backend.
 func TestSelfHostOwnParamReleaseWasmIR(t *testing.T) {
 	cli := newStrictCLI(t)
 	for _, tc := range ownParamReleaseCases() {
@@ -344,7 +246,6 @@ func TestSelfHostOwnParamReleaseWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostOwnParamReleaseIRArm64 — the arm64 sibling under qemu.
 func TestSelfHostOwnParamReleaseIRArm64(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
 	cli := newStrictCLI(t)
@@ -357,17 +258,6 @@ func TestSelfHostOwnParamReleaseIRArm64(t *testing.T) {
 	}
 }
 
-// --- `return f(xs)` handing a pointer-element array back through an `own`
-// position (#10718) ----------------------------------------------------------
-//
-// A callee that does not consume a pointer-element `own` array hands an
-// identical buffer back uncounted, so `return f(xs)` is `xs = f(xs); return
-// xs`. The exit sweep must not release `xs` there: freeing the buffer the
-// result still holds shows up as exit 77 or a sanitizer use-after-free.
-//
-// The elements are static strings, and the array-of-arrays row has no rows,
-// so the only heap unit in play is the buffer the handback moves.
-// Expected values agree with `bin/fern -interp`.
 const ownHandbackReturnHead = `@noinline
 function pass(own xs: string[]): string[] {
     let n: i32 = 0;
@@ -401,29 +291,22 @@ const ownHandbackReturnMain = `let ys: string[] = build(i); let c: string[] = ch
 func ownHandbackReturnCases() []ownParamReleaseCase {
 	return []ownParamReleaseCase{
 		{
-			// The issue's shape: an owned local handed back unchanged.
 			name: "local_handed_back",
 			src:  ownHandbackReturnHead + ownHandbackBuild("pass(xs)") + ownParamReleaseMain(ownHandbackReturnMain),
 			want: 53,
 		},
 		{
-			// The same through an identity callee the inliner takes.
 			name: "local_handed_back_inlined",
 			src: ownHandbackReturnHead + "@noinline function same(own xs: string[]): string[] { return xs; }\n" +
 				ownHandbackBuild("same(xs)") + ownParamReleaseMain(ownHandbackReturnMain),
 			want: 53,
 		},
 		{
-			// Every other round the callee returns a different buffer, and
-			// the local it was handed is released at exit as a rebind would.
 			name: "local_replaced",
 			src:  ownHandbackReturnHead + ownHandbackBuild("swap(xs, i)") + ownParamReleaseMain(ownHandbackReturnMain),
 			want: 3,
 		},
 		{
-			// A flagged `own` parameter that owns a grown buffer when it
-			// reaches the return: kept when handed back, released when the
-			// callee replaced it.
 			name: "flagged_param_replaced",
 			src: ownHandbackReturnHead + `@noinline
 function mid(own xs: string[], i: i32): string[] {
@@ -453,10 +336,6 @@ function build(i: i32): i32[][] {
 	}
 }
 
-// Pointer-element arrays whose elements the heap holds (#10721): strings built
-// at run time and rows appended in a loop. A callee that hands its `own`
-// argument back, or returns a fresh array in its place, gives the caller the
-// release of every element; so does a local built by appends and returned bare.
 const ownHandbackHeapHead = ownParamReleaseHead + `@noinline
 function spass(own xs: string[]): string[] { return xs; }
 @noinline
@@ -520,11 +399,6 @@ function build(i: i32): i32[][] {
 	}
 }
 
-// A closure handing back a value it captured (#10740). The lifted body reads
-// the capture out of the env box as a borrow of the captured local, so
-// returning it retains: the caller binds a closure call's array result as a
-// count it owns. Without the retain the caller's release took the local's
-// count, and the owner's own release underflowed.
 func closureCaptureReturnCases() []ownParamReleaseCase {
 	return []ownParamReleaseCase{
 		{
@@ -578,8 +452,6 @@ function main(): i32 {
 			want: 35,
 		},
 		{
-			// An `own` capture: the callee does not consume it, so the caller releases
-			// the literal it passed after the call, and the closure's return retains.
 			name: "closure_returns_captured_own_arrarr",
 			src: `@noinline
 function usr(f: (i32) => i32[][], i: i32): i32 {
@@ -604,7 +476,6 @@ function main(): i32 {
 			want: 36,
 		},
 		{
-			// The same with string[], beside a plain `own` callee.
 			name: "closure_returns_captured_own_strarr",
 			src: `import "std/i32";
 @noinline
@@ -633,16 +504,10 @@ function main(): i32 {
 	}
 }
 
-// TestSelfHostOwnHandbackReturnX86_64 — every row on both lowerings, balanced
-// at live_bytes 0 with no rc underflow, and clean under the quarantining
-// allocator.
 func TestSelfHostOwnHandbackReturnX86_64(t *testing.T) {
 	runBalancedRows(t, "ownhb", append(append(ownHandbackReturnCases(), ownHandbackHeapCases()...), closureCaptureReturnCases()...))
 }
 
-// runBalancedRows runs every case on both lowerings: the exit code is the
-// value check (99 is the rc underflow gate), the leakcheck must balance at
-// live_bytes 0, and the sanitize leg must be clean.
 func runBalancedRows(t *testing.T, prefix string, cases []ownParamReleaseCase) {
 	cli := newStrictCLI(t)
 	dir := t.TempDir()

@@ -1,10 +1,10 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Conditional alias via a match-expression — the shape that was
-// a latent use-after-free even for arrays before the escape-walk
-// fix. `a1` aliases `a0` through the match arms; a0 must survive
-// until both are read. Churned to force block reuse.
+
+
+
+
+
+
+
 import "core/int";
 function pick_arr(o: Option[i32], a0: i32[]): i32[] {
     return match (o) { Some(x) => a0, None => a0 };

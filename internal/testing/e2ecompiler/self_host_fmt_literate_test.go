@@ -10,10 +10,6 @@ import (
 	goprinter "github.com/jakechampion/lang/internal/syntax/printer"
 )
 
-// fmtLiterateDoc has two declaration chunks, a statement-list chunk, a root
-// whose `<<reference>>` lines keep it verbatim, a file root, a display-only
-// snippet, a `test` example, a fence in another language, and prose that
-// reads like Fern and like a chunk reference.
 const fmtLiterateDoc = "# Formatting a document\n" +
 	"\n" +
 	"function   prose( ):i32{return 1;}\n" +
@@ -65,11 +61,6 @@ const fmtLiterateDoc = "# Formatting a document\n" +
 	"let    x=1;\n" +
 	"```\n"
 
-// TestSelfHostFmtLiterate pins #12645: `fern -fmt` on a `.fern.md` formatted
-// the whole Markdown file as Fern, so `-fmt -w` emptied the document and
-// exited 0. Each document must now format exactly as the Go formatter does —
-// every chunk and file-root body formatted, every other line kept — under
-// `-fmt`, `-fmt -d` and `-fmt -w`, and the result must be a fixed point.
 func TestSelfHostFmtLiterate(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	root := repoRootFromTest(t)
@@ -78,11 +69,8 @@ func TestSelfHostFmtLiterate(t *testing.T) {
 	bin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
 
 	docs := map[string]string{
-		"several-chunks": fmtLiterateDoc,
-		// A fence left open runs to the end of the document; the final
-		// newline is not part of its body.
-		"unclosed-fence": "intro\n\n```fern\n<<*>>=\nfunction   main( ):i32{return 0;}\n",
-		// Nothing formattable: the document must come back byte for byte.
+		"several-chunks":  fmtLiterateDoc,
+		"unclosed-fence":  "intro\n\n```fern\n<<*>>=\nfunction   main( ):i32{return 0;}\n",
 		"only-references": "# Root\n\n```fern\n<<*>>=\n<<a>>\n```\n\n```fern\n<<a>>=\n```\n",
 	}
 	for _, rel := range []string{
@@ -148,9 +136,6 @@ func TestSelfHostFmtLiterate(t *testing.T) {
 	t.Run("keeps-prose", func(t *testing.T) { checkLiterateKeepsProse(t, runner, bin) })
 }
 
-// checkLiterateKeepsProse states the several-chunks case's properties without
-// the Go formatter: the prose that reads like code and the reference-bearing
-// root are untouched, and the chunks are formatted.
 func checkLiterateKeepsProse(t *testing.T, runner []string, bin string) {
 	path := filepath.Join(t.TempDir(), "doc.fern.md")
 	if err := os.WriteFile(path, []byte(fmtLiterateDoc), 0o644); err != nil {

@@ -1,23 +1,4 @@
-// std/http/compress — a response body compressed for the client that
-// asked for it: the content coding (RFC 9110 §8.4) `Accept-Encoding`
-// ranks highest among those offered (`HeaderMap.preferred_coding`), with
-// `Vary: Accept-Encoding` on every response whose coding depends on it.
-// Off unless a handler asks:
-//
-//     import "std/http/compress";
-//
-//     function page(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
-//       use req <- compress.compressed(req);
-//       return Ok(http.html(render()));
-//     }
-//
-// Only a body held whole (`BodyText`, `BodyBytes`) is compressed; a file
-// body is served precompressed by std/http/static instead, and a stream
-// or a chunk producer goes as it is. A response is left alone when it
-// already has a `Content-Encoding`, when its `Cache-Control` says
-// `no-transform`, when it is a 206 or carries no body, when its media type
-// is not one compression shrinks, when its body is under
-// `Options.min_size`, or when the coded body would be no smaller.
+// This module compresses HTTP response bodies under the request policy.
 
 import "std/deflate";
 import "std/zstd";
@@ -25,34 +6,20 @@ import "std/headers";
 import "std/http";
 import "std/http/cache";
 
-// `Options` — the least body worth compressing, in bytes, and the codings
-// offered, the most preferred first.
 pub struct Options { min_size: i32, codings: string[] }
 
-// `options()` — bodies of 1 KiB and up, in zstd or gzip, zstd preferred
-// when the client ranks them alike: below a packet's worth, compression
-// saves no round trip.
 pub function options(): Options {
   return Options { min_size: 1024, codings: ["zstd", "gzip"] };
 }
 
-// `compressed(req, next)` — the middleware: `next`'s response, a failure's
-// answer included, through `response` under `options()`.
 pub function compressed(req: HttpRequest, next: (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]): Result[HttpResponse, dyn http.ToResponse] {
   return Ok(response(req, http.respond(next(req)), options()));
 }
 
-// `compressed_with(req, o, next)` — `compressed` under `o`.
 pub function compressed_with(req: HttpRequest, o: Options, next: (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]): Result[HttpResponse, dyn http.ToResponse] {
   return Ok(response(req, http.respond(next(req)), o));
 }
 
-// `response(req, resp, o)` — `resp` with its body in the coding `req`
-// prefers among the `o.codings` this module writes: `Content-Encoding` names it, an `ETag` is
-// made weak since the bytes differ from the identity body's, and
-// `Accept-Ranges` goes, since a range of the coded body is not one the
-// handler answered. `Vary: Accept-Encoding` is added whichever coding is
-// chosen, identity included.
 pub function response(req: HttpRequest, resp: HttpResponse, o: Options): HttpResponse {
   if (!__eligible(resp, o)) {
     return resp;
@@ -69,9 +36,6 @@ pub function response(req: HttpRequest, resp: HttpResponse, o: Options): HttpRes
   return varied;
 }
 
-// `encode(coding, body)` — `body` in `coding`, None for one this module
-// does not write. zstd's window is at most 1 MiB, inside the 8 MiB a
-// client decoding `Content-Encoding: zstd` may hold (RFC 9659).
 pub function encode(coding: string, body: u8[]): Option[u8[]] {
   if (coding == "gzip") {
     return Some(deflate.gzip(body));
@@ -82,8 +46,6 @@ pub function encode(coding: string, body: u8[]): Option[u8[]] {
   return None;
 }
 
-// `__written(codings)` — those of `codings` `encode` writes, so a coding it
-// cannot write never outranks one it can.
 function __written(codings: string[]): string[] {
   let out: string[] = [];
   for c in codings {
@@ -94,9 +56,6 @@ function __written(codings: string[]): string[] {
   return out;
 }
 
-// `compressible(content_type)` — whether a body of that media type is one
-// compression shrinks: text, and the structured and script formats sent
-// as `application`, as well as SVG and the uncompressed font formats.
 pub function compressible(content_type: string): boolean {
   let t: string = __media_type(content_type);
   if (t.starts_with("text/") || t.ends_with("+json") || t.ends_with("+xml")) {
@@ -118,7 +77,6 @@ function __media_type(content_type: string): string {
   return content_type.trim().to_lower();
 }
 
-// `__eligible(resp, o)` — whether `resp` is one `response` may code.
 function __eligible(resp: HttpResponse, o: Options): boolean {
   if (resp.status == 206 || http.http_bodiless(resp.status) || resp.headers.has("Content-Encoding")) {
     return false;
@@ -152,8 +110,6 @@ function __whole(b: Body): boolean {
   return false;
 }
 
-// `__coded(r, coding, body)` — `r` carrying `body` in `coding`, or `r`
-// as it is when the coding is not written here or saves nothing.
 function __coded(r: HttpResponse, coding: string, body: u8[]): HttpResponse {
   match (encode(coding, body)) {
     Some(z) => {

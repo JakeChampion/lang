@@ -7,10 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// A trait default's own method outranks another trait's of the same name,
-// and `Self.f()` in an impl method or a default calls the impl type's
-// associated function, on the interpreter and every target. The self-host
-// twin is TestSelfHostTraitSelf.
 func TestTraitSelf(t *testing.T) {
 	main := e2eharness.WriteTraitSelfProgram(t)
 	t.Run("interp", func(t *testing.T) {

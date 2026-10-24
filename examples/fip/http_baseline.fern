@@ -1,13 +1,3 @@
-// examples/fip/http_baseline.fern — the idiomatic variant of the HTTP/1.1
-// codec (#9853, experiment 3): the same requests, routing and answers as
-// `http_fip.fern`, through `std/http`'s `http_parse_request` and
-// `http_serialize_response` as a handler would use them today.
-//
-// It is the control. The wire bytes become a string, the parse produces an
-// HttpRequest holding owned copies of the method, the path, every header
-// and the body, the handler builds an HttpResponse, and the serialiser
-// concatenates the reply. Nothing is annotated or owned; what the `fip`
-// variant's zero means is the difference between the two.
 import "core/cmp";
 import "std/bench";
 import "std/headers";
@@ -16,12 +6,6 @@ import "std/i32";
 import "std/i64";
 import "std/string";
 
-// ===================== THE CODEC =====================
-
-// route is the handler, spelled the same way in the `fip` variant: `/`
-// answers `ok`, `/echo` on a POST echoes the body, `/users/<id>` answers
-// the id, anything else is a 404; a served response carries the request id
-// back.
 function route(req: HttpRequest): HttpResponse {
   let resp: HttpResponse = http.text(404, "not found");
   if (req.path == "/") {
@@ -47,8 +31,6 @@ function route(req: HttpRequest): HttpResponse {
   return resp;
 }
 
-// serve parses wire[0, wire_len) as std/serve's loop would, routes it and
-// serialises the answer; a request the parser refuses gets the 400.
 function serve(wire: u8[], wire_len: i32): string {
   match (http.http_parse_request(string_from_bytes_unchecked(wire.take(wire_len)))) {
     Some(req) => {
@@ -59,15 +41,6 @@ function serve(wire: u8[], wire_len: i32): string {
     }
   }
 }
-
-// ===================== THE WORKLOAD =====================
-//
-// Identical in both variants, verbatim, so the runs differ in how the bytes
-// are held and in nothing else. Every 17th request is malformed, cycling
-// through the six refusals, so the validation ladder is exercised in the
-// steady state rather than in a separate test that proves nothing about
-// throughput. The request's length is left in the wire buffer's last four
-// bytes, past anything a request can reach.
 
 fip function max_wire(): i32 {
   return 1024;
@@ -135,7 +108,6 @@ fip function corruption(n: i64): i32 {
   return (n / (17 as i64) % (6 as i64)) as i32;
 }
 
-// Methods 0..3: GET, POST, PUT, DELETE. Only POST and PUT carry a body.
 fip function method_of(n: i64): i32 {
   return (n % (4 as i64)) as i32;
 }
@@ -166,8 +138,6 @@ fip function put_method(own w: u8[], at: i32, m: i32): u8[] {
   return put_str(w, at, "DELETE");
 }
 
-// Paths 0..4: `/`, `/echo`, `/users/<n>`, `/missing/<n>`, `/echo` again
-// (so a GET reaches it and is a 404).
 fip function path_of(n: i64): i32 {
   return (n % (5 as i64)) as i32;
 }
@@ -215,9 +185,6 @@ fip function put_length(own w: u8[], at: i32, cl: i32): u8[] {
   return put_crlf(w, at + 16 + digits(cl));
 }
 
-// build_request writes request `n` into the buffer it is handed and gives
-// it back with the length in its last four bytes. It takes the buffer `own`
-// in both variants: generating the input is the harness, not the codec.
 fip function build_request(own w: u8[], n: i64): u8[] {
   let id: i32 = n as i32;
   let m: i32 = method_of(n);
@@ -299,9 +266,6 @@ fip function wire_len_of(w: u8[]): i32 {
   return w[wire_len_at()] as i32 + w[wire_len_at() + 1] as i32 * 256;
 }
 
-// A running digest over every response byte. Two implementations of one
-// codec agree only if this agrees, which is what makes the comparison a
-// differential test rather than two unrelated benchmarks.
 fip function mix(d: i64, b: i32): i64 {
   let x: i64 = d ^ b as i64;
   x = x * (1099511628211 as i64);
@@ -322,8 +286,6 @@ function zeros_u8(n: i32): u8[] {
   return xs;
 }
 
-// ===================== DRIVER =====================
-
 function main(): i32 {
   let batch: i32 = 64;
   let rounds: i32 = 2000;
@@ -341,7 +303,6 @@ function main(): i32 {
     p = p + 1;
   }
 
-  // One warm round before the mark.
   let w: i32 = 0;
   while (w < batch) {
     wire = build_request(wire, w as i64);

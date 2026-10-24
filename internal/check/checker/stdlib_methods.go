@@ -4,11 +4,10 @@ package checker
 
 import "github.com/jakechampion/lang/internal/syntax/ast"
 
-// Generated from the stdlib sources by TestStdlibMethodIndex. After a stdlib
-// change, run `go test ./internal/check/checker -run TestStdlibMethodIndex -update`.
+// TestStdlibMethodIndex generates this file from the standard library sources.
+// Use `go test ./internal/check/checker -run TestStdlibMethodIndex -update` to regenerate it.
 //
-// stdlibMethodIndex maps a receiver's method surface (ast.ReceiverTypeName)
-// and a method name to the stdlib module that declares the method.
+// stdlibMethodIndex maps receiver and method names to their standard library modules.
 var stdlibMethodIndex = map[string]map[string]string{
 	"Option": {
 		"and":            "std/option",

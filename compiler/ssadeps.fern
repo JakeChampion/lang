@@ -1,5 +1,3 @@
-// Validate SSA value availability for semantic lifetime dependencies before
-// feeding them to ssalive. This proves neither reference counts nor uniqueness.
 import "./ssa";
 import "./ssalive";
 import "./util";
@@ -13,8 +11,6 @@ function contains(values: i32[], value: i32): boolean {
   return false;
 }
 
-// position_of maps a block id to its position in f.blocks, -1 for an id no
-// block carries: one table, so no walk below searches the block list.
 pub function position_of(f: ssa.SFunc): i32[] {
   let top: i32 = 0;
   for b in f.blocks {
@@ -31,7 +27,6 @@ pub function position_of(f: ssa.SFunc): i32[] {
   return out;
 }
 
-// Requires a structurally verified graph with an existing entry block.
 pub function reachable_blocks(f: ssa.SFunc): boolean[] {
   let at: i32[] = position_of(f);
   let reachable: boolean[] = __alloc_bool(f.blocks.len());
@@ -56,17 +51,8 @@ pub function reachable_blocks(f: ssa.SFunc): boolean[] {
   return reachable;
 }
 
-// Dom is the dominator tree of a function's reachable blocks, by position:
-// `pre` and `post` number each block in a walk of the tree, so a block
-// dominates another exactly when its interval contains the other's, and
-// `idom` is each block's immediate dominator, the entry its own. -1 marks
-// an unreachable block, which dominates nothing and is dominated by nothing.
-// `pre` and `post` share one clock, and `by_clock` names the block a clock
-// value enters (-1 where one leaves), so the blocks a block dominates are
-// those `by_clock` names from its `pre` to its `post`.
 pub struct Dom { pre: i32[], post: i32[], idom: i32[], by_clock: i32[] }
 
-// dom_holds reports whether position di dominates position bi.
 pub function dom_holds(d: Dom, bi: i32, di: i32): boolean {
   if (d.pre[bi] < 0 || d.pre[di] < 0) {
     return false;
@@ -74,17 +60,10 @@ pub function dom_holds(d: Dom, bi: i32, di: i32): boolean {
   return d.pre[di] <= d.pre[bi] && d.post[bi] <= d.post[di];
 }
 
-// dominates computes the tree with Cooper, Harvey and Kennedy's iteration over
-// reverse postorder: each block's immediate dominator is the intersection of
-// its processed predecessors' dominator paths, found by walking the two up
-// by postorder number. It settles in a few rounds on a reducible graph, where
-// the n-by-n dataflow it replaces cost a pass over every block pair per round.
 pub function dominates(f: ssa.SFunc): Dom {
   let n: i32 = f.blocks.len();
   let at: i32[] = position_of(f);
   let entry: i32 = at[f.entry];
-  // Postorder by an explicit stack: a block is numbered once all its
-  // successors are.
   let po: i32[] = util.minus_ones(n);
   let order: i32[] = [];
   let seen: boolean[] = __alloc_bool(n);
@@ -143,7 +122,6 @@ pub function dominates(f: ssa.SFunc): Dom {
       }
     }
   }
-  // Number the tree: children lists, then an explicit-stack walk.
   let first_child: i32[] = util.minus_ones(n);
   let next_sibling: i32[] = util.minus_ones(n);
   let bi: i32 = 0;
@@ -191,7 +169,6 @@ pub function dominates(f: ssa.SFunc): Dom {
   return Dom { pre: pre, post: post, idom: idom, by_clock: by_clock };
 }
 
-// push_at writes v at stack depth d, growing the array only past its length.
 function push_at(own stack: i32[], d: i32, v: i32): i32[] {
   if (d < stack.len()) {
     return stack.with(d, v);
@@ -239,9 +216,6 @@ function use_error(value: i32, block: i32, pos: i32, f: ssa.SFunc, dependencies:
   return "";
 }
 
-// The ownership planner's lifetime entry must validate these prerequisites
-// before receiving any live sets. Exact semantic types and counted-unit
-// verification remain separate obligations of that planner's typed input.
 pub function analyze(f: ssa.SFunc, dependencies: i32[][]): ssalive.Flow {
   let why: string = limits_error(f);
   if (why == "" && util.verify_on()) {
@@ -253,9 +227,6 @@ pub function analyze(f: ssa.SFunc, dependencies: i32[][]): ssalive.Flow {
   return ssalive.compute_checked(f, dependencies);
 }
 
-// limits_error refuses a graph too large for the dominator and live matrices.
-// Unlike verify, which re-checks what the lift built, it holds for every
-// compile.
 pub function limits_error(f: ssa.SFunc): string {
   let n: i32 = f.blocks.len();
   if (n > 0 && n > 2147483647 / n) {
@@ -267,9 +238,6 @@ pub function limits_error(f: ssa.SFunc): string {
   return "";
 }
 
-// Dependencies contain their full transitive closure and are keyed by values,
-// not mutable source bindings. Phi results receive independent units in the
-// later planner; their incoming borrows are checked on the incoming edges.
 pub function verify(f: ssa.SFunc, dependencies: i32[][]): string {
   let err: string = ssalive.input_error(f, dependencies);
   if (err != "") {
@@ -313,8 +281,6 @@ pub function verify(f: ssa.SFunc, dependencies: i32[][]): string {
     }
     bi = bi + 1;
   }
-  // Definitions must exist even in unreachable blocks. Dominance below is
-  // meaningful only for reachable uses and executable predecessor edges.
   for b in f.blocks {
     for ins in b.insts {
       for arg in ins.args {

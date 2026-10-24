@@ -35,7 +35,6 @@ function check(sub: ircore.Sub): void {
   require(nominal(take.params[0], "Parent") && nominal(take.result, "Leaf"), 3);
   let replacement = row(sub, "replace");
   require(replacement.params.len() == 2 && replacement.modes.len() == 2, 4);
-  // The child is consuming in the chosen ABI despite lacking source `own`.
   require(replacement.modes[0] == 3 && replacement.modes[1] == 3, 5);
   require(nominal(replacement.params[0], "Parent") && nominal(replacement.params[1], "Leaf") && nominal(replacement.result, "Parent"), 6);
   let read = row(sub, "read");
@@ -48,8 +47,6 @@ function check(sub: ircore.Sub): void {
   let boxed = row(sub, "read_box");
   require(boxed.params.len() == 1 && boxed.modes.len() == 1 && boxed.modes[0] == 2, 10);
   if let typeinfo.TypeStruct(b) = boxed.params[0] {
-    // The checked module has already specialized this nominal declaration.
-    // Preserve its actual clone identity, not the source template spelling.
     require(b.name == "Box__i64" && b.args.len() == 0, 11);
     if let typeinfo.TypeI32(n) = boxed.result {
       require(n.width == 64 && !n.unsigned, 12);

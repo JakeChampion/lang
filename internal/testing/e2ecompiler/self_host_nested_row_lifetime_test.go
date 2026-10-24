@@ -9,8 +9,6 @@ import (
 	"testing"
 )
 
-// The source container dies inside collect. Keep allocations alive after it
-// returns so a missing retain overwrites the borrowed row before its read.
 const nestedRowLifetimeSource = `struct Rows { rows: ELEMENT[][] }
 function collect(): Rows {
   let out: Rows = Rows { rows: [] };

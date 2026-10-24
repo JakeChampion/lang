@@ -66,8 +66,6 @@ function block_controls(row: ssaprepare.Emitted, f: ssa.SFunc): void {
   check(row, ssa.SFunc { ...high, blocks: high.blocks.with(0, ssa.SBlock { ...b, term: ssa.STerm { ...b.term, kind_tag: 2, target: 2147483647 } }) }, false);
 }
 
-// Exercise growing indexes with sparse IDs, physical order unrelated to CFG
-// order, and a late duplicate or missing use. The original graph stays intact.
 function index_controls(row: ssaprepare.Emitted, f: ssa.SFunc, join: i32): void {
   let b = f.blocks[join];
   let insts = b.insts;
@@ -121,12 +119,10 @@ function queue_controls(row: ssaprepare.Emitted, f: ssa.SFunc, join: i32): void 
   }
   let diamond = ssa.SFunc { ...f, nvals: f.nvals + 1, blocks: blocks };
   check(row, diamond, true);
-  // A completed predecessor is not enough: tail must intersect both rows.
   let copy = ssa.SInst { kind_tag: 7, result: f.nvals + 1, args: [b.term.value], imm: 0, str: "" };
   let bad = blocks.with(2, ssa.SBlock { ...left, insts: [copy] });
   bad = bad.with(0, ssa.SBlock { ...tail, term: ssa.STerm { ...tail.term, value: copy.result } });
   check(row, ssa.SFunc { ...diamond, nvals: f.nvals + 2, blocks: bad }, false);
-  // Finishing the entry component must not hide a disconnected cycle.
   let c = ssa.SBlock { ...left, id: 20000, preds: [20001], term: ssa.STerm { ...left.term, target: 20001 } };
   let d = ssa.SBlock { ...c, id: 20001, preds: [c.id], term: ssa.STerm { ...c.term, target: c.id } };
   check(row, ssa.SFunc { ...diamond, blocks: blocks.append(c).append(d) }, false);
@@ -144,9 +140,6 @@ function predecessor_graph(f: ssa.SFunc, join: i32, take_first: boolean): ssa.SF
   let preds: i32[] = [];
   let args: i32[] = [];
   let i = 65;
-  // Reverse physical and predecessor order relative to the branching spine.
-  // Each predecessor defines its own value, so a sorted-index position must
-  // never be confused with the original phi argument position.
   while (i > 0) {
     i = i - 1;
     let leaf = 100000 + i * 31;
@@ -176,8 +169,6 @@ function predecessor_controls(row: ssaprepare.Emitted, f: ssa.SFunc, join: i32):
   check(row, replace(good, tail, phi, b.preds.with(last, 2147483647)), false);
   check(row, replace(good, tail, phi, b.preds.with(last, -1)), false);
   check(row, replace(good, tail, ssa.SInst { ...phi, args: phi.args.with(last, phi.args[0]) }, b.preds), false);
-  // A declared predecessor must actually target this block, and every
-  // outgoing edge must appear in its destination's predecessor list.
   check(row, replace(good, tail, phi, b.preds.with(last, f.blocks[join].id)), false);
   let args: i32[] = [];
   let preds: i32[] = [];
@@ -222,13 +213,10 @@ pub function run(out: ssaprepare.Output): void {
   check(row, replace(f, join, ssa.SInst { ...phi, args: [phi.result, phi.args[1]] }, b.preds), false);
   check(row, replace(f, join, ssa.SInst { ...phi, args: [f.nvals, phi.args[1]] }, b.preds), false);
   check(row, replace(f, join, ssa.SInst { ...phi, kind_tag: 7 }, b.preds), false);
-  // Another valid phi reads the same immutable predecessor snapshots. A phi
-  // cannot instead read that newly defined same-block value.
   let extra = ssa.SInst { ...phi, result: f.nvals };
   let two = ssa.SFunc { ...f, nvals: f.nvals + 1, blocks: f.blocks.with(join, ssa.SBlock { ...b, insts: [extra, phi] }) };
   check(row, two, true);
   check(row, ssa.SFunc { ...two, blocks: two.blocks.with(join, ssa.SBlock { ...b, insts: [extra, ssa.SInst { ...phi, args: [extra.result, phi.args[1]] }] }) }, false);
-  // Copies preserve values; they do not manufacture a parameter or a credit.
   let copy = ssa.SInst { kind_tag: 7, result: f.nvals, args: [phi.result], imm: 0, str: "" };
   let copied = ssa.SFunc { ...f, nvals: f.nvals + 1, blocks: f.blocks.with(join, ssa.SBlock { ...b, insts: [phi, copy], term: ssa.STerm { ...b.term, value: copy.result } }) };
   check(row, copied, true);

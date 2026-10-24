@@ -1,5 +1,5 @@
-// The f32x4 operators and builtins. Each lane computes in single precision,
-// so a third is the f32 nearest a third and three of them do not sum to one.
+
+
 import "std/f64";
 
 function show(tag: string, v: f32x4): void {

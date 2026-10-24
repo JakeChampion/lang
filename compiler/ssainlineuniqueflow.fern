@@ -1,9 +1,6 @@
 import "./ssainlineuniqueisa" as isa;
 import "std/string";
 
-// Values: unknown, original pointer, normalized pointer, zero, one, RC word.
-// Only equality with one is admitted for RC words, so all other signed values
-// share that outcome. Flags are unknown (-1), false (0), or true (1).
 pub struct State { regs: i32[], slot: i32, zero: i32, below: i32, ok: boolean }
 
 pub struct Case { tagged: boolean, view: boolean, low: boolean, one: boolean }
@@ -123,13 +120,10 @@ function flags(s: State, op: isa.Op, b: Boundary, c: Case): State {
   }
   if (op.kind == 7) {
     let p = pointer(s, op.a, b, if (b.arm) { 64 } else { 8 });
-    // A64 TST clears C, so LO (C == 0) is true. x86 TEST clears CF,
-    // making JB (CF == 1) false. The abstract branch condition differs.
     return State { ...s, ok: p > 0, zero: if (c.tagged) { 0 } else { 1 }, below: if (b.arm) { 1 } else { 0 } };
   }
   if (op.kind == 8) {
     let p = pointer(s, op.a, b, 64);
-    // Above the floor includes equality and greater-than; retain no guessed Z.
     return State { ...s, ok: p > 0, zero: if (c.low) { 0 } else { -1 }, below: if (c.low) { 1 } else { 0 } };
   }
   return State { ...s, ok: op.kind == 30 };

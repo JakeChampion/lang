@@ -1,6 +1,6 @@
-// A method on a string, number or boolean receiver checks its arguments like
-// any other call, and a call whose argument is wrong still has the type its
-// callee declares, so a binding of the wrong type is reported too.
+
+
+
 import "std/string";
 
 function (s: string) twice(n: i32): string {

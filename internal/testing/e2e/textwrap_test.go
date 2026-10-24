@@ -2,11 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/textwrap.word_wrap across backends:
-// greedy wrap, the exact-fit boundary, a long unbreakable word, hard
-// newlines / blank lines, space collapsing, and edge widths. Returns 42
-// iff every exact-string check holds. Each leg skips itself when its
-// toolchain is absent.
 const textwrapProg = `
 import "std/textwrap" as tw;
 function main(): i32 {

@@ -11,11 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// `serve.Config { http_allow }` through std/serve's loop: the handler's
-// `plat.http` refuses a host off the list before resolving it, and passes a
-// listed one on to the rest of the route, here the refusal of a loopback
-// address on the global-only route, so neither reaches the network. The
-// interpreter and the x86-64 backend.
 func TestHTTPAllowServeInterp(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := writeHTTPAllowServeSource(t)

@@ -7,8 +7,6 @@ import (
 	"unsafe"
 )
 
-// hostTimerFd is timerfd_create(CLOCK_MONOTONIC) armed once for ms, the two
-// calls the native runtime makes; a failed create returns before the arm.
 func hostTimerFd(ms int64) (int, error) {
 	const clockMonotonic = 1
 	fd, _, errno := syscall.Syscall(syscall.SYS_TIMERFD_CREATE, clockMonotonic, syscall.O_CLOEXEC, 0)

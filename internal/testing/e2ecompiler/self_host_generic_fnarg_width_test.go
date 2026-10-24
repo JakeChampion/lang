@@ -7,17 +7,6 @@ import (
 	"testing"
 )
 
-// genericFnArgWidthProgram reaches its type parameter only through a lambda's
-// parameter: `filter[T, I: Iterator[T]](it: I, keep: (T) => boolean): T[]` binds
-// `I` from `it` and has `T` nowhere else. The monomorphiser substitutes the
-// BOUNDED parameters only, so the instance still declares `T[]` as its return;
-// with the element type left unresolved, type_to_irtag yields "" for it and the
-// backends fall back to an untyped 4-byte read of an 8-byte element — every
-// value comes back 0 while the length is right (#9485).
-//
-// f64 is the whole point: a `string` element is pointer-width either way, which
-// is why the `strings` position of conformance/cases/generic_fnarg_typevar did
-// not catch this.
 const genericFnArgWidthProgram = `import "core/iter" as iter;
 
 function filter[T, I: iter.Iterator[T]](it: I, keep: (T) => boolean): T[] {
@@ -44,15 +33,6 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostGenericFnArgWidthX86_64 pins the answer against the `fern` CLI's
-// build of the same program rather than a literal, so the fixture cannot drift
-// away from the oracle.
-//
-// x86-64 only. The self-host WASM emitter is separately wrong on this shape —
-// the residual `T` also reaches the funcref type a call_indirect dispatches
-// through and the array-push helper the append selects, so it emits a module
-// wasmtime rejects (#9488). A wasm leg here would assert that bug rather than
-// this one.
 func TestSelfHostGenericFnArgWidthX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -81,9 +61,6 @@ func TestSelfHostGenericFnArgWidthX86_64(t *testing.T) {
 	}
 }
 
-// buildAndRunCLI compiles `src` for x86-64 with `cli` and returns the exit code
-// the program answers with. `-o` precedes the positionals: the native CLI stops
-// reading flags at the first one and writes the assembly to stdout instead.
 func buildAndRunCLI(t *testing.T, cli, stdlibRoot, src, tag string) int {
 	t.Helper()
 	out := filepath.Join(t.TempDir(), tag)

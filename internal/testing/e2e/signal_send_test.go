@@ -1,19 +1,3 @@
-// `signal_send` (#8377) end to end on every backend that provides it.
-//
-// Two programs. The first asks for outcomes the runner is guaranteed to get
-// the same answer to whoever it runs as: the caller may always signal its own
-// process group, a pid above the kernel's ceiling is always ESRCH, and an
-// impossible signal number is always EINVAL. None of them needs the test to
-// know whether it is root, and none delivers anything.
-//
-// The second forks and actually kills the child, because a Result that
-// classifies errnos correctly still proves nothing about delivery. It has no
-// interpreter leg: the interpreter cannot bare-fork (Go's runtime is
-// threaded) and answers -38 there.
-//
-// wasm has no leg at all: neither WASI preview has a process table to name a
-// target in, so the `proc` capability withholds the builtin and E066 refuses
-// the program at check time. TestWASMSignalSendRefused is that half.
 package e2e
 
 import (
@@ -24,11 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// Each failing step returns its own code.
-//
-// 4194304 is 2^22, one above the largest pid_max Linux accepts, so no process
-// can ever hold it — where a pid merely "not in use right now" could be
-// reassigned between the compile and the run.
 const signalSendSource = `function main(): i32 {
     // pid 0 is the caller's OWN process group, which it may always signal,
     // and signal 0 delivers nothing. The Ok proves the pid reaches the kernel
@@ -76,9 +55,6 @@ const signalSendSource = `function main(): i32 {
 }
 `
 
-// The delivery proof. The child sleeps far longer than the parent needs, so
-// the only way it reaches the parent's waitpid is the signal; a child that
-// exited on its own would report 0 rather than 128+9.
 const signalSendDeliverySource = `function main(): i32 {
     let pid: i32 = proc_fork();
     if (pid < 0) { return 1; }
@@ -131,10 +107,6 @@ func TestInterpSignalSend(t *testing.T) {
 	}
 }
 
-// The wasm answer is a refusal, and it has to arrive from the capability scan
-// rather than as an `unknown callee` out of the emitter — the difference
-// between "this target has no processes" and "the backend forgot one". Both
-// previews, since `proc` is withheld by each.
 func TestWASMSignalSendRefused(t *testing.T) {
 	prog, err := parser.Parse(signalSendSource)
 	if err != nil {

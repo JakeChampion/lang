@@ -5,11 +5,6 @@ import (
 	"testing"
 )
 
-// wasmFdReleaseProgram runs every file builtin many more times than the
-// descriptor limit the test imposes. A body that keeps the descriptor it
-// opened — the preview-2 bodies once dropped neither the own<descriptor>
-// from open-at nor the stream on it — exhausts the limit within the first
-// few dozen rounds and the round reports which builtin failed.
 const wasmFdReleaseProgram = `
 import "std/i32";
 import "std/io";

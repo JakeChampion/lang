@@ -12,12 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/tools/tty"
 )
 
-// TestArm64DarwinTermios checks the arm64-darwin runtime's TIOCGETA,
-// TIOCSETAW, TIOCSWINSZ and TIOCEXT against internal/tools/tty on one
-// pseudo-terminal: the words the compiled program reads are the words Go
-// reads, and what it writes back — ECHO cleared, both speeds 300, a 33x77
-// window, EXTPROC set through a handle — is what Go finds afterwards. Off
-// Apple Silicon the build is what is checked.
 func TestArm64DarwinTermios(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()

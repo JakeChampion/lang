@@ -9,33 +9,10 @@ import (
 	"testing"
 )
 
-// #8224: a struct-FIELD-receiver `.append` that no later read can observe grows
-// the field's own buffer in place instead of cloning the array, so
-// `S { ...s, xs: s.xs.append(v) }` — the state-threading shape every self-host
-// emitter is built out of — is not O(n) per append and O(n^2) per built array.
-//
-// The two halves are only sound together, so both are pinned here. The CALLEE
-// half is the admission (the shape cases below). The CALLER half is the #4873
-// grow bracket extended to a struct argument's array-field buffers: a callee
-// that may grow them in place must not do so through a container the caller
-// still reads. Every case here is differential — the expectation is the
-// interpreter's answer, never a written-down number — because it is the ANSWER
-// that diverges when either half is missing.
-//
-// SPARE CAPACITY is what makes an in-place grow possible at all, so each case
-// threads its container through several appends before the read it checks.
-//
-// `S { ...s, xs: s.xs.with(i, v) }` uses the same admission (#8419): the store
-// lands in the field's own buffer, gated on the buffer's own count since
-// arr_set has no gate of its own, and the caller half brackets it exactly as
-// it brackets a grow. The `with-` cases below pin both halves for the store.
 var selfHostFieldAppendCases = []struct {
 	name string
 	src  string
 }{
-	// The measured shape: a receiver method returning a spread literal that
-	// overrides the appended field. Threading it is the whole point, and the
-	// answer must not change.
 	{"spread-threading", `
 struct St { ops: i32[], ctrl: i32 }
 function (s: St) emit(op: i32): St {
@@ -51,8 +28,6 @@ function main(): i32 {
     for v in s.ops { sum = sum + v; }
     return s.ops.len() + s.ctrl + (sum % 7);
 }`},
-	// The caller-side hole through a METHOD receiver: `a` survives the call, so
-	// its buffer must not grow under it.
 	{"method-recv-survives", `
 struct St { ops: i32[], ctrl: i32 }
 function (s: St) emit(op: i32): St { return St { ...s, ops: s.ops.append(op), ctrl: s.ctrl }; }
@@ -63,7 +38,6 @@ function main(): i32 {
     let b: St = a.emit(9);
     return a.ops.len() * 10 + b.ops.len() + b.ops[5];
 }`},
-	// The same hole through a free function's struct PARAMETER.
 	{"free-param-survives", `
 struct St { ops: i32[], ctrl: i32 }
 function (s: St) emit(op: i32): St { return St { ...s, ops: s.ops.append(op), ctrl: s.ctrl }; }
@@ -75,9 +49,6 @@ function main(): i32 {
     let c: St = bump(a, 7);
     return a.ops.len() * 10 + c.ops.len() + c.ops[5];
 }`},
-	// Transitive: bump2 rebinds its own parameter from the call, which is the
-	// dying shape the bracket exempts — so the growth escapes to ITS caller and
-	// the may-grow flag has to propagate through the fixpoint.
 	{"transitive-pass-through", `
 struct St { ops: i32[], ctrl: i32 }
 function (s: St) emit(op: i32): St { return St { ...s, ops: s.ops.append(op), ctrl: s.ctrl }; }
@@ -90,10 +61,6 @@ function main(): i32 {
     let d: St = bump2(a, 6);
     return a.ops.len() * 10 + d.ops.len() + d.ops[5];
 }`},
-	// The SOLE-OCCURRENCE death (#6048): `p` is read exactly once in bump3's
-	// whole body, so the caller-side bracket skips it there — and the growth
-	// escapes to bump3's OWN caller, which means the may-grow set has to
-	// propagate through that shape as well as through the self-reassign one.
 	{"sole-occurrence-pass-through", `
 struct St { ops: i32[], ctrl: i32 }
 function (s: St) emit(op: i32): St { return St { ...s, ops: s.ops.append(op), ctrl: s.ctrl }; }
@@ -106,11 +73,6 @@ function main(): i32 {
     let e: St = bump3(a);
     return a.ops.len() * 10 + e.ops.len() + e.ops[5];
 }`},
-	// The bracket's release must name the buffer its retain named. A callee that
-	// hands back the caller's own box — an empty pass-through — leaves that box
-	// freed by the dying-donor release and handed straight back to the next
-	// call's result-box allocation, so a release that re-reads `b.ops` reads the
-	// buffer that call just grew (#8224).
 	{"passthrough-then-bracketed-grow", `
 struct St { ops: i32[], ctrl: i32 }
 function (s: St) emit(op: i32): St { return St { ...s, ops: s.ops.append(op), ctrl: s.ctrl + 1 }; }
@@ -131,15 +93,6 @@ function main(): i32 {
     while (i < 6) { a = a.emit(i); i = i + 1; }
     return outer(a);
 }`},
-	// A struct local bound from a FIELD READ is not a container this frame owns,
-	// so the dying `aug = f(aug)` rebind must NOT be exempt from the bracket:
-	// growing one of aug's array fields in place reaches through it into `sg`,
-	// two levels deep, where the one-level may-grow-fields mask cannot follow.
-	// The `.with` on one of the two co-indexed arrays is what makes the damage
-	// visible rather than merely wrong — it re-clones `next` at cap == len, so
-	// the next append reallocs `next` while `rows` still has spare capacity and
-	// grows in place, and the container is left with two arrays one entry apart
-	// (#8224).
 	{"field-read-alias-refuses-exemption", `
 struct Reg { rows: i32[], next: i32[] }
 struct Sigs { reg: Reg, tag: i32 }
@@ -167,8 +120,6 @@ function main(): i32 {
     let sg: Sigs = Sigs { reg: Reg { rows: rows, next: next }, tag: 0 };
     return grow_from_field(sg);
 }`},
-	// A struct argument reached through a FIELD chain: the bracket has to walk
-	// the container's field hops to the inner struct's buffer.
 	{"nested-field-argument", `
 struct Inner { xs: i32[] }
 struct Outer { inner: Inner, tag: i32 }
@@ -180,8 +131,6 @@ function main(): i32 {
     let again: Inner = push(o.inner, 8);
     return o.inner.xs.len() * 10 + again.xs.len() + again.xs[5];
 }`},
-	// The same field READ AGAIN inside the literal the append feeds: the clone
-	// must stay, or `n` reads the grown length.
 	{"same-field-read-forces-clone", `
 struct St { ops: i32[], n: i32 }
 function grow(s: St, v: i32): St { return St { ops: s.ops.append(v), n: s.ops.len() }; }
@@ -192,8 +141,6 @@ function main(): i32 {
     let b: St = grow(a, 9);
     return a.ops.len() * 10 + b.ops.len() + b.n;
 }`},
-	// A BARE read of the container in the same expression hands the whole thing
-	// over, so the buffer stays readable through it.
 	{"bare-read-forces-clone", `
 struct St { ops: i32[], n: i32 }
 function total(s: St): i32 { let t: i32 = 0; for v in s.ops { t = t + v; } return t; }
@@ -205,8 +152,6 @@ function main(): i32 {
     let b: St = grow(a, 9);
     return a.ops.len() * 10 + b.ops.len() + b.n;
 }`},
-	// A pointer-element field: the grown buffer holds string boxes the container
-	// still owns, so this pins the element retain the clone form also pays.
 	{"string-field", `
 struct Bag { names: string[], n: i32 }
 function (b: Bag) add(s: string): Bag { return Bag { ...b, names: b.names.append(s), n: b.n + 1 }; }
@@ -220,10 +165,6 @@ function main(): i32 {
     for s in c.names { t = t + s.len(); }
     return t + b.names.len() + c.names.len();
 }`},
-	// A LOCAL root (#8556) with a SECOND NAME: `let keep = a` is a dead-alias
-	// bind that takes no count, so `__fern_rc_is_unique` would read 1 with two
-	// live names and the move-out would null a field `keep` still reads.
-	// The admission must refuse a root with a second name; the clone stays.
 	{"local-root-second-name-refused", `
 struct St { ops: i32[], n: i32 }
 function main(): i32 {
@@ -234,9 +175,6 @@ function main(): i32 {
     let b: St = St { ops: a.ops.append(9), n: a.n };
     return keep.ops.len() * 10 + b.ops.len() + a.ops.len();
 }`},
-	// The #8556 shape itself: a top-level `let` rebuilt from its own spread in a
-	// loop. Linear through an `own` parameter and quadratic here until the local
-	// became a root, and the answer must not move either way.
 	{"local-root-threading", `
 struct St { ops: i32[], ctrl: i32 }
 function main(): i32 {
@@ -248,9 +186,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return a.ops.len() + a.ctrl + (sum % 7);
 }`},
-	// The `.with` twin on a local root: the store lands in the field's own
-	// buffer and the identity arm moves the field out, exactly as through a
-	// parameter (#8419).
 	{"local-root-with-threading", `
 struct Tab { tab: i32[], n: i32 }
 function main(): i32 {
@@ -260,9 +195,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t.tab[0] + t.tab[1] * 2 + t.tab[2] + t.tab[3] + t.n;
 }`},
-	// The runtime half for a local root. No static rule sees the box stored in
-	// `hold`, so the box's own count is what has to force the copy: with the
-	// move-out taken, `hold[0].ops` would be null.
 	{"local-root-boxed-elsewhere-copies", `
 struct St { ops: i32[], n: i32 }
 function main(): i32 {
@@ -275,9 +207,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return hold[0].ops.len() * 10 + a.ops.len() + hold[0].ops[3];
 }`},
-	// A local bound FROM A PARAMETER is the hazard the struct-literal rule
-	// exists for: the bind takes no count, so both names reach one box at rc 1
-	// and an admitted move-out would null a field the caller still reads.
 	{"local-root-alias-from-param-refused", `
 struct St { ops: i32[], n: i32 }
 function take(p: St): i32 {
@@ -293,9 +222,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return take(s);
 }`},
-	// A local bound from a counted-return call that hands back the CALLER's box
-	// (#8589): the box reads rc 2, so the gate must copy and the caller's field
-	// must keep its length and contents.
 	{"local-root-counted-call-shared", `
 struct St { ops: i32[], n: i32 }
 @noinline function mk(p: St): St { return p; }
@@ -312,8 +238,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return take(s);
 }`},
-	// The threading style the self-host itself uses: the accumulator is also
-	// rebound through counted-return calls, before and inside the loop.
 	{"local-root-counted-call-threading", `
 struct St { ops: i32[], n: i32 }
 function tag(s: St): St { return St { ...s, n: s.n + 1 }; }
@@ -333,9 +257,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return (a.ops.len() + a.n + sum) % 100;
 }`},
-	// A per-iteration accumulator declared inside the loop (#8589): each
-	// declaration's box is fresh, and the previous iteration's must still be
-	// released rather than grown into.
 	{"local-root-declared-in-loop", `
 struct St { ops: i32[], n: i32 }
 function main(): i32 {
@@ -351,15 +272,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 100;
 }`},
-	// The RETURN-position death (#8254). `return f(a, v)` kills a's BINDING, so
-	// the caller-side grow bracket is withdrawn — but not this frame's claim on
-	// the buffers inside a: the exit sweep still deep-drops a's rc fields, and it
-	// runs after the call. With no bracket the callee grows a.ops in place and
-	// hands the result the very buffer that sweep frees. It stays invisible until
-	// the freed block is handed out again, which is what the appends after the
-	// call do here. `f` takes no spread, so its parameter reads as a pure borrow
-	// and stays borrowable — which is exactly what keeps a credited and its drop
-	// deep.
 	{"return-position-death-frees-the-grown-buffer", `
 struct St { ops: i32[], n: i32 }
 function f(s: St, v: i32): St { return St { ops: s.ops.append(v), n: 1 }; }
@@ -378,8 +290,6 @@ function main(): i32 {
     for v in r.ops { t = t + v; }
     return (t + junk.len()) % 251;
 }`},
-	// The same death with the container threaded through a spread literal, which
-	// keeps the whole shape reachable from the hot form.
 	{"return-position-death", `
 struct St { ops: i32[], ctrl: i32 }
 function bump(s: St, v: i32): St { return St { ...s, ops: s.ops.append(v), ctrl: s.ctrl + 1 }; }
@@ -395,10 +305,6 @@ function main(): i32 {
     for v in r.ops { t = t + v; }
     return r.ops.len() * 10 + (t % 97) + r.ctrl;
 }`},
-	// An `own` container root: the callee, not the caller, holds the box, and
-	// the grown buffer travels out through the SPREAD base, which moves the
-	// fields out of `s`. The conformance case `own_self_reassign_move` covers
-	// the deep field drop of an `own` parameter that keeps its fields.
 	{"own-param-container", `
 struct St { ops: i32[], ctrl: i32 }
 function bump(own s: St, v: i32): St { return St { ...s, ops: s.ops.append(v), ctrl: s.ctrl + 1 }; }
@@ -410,9 +316,6 @@ function main(): i32 {
     for v in a.ops { t = t + v; }
     return a.ops.len() + a.ctrl + (t % 29);
 }`},
-	// A struct-ELEMENT field, whose release walks each element box before the
-	// buffer. The grown buffer now belongs to the new value, so releasing the
-	// superseded one must leave that buffer and its elements alone.
 	{"struct-array-field", `
 struct Row { k: i32, v: i32 }
 struct Tab { rows: Row[], n: i32 }
@@ -425,8 +328,6 @@ function main(): i32 {
     for r in t.rows { s = s + r.k + r.v; }
     return t.rows.len() + t.n + (s % 53);
 }`},
-	// An i64[] field takes the 8-byte-slot push helper, which wasm dispatches
-	// separately from the i32 one.
 	{"i64-field", `
 struct W { xs: i64[], n: i32 }
 function (w: W) put(v: i64): W { return W { ...w, xs: w.xs.append(v), n: w.n + 1 }; }
@@ -438,16 +339,6 @@ function main(): i32 {
     for v in w.xs { t = t + v; }
     return (t as i32) + w.xs.len() + w.n;
 }`},
-	// The grow MOVES the field out of the root's box. Each shape below releases
-	// that box, or the value, by a path that finds the field: the pre-move
-	// lowering left both naming one rc 1 buffer, and the first release freed it
-	// under the other (#8224). Struct elements, so a freed buffer's element boxes
-	// are recycled by `churn` and the read that follows sees 7 where it wrote
-	// 1..4 — or __rc_underflow_count() reports the double free.
-	//
-	// A return-position receiver whose literal-init local keeps its DEEP sweep:
-	// the receiver-borrow registry clears `emit` as a pure borrow, so `ms` is not
-	// NODEEP, and `return ms.emit(4)` deep-drops it after the call.
 	{"return-position-deep-swept-receiver", `
 struct P { x: i32 }
 struct S { ops: P[], n: i32 }
@@ -472,8 +363,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return r.ops[0].x * 27 + r.ops[1].x * 9 + r.ops[2].x * 3 + r.ops[3].x;
 }`},
-	// An OWN parameter is released, deep, by the callee's own exit sweep.
-	// The conformance case own_self_reassign_move hung on this shape.
 	{"own-param-exit-release", `
 struct P { x: i32 }
 struct S { ops: P[], n: i32 }
@@ -496,9 +385,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return a.ops[0].x * 27 + a.ops[1].x * 9 + a.ops[2].x * 3 + a.ops[3].x;
 }`},
-	// The same exit release, reached through a callee that grows the own
-	// param's field on the caller's behalf: `s` occurs once in g, so no bracket
-	// forces the copy there, and g's sweep still deep-drops s.
 	{"own-param-passed-once-to-grower", `
 struct P { x: i32 }
 struct S { ops: P[], n: i32 }
@@ -519,7 +405,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return a.ops[0].x * 27 + a.ops[1].x * 9 + a.ops[2].x * 3 + a.ops[3].x;
 }`},
-	// The receiver spelling of the previous case.
 	{"own-param-receiver-of-grower", `
 struct P { x: i32 }
 struct S { ops: P[], n: i32 }
@@ -540,8 +425,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return a.ops[0].x * 27 + a.ops[1].x * 9 + a.ops[2].x * 3 + a.ops[3].x;
 }`},
-	// The VALUE's holder releases: `ys` is swept at f's exit, and the caller's
-	// rebind then reclaims the same buffer out of the superseded box's field.
 	{"value-local-swept-before-caller-reclaim", `
 struct P { x: i32 }
 struct S { ops: P[], n: i32 }
@@ -568,12 +451,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return ms.n;
 }`},
-	// A second NAME for the root's box: `let cur = s` inside a walk that
-	// recurses with `cur` and rebinds it per statement, the checker's slc_walk
-	// shape. The self-reassign exempts the bracket and the alias scan does not
-	// see a bare ident of a parameter, so the callee's move would null `names`
-	// in a box the outer frames still read (segfault in the self-compiled
-	// checker's Scope.lookup). The box's count is what tells the site to copy.
 	{"aliased-root-box-copies", `
 struct Sc { names: i32[], n: i32 }
 function (s: Sc) bind(v: i32): Sc {
@@ -602,9 +479,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return (r + s0.names[2]) % 200;
 }`},
-	// The `.with` twin's measured shape: the x86 assembler's label table threads
-	// three bucket arrays through `X86Asm { ...a, lab_head: a.lab_head.with(b, at) }`
-	// per label, and each one cloned the array (#8419).
 	{"with-spread-threading", `
 struct St { tab: i32[], n: i32 }
 function (s: St) put(i: i32, v: i32): St { return St { ...s, tab: s.tab.with(i, v), n: s.n + 1 }; }
@@ -616,8 +490,6 @@ function main(): i32 {
     for v in s.tab { sum = sum + v; }
     return (s.n + sum) % 113;
 }`},
-	// The caller-side hole for the store: `a` survives the call, so its buffer
-	// must not be written under it.
 	{"with-method-recv-survives", `
 struct St { tab: i32[], n: i32 }
 function (s: St) put(i: i32, v: i32): St { return St { ...s, tab: s.tab.with(i, v), n: s.n + 1 }; }
@@ -627,9 +499,6 @@ function main(): i32 {
     let b: St = a.put(2, 9);
     return a.tab[2] * 10 + b.tab[2] + a.tab[0];
 }`},
-	// The label table itself: an `own` root, a rebind in each branch of an
-	// `if` and a third after it — three body-scope hosts, each of its own
-	// field — and a duplicate name still resolves to its first entry.
 	{"with-own-param-label-table", `
 struct Tab { names: string[], head: i32[], tail: i32[], next: i32[] }
 function bucket(name: string): i32 { return name.len() % 4; }
@@ -666,8 +535,6 @@ function main(): i32 {
     t = add(t, "a");
     return lookup(t, "a") * 100 + lookup(t, "eeeee") * 10 + lookup(t, "ff") + lookup(t, "zz") + 1;
 }`},
-	// The same field READ AGAIN inside the literal the store feeds: the clone
-	// must stay, or `n` reads the new element.
 	{"with-same-field-read-forces-clone", `
 struct St { tab: i32[], n: i32 }
 function put(s: St, v: i32): St { return St { tab: s.tab.with(0, v), n: s.tab[0] }; }
@@ -676,7 +543,6 @@ function main(): i32 {
     let b: St = put(a, 9);
     return (a.tab[0] * 100 + b.tab[0] * 10 + b.n) % 101;
 }`},
-	// An i64[] field takes the 8-byte store.
 	{"with-i64-field", `
 struct W { xs: i64[], n: i32 }
 function (w: W) put(i: i32, v: i64): W { return W { ...w, xs: w.xs.with(i, v), n: w.n + 1 }; }
@@ -688,8 +554,6 @@ function main(): i32 {
     for v in w.xs { t = t + v; }
     return (t as i32) + w.n;
 }`},
-	// A second NAME for the root's box, with a store instead of a grow: the
-	// box's count is what tells the site to copy.
 	{"with-aliased-root-box-copies", `
 struct Sc { tab: i32[], n: i32 }
 function (s: Sc) put(v: i32): Sc { return Sc { ...s, tab: s.tab.with(0, v), n: s.n + 1 }; }
@@ -713,15 +577,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return r % 113;
 }`},
-	// #8485 widened the store's element-kind gate to the pointer-element field
-	// kinds `.append` already admits — struct, enum and array elements — since
-	// neither form does anything to the element the store overwrites. The rows
-	// below are the pointer-element twins of the scalar ones above; the two
-	// shared-root shapes are what make the widening gated rather than merely
-	// tested, so they come first.
-	//
-	// The measured shape: a struct-element window threaded through a spread
-	// literal that overrides the stored field.
 	{"with-ptr-elem-threading", `
 struct L { v: i32 }
 struct W { w: L[], n: i32 }
@@ -735,8 +590,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return (sum + p.n) % 113;
 }`},
-	// The caller-side hole through a METHOD receiver, pointer elements: `a`
-	// survives the call, so the store must not land in its buffer.
 	{"with-ptr-elem-method-recv-survives", `
 struct L { v: i32 }
 struct W { w: L[], n: i32 }
@@ -748,7 +601,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return a.w[2].v * 10 + b.w[2].v + a.w[0].v;
 }`},
-	// The same hole through a free function's struct PARAMETER, pointer elements.
 	{"with-ptr-elem-free-param-survives", `
 struct L { v: i32 }
 struct W { w: L[], n: i32 }
@@ -761,8 +613,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return a.w[2].v * 10 + c.w[2].v + a.w[0].v;
 }`},
-	// A second NAME for the root's box with a pointer-element store: the box's
-	// count is what sends the site to the copy, through the share bracket.
 	{"with-ptr-elem-aliased-root-box-copies", `
 struct L { v: i32 }
 struct W { w: L[], n: i32 }
@@ -787,7 +637,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return r % 113;
 }`},
-	// The ENUM-element classifier, same shared-root shape.
 	{"with-enum-elem-recv-survives", `
 enum E { A(i32), B }
 struct W { es: E[], n: i32 }
@@ -800,7 +649,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return val(a.es[2]) * 10 + val(b.es[2]) + val(a.es[0]);
 }`},
-	// The ARRAY-of-array classifier, same shared-root shape.
 	{"with-nested-arr-elem-recv-survives", `
 struct W { rows: i32[][], n: i32 }
 function (p: W) put(i: i32, r: i32[]): W { return W { ...p, rows: p.rows.with(i, r), n: p.n + 1 }; }
@@ -811,10 +659,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return a.rows[2][0] * 10 + b.rows[2][0] + a.rows[0][0];
 }`},
-	// The hash-index shape (#8485): the bucket array's LENGTH and one of its
-	// ELEMENTS are read before the store that rewrites a third slot. Both reads
-	// are sequenced before it and yield scalars, so the store lands in the
-	// field's own buffer — and the answers must not move.
 	{"with-prior-scalar-field-reads", `
 struct RefSet { names: string[], head: i32[], next: i32[] }
 function bucket(name: string, n: i32): i32 { return name.len() % n; }
@@ -850,8 +694,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return hits + rs.head[bucket("a", 5)];
 }`},
-	// The same shape with the root SURVIVING the call: the caller-side bracket
-	// is what must send the store down its copy path here.
 	{"with-prior-reads-root-survives", `
 struct RefSet { names: string[], head: i32[], next: i32[] }
 function bucket(name: string, n: i32): i32 { return name.len() % n; }
@@ -870,12 +712,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return a.names.len() * 10 + b.names.len() + a.head[3] + b.head[3];
 }`},
-	// A body-scope host INSIDE A LOOP runs again with the same root, and the
-	// grow has moved the field out of it — so the site keeps the clone form.
-	// The root arrives as a fresh call result at an `own` position: no caller
-	// bracket can reach it, so its buffer is at rc 1 and the first push would
-	// take the identity arm. Without the refusal the second iteration pushes
-	// onto the moved-out field (segfault on the stubbed rule).
 	{"body-host-in-loop-clones", `
 struct S { ops: i32[], n: i32 }
 function mk(): S {
@@ -899,8 +735,6 @@ function main(): i32 {
 }`},
 }
 
-// TestSelfHostFieldAppendInPlaceX86_64 — the production x86-64 IR path against
-// the interpreter oracle.
 func TestSelfHostFieldAppendInPlaceX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
@@ -930,9 +764,6 @@ func TestSelfHostFieldAppendInPlaceX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostFieldAppendInPlaceArm64 — the same cases through the arm64 emit.
-// The decision is shared lowering analysis, so this leg guards the two register
-// backends agreeing about the grow helper's uniqueness gate.
 func TestSelfHostFieldAppendInPlaceArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -958,8 +789,6 @@ func TestSelfHostFieldAppendInPlaceArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostFieldAppendInPlaceWasmIR — the wasm-IR leg, which reaches
-// $__fern_arr_push_i64 for the 8-byte-slot field.
 func TestSelfHostFieldAppendInPlaceWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm-IR field-append e2e")
@@ -993,18 +822,6 @@ func TestSelfHostFieldAppendInPlaceWasmIR(t *testing.T) {
 	}
 }
 
-// The grow bracket must RELEASE WHAT IT RETAINED. Its release side used to be a
-// second evaluation of the same PLACE — load the slot, walk the field hops, dec
-// — and a place is not stable across the call it brackets: a box the caller
-// still names can be freed by the dying-donor release of a pass-through call and
-// handed straight back to the next callee's own result-box allocation, so the
-// re-read yields the buffer that callee just grew. The dec then lands on a live
-// rc-1 buffer, whose freed block takes a freelist link over its cap word, and
-// the next append reads cap 0 with len N and copies N elements into a
-// four-element buffer (#8224). No answer separates the two forms until the
-// freelist happens to line up, so this reads the pairing off the asm.
-// Construct the result explicitly: a spread update now consumes its base,
-// while this test needs a borrowed receiver and its caller-side field bracket.
 func TestSelfHostGrowFieldBracketReleasesRetainedX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -1027,9 +844,6 @@ function main(): i32 {
 
 	body := asmFuncBody(t, string(runCaptureStrictIR(t, gcc, runner, driverBin, []byte(src))), "__fn_outer")
 	lines := strings.Split(body, "\n")
-	// The retained buffer is the operand pushed for the retain call — a
-	// register the allocator chose, or a spill slot — and the release must
-	// push the same one.
 	pushRe := regexp.MustCompile(`^\s*pushq (%r[a-z0-9]+|-\d+\(%rbp\))$`)
 
 	held := ""
@@ -1047,8 +861,6 @@ function main(): i32 {
 	if held == "" {
 		t.Fatalf("no bracket retain of a pushed operand in __fn_outer; body:\n%s", body)
 	}
-	// The release passes the same operand: pushed for the stack entry, or
-	// moved into %rax for the register entry.
 	regArgRe := regexp.MustCompile(`^\s*movq (%r[a-z0-9]+|-\d+\(%rbp\)), %rax$`)
 	for i, ln := range lines {
 		if !strings.Contains(ln, "call __fn___fern_arr_dec") {
@@ -1070,27 +882,12 @@ function main(): i32 {
 	t.Fatalf("no bracket release in __fn_outer; body:\n%s", body)
 }
 
-// The in-place grow's result must be UNCOUNTED (#8254). On the identity arm
-// arr_push hands the source container's own buffer straight back, and nothing
-// releases a retain taken there: the buffer sits at rc >= 2 for the rest of its
-// life, the NEXT append through the field takes `__fern_arr_push`'s un-share
-// copy, and the buffer that copy abandons is reclaimed by nothing — one leaked
-// buffer per grow, which is quadratic over a threaded accumulator.
-//
-// Answers cannot see this: both forms compute the same array. `__heap_bump_bytes()`
-// can — it is the bump allocator's high-water mark, i.e. everything the freelist
-// could not recycle. The RETAINED shape beside it is the calibration: it keeps
-// every intermediate buffer alive and so must stay high, which is what makes a
-// passing admitted case evidence about reclaim rather than about the instrument.
 func TestSelfHostFieldAppendInPlaceReclaimsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	// Each program threads 2000 appends and exits with the bytes it could not
-	// recycle, in 64 KiB units, clamped to 200 so the reading cannot wrap
-	// through the 8-bit exit status.
 	const tail = `
     let u: i64 = __heap_bump_bytes() / 65536i64;
     if (u > 200i64) { u = 200i64; }
@@ -1103,9 +900,6 @@ function main(): i32 {
     let s: St = St { ops: [], ctrl: 0 };
     let i: i32 = 0;
     while (i < 2000) { s = s.emit(i); i = i + 1; }` + tail
-	// The admitted shape with every intermediate buffer kept alive — the
-	// control. Nothing here can be recycled, so it reads what the admitted case
-	// would if its grown buffer were never reclaimed.
 	retained := `
 struct St { ops: i32[], ctrl: i32 }
 function (s: St) emit(v: i32): St { return St { ...s, ops: s.ops.append(v), ctrl: s.ctrl + 1 }; }
@@ -1133,13 +927,6 @@ function main(): i32 {
 		return cmd.ProcessState.ExitCode()
 	}
 
-	// The pointer-element `.with` (#8485). Nothing here grows, so the clone
-	// form is invisible to this instrument — each copy is the size class of the
-	// buffer it replaces and the freelist takes it back. What the instrument
-	// CAN see is the #8254 failure mode: an in-place result left counted keeps
-	// the field's buffer at rc >= 2 forever, so every later store takes the copy
-	// arm and abandons a 256-slot buffer nothing reclaims. 4000 of those is
-	// ~4 MB; the `retained` control is what shows the reading is live.
 	withPtr := `
 struct L { v: i32 }
 struct W { w: L[], n: i32 }
@@ -1152,17 +939,12 @@ function main(): i32 {
     let i: i32 = 0;
     while (i < 4000) { p = p.put(i % 256, L { v: i }); i = i + 1; }` + tail
 
-	// Measured: 0 units here, 165 with the identity-arm retain in place.
 	if got := run(t, admitted); got > 4 {
 		t.Errorf("admitted in-place shape bumped %d x 64 KiB, want <= 4 — the grown buffer is not being reclaimed", got)
 	}
-	// A low reading here would mean the instrument, not the reclaim, is what
-	// the case above is reporting.
 	if got := run(t, retained); got < 32 {
 		t.Errorf("retained control bumped only %d x 64 KiB, want >= 32 — the calibration case is not allocating, so the admitted case proves nothing", got)
 	}
-	// Measured: 2 units, and 2 for the clone form this replaced — the orphaned
-	// L boxes are all of it and both forms orphan the same ones.
 	if got := run(t, withPtr); got > 8 {
 		t.Errorf("pointer-element in-place .with bumped %d x 64 KiB, want <= 8 — the field's buffer is not being reused across stores", got)
 	}

@@ -12,14 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExportTupleResultRunsViaConsumer is the P6 tuple result export gate
-// (docs/WIT-BRING-YOUR-OWN.md): a structural composite export. A Fern reactor
-// `@export make_pair(a, b): (i32, i32)` returns a tuple value; the canonical
-// tuple flattens to > 1 core value, so it returns indirectly, and the wasmbin
-// wrapper copies each element from the tuple value into the canonical return
-// area. The composer emits the `tuple<s32, s32>` component type and lifts via
-// memory. A Fern consumer `@import`s it and reads `p.0`/`p.1` — linked with
-// `wasm-tools compose` and run under wasmtime.
 func TestExportTupleResultRunsViaConsumer(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -39,7 +31,6 @@ func TestExportTupleResultRunsViaConsumer(t *testing.T) {
 
 	const iface = "interface pairs { make-pair: func(a: s32, b: s32) -> tuple<s32, s32>; }"
 
-	// --- exporter: Fern reactor `@export make_pair(a, b): (i32, i32)`. ---
 	expWit := filepath.Join(dir, "expwit")
 	if err := os.MkdirAll(expWit, 0o755); err != nil {
 		t.Fatalf("mkdir expwit: %v", err)
@@ -78,7 +69,6 @@ function make_pair(a: i32, b: i32): (i32, i32) { return (a + 1, b * 2); }`
 	}
 	run(wasmtools, "validate", exporter)
 
-	// --- consumer: Fern, @imports make-pair and reads p.0/p.1. ---
 	userWit := filepath.Join(dir, "userwit")
 	if err := os.MkdirAll(userWit, 0o755); err != nil {
 		t.Fatalf("mkdir userwit: %v", err)

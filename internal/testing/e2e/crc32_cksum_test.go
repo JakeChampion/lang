@@ -7,25 +7,6 @@ import (
 	"testing"
 )
 
-// __crc32_cksum is the seventh kernel of docs/ATLAS-PLATFORM-PLAN.md §3, and
-// the first CARRIED one: the state goes in and comes back, so a chunked
-// stream and a one-shot call have to agree.
-//
-// The compiled backends fold sixteen bytes a step with a carry-less multiply
-// against a scalar interpreter oracle, and the folds get three things wrong
-// that a byte loop cannot:
-//
-//   - BYTE ORDER. The message is a polynomial with byte 0 most significant,
-//     the opposite of the order a 16-byte load produces, so each block is
-//     reversed before folding. Reversing wrongly still yields a CRC — of a
-//     different message — so only a full length sweep separates them.
-//   - the BLOCK BOUNDARIES. Four accumulators 64 bytes apart prime off three
-//     extra blocks, so 16, 64, 112 and 128 bytes are each a different path
-//     into or out of the wide loop, and the residue between them is what a
-//     mis-stepped pointer drops.
-//   - the CARRIED STATE. Every other kernel starts from nothing each call.
-//     This one does not, so a fold that absorbs the incoming CRC at the wrong
-//     bit position agrees on a zero CRC and on nothing else.
 func crc32CksumRef(crc uint32, s string) int32 {
 	for i := 0; i < len(s); i++ {
 		crc ^= uint32(s[i]) << 24
@@ -55,20 +36,13 @@ func crc32CksumCases() []crcCase {
 		}
 		return string(b)
 	}
-	// Exhaustive over length through the 4-way prime (48) and its first full
-	// 64-byte step, so every entry and exit path is hit at a zero and at a
-	// non-zero incoming CRC.
 	for n := 0; n <= 200; n++ {
 		out = append(out, crcCase{0, rnd(n)}, crcCase{0xdeadbeef, rnd(n)})
 	}
-	// The exact boundaries, where an off-by-one block is a real instruction
-	// path rather than a rounding of the same one.
 	for _, n := range []int{15, 16, 17, 31, 32, 33, 47, 48, 49, 63, 64, 65,
 		111, 112, 113, 127, 128, 129, 175, 176, 177, 191, 192, 193, 255, 256, 257} {
 		out = append(out, crcCase{0, rnd(n)}, crcCase{1, rnd(n)}, crcCase{0xffffffff, rnd(n)})
 	}
-	// High bytes only: a sign-extending load or a signed shift in the step
-	// passes everything ASCII and fails here.
 	for _, n := range []int{16, 64, 128, 200} {
 		out = append(out, crcCase{0x80000000, strings.Repeat("\xff", n)})
 	}
@@ -127,12 +101,6 @@ func TestArm64Crc32Cksum(t *testing.T) {
 	})
 }
 
-// The wasm leg runs the same corpus against a bit-at-a-time body rather than a
-// fold — wasm has no carry-less multiply — so this is where the corpus proves
-// the DEFINITION and the native kernels agree, not just that two folds agree
-// with each other. It also adds a case class the native legs lack: a short
-// string lives in its two words with no address, and is read through
-// __fern_str_byte.
 func TestWASMCrc32Cksum(t *testing.T) {
 	runCrc32CksumCorpus(t, func(t *testing.T, src string) string {
 		out, _ := invokeWasmtime(t, src)
@@ -144,15 +112,6 @@ func TestWASMCrc32Cksum(t *testing.T) {
 	})
 }
 
-// The streaming identity the carried state exists for: the same bytes cut at
-// irregular offsets must fold to the same CRC as one call. Cuts straddle the
-// single-block, prime and 4-way boundaries, and none of them divides 64.
-// The arm64 kernel gets the same streaming check, and it carries a second
-// job there: the loop keeps several locals live ACROSS the call, which is
-// what a kernel clobbering a callee-saved register corrupts. The corpus
-// cannot see that — its call sites are straight-line expressions with
-// nothing live over them — so a kernel that destroyed x19/x20 passed 487
-// cases and still miscompiled its caller.
 func TestArm64Crc32CksumStreams(t *testing.T) {
 	runCrc32CksumStreams(t, func(t *testing.T, src string) (string, int) {
 		return compileAndRunArm64(t, src)

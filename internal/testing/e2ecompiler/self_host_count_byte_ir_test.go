@@ -9,29 +9,6 @@ import (
 	"testing"
 )
 
-// `__count_byte(s, byte)` on the self-host IR path — the fourth fused kernel of
-// docs/ATLAS-PLATFORM-PLAN.md §3, and the first with no early exit.
-//
-// It lands SCALAR on all seven backends at once, which is §3.4's step 1: the
-// intrinsic becomes total before anything depends on it being fast, so no step
-// can leave the tree unbuildable.
-//
-// What a port gets wrong here is not the clamp — there is no cursor, so there
-// is nothing to clamp. It is the ACCUMULATOR: a body that returns on the first
-// match, or loses the running total across a block boundary, answers every
-// single-occurrence case correctly and fails only where matches are dense. The
-// sweep below therefore checks the all-match and complement cases at every
-// length, not just the one-needle-at-each-position shape its siblings use.
-
-// countByteIRProg is SELF-CHECKING: it carries its own reference
-// implementation in Fern and compares `__count_byte` against it, so the corpus
-// sweeps exhaustively with no Go-side expectation list to keep in step.
-//
-// Lengths 0..72 — two full 32-byte blocks, a 16-byte one and a partial tail,
-// so every boundary between the vector tiers and the scalar tail is crossed.
-//
-// A failure returns a small distinct code rather than a count, so the exit
-// status says WHICH shape disagreed. 42 means every comparison matched.
 const countByteIRProg = `function ref(s: string, b: i32): i32 {
     if (b < 0) { return 0; }
     if (b > 255) { return 0; }
@@ -74,8 +51,6 @@ function main(): i32 {
 }
 `
 
-// runCountByteIR compiles countByteIRProg with the self-host modload driver for
-// the given register target and returns the exit code.
 func runCountByteIR(t *testing.T, target string) int {
 	t.Helper()
 	var runner, runPrefix, extra []string
@@ -120,10 +95,6 @@ func TestSelfHostCountByteIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostCountByteIRWasm runs the same program through the self-hosted
-// wasm IR driver. The helper's presence in the emitted text is asserted, so a
-// module that silently stopped needing it would fail rather than pass by
-// exercising nothing.
 func TestSelfHostCountByteIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host count_byte wasm IR e2e")

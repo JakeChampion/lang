@@ -14,16 +14,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/fernsmith"
 )
 
-// TestDifferential_CheckerMutants runs both checkers over type mutants of
-// the fernsmith corpus: each program with one `let` annotation erased, or one
-// `let`, parameter, result or struct-field type replaced by another
-// (fernsmith.TypeMutants). The Go checker and the self-host checker must
-// agree on whether each mutant type-checks. A mutant one accepts and the
-// other rejects is a soundness hole in the one that accepts or a completeness
-// gap in the one that rejects, and the generated corpus alone never shows
-// either: fernsmith writes only well-typed programs. An erased mutant that checks must also compute what the original
-// did, which catches inference settling on a different type than the
-// annotation named.
 func TestDifferential_CheckerMutants(t *testing.T) {
 	requireSelfHostDiffLeg(t)
 	gcc, runner := x86_64Tooling(t)
@@ -43,8 +33,6 @@ func TestDifferential_CheckerMutants(t *testing.T) {
 		t.Run(fmt.Sprintf("seed=%d", seed), func(t *testing.T) {
 			t.Parallel()
 			src := fernsmith.GenMain(seed)
-			// The unmutated program checks in both, or the verdicts below
-			// say nothing about the mutation.
 			if out, err := selfHostCheck(t, fernBin, stdlibRoot, src); err != nil {
 				t.Fatalf("the self-host checker rejects the unmutated program:\n%s\nsrc:\n%s", out, src)
 			}
@@ -77,7 +65,6 @@ func TestDifferential_CheckerMutants(t *testing.T) {
 	}
 }
 
-// goCheck runs the Go front end over src as far as the checker.
 func goCheck(src string) error {
 	prog, _, err := modload.LoadSource(src)
 	if err != nil {
@@ -90,9 +77,6 @@ func goCheck(src string) error {
 	return err
 }
 
-// selfHostCheck runs the self-host CLI's -check over src. A non-nil error is
-// a rejection; a crash is reported as one too, with its output, since the
-// disagreement it produces names it.
 func selfHostCheck(t *testing.T, fernBin, stdlibRoot, src string) (string, error) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "main.fern")

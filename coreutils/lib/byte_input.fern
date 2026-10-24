@@ -1,5 +1,3 @@
-// Specialize byte-wise parsers for text and raw bytes. Bytes borrows a view
-// within a parser call; Array retains a buffer across repeated comparisons.
 pub trait Input {
   function byte_count(self: Self): i32;
   function byte_at(self: Self, at: i32): u8;

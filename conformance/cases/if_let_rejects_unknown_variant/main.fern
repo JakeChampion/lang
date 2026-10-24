@@ -1,4 +1,4 @@
-// `if let` reads the shared pattern grammar (#5356): every pattern form a
-// `match` accepts works in its head.
+
+
 enum O { Has(i32), Nil }
 function main(): i32 { let o: O = Nil; if let Bogus(v) = o { return 0; } return 0; }

@@ -2,17 +2,6 @@ package e2e
 
 import "testing"
 
-// `std/i32`'s `(b: u8) is_ascii_white_space()` and `std/string`'s
-// `__is_ascii_ws(b: i32)` are ONE predicate: the method widens its byte and
-// defers, rather than open-coding the same six comparisons (#4387 item 1).
-//
-// The delegation runs that way round on purpose. `u8 -> i32` is lossless, so
-// no input changes meaning; the reverse (`__is_ascii_ws` calling the method)
-// would truncate, and a caller passing e.g. 288 would flip from false to true.
-//
-// The exhaustive 0..255 sweep is the property that matters — the two spellings
-// agreeing on the six whitespace bytes alone would also pass if one of them
-// wrongly admitted a seventh.
 const asciiWsProg = `import "std/i32";
 import "std/string";
 
@@ -46,7 +35,6 @@ function main(): i32 {
 }
 `
 
-// TestNativeAsciiWsSingleImpl runs the shipped modules on interp / x86-64 / wasm.
 func TestNativeAsciiWsSingleImpl(t *testing.T) {
 	p := writeIterProg(t, asciiWsProg)
 	if _, code := runFixtureInterp(t, p, ""); code != 42 {

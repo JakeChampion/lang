@@ -7,17 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostRcEnumCallInitIRX86_64 pins #4355 slice 5 on the self-host IR
-// path: a match-consumed enum local initialised by a CALL to a factored
-// constructor (`let e: E = mk(i)`), where every return of mk is a fresh direct
-// variant construction, is reclaimed exactly like a direct variant-ctor init
-// (`let b = Full([..])`) — the whole chain (enum box + payload struct box + its
-// string/array fields) is released each iteration, so the bump high-water
-// stays flat.
-//
-// The release must free the payload box once and each field once: a field
-// released twice ticks the underflow detector once per consume (99) and, for
-// a STRING field, segfaults.
 func TestSelfHostRcEnumCallInitIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -49,10 +38,6 @@ func TestSelfHostRcEnumCallInitIRX86_64(t *testing.T) {
 		}
 	}
 
-	// CALL-INIT, STRING-field payload struct (the slice target): churn flat at
-	// detector zero. mk's every return is a fresh direct ctor with a fresh
-	// concat string field, so the RCE scan admits it and the loop-rebind
-	// deep-drop reclaims enum box + S box + the string each iteration.
 	run(t, `struct S { name: string, n: i32 }
 enum E { A(S, i32), B(i32, i32) }
 function mk(nm: string, n: i32): E { return A(S { name: nm + "x", n: n }, n); }
@@ -79,8 +64,6 @@ function main(): i32 {
     return 0;
 }`, "rcenum-call-init-str-flat", 0)
 
-	// CALL-INIT, ARRAY-field payload struct: same admission, and the array field
-	// is freed with the payload box.
 	run(t, `struct S { xs: i32[], n: i32 }
 enum E { A(S, i32), B(i32, i32) }
 function mk(n: i32): E { return A(S { xs: [n, n + 1], n: n }, n); }
@@ -106,9 +89,6 @@ function main(): i32 {
     return 0;
 }`, "rcenum-call-init-arr-flat", 0)
 
-	// SCALAR-ONLY struct payload (#4355 slice 8): S { m, n } has no reclaimable
-	// leaf, but the consume still releases the payload box with a single
-	// rc_dec. Churn flat at detector zero.
 	run(t, `struct S { m: i32, n: i32 }
 enum E { A(S, i32), B(i32, i32) }
 function mk(n: i32): E { return A(S { m: n, n: n + 1 }, n); }
@@ -134,10 +114,6 @@ function main(): i32 {
     return 0;
 }`, "rcenum-scalar-struct-payload-flat", 0)
 
-	// SCALAR-ONLY struct payload, ALIASED (bare-ident) — not a fresh literal,
-	// so the consume must not free it: s0's box is swept by its own local
-	// reclaim, and a consume-site free would double-free. s0 stays readable at
-	// detector zero.
 	run(t, `struct S { m: i32, n: i32 }
 enum E { A(S, i32), B(i32, i32) }
 function main(): i32 {
@@ -155,10 +131,6 @@ function main(): i32 {
     return 0;
 }`, "rcenum-scalar-struct-aliased-payload-safe", 0)
 
-	// PARAM-EMBED exclusion: mk stores its param string into the payload field
-	// (`S { name: nm }`) — the RCE scan must reject it (freeing would dangle
-	// the caller's string). keep stays readable, detector zero, chain leaks
-	// (sound).
 	run(t, `struct S { name: string, n: i32 }
 enum E { A(S, i32), B(i32, i32) }
 function mk(nm: string, n: i32): E { return A(S { name: nm, n: n }, n); }
@@ -176,10 +148,6 @@ function main(): i32 {
     return 0;
 }`, "rcenum-call-init-param-embed-safe", 0)
 
-	// RETURN-CLOBBER regression pin: the DIRECT-init struct-payload consume
-	// (the shipped TestSelfHostEnumStructPayloadDropIRX86_64 shape) at
-	// DETECTOR ZERO — the shipped test asserts boundedness only, which the
-	// clobbered return passed while ticking the detector once per consume.
 	run(t, `struct Inner { items: i32[] }
 enum Box { Full(Inner), Empty }
 function readit(): i32 {
@@ -196,9 +164,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`, "rcenum-struct-payload-detector-zero", 0)
 
-	// STRING-field payload, DIRECT init: the shape the clobbered return
-	// SEGFAULTED on (__fern_str_free on the twice-freed field) — now flat at
-	// detector zero.
 	run(t, `struct S { name: string, n: i32 }
 enum E { A(S), Empty }
 function main(): i32 {

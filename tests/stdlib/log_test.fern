@@ -2,14 +2,6 @@ import "std/log";
 import "std/test";
 import "std/string";
 
-// tests/stdlib/log_test.fern — the leveled `Logger` added to
-// std/log (#2683): min-level threshold filtering, the five levels
-// TRACE..ERROR, structured key/value fields, the JSON-line output
-// mode, and the sink `emit` writes through. Assertions target the pure
-// `render(msg)` (the exact formatted line, or "" when filtered) and a
-// collecting sink, so no stderr capture is needed. This suite runs
-// through the self-host stdtest gate as well as the interpreter.
-
 function test_text_basic(): test.TestOutcome {
   let lg: log.Logger = log.new(log.INFO);
   return test.assert_eq(lg.info_().render("hello"), "[INFO] hello\n");
@@ -22,7 +14,6 @@ function test_text_fields(): test.TestOutcome {
 }
 
 function test_threshold_filters_below(): test.TestOutcome {
-  // INFO threshold drops DEBUG / TRACE.
   let lg: log.Logger = log.new(log.INFO);
   if (lg.debug_().str("k", "v").render("d") != "") {
     return test.fail("DEBUG should be filtered at INFO threshold");
@@ -50,25 +41,19 @@ function test_json_fields(): test.TestOutcome {
 }
 
 function test_json_escaping(): test.TestOutcome {
-  // Quote + backslash in the message must not break the JSON object.
   let lg: log.Logger = log.new_json(log.TRACE);
   let line: string = lg.info_().render("a\"b\\c");
   return test.assert_eq(line, "{\"level\":\"INFO\",\"msg\":\"a\\\"b\\\\c\"}\n");
 }
 
-// Newline / CR / tab take the 2-byte named escapes (\n \r \t), not \u00XX —
-// exercises the escaper's 2-byte-expansion branch on the whitespace controls.
 function test_json_escaping_whitespace(): test.TestOutcome {
   let lg: log.Logger = log.new_json(log.TRACE);
   let line: string = lg.info_().render("x\ny\rz\tw");
   return test.assert_eq(line, "{\"level\":\"INFO\",\"msg\":\"x\\ny\\rz\\tw\"}\n");
 }
 
-// A C0 control byte with no short escape must render as \u00XX so the
-// JSON-lines record stays parseable (#4388) — previously it passed
-// through raw, producing invalid JSON.
 function test_json_escaping_control(): test.TestOutcome {
-  let raw: u8[] = [65 as u8, 1 as u8, 66 as u8, 31 as u8];  // "A", 0x01, "B", 0x1F
+  let raw: u8[] = [65 as u8, 1 as u8, 66 as u8, 31 as u8];
   let msg: string = string_from_bytes_unchecked(raw);
   let lg: log.Logger = log.new_json(log.TRACE);
   let line: string = lg.info_().render(msg);
@@ -92,13 +77,10 @@ function test_level_names(): test.TestOutcome {
 }
 
 function test_at_explicit_level(): test.TestOutcome {
-  // `.at(level)` is the general form the shortcuts delegate to.
   let lg: log.Logger = log.new(log.DEBUG);
   return test.assert_eq(lg.at(log.DEBUG).render("x"), "[DEBUG] x\n");
 }
 
-// `emit` hands the sink each record once, without its newline, and
-// nothing for a record under the threshold.
 function test_sink_receives_each_line(): test.TestOutcome {
   let seen: Cell[string] = cell_new("");
   let lg: log.Logger = log.new_json(log.INFO).to((line: string): void => { seen.set(seen.get() + line + "|"); });
@@ -108,8 +90,6 @@ function test_sink_receives_each_line(): test.TestOutcome {
   return test.assert_eq(seen.get(), "{\"level\":\"INFO\",\"msg\":\"a\"}|{\"level\":\"WARN\",\"msg\":\"b\",\"k\":\"v\"}|");
 }
 
-// `to` keeps the threshold and the mode; the plain-text line reaches the
-// sink without the newline `render` ends it with.
 function test_sink_keeps_level_and_mode(): test.TestOutcome {
   let seen: Cell[string] = cell_new("");
   let lg: log.Logger = log.new(log.WARN).to((line: string): void => { seen.set(seen.get() + "<" + line + ">"); });

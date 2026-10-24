@@ -7,7 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// targetArchCalls counts the `target_arch(...)` calls left in prog.
 func targetArchCalls(prog *ast.Program) int {
 	n := 0
 	ast.WalkProgram(prog, func(node ast.Node) bool {
@@ -21,9 +20,6 @@ func targetArchCalls(prog *ast.Program) int {
 	return n
 }
 
-// `target_arch()` becomes the ISA the caller compiles for, wherever the call
-// sits, and folds independently of the environment half: naming one must not
-// resolve or disturb the other.
 func TestFoldWithResolvesTargetArch(t *testing.T) {
 	prog, err := parser.Parse(`function arch(): string { return target_arch(); }
 function main(): i32 {
@@ -49,8 +45,6 @@ function main(): i32 {
 	}
 }
 
-// Each half is folded by its own input: an environment with no ISA resolves
-// target_os() and leaves target_arch() for the checker, and the reverse.
 func TestFoldWithResolvesEachHalfSeparately(t *testing.T) {
 	src := `function both(): string { return target_os() + target_arch(); }`
 
@@ -83,8 +77,6 @@ func TestFoldWithResolvesEachHalfSeparately(t *testing.T) {
 	}
 }
 
-// A call with arguments is not the builtin's shape, so it stays for the
-// checker's arity error rather than folding to a literal that hides it.
 func TestFoldWithLeavesTargetArchWithArguments(t *testing.T) {
 	prog, err := parser.Parse(`function arch(): string { return target_arch(1); }`)
 	if err != nil {

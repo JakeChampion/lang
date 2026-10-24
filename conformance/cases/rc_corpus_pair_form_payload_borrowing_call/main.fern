@@ -1,17 +1,17 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// A pair-form payload passed to a BORROWING call in the arm body
-// (#6409). `x.len()` is `__method_Array_len(x)` after the checker's
-// method rewrite, and `total(x)` is the user-function spelling of the
-// same borrow; both now excuse the occurrence, so the payload is
-// released when the arm ends.
-//
-// `ident` is the control: it returns its parameter, so the payload
-// escapes the arm and must keep its prior leak. `alias` is read AFTER
-// the match on every round — if the release admitted a pointer result
-// the read would be a use-after-free rather than a wrong value, so
-// this is the row that would fail loudly. 4 × (3 + 6) + 4 × (2 + 3).
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import "core/int";
 function mk(n: i32): Option[i32[]] {
     if (n == 0) { return None; }

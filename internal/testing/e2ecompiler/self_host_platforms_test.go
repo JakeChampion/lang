@@ -10,17 +10,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostPlatformsCapabilityRules exercises the self-host's target
-// capability boundary (compiler/platforms.fern, #6633) — the port of
-// native's internal/pkg/platforms.
-//
-// The driver asserts each rule in BOTH directions: a program the target may
-// not compile, and one it may. The permissive half carries the weight. A
-// capability gate that fires on a valid program refuses code every backend
-// would have built, and unlike a missing gate it cannot be worked around.
-//
-// Exit 0 means every assertion held. A non-zero code identifies the case, so a
-// regression names itself without a stdout diff.
 func TestSelfHostPlatformsCapabilityRules(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -43,20 +32,6 @@ func TestSelfHostPlatformsCapabilityRules(t *testing.T) {
 	}
 }
 
-// TestSelfHostCapabilityCorpusAgreesWithNative runs both compilers over every
-// conformance fixture and requires the same E066 diagnostics from each.
-//
-// This is the false-positive gate, and it is the one that decides whether the
-// boundary is usable. The corpus is known-good code compiled for a target with
-// a real host, so an E066 here is the self-host refusing a program every
-// backend would have built — a failure the user cannot work around, unlike a
-// missing gate. It is also the only place a shake difference would show:
-// enforcement runs on the tree-shaken module, and the two compilers shake with
-// different root sets.
-//
-// A fixture the self-host cannot load at all contributes no E066 on either
-// side and passes vacuously; that is the same coverage the other corpus
-// sweeps have, and the sweep still runs the whole frontend on every case.
 func TestSelfHostCapabilityCorpusAgreesWithNative(t *testing.T) {
 	if testing.Short() {
 		t.Skip("corpus sweep is slow; skipped under -short")
@@ -102,14 +77,6 @@ func TestSelfHostCapabilityCorpusAgreesWithNative(t *testing.T) {
 	}
 }
 
-// e066Sites reduces a compiler's output to the E066 diagnostics it emitted, as
-// `line:col` (or a bare marker when the diagnostic carries no position, which
-// is how both compilers report a violation inside an imported module).
-//
-// The MESSAGE is not compared, only the code and the position — the same rule
-// firing at the same place. The two render a violation differently (native
-// carries a source excerpt and a caret), which is a diagnostic-format
-// difference rather than a capability one.
 func e066Sites(out string) []string {
 	var sites []string
 	re := regexp.MustCompile(`(?:^|[: ])(\d+):(\d+): error\[E066\]`)
@@ -127,15 +94,6 @@ func e066Sites(out string) []string {
 	return sites
 }
 
-// TestSelfHostTargetCapabilityDifferentialX86_64 is the parity gate: for a
-// program reaching for a host capability, native and the self-host must agree
-// on whether the target provides it.
-//
-// This is the divergence shape that actually blocks "the self-host is the only
-// compiler" — not a message the self-host words differently, but a source file
-// that builds under one compiler and not the other. Before #6633 the self-host
-// had no capability layer at all, so every case below built clean there and
-// was refused by native.
 func TestSelfHostTargetCapabilityDifferentialX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -151,29 +109,16 @@ func TestSelfHostTargetCapabilityDifferentialX86_64(t *testing.T) {
 	}
 
 	for _, c := range []struct {
-		name string
-		// One target name for both compilers: #6635 gave the self-host driver
-		// cmd/fern's `<isa>-<environment>` spellings, so the command that
-		// reaches one reaches the other unchanged.
+		name   string
 		target string
 		src    string
 	}{
-		// The wasi CLI world has no process model, so fork/waitpid/exec are
-		// refused there and granted on the hosted natives.
 		{"proc-fork-wasm", "wasm32-wasi", "function main(): i32 {\n    let pid: i32 = proc_fork();\n    return pid;\n}\n"},
 		{"proc-fork-native-ok", "x86-64-linux", "function main(): i32 {\n    let pid: i32 = proc_fork();\n    return pid;\n}\n"},
-		// The bump-arena checkpoint rewinds a heap pointer only the natives
-		// keep. Reading the cursor (`__heap_bump_bytes`) is ungated, which is
-		// what keeps this from being "anything heap-shaped is native-only".
 		{"heap-mark-wasm", "wasm32-wasi", "function main(): i32 {\n    let m: i64 = __heap_mark();\n    __heap_release_to(m);\n    return 0;\n}\n"},
 		{"heap-bump-bytes-wasm-ok", "wasm32-wasi", "function main(): i32 {\n    return __heap_bump_bytes();\n}\n"},
-		// The wasm worlds have no process model, so spawning is refused there
-		// and granted on the hosted natives.
 		{"subprocess-wasm", "wasm32-wasi", "function main(): i32 {\n    let argv: string[] = [];\n    let r: i32 = run_it(argv);\n    return r;\n}\nfunction run_it(argv: string[]): i32 {\n    subprocess(\"ls\", argv, \"\");\n    return 0;\n}\n"},
 		{"subprocess-native-ok", "x86-64-linux", "function main(): i32 {\n    let argv: string[] = [];\n    let r: i32 = run_it(argv);\n    return r;\n}\nfunction run_it(argv: string[]): i32 {\n    subprocess(\"ls\", argv, \"\");\n    return 0;\n}\n"},
-		// The capabilities a wasm program legitimately has: a filesystem, a
-		// clock, entropy, stdout. If the gate fired on these it would refuse
-		// most real programs.
 		{"fs-wasm-ok", "wasm32-wasi", "function main(): i32 {\n    match (read_file(\"x\")) {\n        Ok(s) => { return s.len(); },\n        Err(e) => { return 1; },\n    }\n    return 0;\n}\n"},
 		{"print-wasm-ok", "wasm32-wasi", "function main(): i32 {\n    print(\"hi\");\n    return 0;\n}\n"},
 		{"clock-wasm-ok", "wasm32-wasi", "function main(): i32 {\n    return (now_unix_ms() as i32);\n}\n"},
@@ -196,18 +141,6 @@ func TestSelfHostTargetCapabilityDifferentialX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostFreestandingTargets is the end-to-end form of #6633 item 4: the
-// two freestanding targets are reachable from the self-host driver, and behave
-// as native's do — a core-safe program type-checks against an empty capability
-// set, a program touching a host draws E066, and codegen is refused because no
-// backend emits for them.
-//
-// That third case is the one worth a test rather than a reading of the table.
-// A target with no backend is the only kind whose correct behaviour is to
-// REFUSE, so a driver that silently fell through to a backend would produce an
-// artifact for a machine the user did not ask for — and the freestanding pair
-// is the shape every later bare-metal target takes
-// (docs/BARE-METAL-PLAN.md, #6510).
 func TestSelfHostFreestandingTargets(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -222,8 +155,6 @@ func TestSelfHostFreestandingTargets(t *testing.T) {
 		t.Fatalf("stdlib path: %v", err)
 	}
 
-	// `-targets` must list both, or nothing tells a user they exist, and it
-	// lists exactly what the oracle's does.
 	listing, _ := exec.Command(driverBin, "-targets").CombinedOutput()
 	for _, want := range []string{"arm64-freestanding", "x86-64-freestanding"} {
 		if !strings.Contains(string(listing), want) {
@@ -240,19 +171,11 @@ func TestSelfHostFreestandingTargets(t *testing.T) {
 		target string
 		src    string
 	}{
-		// Arithmetic needs no host, so it type-checks with nothing granted.
 		{"core-ok-arm64", "arm64-freestanding", "function main(): i32 { return 7; }\n"},
 		{"core-ok-x86", "x86-64-freestanding", "function main(): i32 { return 7; }\n"},
-		// `print` needs `log`, which no freestanding host provides.
 		{"log-refused-arm64", "arm64-freestanding", "function main(): i32 {\n    print(\"x\");\n    return 0;\n}\n"},
 		{"log-refused-x86", "x86-64-freestanding", "function main(): i32 {\n    print(\"x\");\n    return 0;\n}\n"},
-		// `exit` is core with a target-specific lowering, not a capability, so
-		// a freestanding program may still stop.
 		{"exit-ok", "arm64-freestanding", "function main(): i32 {\n    exit(0);\n    return 0;\n}\n"},
-		// `print` in a function nothing calls is NOT a violation: the verdict is
-		// the tree-shaken module's. A refusal with no diagnostic printed would pass
-		// the E066-site comparison, since both compilers report no site, so the
-		// exit code is checked as well.
 		{"unreachable-log-ok", "x86-64-freestanding", "function never_called(): void {\n    print(\"x\");\n}\nfunction main(): i32 { return 7; }\n"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -270,8 +193,6 @@ func TestSelfHostFreestandingTargets(t *testing.T) {
 				t.Errorf("E066 sites differ: native [%s], self-host [%s]\n--- native ---\n%s\n--- self-host ---\n%s",
 					want, got, nativeOut, shOut)
 			}
-			// Whether the program is ACCEPTED, which the site lists agree on
-			// even when one compiler rejects with nothing to show for it.
 			if wantCode, gotCode := nativeCmd.ProcessState.ExitCode(), shCmd.ProcessState.ExitCode(); wantCode != gotCode {
 				t.Errorf("-check exit differs: native %d, self-host %d\n--- native ---\n%s\n--- self-host ---\n%s",
 					wantCode, gotCode, nativeOut, shOut)
@@ -279,8 +200,6 @@ func TestSelfHostFreestandingTargets(t *testing.T) {
 		})
 	}
 
-	// Codegen: both compilers must refuse, and say why rather than failing
-	// somewhere further down with a missing-backend symptom.
 	src := filepath.Join(dir, "fs_codegen.fern")
 	if err := os.WriteFile(src, []byte("function main(): i32 { return 7; }\n"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)

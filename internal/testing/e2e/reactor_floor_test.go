@@ -11,10 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The reactor floor (#9853) on every leg of the Go compiler: one probe,
-// exit 42 iff every check holds. The wasm leg reads the verdict from
-// stdout, as the socket tests do.
-
 func TestReactorFloorInterp(t *testing.T) {
 	if out, got := runInterpExitCode(t, e2eharness.ReactorProbe()); got != 42 {
 		t.Fatalf("interp got %d, want 42; first failing check: %s", got, out)
@@ -33,7 +29,6 @@ func TestReactorFloorArm64(t *testing.T) {
 	}
 }
 
-// The Darwin leg: kqueue behind the same floor.
 func TestArm64DarwinReactorFloor(t *testing.T) {
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 		t.Skip("requires the Apple Silicon execution lane")
@@ -67,9 +62,6 @@ func TestReactorFloorWasm(t *testing.T) {
 		t.Fatal(err)
 	}
 	component := filepath.Join(dir, "probe.component.wasm")
-	// Under the leak census: the probe's would-block and end-of-stream
-	// reads are the empty lists the host lowers through cabi_realloc, and
-	// a zero-size block taken there is a count nothing gives back (#10608).
 	compile := exec.Command(fern, "-target", "wasm32-wasi", "-o", component, src)
 	compile.Env = append(os.Environ(), "FERN_LEAKCHECK=1")
 	if out, err := compile.CombinedOutput(); err != nil {

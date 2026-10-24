@@ -7,21 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostEmptyImplAdoptedMethodGate pins that the file-loading driver's
-// build gate reads the module AS WRITTEN, not the treeshaked one.
-//
-// `impl Trait for T { }` is satisfied by an inherent method T already carries
-// (core/cmp's `impl Hash for bigint.BigInt { }` is the shape). treeshake prunes
-// mod.funcs by name reachability but leaves mod.impls whole, so a program that
-// never calls that method loses it and the impl is left pointing at nothing.
-// Gating on that pruned module reported `bigint__BigInt does not implement
-// Hash: missing method "hash"` for every stdlib-importing program (#8885) —
-// which the native checker, running before any prune, never says.
-//
-// The type is reached through an import so the impl names it module-qualified
-// (`bigish__Val` after mangling), the spelling the failure carried.
-//
-// Native only: the file-loading driver reads modules by host path from argv.
 func TestSelfHostEmptyImplAdoptedMethodGate(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -39,7 +24,6 @@ pub function (v: Val) hash(): i32 { return v.n * 31; }
 
 pub function make(n: i32): Val { return Val { n: n }; }
 `
-	// main never spells `.hash()`, so the prune drops `bigish__Val.hash`.
 	const progSrc = `import "./bigish";
 
 trait Hash { function hash(self: Self): i32; }
@@ -55,8 +39,6 @@ function main(): i32 {
 	mustWrite(t, progDir, "bigish.fern", modSrc)
 	prog := mustWrite(t, progDir, "prog.fern", progSrc)
 
-	// `-treeshake` forces the prune the stdlib root turns on by default, so the
-	// pin costs a two-module load rather than the whole stdlib closure.
 	asm, err := exec.Command(mmc, prog, "-treeshake").Output()
 	if err != nil {
 		var ee *exec.ExitError

@@ -4,15 +4,6 @@ import (
 	"testing"
 )
 
-// #6425 — `acc = step(acc, x)` on a string-bearing array: the callee appends
-// and hands the (possibly regrown) buffer back, and the caller's overwrite of
-// `acc` superseded the old buffer without releasing it, one buffer per grow.
-// Measured on the issue's own commit at 352 B a round; the array-overwrite
-// depth and identity-guard work (docs/rc-log/2026-09-01-array-overwrite-depth.md)
-// closed it, and this pins the shape so it cannot reopen. Rounds-based: the
-// accumulator is built and dies each round, so a correct runtime is flat in
-// the round count.
-
 const threadedStringArrayAccumulatorSrc = `import "std/i32";
 @noinline
 function cb(xs: string[], i: i32): string[] { return xs.append("p-a-wide-payload-past-any-inline-threshold" + i.to_string()); }

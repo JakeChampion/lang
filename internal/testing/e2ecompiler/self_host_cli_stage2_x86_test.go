@@ -1,3 +1,4 @@
+// CI-DARK: FERN_STAGE3 — CI uses stage 2 because stage 3 repeats the compiler build.
 package e2ecompiler
 
 import (
@@ -9,16 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/envflag"
 )
 
-// TestSelfHostCLIStage2X86_64 gates the CLI reproducing itself on x86-64
-// (#7954). Stage 1 is fern.fern built by the Go backend; stage 2 is fern.fern
-// built by stage 1. Stage 2 then compiles lexer.fern and a small program, and
-// the program must run and answer correctly.
-//
-// Nothing else runs a compiler the self-host built over real input: the
-// fixpoints compare emitted bytes, and this failed (arena exhaustion on
-// parser.fern, SIGSEGV on checker.fern and fern.fern) while every one of them
-// was green. Stage 2 rebuilding the whole compiler is FERN_STAGE3=1, since it
-// doubles the cost.
 func TestSelfHostCLIStage2X86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -67,13 +58,11 @@ function main(): i32 {
 		compile(t, stage2, src, bin)
 		run := exec.Command(bin)
 		_ = run.Run()
-		// 5 rounds of (2i + 1) + 2: 25 + 10.
 		if code := run.ProcessState.ExitCode(); code != 35 {
 			t.Fatalf("stage-2-built program exited %d, want 35", code)
 		}
 	})
 
-	// The checker stage 1 lowered read a freed Map type here (#10832).
 	t.Run("check-map-literal-branches", func(t *testing.T) {
 		src := filepath.Join(dir, "stage2_check.fern")
 		prog := `import "core/map";
@@ -93,8 +82,6 @@ function main(): i32 {
 	})
 
 	t.Run("stage3", func(t *testing.T) {
-		// CI-DARK: FERN_STAGE3 — doubles a job already ~4 minutes long; stage 2
-		// compiling lexer.fern and a program is what runs on every push.
 		if !envflag.On("FERN_STAGE3") {
 			t.Skip("set FERN_STAGE3=1 to have stage 2 rebuild the whole compiler")
 		}

@@ -1,7 +1,3 @@
-// Package e2eharness holds the shared e2e test harness — driver builds,
-// tooling discovery, caches — used by both internal/testing/e2e and
-// internal/testing/e2ecompiler (#4398 part 3). Extracted verbatim from
-// internal/testing/e2e/interp_script_test.go.
 package e2eharness
 
 import (
@@ -11,22 +7,6 @@ import (
 	"testing"
 )
 
-// `BuildLangBinForInterp` returns a path to a compiled
-// `cmd/fern` binary. Earlier this rebuilt per-call into
-// `t.TempDir()`; with ~60+ callsites across the runner-
-// example gates that meant 60 sequential `go build`s on
-// every run. Now the binary is built **once** per `go
-// test` process via `sync.Once` and shared across all
-// callers — drops the per-call cost to a single map
-// lookup and unblocks `t.Parallel()` in the dependent
-// tests (parallel runs no longer race on temp-dir
-// cleanup of a binary another test is mid-exec).
-//
-// The shared binary lives in a `ProcessScratchDir`
-// rather than `t.TempDir()`: per-test temp dirs get
-// auto-cleaned at the END of THEIR test, which would yank
-// the binary out from under a parallel sibling that's
-// still using it.
 var (
 	langBinOnce sync.Once
 	langBinPath string

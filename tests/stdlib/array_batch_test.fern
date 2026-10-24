@@ -1,12 +1,6 @@
 import "std/test";
 import "std/array" as array;
 
-// tests/stdlib/array_batch_test.fern — std/array batch-processing verbs
-// (#4416 / ROADMAP #12): slice (half-open range, clamped), chunks
-// (consecutive non-overlapping groups) and windows (overlapping sliding
-// groups). chunks/windows return i32[][], so this also exercises the
-// nested-array shape through the self-host IR path on real stdlib bodies.
-
 function test_slice_basic(): test.TestOutcome {
   let s: i32[] = array.slice([10, 20, 30, 40, 50], 1, 4);
   if (s.len() != 3) {
@@ -16,13 +10,11 @@ function test_slice_basic(): test.TestOutcome {
 }
 
 function test_slice_clamped(): test.TestOutcome {
-  // Out-of-range bounds clamp to [0, len] instead of faulting.
   let s: i32[] = array.slice([1, 2, 3], 0 - 3, 100);
   return test.assert_true(s.len() == 3 && s[0] == 1 && s[2] == 3);
 }
 
 function test_slice_empty(): test.TestOutcome {
-  // start >= end (after clamping) is empty.
   return test.assert_eq(array.slice([1, 2, 3], 2, 2).len(), 0);
 }
 
@@ -35,7 +27,6 @@ function test_chunks_even(): test.TestOutcome {
 }
 
 function test_chunks_uneven(): test.TestOutcome {
-  // A short final chunk when len isn't a multiple of size.
   let c: i32[][] = array.chunks([1, 2, 3, 4, 5], 2);
   if (c.len() != 3) {
     return test.fail("chunk count");
@@ -44,7 +35,6 @@ function test_chunks_uneven(): test.TestOutcome {
 }
 
 function test_chunks_nonpositive_size(): test.TestOutcome {
-  // size <= 0 is empty, not an infinite loop.
   return test.assert_eq(array.chunks([1, 2, 3], 0).len(), 0);
 }
 
@@ -66,12 +56,10 @@ function test_windows_basic(): test.TestOutcome {
 }
 
 function test_windows_too_wide(): test.TestOutcome {
-  // size > len yields no windows.
   return test.assert_eq(array.windows([1, 2], 3).len(), 0);
 }
 
 function test_windows_full_width(): test.TestOutcome {
-  // size == len yields exactly one window (the whole array).
   let w: i32[][] = array.windows([1, 2, 3], 3);
   if (w.len() != 1) {
     return test.fail("window count");

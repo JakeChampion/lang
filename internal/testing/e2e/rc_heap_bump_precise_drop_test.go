@@ -4,25 +4,6 @@ import (
 	"testing"
 )
 
-// Perceus precise drops (garbage-free, straight-line subset). An owned
-// primitive-element array local (i32[] / u8[] / f32[] ...) is dropped right
-// AFTER its last top-level use instead of at the function-exit sweep, so a
-// later same-shaped allocation reuses the freed block — lowering peak memory.
-// Slice 1 scopes to primitive arrays: the large data buffers whose drop is a
-// pure buffer free (no element/field decs). See computePreciseDrops.
-//
-// The win is demonstrated by comparing 4 SEQUENTIALLY-DEAD arrays (each used
-// then dead before the next is allocated) against 4 SIMULTANEOUSLY-LIVE ones
-// (all read at the end): with precise drops the dead version reclaims to ~1
-// block while the live version holds all 4. The wasm bump probe measures it
-// directly; natives' segregated-freelist arena is insensitive to the bump
-// cursor (it reads a flat low high-water either way), so for natives the
-// tests assert value-correctness + 0 over-release. The aliasing case pins
-// the soundness invariant: a local inc'd into a container that outlives its
-// last bare use is only DEC'd by the precise drop (the container's reference
-// survives), never freed early.
-
-// pdValuesSrc: distinct values across sequential precise-dropped arrays.
 const pdValuesSrc = `function main(): i32 {
     let a: i32[] = [10, 20, 30]; let sa: i32 = a[0] + a[2];
     let b: i32[] = [1, 2, 3]; let sb: i32 = b[1];
@@ -33,9 +14,6 @@ const pdValuesSrc = `function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// pdAliasSrc: `a` is inc'd into a struct that outlives a's last bare use;
-// the precise drop must only dec (the struct keeps it). Forced interleaved
-// allocation (junk) would corrupt a wrongly-freed buffer.
 const pdAliasSrc = `struct Holder { items: i32[], n: i32 }
 function main(): i32 {
     let acc: i32 = 0;
@@ -53,13 +31,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// pdArgReturnSrc: a non-inlinable function that ALWAYS returns its argument,
-// so `b` aliases `a`'s buffer. `a`'s last bare use is `biggy(a)` — but
-// because biggy returns its param, the borrow model makes the param OWNED and
-// incs `a` at the call, so the precise drop only DECs (b's reference
-// survives). The forced `junk` allocation would corrupt a wrongly-freed
-// buffer. This pins the "precise drop is just a dec; a counted alias
-// survives" invariant for the function-return-of-arg shape.
 const pdArgReturnSrc = `function biggy(xs: i32[]): i32[] {
     let w: i32 = 0;
     let j: i32 = 0;
@@ -82,14 +53,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// --- Slice 2: rc-element arrays (arrays of boxes / nested arrays). Their
-// precise drop is the deep __drop_arr_* loop (frees the element boxes / inner
-// buffers + the outer buffer), so a sequentially-dead rc-element array
-// reclaims its WHOLE structure early, not just the outer buffer. ---
-
-// rcArrValuesSrc: array-of-struct (P[]), distinct values, with an aliased
-// element kept live — the deep struct-array drop must only DEC the shared
-// element box, not free it.
 const rcArrValuesSrc = `struct P { x: i32, y: i32 }
 function main(): i32 {
     let acc: i32 = 0;

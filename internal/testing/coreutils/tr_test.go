@@ -9,40 +9,18 @@ func init() {
 	registerCorpus("tr", trCases)
 }
 
-// trCases is tr(1)'s corpus.
-//
-// tr has no file operands: everything it does is decided by two SET
-// strings, so the corpus is mostly a grammar test. The parts that repay
-// the most cases are the ones where a construct is recognised only when
-// its whole shape is present (`[:up` and `[x*1` are ordinary bytes,
-// `[x*z]` is a fault), and the pairing rules between SET1 and SET2,
-// where the same two operands can be a case fold, a positional map, a
-// misalignment or an un-extendable tail depending on where the classes
-// sit.
 func trCases(t *testing.T) []invocation {
-	// Mixed case, digits, blanks and a terminator: enough for every
-	// class in one line, short enough to read in a failure.
 	mixed := "aBcXyZ123 \t\n"
-	// Every byte, four times over: the only input that proves a table
-	// entry for each of the 256 and that a run crossing a read block is
-	// still squeezed as one.
 	var all strings.Builder
 	for i := 0; i < 256; i++ {
 		all.WriteByte(byte(i))
 	}
 	allBytes := strings.Repeat(all.String(), 4)
-	// Longer than one 64 KiB read, so a squeeze run and a translation
-	// both cross a block boundary.
 	big := strings.Repeat("aabbccdd\n", 20000)
-	// A SET that is not valid UTF-8: it reaches the tables and the
-	// diagnostics as bytes, so nothing may re-encode it.
 	raw := "a\xffb"
-	// A directory as stdin: open(2) succeeds and read(2) fails EISDIR,
-	// which is the only way this corpus reaches a read error.
 	dir := t.TempDir()
 
 	return []invocation{
-		// Translation.
 		{name: "translate", args: []string{"abc", "xyz"}, stdin: mixed},
 		{name: "set2 shorter", args: []string{"abcde", "xy"}, stdin: mixed},
 		{name: "set2 longer", args: []string{"a", "XYZ"}, stdin: mixed},
@@ -54,7 +32,6 @@ func trCases(t *testing.T) []invocation {
 		{name: "every byte", args: []string{"\\000-\\377", "[X*]"}, stdin: allBytes},
 		{name: "translate across read blocks", args: []string{"ab", "xy"}, stdin: big},
 
-		// Ranges.
 		{name: "range", args: []string{"a-c", "x-z"}, stdin: mixed},
 		{name: "range in set1 only", args: []string{"a-z", "X"}, stdin: mixed},
 		{name: "one-byte range", args: []string{"a-a", "X"}, stdin: mixed},
@@ -68,7 +45,6 @@ func trCases(t *testing.T) []invocation {
 		{name: "reverse range of high bytes", args: []string{"\\377-\\376", "x"}, stdin: mixed},
 		{name: "range to a bracket is reversed", args: []string{"a-[:alpha:]", "X"}, stdin: mixed},
 
-		// Escapes.
 		{name: "named escapes", args: []string{"\\a\\b\\f\\n\\r\\t\\v", "ABCDEFG"}, stdin: "a\a\b\f\n\r\t\vz"},
 		{name: "escaped backslash", args: []string{"a\\\\b", "XYZ"}, stdin: "a\\b\n"},
 		{name: "unknown escape is the byte", args: []string{"a\\zb", "XYZ"}, stdin: mixed},
@@ -90,7 +66,6 @@ func trCases(t *testing.T) []invocation {
 		{name: "set that is not valid UTF-8", args: []string{raw, "XYZ"}, stdin: "a\xffb\n"},
 		{name: "set2 that is not valid UTF-8", args: []string{"abc", raw}, stdin: mixed},
 
-		// Character classes.
 		{name: "class alnum", args: []string{"-d", "[:alnum:]"}, stdin: mixed},
 		{name: "class alpha", args: []string{"-d", "[:alpha:]"}, stdin: mixed},
 		{name: "class blank", args: []string{"-d", "[:blank:]"}, stdin: mixed},
@@ -112,7 +87,6 @@ func trCases(t *testing.T) []invocation {
 		{name: "bare bracket is a byte", args: []string{"[", "X"}, stdin: "a[b\n"},
 		{name: "bracket pair is bytes", args: []string{"a[b]c", "XYZW"}, stdin: "a[b]c\n"},
 
-		// The case-fold pairing.
 		{name: "lower to upper", args: []string{"[:lower:]", "[:upper:]"}, stdin: mixed},
 		{name: "upper to lower", args: []string{"[:upper:]", "[:lower:]"}, stdin: mixed},
 		{name: "upper to upper is the identity", args: []string{"[:upper:]", "[:upper:]"}, stdin: mixed},
@@ -134,7 +108,6 @@ func trCases(t *testing.T) []invocation {
 		{name: "set2 ends with a class under -t", args: []string{"-t", "[:lower:]0", "[:upper:]"}, stdin: mixed},
 		{name: "set2 ends with a range", args: []string{"abcd", "x-y"}, stdin: mixed},
 
-		// Equivalence classes.
 		{name: "equiv in set1", args: []string{"[=a=]", "X"}, stdin: mixed},
 		{name: "equiv deleted", args: []string{"-d", "[=a=]"}, stdin: mixed},
 		{name: "equiv of an escape", args: []string{"[=\\n=]", "x"}, stdin: mixed},
@@ -146,7 +119,6 @@ func trCases(t *testing.T) []invocation {
 		{name: "unterminated equiv is bytes", args: []string{"[=a", "XY"}, stdin: mixed},
 		{name: "equiv is not a range endpoint", args: []string{"[=a=]-z", "X"}, stdin: mixed},
 
-		// Repeats.
 		{name: "repeat until set1 ends", args: []string{"abc", "[x*]"}, stdin: mixed},
 		{name: "repeat with a count", args: []string{"abcde", "[x*3]"}, stdin: mixed},
 		{name: "repeat before other bytes", args: []string{"abcd", "[q*]xy"}, stdin: mixed},
@@ -176,7 +148,6 @@ func trCases(t *testing.T) []invocation {
 		{name: "escaped bracket is not a repeat", args: []string{"\\[x*3]", "QRSTUV"}, stdin: "a[x*3]z\n"},
 		{name: "class then a star", args: []string{"abc", "[[:upper:]*3]"}, stdin: mixed},
 
-		// -d.
 		{name: "delete", args: []string{"-d", "abc"}, stdin: mixed},
 		{name: "delete long", args: []string{"--delete", "abc"}, stdin: mixed},
 		{name: "delete nothing", args: []string{"-d", ""}, stdin: mixed},
@@ -184,7 +155,6 @@ func trCases(t *testing.T) []invocation {
 		{name: "delete every byte", args: []string{"-d", "\\000-\\377"}, stdin: allBytes},
 		{name: "delete across read blocks", args: []string{"-d", "a"}, stdin: big},
 
-		// -s.
 		{name: "squeeze one set", args: []string{"-s", "a"}, stdin: "aaabbb\n"},
 		{name: "squeeze long", args: []string{"--squeeze-repeats", "a"}, stdin: "aaabbb\n"},
 		{name: "squeeze a class", args: []string{"-s", "[:space:]"}, stdin: "a   b\t\t\tc\n\n\n"},
@@ -195,14 +165,12 @@ func trCases(t *testing.T) []invocation {
 		{name: "squeeze across read blocks", args: []string{"-s", "a"}, stdin: strings.Repeat("a", 200000)},
 		{name: "squeeze a run that straddles a block", args: []string{"-s", "ab"}, stdin: big},
 
-		// -d -s.
 		{name: "delete and squeeze", args: []string{"-ds", "a", "b"}, stdin: "aabbcc\n"},
 		{name: "delete and squeeze long", args: []string{"--delete", "--squeeze-repeats", "a", "b"}, stdin: "aabbcc\n"},
 		{name: "delete and squeeze with an empty set2", args: []string{"-ds", "a", ""}, stdin: mixed},
 		{name: "delete and squeeze classes", args: []string{"-ds", "[:digit:]", "[:space:]"}, stdin: "a1  2\t\tb\n"},
 		{name: "delete brings two runs together", args: []string{"-ds", "b", "a"}, stdin: "abaaba\n"},
 
-		// -c / -C.
 		{name: "complement translate", args: []string{"-c", "a", "X"}, stdin: mixed},
 		{name: "complement with a short set2", args: []string{"-c", "a", "XY"}, stdin: mixed},
 		{name: "complement upper case", args: []string{"-C", "a", "X"}, stdin: mixed},
@@ -220,7 +188,6 @@ func trCases(t *testing.T) []invocation {
 		{name: "complement with an empty set2", args: []string{"-c", "a", ""}, stdin: mixed},
 		{name: "complement of everything", args: []string{"-c", "\\000-\\377", "X"}, stdin: mixed},
 
-		// -t.
 		{name: "truncate", args: []string{"-t", "abc", "X"}, stdin: mixed},
 		{name: "truncate long", args: []string{"--truncate-set1", "abc", "X"}, stdin: mixed},
 		{name: "truncate with a longer set2", args: []string{"-t", "a", "XYZ"}, stdin: mixed},
@@ -228,7 +195,6 @@ func trCases(t *testing.T) []invocation {
 		{name: "truncate a case fold", args: []string{"-t", "[:lower:]", "[:upper:]abc"}, stdin: mixed},
 		{name: "truncate is ignored when deleting", args: []string{"-td", "abc"}, stdin: mixed},
 
-		// Operand counts: each combination words its own fault.
 		{name: "no operands", stdin: mixed},
 		{name: "one operand translating", args: []string{"abc"}, stdin: mixed},
 		{name: "three operands translating", args: []string{"a", "b", "c"}, stdin: mixed},
@@ -243,8 +209,6 @@ func trCases(t *testing.T) []invocation {
 		{name: "operand needing quotes", args: []string{"a'b", "c d", "e"}, stdin: mixed},
 		{name: "operand that is not valid UTF-8 in a fault", args: []string{"a", "b", raw}, stdin: mixed},
 
-		// Option scanning. tr's optstring starts with `+`, so the first
-		// operand ends it whether or not POSIXLY_CORRECT is set.
 		{name: "option after an operand", args: []string{"a", "b", "-d"}, stdin: mixed},
 		{name: "option after one operand", args: []string{"a", "-d"}, stdin: mixed},
 		{name: "posix option after an operand", args: []string{"a", "b", "-d"}, stdin: mixed, env: []string{"POSIXLY_CORRECT=1"}},
@@ -267,13 +231,11 @@ func trCases(t *testing.T) []invocation {
 		{name: "help rejects a value", args: []string{"--help=x"}, stdin: mixed},
 		{name: "version rejects a value", args: []string{"--version=x"}, stdin: mixed},
 
-		// Input edges.
 		{name: "empty stdin", args: []string{"a", "b"}},
 		{name: "stdin with no trailing newline", args: []string{"a", "X"}, stdin: "abc"},
 		{name: "stdin of NUL bytes", args: []string{"\\0", "X"}, stdin: "a\x00b\x00c"},
 		{name: "stdin from a directory", args: []string{"a", "b"}, stdinPath: dir},
 
-		// Write failures.
 		{name: "stdout closed", args: []string{"a", "b"}, stdin: mixed, stdout: stdoutClosed},
 		{name: "stdout full", args: []string{"a", "b"}, stdin: mixed, stdout: stdoutFull},
 		{name: "stdout closed with a large output", args: []string{"a", "b"}, stdin: big, stdout: stdoutClosed},

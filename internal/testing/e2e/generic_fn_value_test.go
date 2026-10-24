@@ -10,9 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// A generic function named as a value is instantiated from the function type
-// it is wanted at, on the interpreter and every native target. The self-host
-// twin is TestSelfHostGenericFnValue.
 func TestGenericFnValue(t *testing.T) {
 	main := e2eharness.WriteGenericFnValueProgram(t)
 	t.Run("interp", func(t *testing.T) {
@@ -36,9 +33,6 @@ func TestGenericFnValue(t *testing.T) {
 			t.Fatalf("exit = %d, want 0\n%s", code, out)
 		}
 	})
-	// The type arguments a generic callee's other arguments pin are bound
-	// after the checker typed the value, so their bounds are monomorph's to
-	// check, as a call's are; `-check` runs it.
 	t.Run("bound unmet through a generic callee", func(t *testing.T) {
 		bad := filepath.Join(t.TempDir(), "bad.fern")
 		src := `trait Shape { function area(self: Self): i32; }

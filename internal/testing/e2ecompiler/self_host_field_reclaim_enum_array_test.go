@@ -8,59 +8,25 @@ import (
 	"testing"
 )
 
-// #8604: a replaced enum-ARRAY field's element boxes were freed without
-// walking their variant payloads, while the same field released deeply when the
-// struct went out of scope.
-//
-// THE EXIT CODE DOES NOT MOVE on the leak, as with the rest of this family: the
-// leakcheck leg against native is the gate. The register and wasm legs are the
-// miscompile guard on adding a call inside a helper three backends emit, and the
-// shared-buffer row is where an over-release would land (exit 99) rather than a
-// leak.
 var selfHostFieldReclaimEnumArrayCases = []struct {
 	name string
 	src  string
 }{
-	// The reported shape: an enum-array field replaced on a rebind from a call.
 	{"enum-array-field-reclaim", "enum Payload { None, Some(i32[]) }\nstruct Asm { ps: Payload[], n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, ps: [Payload.Some([v])] };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { ps: [Payload.Some([9])], n: 0 };\n    a = step(a, 1);\n    return a.ps.len() + __rc_underflow_count();\n}"},
 
-	// Two rc-carrying variants, so the walk's tag dispatch has to pick rather
-	// than fall into a single arm.
 	{"enum-array-two-rc-variants", "enum Payload { None, Some(i32[]), Many(i32[]) }\nstruct Asm { ps: Payload[], n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, ps: [Payload.Some([v]), Payload.Many([v, v])] };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { ps: [Payload.Some([9]), Payload.Many([8, 7])], n: 0 };\n    a = step(a, 1);\n    return a.ps.len() + __rc_underflow_count();\n}"},
 
-	// Several rounds, so a per-round leak accumulates rather than resting on one
-	// missed walk.
 	{"enum-array-three-rounds", "enum Payload { None, Some(i32[]) }\nstruct Asm { ps: Payload[], n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, ps: [Payload.Some([v])] };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { ps: [Payload.Some([9])], n: 0 };\n    a = step(a, 1);\n    a = step(a, 2);\n    a = step(a, 3);\n    return a.ps.len() + __rc_underflow_count();\n}"},
 
-	// The SAME field one level down, released through Inner's drop when the old Asm
-	// dies rather than as a field of Asm itself.
 	{"enum-array-via-struct-drop", "enum Payload { None, Some(i32[]) }\nstruct Inner { ps: Payload[] }\nstruct Asm { i: Inner, n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, i: Inner { ps: [Payload.Some([v])] } };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { i: Inner { ps: [Payload.Some([9])] }, n: 0 };\n    a = step(a, 1);\n    return a.i.ps.len() + __rc_underflow_count();\n}"},
 
-	// A SECOND owner holds the buffer across the rebind, so the walk's rc==1
-	// gate must decline it — that owner still reads the payload afterwards. An
-	// unguarded walk fails this row as a changed answer or an underflow, not as
-	// a leak. The second owner is a struct on purpose: an enum-array LOCAL is
-	// released by a different path, which has a leak of its own (#8610) that
-	// would confound this row.
 	{"shared-via-second-struct-declines-walk", "enum Payload { None, Some(i32[]) }\nstruct Asm { ps: Payload[], n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, ps: [Payload.Some([v])] };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { ps: [Payload.Some([9, 9, 9])], n: 0 };\n    let b: Asm = Asm { ps: a.ps, n: 1 };\n    a = step(a, 1);\n    let r: i32 = 0;\n    match (b.ps[0]) { Payload.None => { r = 0; }, Payload.Some(g) => { r = g.len(); } }\n    return r + __rc_underflow_count();\n}"},
 
-	// Control: an enum array whose payloads are all SCALAR. Nothing on the heap
-	// sits under those element boxes, so a payload dec there would be an
-	// over-release.
 	{"scalar-payload-enum-array-control", "enum Payload { None, Some(i32) }\nstruct Asm { ps: Payload[], n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, ps: [Payload.Some(v)] };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { ps: [Payload.Some(0)], n: 0 };\n    a = step(a, 1);\n    return a.ps.len() + __rc_underflow_count();\n}"},
 
-	// Control: the STRUCT-array sibling in the same helper, which already had its
-	// pre-walk. Clean either way — it says the arrarr_free mechanism was sound
-	// and the enum arm was what was missing.
 	{"struct-array-field-reclaim-control", "struct Slot { xs: i32[] }\nstruct Asm { cs: Slot[], n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, cs: [Slot { xs: [v] }] };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { cs: [Slot { xs: [9] }], n: 0 };\n    a = step(a, 1);\n    return a.cs.len() + __rc_underflow_count();\n}"},
 }
 
-// TestSelfHostFieldReclaimEnumArrayLeakCheck is the gate: clean under
-// FERN_LEAKCHECK on BOTH compilers, native as the oracle.
-//
-// The first three rows leak without the fix; the four controls are clean either
-// way. An unguarded or wrongly-typed walk shows up as an over-release rather
-// than a leak, which is why the exit code is asserted alongside the verdict.
 func TestSelfHostFieldReclaimEnumArrayLeakCheck(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	cli := buildLangBinForInterp(t)
@@ -86,10 +52,6 @@ func TestSelfHostFieldReclaimEnumArrayLeakCheck(t *testing.T) {
 	}
 }
 
-// TestSelfHostFieldReclaimEnumArrayX86_64 — the answers against the interpreter
-// oracle. Vacuous for the leak itself; it is the miscompile guard on adding a
-// call inside the reclaim helper, and where the shared-buffer row's over-release
-// would surface.
 func TestSelfHostFieldReclaimEnumArrayX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
@@ -119,7 +81,6 @@ func TestSelfHostFieldReclaimEnumArrayX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostFieldReclaimEnumArrayArm64 — the arm64 emit of the same directive.
 func TestSelfHostFieldReclaimEnumArrayArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -145,9 +106,6 @@ func TestSelfHostFieldReclaimEnumArrayArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostFieldReclaimEnumArrayWasmIR — wasm builds its reclaim body itself
-// rather than from the shared directives, so it carried the identical omission
-// and needs its own proof.
 func TestSelfHostFieldReclaimEnumArrayWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping the wasm leg")

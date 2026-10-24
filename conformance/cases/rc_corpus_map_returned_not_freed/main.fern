@@ -1,11 +1,11 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Returned map: make_map builds an owned map and returns it.
-// The return-inc (maps inc as structs in needsRcIncOnAlias)
-// must protect it so make_map's exit drop does NOT free the
-// buf/handle out from under the caller. sum_{k=0..49}(k+2k) =
-// 3*1225 = 3675.
+
+
+
+
+
+
+
+
 import "core/int";
 import "core/map";
 function make_map(n: i32): Map[i32, i32] {

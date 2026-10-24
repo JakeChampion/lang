@@ -4,26 +4,12 @@ import (
 	"testing"
 )
 
-// Heap-bump FIXPOINTS for #5335 (issue #4353 layer 0, general case): a
-// growing STRING-column map frees its superseded column buffers, so a churn
-// over Map[i32,string] / Map[string,i32] / Map[string,string] keeps the heap
-// flat.
-//
-// Fixpoint contract (mirrors self_host_map_fixpoint_ir_test.go): growth at
-// N=50 == growth at N=5000, non-zero, under a hard leak guard. The fixed
-// cases pin value-correctness and the soundness edges: keys()/values() taken
-// BEFORE later growing inserts must stay valid and keep SNAPSHOT semantics,
-// and an i64-valued map's values() must survive the grows after it.
 var mapStrColOwncolsCases = []struct {
 	name  string
 	src   func(n string) string
 	fixed bool
 	want  int
 }{
-	// A Map[i32,string] grown from cap 2 to 5 entries in a helper: each call
-	// would otherwise leak the superseded keys/vals buffers (2 grows x 2
-	// columns); with owncols they are freed on the spot and the MAPVS exit free reclaims
-	// the final columns, so the per-call high-water is flat.
 	{name: "strval-grow", src: func(n string) string {
 		return `import "core/map";
 function step(k: i32): i32 {
@@ -48,11 +34,6 @@ function main(): i32 {
     return g / 16;
 }`
 	}},
-	// The string-KEY twin: Map[string,i32] grown past its initial capacity.
-	// Deliberately no get_or/has lookups in the hot path: a computed string
-	// lookup key (`m.get_or("k" + "0", ..)`) leaks its concat temp per call —
-	// a separate, pre-existing string-temp gap that would hide this probe's
-	// signal (the column-buffer grow-leak). m.len() reads allocate nothing.
 	{name: "strkey-grow", src: func(n string) string {
 		return `import "core/map";
 function step(k: i32): i32 {
@@ -74,7 +55,6 @@ function main(): i32 {
     return g / 16;
 }`
 	}},
-	// Both columns string: Map[string,string] (owncols + the MAPKVS deep free).
 	{name: "strkv-grow", src: func(n string) string {
 		return `import "core/map";
 function step(k: i32): i32 {
@@ -96,11 +76,6 @@ function main(): i32 {
     return g / 16;
 }`
 	}},
-	// THE revert-reason probe: keys()/values() of a Map[i32,string] taken
-	// BEFORE five growing inserts. With owncols the grow frees the superseded
-	// buffers, so these reads are only sound because they SNAPSHOT (native
-	// semantics: ks/vs keep the pre-insert view). Exit codes pin both
-	// liveness (no UAF garbage) and snapshot length semantics.
 	{name: "valalias-snapshot-safe", fixed: true, want: 0, src: func(string) string {
 		return `import "core/map";
 function main(): i32 {
@@ -123,8 +98,6 @@ function main(): i32 {
     return 0;
 }`
 	}},
-	// String-KEY twin of the alias probe (keys() snapshots before the growing
-	// inserts).
 	{name: "keyalias-snapshot-safe", fixed: true, want: 0, src: func(string) string {
 		return `import "core/map";
 function main(): i32 {
@@ -144,8 +117,6 @@ function main(): i32 {
     return 0;
 }`
 	}},
-	// Loop-declared churn correctness: values must read back right while the
-	// owned grow + MAPKVS reclaim fire every iteration.
 	{name: "strkv-churn", fixed: true, want: 0, src: func(string) string {
 		return `import "core/map";
 function main(): i32 {
@@ -163,10 +134,6 @@ function main(): i32 {
     return 0;
 }`
 	}},
-	// i64-VALUE churn correctness: an i64 column is flag-1 (raw alias reads),
-	// so owncols must stay CLEAR — its superseded buffers keep leaking (the
-	// load-bearing leak), but values must stay correct. The owncols exclusion
-	// itself is pinned deterministically by the asm-grep subtest below.
 	{name: "i64val-churn", fixed: true, want: 0, src: func(string) string {
 		return `import "core/map";
 function main(): i32 {
@@ -186,13 +153,6 @@ function main(): i32 {
 	}},
 }
 
-// TestSelfHostMapStrColOwncolsIRX86_64 runs the string-column shapes through
-// the self-hosted CLI, which loads core/map. Fixpoint cases assert
-// growth(N=50) == growth(N=5000), non-zero, under the leak guard; fixed cases
-// assert their exact exit (121 = value mismatch, 119 = leak guard, 9x = a
-// specific correctness probe) AND are cross-checked against the native
-// `fern -interp` oracle (differential leg: every program is native-valid and
-// must exit identically on both).
 func TestSelfHostMapStrColOwncolsIRX86_64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	sh := func(t *testing.T, prog string) int {

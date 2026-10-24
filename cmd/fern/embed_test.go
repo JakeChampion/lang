@@ -9,9 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/pkg/embed"
 )
 
-// writeAssets materialises an asset tree and loads it the way the -embed
-// flag does, leaving it installed as the compile-time asset set for the
-// duration of the test.
 func writeAssets(t *testing.T, files map[string]string) {
 	t.Helper()
 	root := t.TempDir()
@@ -33,8 +30,6 @@ func writeAssets(t *testing.T, files map[string]string) {
 	t.Cleanup(func() { embeddedAssets = prev })
 }
 
-// Without -embed, __fern_asset is a compile error naming the flag, not an
-// "undefined identifier" from the checker.
 func TestEmbedMissingFlagIsADiagnostic(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "main.fern")
@@ -59,7 +54,6 @@ func TestEmbedMissingFlagIsADiagnostic(t *testing.T) {
 	}
 }
 
-// A misspelled asset names the near miss rather than only failing.
 func TestEmbedUnknownAssetSuggests(t *testing.T) {
 	writeAssets(t, map[string]string{"html/index.html": "x"})
 	dir := t.TempDir()
@@ -81,8 +75,6 @@ func TestEmbedUnknownAssetSuggests(t *testing.T) {
 	}
 }
 
-// A string is always valid UTF-8: the text form refuses a binary file with a
-// diagnostic naming it, and the bytes form takes the same file as u8[].
 func TestEmbedTextFormRefusesInvalidUTF8(t *testing.T) {
 	writeAssets(t, map[string]string{"img/favicon.png": "\x89PNG\r\n\x1a\n\x00\xff"})
 	dir := t.TempDir()
@@ -115,10 +107,6 @@ func TestEmbedTextFormRefusesInvalidUTF8(t *testing.T) {
 	}
 }
 
-// An embed directory holding no files is legitimate: the loop body just
-// never runs. Without a stamped element type this fails to compile with
-// "E020: empty array literal needs a type annotation" pointing at the
-// `for`, which the user cannot act on.
 func TestEmbedEnumerationEmptyBundleCompiles(t *testing.T) {
 	writeAssets(t, map[string]string{})
 	dir := t.TempDir()

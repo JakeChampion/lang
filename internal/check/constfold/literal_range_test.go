@@ -8,8 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// foldErrors expects Fold to fail and returns each diagnostic as the coded,
-// positioned Error the driver renders with a file and a caret.
 func foldErrors(t *testing.T, src string) []*Error {
 	t.Helper()
 	prog, err := parser.Parse(src)
@@ -35,13 +33,6 @@ func foldErrors(t *testing.T, src string) []*Error {
 	return out
 }
 
-// A const initialiser out of range was reported as an uncoded message at the
-// const's 1:1, in different words from the `let` spelling's E047; a negated
-// one, or one inside arithmetic, was not reported at all, because the fold
-// truncated it to the declared width first; and u64's upper half was refused
-// outright, the literal's wrapped Value read as negative. Every literal in a
-// const is now judged as written, before folding, by the checker's own rule
-// (#8563, #8444).
 func TestConstLiteralRangeIsE047AtTheLiteral(t *testing.T) {
 	cases := []struct {
 		src     string
@@ -55,11 +46,8 @@ func TestConstLiteralRangeIsE047AtTheLiteral(t *testing.T) {
 		{`const B: u8 = 300;`, "literal 300 does not fit in u8", 15},
 		{`const B: i64 = 9223372036854775808;`, "literal 9223372036854775808 does not fit in i64", 16},
 		{`const B: u64 = -18446744073709551615;`, "literal -18446744073709551615 does not fit in u64: unsigned types have no negative values", 17},
-		// An operand takes the const's type, as a var initialiser's does.
 		{`const B: i32 = 2147483648 - 1;`, "literal 2147483648 does not fit in i32", 16},
 		{`const B: i32 = 1 + -2147483649;`, "literal -2147483649 does not fit in i32", 21},
-		// Past u64: refused against the declared type, or the i64 a const
-		// with no integer type folds at.
 		{`const B: u64 = 18446744073709551616;`, "literal 18446744073709551616 does not fit in u64", 16},
 		{`const B: i32 = 18446744073709551616;`, "literal 18446744073709551616 does not fit in i32", 16},
 		{`const B = 18446744073709551616;`, "literal 18446744073709551616 does not fit in i64", 11},
@@ -90,8 +78,6 @@ func TestConstLiteralRangeIsE047AtTheLiteral(t *testing.T) {
 		`const B: u32 = -0;`,
 		`const B: u64 = 18446744073709551615;`,
 		`const B: i64 = -9223372036854775808;`,
-		// Arithmetic wraps at the declared width by design (#8444); only a
-		// literal that is itself too wide is refused.
 		`const B: i32 = 2147483647 + 1;`,
 		`const B: i32 = -(2147483647 + 1);`,
 	}
@@ -100,11 +86,6 @@ func TestConstLiteralRangeIsE047AtTheLiteral(t *testing.T) {
 	}
 }
 
-// A typed suffix pins the literal's width in the parser, so the const's
-// declared type never applies to it and the walk skipped it entirely: a
-// wrapped `const B: u8 = 300u8` folded silently where the same literal
-// without its suffix was E047 (#8639). It is judged against the type its
-// suffix names, with the sign the source wrote.
 func TestConstSuffixedLiteralRange(t *testing.T) {
 	cases := []struct {
 		src     string
@@ -116,8 +97,6 @@ func TestConstSuffixedLiteralRange(t *testing.T) {
 		{`const B: u32 = 4294967296u32;`, "literal 4294967296 does not fit in u32", 16},
 		{`const B: i32 = 2147483648i32;`, "literal 2147483648 does not fit in i32", 16},
 		{`const B: i64 = 9223372036854775808i64;`, "literal 9223372036854775808 does not fit in i64", 16},
-		// The suffix wins over the declared type: a u8 const holding an i32
-		// literal is judged at i32, and the assignment is the checker's E003.
 		{`const B: u8 = 300i32;`, "", 0},
 	}
 	for _, c := range cases {
@@ -150,7 +129,6 @@ func TestConstSuffixedLiteralRange(t *testing.T) {
 	}
 }
 
-// Two bad consts are two diagnostics, each rendered on its own.
 func TestConstLiteralRangeReportsEveryConst(t *testing.T) {
 	errs := foldErrors(t, "const A: i32 = 2147483648;\nconst B: u8 = 256;\nfunction main(): i32 { return 0; }")
 	if len(errs) != 2 || errs[0].Pos.Line != 1 || errs[1].Pos.Line != 2 {
@@ -158,8 +136,6 @@ func TestConstLiteralRangeReportsEveryConst(t *testing.T) {
 	}
 }
 
-// A u64 const at the top of the range keeps its bit pattern and the declared
-// width: the substituted literal reaches the IR as a u64.
 func TestU64ConstUpperHalfSettles(t *testing.T) {
 	prog := fold(t, `const B: u64 = 18446744073709551615;
 function main(): i32 { return B; }`)
@@ -172,9 +148,6 @@ function main(): i32 { return B; }`)
 	}
 }
 
-// A usize const settles to the pointer width the way a usize var initialiser
-// does; it used to be refused as "declared type usize does not match
-// initialiser type i32".
 func TestUsizeConstSettlesToPointerWidth(t *testing.T) {
 	prog := fold(t, `const B: usize = 5;
 function main(): i32 { return B; }`)

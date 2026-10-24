@@ -1,14 +1,14 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// The struct sibling of the case above, for a type with no wired deep
-// drop: a closure field. computeConsumedParams declines to promote a
-// reassigned borrowed param of such a type, so the caller passes it
-// without a retain, yet the Assign catch-all still emitted the
-// overwrite dec. `ctx = step(ctx)` released a reference `steps` was
-// never handed, and main's own drop then took the box to -1. The
-// overwrite dec and the exit release are gated on an ownership flag
-// now, as the array param's are.
+
+
+
+
+
+
+
+
+
+
+
 struct Ctx { f: (string) => i32, n: i32 }
 function step(ctx: Ctx): Ctx { return Ctx { f: ctx.f, n: ctx.n + 1 }; }
 function steps(ctx: Ctx, k: i32): Ctx {

@@ -8,18 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostF64ParamCoerceIR pins that an INTEGER argument bound to an f64
-// parameter is converted rather than pushed raw.
-//
-// `addhalf(3)` at `addhalf(x: f64)` must convert the argument at the call site;
-// a bare i32 makes wasm reject the whole module:
-//
-//	Invalid input WebAssembly code ...: type mismatch: expected f64, found i32
-//
-// Part of #4801.
-//
-// Oracle-checked against the reference interpreter so a wrong-but-stable value
-// cannot pass.
 func TestSelfHostF64ParamCoerceIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host f64-param-coerce IR e2e")
@@ -36,17 +24,10 @@ func TestSelfHostF64ParamCoerceIR(t *testing.T) {
 		src  string
 		exit int
 	}{
-		// The bug: an integer literal at an f64 param. 3 -> 3.5 -> 3.
 		{"int-literal-arg", `function addhalf(x: f64): f64 { return x + 0.5; } function main(): i32 { return addhalf(3) as i32; }`, 3},
-		// A float argument at the same param must be unaffected by the new arm.
 		{"float-arg-unchanged", `function addhalf(x: f64): f64 { return x + 0.5; } function main(): i32 { return addhalf(3.25) as i32; }`, 3},
-		// An f64-typed local, likewise unaffected.
 		{"f64-local-arg", `function addhalf(x: f64): f64 { return x + 0.5; } function main(): i32 { let v: f64 = 2.5; return addhalf(v) as i32; }`, 3},
-		// Mixed signature: the coercion must apply per-parameter, not to the
-		// whole call — b stays an i32. 1 + 3 + 2 == 6.
 		{"mixed-params", `function m(a: f64, b: i32, c: f64): f64 { return a + c + (b as f64); } function main(): i32 { return m(1, 2, 3) as i32; }`, 6},
-		// The i64 param path shares the same signature registry, so pin that
-		// adding the '4' flag did not disturb it. 21*2 == 42.
 		{"i64-param-unaffected", `function d(x: i64): i64 { return x * 2; } function main(): i32 { return (d(21) % 97) as i32; }`, 42},
 	}
 

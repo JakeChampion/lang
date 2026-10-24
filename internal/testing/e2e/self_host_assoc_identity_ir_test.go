@@ -9,40 +9,25 @@ import (
 	"testing"
 )
 
-// Associated-function calls on a BOUND type parameter — `T.zero()` / `T.one()`
-// where `T: Zero` / `T: One` (std/num's additive / multiplicative identities) —
-// on the self-host IR path. The primitive Zero/One impls are not compiled in
-// the IR path (same as `Default`), so before this fix `T.zero()` monomorphised
-// to an unresolved `i32.zero()` and bailed the whole module to the legacy AST
-// emitter. The monomorphiser now emits the identity literal directly (i32→0/1,
-// f64→0.0/1.0), mirroring the existing `T.default()` scalar-literal lowering,
-// so a generic numeric reducer `sum[T: Add + Zero](xs): T { let acc = T.zero();
-// … }` lowers through the IR path on every backend. Oracle-checked against the
-// native backend; routing pinned to "ir".
 var assocIdentityCases = []struct {
 	name string
 	main string
 	want int
 }{
-	// T.zero() on a bound param → the additive identity literal. z_of(7)=0, +42.
 	{"zero-i32", `pub trait Zero { function zero(): Self; }
 impl Zero for i32 { function zero(): Self { return 0; } }
 function z_of[T: Zero](x: T): T { return T.zero(); }
 function main(): i32 { return z_of(7) + 42; }`, 42},
-	// T.one() on a bound param → the multiplicative identity literal. o_of(7)=1, +41.
 	{"one-i32", `pub trait One { function one(): Self; }
 impl One for i32 { function one(): Self { return 1; } }
 function o_of[T: One](x: T): T { return T.one(); }
 function main(): i32 { return o_of(7) + 41; }`, 42},
-	// the benefit: a generic numeric reducer seeded from T.zero() and folding with
-	// the bound's .add — 10+20+12 = 42.
 	{"sum-add-zero", `pub trait Add { function add(self: Self, o: Self): Self; }
 pub trait Zero { function zero(): Self; }
 impl Add for i32 { function add(self: Self, o: Self): Self { return self + o; } }
 impl Zero for i32 { function zero(): Self { return 0; } }
 function sum[T: Add + Zero](xs: T[]): T { let acc: T = T.zero(); let i = 0; while (i < xs.len()) { acc = acc.add(xs[i]); i = i + 1; } return acc; }
 function main(): i32 { let xs: i32[] = [10, 20, 12]; return sum(xs); }`, 42},
-	// product seeded from T.one(), folding with .mul — 2*3*7 = 42.
 	{"product-mul-one", `pub trait Mul { function mul(self: Self, o: Self): Self; }
 pub trait One { function one(): Self; }
 impl Mul for i32 { function mul(self: Self, o: Self): Self { return self * o; } }
@@ -51,8 +36,6 @@ function product[T: Mul + One](xs: T[]): T { let acc: T = T.one(); let i = 0; wh
 function main(): i32 { let xs: i32[] = [2, 3, 7]; return product(xs); }`, 42},
 }
 
-// TestNativeAssocIdentity runs the associated-identity programs through the
-// native interpreter + x86-64 + wasm backends, oracle-checked.
 func TestNativeAssocIdentity(t *testing.T) {
 	for _, tc := range assocIdentityCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -74,10 +57,6 @@ func TestNativeAssocIdentity(t *testing.T) {
 	}
 }
 
-// TestSelfHostAssocIdentityIRX86_64 routes each case through the self-hosted
-// x86-64 IR driver, pins routing to "ir" (the monomorphiser now lowers
-// `T.zero()` / `T.one()` to a literal instead of bailing), and oracle-checks
-// the exit code.
 func TestSelfHostAssocIdentityIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -111,7 +90,6 @@ func TestSelfHostAssocIdentityIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostAssocIdentityIRWasm runs the same cases through the wasm IR backend.
 func TestSelfHostAssocIdentityIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host assoc-identity wasm IR e2e")

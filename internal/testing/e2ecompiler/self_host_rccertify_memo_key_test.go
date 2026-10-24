@@ -7,10 +7,6 @@ import (
 	"testing"
 )
 
-// The memo's key must change with every op field the lift reads: a width,
-// a decl index, the signedness flag and the float immediate shape the
-// lifted SSA without changing the op's kind, immediates or name, and a key
-// blind to one of them would answer a changed function from an old verdict.
 func rcmemoKeyCasesSource() string {
 	return `import "./ir"; import "./rccertify"; import "./rcmemo"; import "./ssa"; import "./util";
 

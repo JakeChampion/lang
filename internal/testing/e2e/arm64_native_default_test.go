@@ -10,16 +10,11 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// buildFernCLI compiles cmd/fern to a temp binary that compiles through the
-// current self-host compiler.
 func buildFernCLI(t *testing.T) string {
 	t.Helper()
 	return e2eharness.FernCLI(t)
 }
 
-// arm64QemuOrEmpty returns "" on a native arm64 Linux host (binaries run
-// directly) or the path to qemu-aarch64 on a cross host. Skips when
-// neither applies.
 func arm64QemuOrEmpty(t *testing.T) string {
 	t.Helper()
 	runner, ok := arm64Runner()
@@ -29,11 +24,6 @@ func arm64QemuOrEmpty(t *testing.T) string {
 	return runner
 }
 
-// arm64Runner is arm64QemuOrEmpty without the skip: ("", true) on a native
-// arm64 Linux host, (qemuPath, true) on a cross host with an emulator, and
-// ("", false) when there is no way to run an arm64 binary at all. Callers that
-// want a missing emulator to be a FAILURE rather than a skip need the third
-// case as a value.
 func arm64Runner() (string, bool) {
 	if runtime.GOOS == "linux" && runtime.GOARCH == "arm64" {
 		return "", true
@@ -46,15 +36,10 @@ func arm64Runner() (string, bool) {
 	return "", false
 }
 
-// `fern -target arm64-linux` builds with no external toolchain. This
-// exercises the default path end to end and the -run temp-binary path (which
-// must be chmod'd executable).
 func TestArm64NativeIsCLIDefault(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "prog.fern")
-	// Self-contained — no stdlib, so the only thing exercised is codegen
-	// + the native assembler/linker.
 	if err := os.WriteFile(src, []byte("function main(): i32 { return 42; }\n"), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
@@ -62,7 +47,6 @@ func TestArm64NativeIsCLIDefault(t *testing.T) {
 	t.Run("default_build_is_native", func(t *testing.T) {
 		qemu := arm64QemuOrEmpty(t)
 		out := filepath.Join(dir, "prog.bin")
-		// Must build with no external assembler/linker on PATH.
 		if o, err := exec.Command(bin, "-target", "arm64-linux", "-o", out, src).CombinedOutput(); err != nil {
 			t.Fatalf("default arm64 build failed: %v\n%s", err, o)
 		}
@@ -81,9 +65,6 @@ func TestArm64NativeIsCLIDefault(t *testing.T) {
 	})
 
 	t.Run("run_flag_native", func(t *testing.T) {
-		// The CLI execs the binary DIRECTLY when the target matches the host
-		// arch (cmd/fern's runIt path) and only shells out to qemu-aarch64 for
-		// the cross case, so this needs the emulator to EXIST but not the path.
 		arm64QemuOrEmpty(t)
 		cmd := exec.Command(bin, "-target", "arm64-linux", "-run", src)
 		_ = cmd.Run()

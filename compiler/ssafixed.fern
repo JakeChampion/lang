@@ -1,6 +1,3 @@
-// Fixed caller-register clobbers at numbered instruction/terminator positions.
-// `inside`: a clobber binds only values live across its position, not one
-// that dies or is defined there (`table_inside`).
 pub struct Table { first: i32, before: i32[][], inside: boolean }
 
 pub function none(): Table {
@@ -33,8 +30,6 @@ pub function table(first: i32, count: i32, masks: i32[]): Table {
   return Table { first: first, before: rows, inside: false };
 }
 
-// table_inside is `table` for clobbers an instruction makes only after it
-// has read its operands and before it writes its result: a call's.
 pub function table_inside(first: i32, count: i32, masks: i32[]): Table {
   return Table { ...table(first, count, masks), inside: true };
 }
@@ -52,8 +47,6 @@ pub function validate(t: Table, nregs: i32, positions: i32): void {
   }
 }
 
-// Endpoints count too: an input dying at a clobber must survive until read,
-// and a result cannot occupy scratch that the instruction still writes.
 pub function allows(t: Table, reg: i32, lo: i32, hi: i32): boolean {
   if (reg < t.first || reg - t.first >= t.before.len()) {
     return true;

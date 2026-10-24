@@ -1,9 +1,9 @@
-// `let PAT = E else { … }` reads the shared pattern grammar (#5356); the else
-// must diverge, so the bindings are live for the rest of the block.
-//
-// The baseline: bindings live for the rest of the block, and the
-// else branch diverges on a miss.
-// exit: 10*10 + 1
+
+
+
+
+
+
 enum O { Has(i32), Nil }
 function f(o: O): i32 {
   let Has(v) = o else { return 1; };

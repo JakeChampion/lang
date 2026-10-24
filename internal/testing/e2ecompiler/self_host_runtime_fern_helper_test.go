@@ -7,20 +7,6 @@ import (
 	"testing"
 )
 
-// Issue #2649 — runtime helpers written in Fern instead of hand-written asm.
-//
-// Helpers migrated from hand-written asm strings to real Fern functions
-// (asmcore.rt_src_*) are compiled through the normal function emitter, so they
-// link as the ordinary user-function symbol `__fn_<name>` and are invoked via
-// the stack-call convention, not as bare register-ABI `__fern_*` symbols.
-//
-// The behavioural cases in TestSelfHostAsmRunX86_64 already prove these helpers
-// compute the right answers; they'd keep passing even if someone reverted to
-// the hand-written asm. This test locks in the *migration* itself: for each
-// migrated helper the emitted symbol must be the Fern-compiled `__fn_<name>`
-// and the old hand-asm form (the bare label / its local loop label) must be
-// gone. It shares the asm_run driver build with TestSelfHostAsmRunX86_64 (same
-// sources → same driver-bin cache key), so it adds no driver rebuild.
 func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -30,120 +16,82 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 	cases := []struct {
 		name string
 		src  string
-		sym  string   // the Fern-compiled symbol that must appear
-		gone []string // hand-asm markers that must NOT appear
+		sym  string
+		gone []string
 	}{
 		{
-			// str_cmp backs ordered comparison on strings.
 			"str_cmp",
 			`function main(): i32 { if ("abc" < "abd") { return 1; } return 0; }`,
 			"__fn___fern_str_cmp",
 			[]string{"\n__fern_str_cmp:", ".Lstrcmp_loop"},
 		},
 		{
-			// str_eq backs == on strings (and the map / arr_str helpers).
-			//
-			// One operand comes from args() so the literal-vs-literal fold
-			// cannot remove the comparison.
 			"str_eq",
 			`function main(): i32 { let xs: string[] = args(); if (xs[0] == "ab") { return 1; } return 0; }`,
 			"__fn___fern_str_eq",
 			[]string{"\n__fern_str_eq:", ".Lstreq_loop"},
 		},
 		{
-			// str_trim (s.trim()) — a zero-copy slice helper under its own
-			// str_trim need.
 			"str_trim",
 			`function main(): i32 { return "  hi ".trim().len(); }`,
 			"__fn___fern_str_trim",
 			[]string{"\n__fern_str_trim:", ".Ltrim_front"},
 		},
 		{
-			// str_lines (s.lines()) — a Fern helper composing str_split + an array
-			// slice, with no inline `.Llines_have_` labels.
 			"str_lines",
 			`function main(): i32 { return "a\nb\n".lines().len(); }`,
 			"__fn___fern_str_lines",
 			[]string{".Llines_have_"},
 		},
 		{
-			// str_bytes (s.bytes() / s.as_bytes()) — a Fern helper that appends each
-			// byte (arr_push) into a u8[]. The old hand-asm (__fern_str_bytes: /
-			// .Lbytes_loop) gone.
 			"str_bytes",
 			`function main(): i32 { return "abc".bytes().len(); }`,
 			"__fn___fern_str_bytes_u8",
 			[]string{"\n__fern_str_bytes:", ".Lbytes_loop"},
 		},
 		{
-			// str_concat — backs `+` on strings, Tier-2 via the intrinsics (#2649).
-			// The old register-ABI hand-asm (__fern_str_concat: / .Lstrconcat_a_loop)
-			// is gone; the `+` call site now targets __fn___fern_str_concat.
 			"str_concat",
 			`function main(): i32 { let s: string = "ab" + "cd"; return s.len(); }`,
 			"__fn___fern_str_concat",
 			[]string{"\n__fern_str_concat:", ".Lstrconcat_a_loop"},
 		},
 		{
-			// str_to_upper — Tier-2 via the intrinsics (#2649), under its own
-			// str_case need. The old register-ABI hand-asm (__fern_str_to_upper: /
-			// .Lupper_loop) is gone.
 			"str_to_upper",
 			`function main(): i32 { return "aB".to_ascii_upper()[0] as i32; }`,
 			"__fn___fern_str_to_upper",
 			[]string{"\n__fern_str_to_upper:", ".Lupper_loop"},
 		},
 		{
-			// str_to_lower — the lower-case sibling, same str_case-gated migration.
 			"str_to_lower",
 			`function main(): i32 { return "Ab".to_ascii_lower()[0] as i32; }`,
 			"__fn___fern_str_to_lower",
 			[]string{"\n__fern_str_to_lower:", ".Llower_loop"},
 		},
 		{
-			// str_repeat (s.repeat(n) / str_repeat(s, n)) — Tier-2 via the
-			// raw-memory intrinsics (#2649). The old register-ABI hand-asm (a bare
-			// __fern_str_repeat: label + .Lrep_outer loop) is gone; the call site
-			// targets __fn___fern_str_repeat via the stack ABI.
 			"str_repeat",
 			`function main(): i32 { return "ab".repeat(3).len(); }`,
 			"__fn___fern_str_repeat",
 			[]string{"\n__fern_str_repeat:", ".Lrep_outer"},
 		},
 		{
-			// str_replace (s.replace(old, new)) — the last per-byte string builder,
-			// Tier-2 via the raw-memory intrinsics (#2649). The old register-ABI
-			// hand-asm (a bare __fern_str_replace: label + .Lrepl_walk loop) is
-			// gone; the call site targets __fn___fern_str_replace via the stack ABI.
 			"str_replace",
 			`function main(): i32 { return "a.b".replace(".", "-").len(); }`,
 			"__fn___fern_str_replace",
 			[]string{"\n__fern_str_replace:", ".Lrepl_walk"},
 		},
 		{
-			// string_from_bytes_unchecked(arr) — pack each element's low byte into a string,
-			// Tier-2 via the raw-memory intrinsics (#2649). The old register-ABI
-			// hand-asm (a bare __fern_string_from_bytes: label + .Lsfb_loop) is gone;
-			// the call site targets the u8[] helper __fn___fern_string_from_bytes_u8
-			// via the stack ABI.
 			"string_from_bytes_unchecked",
 			`function main(): i32 { let b: u8[] = [104 as u8, 105 as u8]; return string_from_bytes_unchecked(b).len(); }`,
 			"__fn___fern_string_from_bytes_u8",
 			[]string{"\n__fern_string_from_bytes:", ".Lsfb_loop"},
 		},
 		{
-			// str_split (s.split(sep) / str_split(s, sep)) — string[] result, built
-			// with .append() + string slices (#2649). The old register-ABI hand-asm
-			// (a bare __fern_str_split: label + .Lsplit_cl count loop) is gone; the
-			// call site targets __fn___fern_str_split via the stack ABI.
 			"str_split",
 			`function main(): i32 { return "a,b,c".split(",").len(); }`,
 			"__fn___fern_str_split",
 			[]string{"\n__fern_str_split:", ".Lsplit_cl"},
 		},
 		{
-			// arr_str_join (string[].join) — fills one exact-size block, so the
-			// heap is its only runtime dep.
 			"arr_str_join",
 			`function main(): i32 { let xs: string[] = ["a", "b"]; return xs.join(",").len(); }`,
 			"__fn___fern_arr_str_join",
@@ -167,14 +115,12 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 				t.Fatalf("driver run: %v", err)
 			}
 			got := string(asm)
-			// The migrated, Fern-compiled helper + its stack-call site.
 			if !strings.Contains(got, tc.sym+":") {
 				t.Errorf("emitted asm missing definition %q — %s no longer compiled from Fern?", tc.sym+":", tc.name)
 			}
 			if !strings.Contains(got, "call "+tc.sym) {
 				t.Errorf("emitted asm missing %q — call site not migrated to the Fern symbol", "call "+tc.sym)
 			}
-			// The old hand-written asm form must be gone.
 			for _, bad := range tc.gone {
 				if strings.Contains(got, bad) {
 					t.Errorf("emitted asm still contains hand-written form %q — %s migration regressed", bad, tc.name)

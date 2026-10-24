@@ -1,4 +1,3 @@
-// Abstract counted-unit planning and independent replay before physical RC.
 import "./ir";
 import "./ssa";
 import "./ssasem";
@@ -31,12 +30,6 @@ pub function move_unit(): i32 {
   return 2;
 }
 
-// A steal takes the unit from the record the value projects: at run time,
-// when the record has no other holder, the field is nulled and its unit goes
-// to the callee; otherwise the supply retains as any other. Chosen only where
-// the record is this frame's own and read no further through that field
-// (projection_root), so the null is seen by nothing but the record's own
-// release, which skips it.
 pub function steal_unit(): i32 {
   return 3;
 }
@@ -55,44 +48,14 @@ pub function edge_point(): i32 {
 
 pub struct Supply { value: i32, slot: i32, mode: i32 }
 
-// point is an instruction position, or entry/return/edge. target is a block
-// id only for edges and -1 otherwise. All acquisitions execute before moves,
-// the semantic operation then creates its result, and drops execute last.
-//
-// `hand_roots` / `hand_fields`, one per operand of a direct call: the record
-// whose field the operand projects, or the parameter itself, when this frame
-// reads it no further after the call (projection_root) and so hands the
-// buffer on without a bracket; -1 otherwise. `hand_fields` is the field's
-// index, or -1 for a parameter's own buffer — an array's, or a whole record
-// parameter's, whose every field the callee may grow is handed with it.
 pub struct Step { block: i32, point: i32, target: i32, supplies: Supply[], drops: i32[], hand_roots: i32[], hand_fields: i32[] }
 
-// `grows` names, at an append's, a with's or a string append's result, the
-// record value whose field buffer the operation may grow or write IN PLACE
-// (field_grow_root), or -1; `grow_fields` holds that field's index at the same
-// position.
-// `held` marks an element read that takes a unit of its own at the read
-// (held_elements); the physical lowering retains what it read.
-// `literal` marks the values that can only hold a string literal (`literals`).
-// `defs` is the definitions table (`definitions`) of the function the plan was
-// planned from, indexed by value; a verifier checking another function
-// derives its own.
-// `fresh_seeded` says `unique_receivers` counted a fresh row's result
-// (`with_fresh`), so a plan reused under another module's rows is proved again.
 pub struct Plan { ok: boolean, why: string, steps: Step[], owned: boolean[], literal: boolean[], grows: i32[], grow_fields: i32[], takes: i32[], held: boolean[], payloads: boolean[], likely: boolean[], kept: boolean[], entry_kept: boolean[], frame_views: boolean[], constants: string[], text_lens: i32[], analysis: ssasem.Analysis, defs: ssa.SInst[], modes: i32[], unit_analysis: ssasem.Analysis, unique_receivers: boolean[], fresh_seeded: boolean, checked_writes: boolean[], links: i32[], reuse: Reuse }
 
 struct Ledger { ok: boolean, why: string, bits: boolean[] }
 
-// A callee parameter whose buffer the callee may grow in place: `field` is the
-// index of a record parameter's array field, or -1 for an array parameter's
-// own buffer. A caller still reading such an argument after the call holds a
-// second count on the buffer across it, so the callee's push takes the copy
-// (#4873, #8785).
 pub struct GrowRow { callee: string, param: i32, field: i32 }
 
-// GrowTable is the module's rows with a name index over their callees kept
-// beside them, one entry per row in order, so a body's bracket asks about a
-// callee along its chain rather than across the table.
 pub struct GrowTable { rows: GrowRow[], by_callee: util.NameIndex }
 
 pub function no_grows(): GrowTable {
@@ -113,7 +76,6 @@ pub function grow_fields_of(t: GrowTable, callee: string, param: i32): i32[] {
   return out;
 }
 
-// Whether the callee may grow the array at `param` in place.
 pub function grows_buffer(t: GrowTable, callee: string, param: i32): boolean {
   return has_row_at(t.rows, t.by_callee, callee, param, 0 - 1);
 }
@@ -127,14 +89,6 @@ function has_row(rows: GrowRow[], callee: string, param: i32, field: i32): boole
   return false;
 }
 
-// Whether two grow tables say the same thing about `callees`.
-//
-// A body reads this table only through `grow_fields_of` and `grows_buffer` in
-// `ssarc.bracketed`, keyed by the name each call instruction names, or by
-// `indirect_callee` for a call through a function value — so two
-// tables that agree on the callees one body names produce that body
-// identically, however much they differ elsewhere. That is what lets a second
-// lowering keep a body the inference did not move.
 pub function grow_rows_agree(a: GrowTable, b: GrowTable, callees: string[]): boolean {
   for callee in callees {
     if (!rows_within(a, b, callee) || !rows_within(b, a, callee)) {
@@ -144,7 +98,6 @@ pub function grow_rows_agree(a: GrowTable, b: GrowTable, callees: string[]): boo
   return true;
 }
 
-// rows_within reports whether every row of `a` for `callee` is in `b`.
 function rows_within(a: GrowTable, b: GrowTable, callee: string): boolean {
   let i: i32 = a.by_callee.chain(callee);
   while (i >= 0) {
@@ -164,8 +117,6 @@ function with_row(rows: GrowRow[], callee: string, param: i32, field: i32): Grow
   return rows.append(GrowRow { callee: callee, param: param, field: field });
 }
 
-// has_row_at is has_row over a table with a name index kept beside it, one
-// entry per row in order: the callee's chain, ascending.
 function has_row_at(rows: GrowRow[], ix: util.NameIndex, callee: string, param: i32, field: i32): boolean {
   let i: i32 = ix.chain(callee);
   while (i >= 0) {
@@ -177,15 +128,6 @@ function has_row_at(rows: GrowRow[], ix: util.NameIndex, callee: string, param: 
   return false;
 }
 
-// The rows this function's plan contributes, given the rows `table` already
-// holds for its callees: one per borrowed parameter position an admitted
-// in-place grow or write reaches, directly through an append or a with of its
-// own, through an append or a with whose receiver a phi, an earlier update or
-// a call carries from the parameter (ssarc's links write those in place), or through a
-// buffer it hands on unbracketed to a callee whose row says that position may
-// grow — the parameter itself, or a value dying at the call that the same
-// carriers lead back to it. An owned parameter needs no caller bracket — its caller moved the
-// unit in, or retained and so made the record's own count answer "shared".
 pub function grow_rows(callee: string, f: ssasem.Func, p: Plan, table: GrowRow[], tix: util.NameIndex): GrowRow[] {
   let out: GrowRow[] = [];
   let defs: ssa.SInst[] = p.defs;
@@ -232,8 +174,6 @@ pub function grow_rows(callee: string, f: ssasem.Func, p: Plan, table: GrowRow[]
       let root: i32 = s.hand_roots[i];
       if (root >= 0 && defs[root].kind_tag == 6 && !p.owned[root]) {
         if (is_record(f.values[root]) && s.hand_fields[i] < 0) {
-          // A whole record handed on: every field the callee may
-          // grow, this parameter may grow.
           for field in grow_fields_of(partial, ins.str, i) {
             out = with_row(out, callee, defs[root].imm, field);
           }
@@ -247,12 +187,8 @@ pub function grow_rows(callee: string, f: ssasem.Func, p: Plan, table: GrowRow[]
   return out;
 }
 
-// The rows found so far, and `carried_params`' scratch set.
 struct GrowScan { rows: GrowRow[], seen: boolean[] }
 
-// The rows of a direct call's array operands that die at it, at the positions
-// the callee may grow: the box they carry from a parameter is lent on with
-// nothing in this frame reading it again.
 function dying_lent_rows(callee: string, f: ssasem.Func, p: Plan, defs: ssa.SInst[], s: Step, ins: ssa.SInst, table: GrowRow[], tix: util.NameIndex, own scan: GrowScan): GrowScan {
   if (ins.kind_tag != ssasem.call()) {
     return scan;
@@ -278,9 +214,6 @@ function dying_lent_rows(callee: string, f: ssasem.Func, p: Plan, defs: ssa.SIns
 
 struct Carried { params: i32[], seen: boolean[] }
 
-// The parameters whose box `v` may be, through phis, the receivers of
-// appends and the array operands of calls. `seen` is a clear nvals-long
-// scratch set, handed back clear.
 function carried_params(f: ssasem.Func, defs: ssa.SInst[], v: i32, own seen: boolean[]): Carried {
   let out: i32[] = [];
   let work: i32[] = [v];
@@ -319,16 +252,9 @@ function carried_params(f: ssasem.Func, defs: ssa.SInst[], v: i32, own seen: boo
   return Carried { params: out, seen: seen };
 }
 
-// Every produced body's rows, closed over the buffers handed on: a row only
-// ever gains, so the rounds converge. A plan reads the table only through the
-// rows filed under the callees its steps name, and each row is filed under the
-// key of the plan that produced it, so a plan is evaluated again only once a
-// callee of its has gained a row; until then it would hand back rows the
-// table already holds.
 pub function grow_table(keys: string[], funcs: ssasem.Func[], plans: Plan[]): GrowTable {
   let table: GrowRow[] = [];
   let no_names: string[] = [];
-  // tix indexes `table` by callee, one entry per row in order.
   let tix: util.NameIndex = util.name_index(no_names);
   let kix: util.NameIndex = util.name_index(keys);
   let callers: i32[][] = plan_callers(kix, funcs, plans);
@@ -369,14 +295,10 @@ pub function grow_table(keys: string[], funcs: ssasem.Func[], plans: Plan[]): Gr
   return GrowTable { rows: table, by_callee: tix };
 }
 
-// The callee under which the table holds the positions a call through a
-// function value may grow. No function can take this name.
 pub function indirect_callee(): string {
   return "&";
 }
 
-// The names a body reads the grow table under: its direct callees, and
-// `indirect_callee` when it calls through a function value.
 pub function grow_callees(f: ssasem.Func): string[] {
   let out: string[] = ssasem.called_names(f);
   for b in f.graph.blocks {
@@ -389,14 +311,6 @@ pub function grow_callees(f: ssasem.Func): string[] {
   return out;
 }
 
-// The rows of calls that name no body: a call through a function value may
-// reach any closure body the module makes, and a dyn call any of its arms.
-// A position some body may grow is a row of the call's own name, with no
-// field, since `ssarc.dispatch_bracketed` holds the whole box: a field is
-// grown only under its record's own count. A body's parameter p is the
-// call's operand p either way, the environment and the receiver both being
-// operand 0. Nothing in the fixpoint reads these rows, so they are made once
-// it has settled.
 function dispatched_rows(funcs: ssasem.Func[], plans: Plan[], table: GrowRow[], tix: util.NameIndex): GrowRow[] {
   let out: GrowRow[] = [];
   let i: i32 = 0;
@@ -419,8 +333,6 @@ function dispatched_rows(funcs: ssasem.Func[], plans: Plan[], table: GrowRow[], 
   return out;
 }
 
-// `body`'s rows at a parameter from `first` on, as rows of `name` with no
-// field.
 function rows_as(own out: GrowRow[], table: GrowRow[], tix: util.NameIndex, body: string, name: string, first: i32): GrowRow[] {
   let k: i32 = tix.chain(body);
   while (k >= 0) {
@@ -432,8 +344,6 @@ function rows_as(own out: GrowRow[], table: GrowRow[], tix: util.NameIndex, body
   return out;
 }
 
-// plan_callers[j] lists the plans whose steps name the plan first keyed
-// keys[j] (kix), each once.
 function plan_callers(kix: util.NameIndex, funcs: ssasem.Func[], plans: Plan[]): i32[][] {
   let out: i32[][] = [];
   while (out.len() < plans.len()) {
@@ -486,8 +396,6 @@ function successors(b: ssa.SBlock): i32[] {
   return [];
 }
 
-// The types that carry no unit at all: the scalars, a handle, which is its
-// descriptor, and never, which no value has (a `never[]` is always empty).
 function unit_free(t: typeinfo.Type): boolean {
   if (semtypes.is_never(t) || ssasem.is_lanes(t)) {
     return true;
@@ -518,15 +426,10 @@ pub function has_nominal(t: typeinfo.Type, f: ssasem.Func): boolean {
   return semrecords.find_enum(f.enums, t) >= 0;
 }
 
-// nominal admits a struct or union type: with `lookup`, when f's table holds
-// it. A schema entry's field is admitted without: the analysis a plan is
-// formed from refuses a table whose fields name a type it lacks
-// (semrecords.verify).
 pub function nominal(t: typeinfo.Type, f: ssasem.Func, lookup: boolean): boolean {
   return !lookup || has_nominal(t, f);
 }
 
-// unit_shape: whether `t` is a value this pass plans.
 function unit_shape(t: typeinfo.Type, f: ssasem.Func, lookup: boolean): boolean {
   if (unit_free(t)) {
     return true;
@@ -540,7 +443,6 @@ function unit_shape(t: typeinfo.Type, f: ssasem.Func, lookup: boolean): boolean 
   if let typeinfo.TypeDyn(_) = t {
     return true;
   }
-  // A map cursor holds a unit of its map.
   if (semtypes.is_map_iter(t)) {
     return unit_shape(semtypes.map_iter_map(t), f, lookup);
   }
@@ -555,14 +457,9 @@ function unit_shape(t: typeinfo.Type, f: ssasem.Func, lookup: boolean): boolean 
     }
     return true;
   }
-  // A cell holds one unit of its own and one slot; no declaration names it.
   if (semtypes.is_cell(t)) {
     return unit_shape(semtypes.cell_elem(t), f, lookup);
   }
-  // A map holds one unit of its own and one of every key in its column, and
-  // one of every value when that column is counted; only the shapes whose
-  // release does that are admitted, and a column of boxes only when the box
-  // itself is a value this pass plans.
   if (ssasem.is_map(t)) {
     if (!ssasem.is_supported_map(t)) {
       return false;
@@ -596,8 +493,6 @@ function mode_error(params: typeinfo.Type[], modes: i32[]): string {
   return "";
 }
 
-// A callee's contract is held to the same representation and mode rules as
-// this function's own parameters: its counted result is a fresh unit here.
 function call_contract_error(c: ssasem.Contract, f: ssasem.Func): string {
   for t in c.params {
     if (!supported(t, f)) {
@@ -610,11 +505,6 @@ function call_contract_error(c: ssasem.Contract, f: ssasem.Func): string {
   return mode_error(c.params, c.modes);
 }
 
-// A SchemaView is a function's schema tables already checked: per record,
-// then per enum, in table order, whether all its fields are admitted as a unit
-// (`*_unit`) and as a physical walk (`*_walk`).
-// ssarc.schema_views forms each distinct entry's once per module. An empty
-// view, which no_view is, leaves every entry to be checked here.
 pub struct SchemaView { rec_unit: boolean[], rec_walk: boolean[], enum_unit: boolean[], enum_walk: boolean[] }
 
 pub function no_view(): SchemaView {
@@ -622,7 +512,6 @@ pub function no_view(): SchemaView {
   return SchemaView { rec_unit: none, rec_walk: none, enum_unit: none, enum_walk: none };
 }
 
-// view_fits: `v` was formed for this very table.
 pub function view_fits(v: SchemaView, f: ssasem.Func): boolean {
   return v.rec_unit.len() == f.records.list.len() && v.enum_unit.len() == f.enums.len();
 }
@@ -638,8 +527,6 @@ pub function record_unit(r: semrecords.Record, f: ssasem.Func): boolean {
 
 pub function enum_unit(e: semrecords.Enum, f: ssasem.Func): boolean {
   for vr in e.variants {
-    // An impossible variant carries no runtime units. Keep its schema and
-    // ordinal, but never admit its absent payload as an ordinary value.
     if (!semrecords.inhabited(vr)) {
       continue;
     }
@@ -652,7 +539,6 @@ pub function enum_unit(e: semrecords.Enum, f: ssasem.Func): boolean {
   return true;
 }
 
-// Check the finite schema tables, not recursive nominal field expansion.
 function schema_fields_error(f: ssasem.Func, view: SchemaView): string {
   let fits: boolean = view_fits(view, f);
   let i: i32 = 0;
@@ -684,15 +570,6 @@ function schema_fields_error(f: ssasem.Func, view: SchemaView): string {
   return "";
 }
 
-// A closure is dispatched through with no declaration in hand, so the units its
-// arguments carry are read off the function TYPE the box hands out. A counted
-// parameter is a CONSUMING slot and the type spells one with `own`: what
-// ssasem.closure_type builds from these same modes is what every call through
-// the box is checked against, so the two sides cannot disagree.
-//
-// The environment parameter is the box, which is lent like any other receiver
-// and never appears in the type the box hands out, so a counted one there would
-// be a promise nothing can state.
 function closure_body_error(f: ssasem.Func, ins: ssa.SInst): string {
   let c: ssasem.Contract = f.calls[ssasem.find_contract_in(f.calls, ins.str)];
   if (c.modes.len() > 0 && c.modes[0] == counted_mode()) {
@@ -744,55 +621,20 @@ function contract_error(f: ssasem.Func, modes: i32[], view: SchemaView): string 
   return mode_error(f.params, modes);
 }
 
-// A construction, a closure box, a call result, a phi, a string constant and a
-// binary operator's result are fresh; only a reference-typed one is a unit of
-// this function's own (a string concatenation), so a scalar operator's result
-// is never owned. A projection or a copy borrows its source.
-// A closure box is a construction too: it owns one unit per reference capture,
-// released when the box is. So is a cell, over its one element; a read of a
-// cell hands out a unit of the element rather than borrowing the slot.
 function construction(kind: i32): boolean {
   return kind == ssasem.array_new() || kind == ssasem.bytes_new() || kind == ssasem.array_reserve() || kind == ssasem.tuple_new() || kind == ssasem.record_new() || kind == ssasem.variant_new() || kind == ssasem.dyn_box()
     || kind == ssasem.closure_new() || kind == ssasem.cell_new() || kind == ssasem.map_new()
     || kind == ssasem.map_cleared();
 }
 
-// The operand types a construction takes a unit of: every reference, without
-// exception. A closure box used to BORROW a captured function value, secured
-// by requiring the capture to be a borrowed parameter so its owner outlived
-// the box. That rule could not describe a box that escapes: a local function
-// value captured into a returned box is owned by a frame that is going away,
-// and the box never took it, so nobody freed it (#9637). The box owns it now,
-// and its release walks the field (ssarc.walked) — which a frame that never
-// built the box can do, because `semsource.env_rows` pairs every environment
-// a value of that type could carry with the type itself, and the whole module
-// contract table is what it reads.
-//
-// No `kind`: there is no construction with an exception any more.
 function taken(t: typeinfo.Type): boolean {
   return ssasem.reference(t);
 }
 
-// A zero is a unit this frame holds, not one it allocated: at a reference type
-// it is the null word, so the release it owes is nothing (`ssarc.null_unit`
-// emits none), and the replacement the declaration site assigns drops exactly
-// that nothing. It is deliberately NOT a `construction` — no box was
-// made, so nothing may take a field out of one.
-//
-// A string literal (kind 5) is not a unit either: its static box carries the
-// immortal count on every backend, so it is never released, and a consumer
-// that takes one is handed it with no retain (`literal`).
 function fresh_unit(kind: i32): boolean {
   return kind == 8 || kind == 9 || kind == ssasem.append_range() || kind == ssasem.zero() || construction(kind) || hands_out(kind);
 }
 
-// The operations whose result is a unit handed to this function: a call's
-// result, a rebuilt container, a view's box, a cell's element, a map read,
-// which retains what it answers because the value may come from the column or
-// from the caller's default, a column snapshot, which semsource admits only
-// where the runtime hands back a copy the frame owns whole, a delete,
-// which answers the map the receiver handed over, and a hole
-// fill, which hands back the chain it was given or the value it stored.
 function hands_out(kind: i32): boolean {
   return kind == ssasem.call() || kind == ssasem.call_value() || kind == ssasem.closure_new()
     || kind == ssasem.append() || kind == ssasem.with() || kind == ssasem.slice() || kind == ssasem.cell_get()
@@ -802,9 +644,6 @@ function hands_out(kind: i32): boolean {
     || kind == ssasem.map_iter() || kind == ssasem.hole_fill();
 }
 
-// A phi is a literal too when every operand is: assumed of every phi, then
-// withdrawn from each one with another operand, to a fixpoint, so a loop
-// phi that only ever carries literals keeps the mark.
 function literals(f: ssasem.Func): boolean[] {
   let out: boolean[] = __alloc_bool(f.graph.nvals);
   for b in f.graph.blocks {
@@ -855,17 +694,6 @@ function owned_values(f: ssasem.Func, modes: i32[], defs: ssa.SInst[]): boolean[
   return phi_ownership(f, out, defs);
 }
 
-// A phi owns a unit unless every operand is lent whole: a borrowed parameter,
-// a string literal, another phi that is, or a projection of one of those. Such
-// a phi holds nothing its edges could supply -- asking them retains a view
-// with a no-op and releases it with a free (#9802), and retains a counted box
-// for nothing. A projection of a lent value is a part of a box its holder
-// keeps alive for the whole call, so it lends on the same terms; the loop a
-// self tail call becomes (`ssasem.tail_recursion`) rebinds every parameter to
-// such a projection. Any other operand makes the phi owned: a projection of
-// an owned record is anchored to its root, and the retain the edge supplies
-// is what keeps the child alive past the root's release. To a fixpoint, since
-// ownership reaches a phi through a phi, and through a projection of one.
 function phi_ownership(f: ssasem.Func, owned: boolean[], defs: ssa.SInst[]): boolean[] {
   let out: boolean[] = owned;
   for b in f.graph.blocks {
@@ -912,11 +740,6 @@ function phi_ownership(f: ssasem.Func, owned: boolean[], defs: ssa.SInst[]): boo
   return out;
 }
 
-// The value `v` is a part of, through every projection of a plain reference
-// it was read by: a record field, a variant payload or member, a tuple
-// element or an array element. A view holder and a map stop the walk, as
-// they stop the tail-call rewrite (`ssasem.crosses_jump`): a view's box has
-// no count to lend, and a map read answers a unit of its own.
 function lent_root(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32 {
   let at: i32 = v;
   while (part_read(defs[at].kind_tag) && defs[at].args.len() > 0) {
@@ -934,18 +757,6 @@ function part_read(kind: i32): boolean {
     || kind == ssasem.tuple_get() || kind == ssasem.array_get();
 }
 
-// A view is lent, never retained: its box carries the immortal sentinel
-// rather than a count, so the retain the runtime would emit is a no-op while
-// the release that balances it frees the box (#9802). A supply that MOVES a
-// view is fine, the one unit changes hands; one that retains it, because the
-// value stays live past the step, would give back a unit nothing took: a
-// phi merging a live view with a fresh one released the live one from
-// under its holder. `ssarc`'s #9328 note is the same asymmetry at the call
-// bracket, which it restricts to arrays.
-//
-// A string retagged as a view is the string's own counted box, so retaining
-// it retains the string, which `__fern_str_view_free` then releases as one.
-// A literal's retain is never emitted (ssarc.supplies), so it lends nothing.
 function view_retain_error(f: ssasem.Func, steps: Step[], literal: boolean[], defs: ssa.SInst[]): string {
   for s in steps {
     for item in s.supplies {
@@ -962,8 +773,6 @@ function retagged_string(f: ssasem.Func, defs: ssa.SInst[], v: i32): boolean {
   return d.kind_tag == ssasem.str_as() && d.args.len() == 1 && !ssasem.is_view(f.values[d.args[0]]);
 }
 
-// use_ids lists `value` and the values it depends on, each once; none for
-// no value.
 function use_ids(value: i32, deps: i32[][]): i32[] {
   if (value < 0) {
     return [];
@@ -977,19 +786,6 @@ function use_ids(value: i32, deps: i32[][]): i32[] {
   return ids;
 }
 
-// A construction takes one unit per reference operand, function values
-// included: the closure box that used to borrow its captures of that type now
-// owns them (#9637). A call takes one per counted parameter; a borrowed parameter
-// only reads the caller's unit. An append or a with takes one for its
-// receiver, which a receiver this function does not own reaches by retaining;
-// a cell write takes one for the element it stores and reads the cell. A map
-// insert takes one for the receiver it hands back and one for the key its
-// column holds until the map is released, and one for the value when that
-// column is counted too. A delete takes one for the receiver it hands back
-// inside its tuple and only COMPARES the key, whose unit stays with the
-// caller. A hole fill takes the chain's and the stored value's, and reads the
-// hole's address. A string append takes one for its left operand, whose
-// buffer it may grow in place (`string_append`).
 function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
   let out: Supply[] = [];
   let counted: boolean[] = [];
@@ -1030,9 +826,6 @@ function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
   return out;
 }
 
-// The supplies of every operation of `f`, made once for the passes that read
-// them: the operation at `pos` in block `bi` is rows[from[bi] + pos]. A
-// parameter or a phi supplies nothing here.
 struct SupplyTable { from: i32[], rows: Supply[][] }
 
 function supply_table(f: ssasem.Func): SupplyTable {
@@ -1055,10 +848,6 @@ function (t: SupplyTable) at(bi: i32, pos: i32): Supply[] {
   return t.rows[t.from[bi] + pos];
 }
 
-// A `+` on a counted string: the runtime appends onto the left operand's
-// buffer when the frame hands it the only unit and its block has room, so the
-// operand is taken rather than lent. A view has no unit to hand over, and a
-// range append's left operand is always counted (ssasem.append_range).
 pub function string_append(f: ssasem.Func, ins: ssa.SInst): boolean {
   if (ins.kind_tag == ssasem.append_range()) {
     return true;
@@ -1066,8 +855,6 @@ pub function string_append(f: ssasem.Func, ins: ssa.SInst): boolean {
   return ins.kind_tag == 9 && ins.str == "+" && ssasem.is_string(f.values[ins.args[0]]);
 }
 
-// The operands a call lends rather than counts. The callee reads them for the
-// whole call, and it may release a unit it is handed before it does.
 function lent_operands(ins: ssa.SInst, counted: Supply[]): i32[] {
   let out: i32[] = [];
   if (ins.kind_tag != ssasem.call() && ins.kind_tag != ssasem.call_value()) {
@@ -1089,8 +876,6 @@ function lent_operands(ins: ssa.SInst, counted: Supply[]): i32[] {
   return out;
 }
 
-// What a call's lent operands borrow from: none of it may move into the call
-// (#10832).
 function lent_owners(ins: ssa.SInst, counted: Supply[], deps: i32[][]): i32[] {
   let out: i32[] = [];
   if (counted.len() == 0) {
@@ -1106,9 +891,6 @@ function lent_owners(ins: ssa.SInst, counted: Supply[], deps: i32[][]): i32[] {
   return out;
 }
 
-// An indirect call LENDS every reference it is handed except at a slot the
-// function type spells CONSUMING, `own T`. The callee box itself (operand 0)
-// is lent like any other.
 function call_value_supplied(f: ssasem.Func, ins: ssa.SInst): boolean[] {
   let out: boolean[] = [false];
   let callee: typeinfo.Type = f.values[ins.args[0]];
@@ -1132,9 +914,6 @@ function call_supplied(f: ssasem.Func, ins: ssa.SInst): boolean[] {
   return out;
 }
 
-// The callee's declared mode at each operand of a direct call, for a caller
-// deciding which arguments its bracket covers. `call_supplied` reads the same
-// contract for the ledger; this is the whole row rather than the counted half.
 pub function callee_modes(f: ssasem.Func, ins: ssa.SInst): i32[] {
   let at: i32 = ssasem.find_contract_in(f.calls, ins.str);
   if (at < 0) {
@@ -1143,8 +922,6 @@ pub function callee_modes(f: ssasem.Func, ins: ssa.SInst): i32[] {
   return f.calls[at].modes;
 }
 
-// An unreachable end (kind 4) supplies nothing and, like a return, releases
-// every unit the frame still holds at its step.
 function return_supplies(f: ssasem.Func, b: ssa.SBlock): Supply[] {
   if (b.term.kind_tag == 1 && b.term.value >= 0 && ssasem.reference(f.values[b.term.value])) {
     return [Supply { value: b.term.value, slot: 0, mode: 0 }];
@@ -1152,7 +929,6 @@ function return_supplies(f: ssasem.Func, b: ssa.SBlock): Supply[] {
   return [];
 }
 
-// The edge from b into the block at position si.
 function edge_supplies(f: ssasem.Func, b: ssa.SBlock, si: i32, owned: boolean[]): Supply[] {
   let succ: ssa.SBlock = f.graph.blocks[si];
   let pi: i32 = 0;
@@ -1188,15 +964,6 @@ function definitions(f: ssasem.Func): ssa.SInst[] {
   return out;
 }
 
-// Per slice result, of a string or of a byte view's sub-range: whether its
-// view box may live in the frame that made it. Every use has to read the
-// bytes and be done with the box within the one instruction — a comparison
-// or concatenation, a length, a byte, a further window, or a borrowed
-// argument to a callee that does not keep it. A callee whose result borrows
-// the argument also keeps its descriptor, as recorded by the typed result
-// anchors. A phi, a store, a return or anything else keeps the box past the
-// instruction, and a phi is also the only way an earlier iteration's box
-// could still be read when the site runs again.
 function frame_views(f: ssasem.Func, defs: ssa.SInst[]): boolean[] {
   let out: boolean[] = __alloc_bool(f.graph.nvals);
   for b in f.graph.blocks {
@@ -1230,8 +997,6 @@ function frame_views(f: ssasem.Func, defs: ssa.SInst[]): boolean[] {
   return out;
 }
 
-// A sub-range of a byte view or an owned `u8[]`, whose descriptor the
-// lowering may build in the frame (ssabytes.slice_frame).
 function byte_view_slice(f: ssasem.Func, ins: ssa.SInst): boolean {
   if (ins.kind_tag != ssasem.arr_slice() || ins.result < 0 || ins.result >= f.values.len()) {
     return false;
@@ -1242,7 +1007,6 @@ function byte_view_slice(f: ssasem.Func, ins: ssa.SInst): boolean {
   return false;
 }
 
-// Per value, the byte length of the string literal it is, or -1.
 function text_lens(f: ssasem.Func): i32[] {
   let out: i32[] = [];
   while (out.len() < f.graph.nvals) {
@@ -1258,16 +1022,6 @@ function text_lens(f: ssasem.Func): i32[] {
   return out;
 }
 
-// Per record, variant or array construction whose every field or element is a
-// scalar constant, a 64-bit integer or f64 constant among them: "|" and its
-// words, which is a static box's whole content; "" for any other value. An
-// empty array literal is one whatever its element type. A field or element may also hold another such box, as the
-// word `@<value>`, a string literal's static box, as `$<value>`, or a
-// payloadless Option or Result's, as its packing in braces. A static
-// box's rc is immortal, so its releases and uniqueness tests leave it alone.
-//
-// A field's box can be defined in a block visited after the field's, so a pass
-// that left a field waiting on one is repeated once it has placed anything.
 function constants(f: ssasem.Func, defs: ssa.SInst[]): string[] {
   let out: string[] = [];
   let i: i32 = 0;
@@ -1301,8 +1055,6 @@ function constants(f: ssasem.Func, defs: ssa.SInst[]): string[] {
   return out;
 }
 
-// A construction `constants` has not placed and may: not handed to the raw
-// floor, and with no finalizer to run.
 function placeable(f: ssasem.Func, raw: boolean[], out: string[], ins: ssa.SInst): Construction {
   let built: Construction = built_fields(f, ins);
   if (!built.ok || built.fields.len() != ins.args.len() || raw[ins.result] || out[ins.result] != "") {
@@ -1314,8 +1066,6 @@ function placeable(f: ssasem.Func, raw: boolean[], out: string[], ins: ssa.SInst
   return built;
 }
 
-// One construction's static words, "" when a field is not constant, and
-// whether a field is a box this pass has not placed yet.
 struct BoxWords { text: string, waiting: boolean }
 
 function box_words(f: ssasem.Func, defs: ssa.SInst[], raw: boolean[], out: string[], ins: ssa.SInst, fields: semrecords.Field[]): BoxWords {
@@ -1354,8 +1104,6 @@ function box_words(f: ssasem.Func, defs: ssa.SInst[], raw: boolean[], out: strin
   return BoxWords { text: words, waiting: false };
 }
 
-// A string literal's static box, as `$<value>`, read through copies; "" for
-// anything else.
 function literal_word(defs: ssa.SInst[], v: i32): string {
   if (v < 0) {
     return "";
@@ -1367,8 +1115,6 @@ function literal_word(defs: ssa.SInst[], v: i32): string {
   return "$" + util.i32_to_string(d.result);
 }
 
-// A payloadless Option or Result's static block (ir.op_const_option), read
-// through copies; "" for anything else.
 function option_word(f: ssasem.Func, defs: ssa.SInst[], v: i32): string {
   if (v < 0) {
     return "";
@@ -1384,8 +1130,6 @@ function option_word(f: ssasem.Func, defs: ssa.SInst[], v: i32): string {
   return ir.const_option_ref(semrecords.find_variant(f.enums[e], d.str));
 }
 
-// The construction a field's value is, read through copies, when it is one
-// `constants` could place; -1 otherwise.
 function placed_box(f: ssasem.Func, defs: ssa.SInst[], raw: boolean[], v: i32): i32 {
   if (v < 0) {
     return 0 - 1;
@@ -1397,10 +1141,6 @@ function placed_box(f: ssasem.Func, defs: ssa.SInst[], raw: boolean[], v: i32): 
   return d.result;
 }
 
-// The values whose storage this body hands to the raw floor: an array cast to
-// its data pointer, or given to `__arr_set_len` or `__raw_arr_ptr`, traced back
-// through copies and phis. The floor writes that storage without a count, so a
-// literal reaching it is built fresh rather than shared.
 function raw_reached(f: ssasem.Func, defs: ssa.SInst[]): i32[] {
   let work: i32[] = [];
   for b in f.graph.blocks {
@@ -1436,11 +1176,6 @@ function raw_reached(f: ssasem.Func, defs: ssa.SInst[]): i32[] {
   return out;
 }
 
-// The declared fields a record or boxed-variant construction fills, one per
-// element for an array literal; not ok for anything else, an Option or Result
-// among them, whose box is a tag and a payload rather than a shape and fields.
-// A closure's environment is a record only to the lowering, so it is not one
-// here.
 struct Construction { ok: boolean, fields: semrecords.Field[] }
 
 function built_fields(f: ssasem.Func, ins: ssa.SInst): Construction {
@@ -1477,10 +1212,6 @@ function built_fields(f: ssasem.Func, ins: ssa.SInst): Construction {
   return Construction { ok: false, fields: none };
 }
 
-// A field's static word, or "" when the value is not a constant this can
-// place. A u32 literal carries its text rather than an immediate, as
-// `ssarc.constant` reads it. A copy reads through to what it copies, which is
-// how a spliced accessor's constant arrives.
 function constant_word(f: ssasem.Func, defs: ssa.SInst[], v: i32, t: typeinfo.Type): string {
   if (!narrow_scalar(t)) {
     return "";
@@ -1502,10 +1233,6 @@ function constant_word(f: ssasem.Func, defs: ssa.SInst[], v: i32, t: typeinfo.Ty
   return negated_word(defs, d);
 }
 
-// A non-negative integer literal cast to u8, i32 or u32, `7 as u8`, is the
-// literal; the checker has already refused one that does not fit (E047).
-// A byte table is written with such casts, and placing it keeps it from
-// being built on every evaluation.
 function cast_word(f: ssasem.Func, defs: ssa.SInst[], v: i32, t: typeinfo.Type): string {
   if (!ssasem.is_u8(t) && !ssasem.is_i32(t) && !ssasem.is_u32(t)) {
     return "";
@@ -1530,9 +1257,6 @@ function constant_cast_arg(ins: ssa.SInst): i32 {
   return -1;
 }
 
-// Float literals also use kind 1, but their source text is not an integer
-// conversion's value: an f32 may already have rounded it (16777217 ->
-// 16777216). Only integer source values can reuse their literal spelling.
 function integer_literal(f: ssasem.Func, ins: ssa.SInst): boolean {
   if (ins.kind_tag != 1 || ins.result < 0 || ins.result >= f.values.len()) {
     return false;
@@ -1541,10 +1265,6 @@ function integer_literal(f: ssasem.Func, ins: ssa.SInst): boolean {
   return ssasem.is_integer(from) || ssasem.is_char(from);
 }
 
-// A 64-bit field's or element's word: an i64 or u64 literal's value, or an f64
-// literal's bit pattern, as signed decimal; a negation of one negated; "" for
-// anything else. Every backend keeps a record's field and a wide array's
-// element in an 8-byte slot, so the word is the slot's bytes on each.
 function wide_word(f: ssasem.Func, defs: ssa.SInst[], v: i32, t: typeinfo.Type): string {
   if (ssasem.is_float(t)) {
     match (float_constant_bits(f, defs, v, cell_new(32))) {
@@ -1579,9 +1299,6 @@ function wide_word(f: ssasem.Func, defs: ssa.SInst[], v: i32, t: typeinfo.Type):
   return util.i64_to_string(bits);
 }
 
-// Static floating tables retain the same intermediate rounding as runtime code.
-// f32 arrays use promoted f64 slots on every backend, including WASI.
-// One shared node budget also bounds repeated visits through a shared SSA graph.
 function float_constant_bits(f: ssasem.Func, defs: ssa.SInst[], v: i32, budget: Cell[i32]): Option[i64] {
   if (budget.get() <= 0 || v < 0 || v >= defs.len()) {
     return None;
@@ -1640,7 +1357,6 @@ function float_constant_bits(f: ssasem.Func, defs: ssa.SInst[], v: i32, budget: 
     if (d.str == "/") {
       value = a / b;
     }
-    // Computed NaN payloads differ between targets. Keep their runtime operation.
     if (value != value) {
       return None;
     }
@@ -1654,10 +1370,6 @@ function float_constant_bits(f: ssasem.Func, defs: ssa.SInst[], v: i32, budget: 
   return Some(bits);
 }
 
-// `wide_literal(f, defs, d)` — the integer literal under a cast to the wide
-// type, `10i32 as i64`, which is the literal at that width (an unsuffixed
-// one the typed lowering already ascribes); `d` itself for anything else,
-// a cast of a computed value among them, which is no literal.
 function wide_literal(f: ssasem.Func, defs: ssa.SInst[], d: ssa.SInst): ssa.SInst {
   let arg: i32 = constant_cast_arg(d);
   if (arg < 0) {
@@ -1680,9 +1392,6 @@ function through_copies(defs: ssa.SInst[], v: i32): ssa.SInst {
   return d;
 }
 
-// A negative i32 literal is `0 - k` in source, which arrives as that
-// subtraction or, once the front end has folded it, as a negation; negating a
-// non-negative i32 cannot wrap.
 function negated_word(defs: ssa.SInst[], d: ssa.SInst): string {
   let k: ssa.SInst = defs[d.args[d.args.len() - 1]];
   if (k.kind_tag != 1 || k.imm < 0) {
@@ -1698,8 +1407,6 @@ function negated_word(defs: ssa.SInst[], d: ssa.SInst): string {
   return util.i32_to_string(0 - k.imm);
 }
 
-// A literal carried as its source text (an unsigned one), admitted only when
-// it is plain decimal below 2^31, where its word reads the same at any width.
 function small_decimal(text: string): string {
   if (text.len() == 0 || text.len() > 9) {
     return "";
@@ -1721,8 +1428,6 @@ function narrow_scalar(t: typeinfo.Type): boolean {
   return ssasem.is_i32(t) || ssasem.is_u32(t) || ssasem.is_u8(t) || ssasem.is_char(t);
 }
 
-// The slice a value is, directly or retagged as a borrowed string; -1 when it
-// is neither.
 function lent_view(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32 {
   if (v < 0 || v >= defs.len()) {
     return 0 - 1;
@@ -1737,11 +1442,6 @@ function lent_view(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32 {
   return 0 - 1;
 }
 
-// Whether the use of the view at operand `at` of `ins` reads it within the
-// instruction. A string slice reaches a callee only through the retag
-// `semsource.lend` makes at a borrowed `str` parameter (`lent`); a byte view
-// (`byte`) is a callee's parameter type as it is, so it is read where the
-// callee's declared mode borrows it.
 function reads_view(f: ssasem.Func, ins: ssa.SInst, at: i32, lent: boolean, byte: boolean): boolean {
   let k: i32 = ins.kind_tag;
   if (k == 9 || k == ssasem.append_range() || k == ssasem.length() || k == ssasem.str_index() || k == ssasem.str_bytes()) {
@@ -1773,14 +1473,12 @@ function is_record(t: typeinfo.Type): boolean {
   return false;
 }
 
-// A value reached through another: a copy, a projection, or a retag.
 function projection(kind: i32): boolean {
   return kind == 7 || kind == ssasem.array_get() || kind == ssasem.tuple_get() || kind == ssasem.record_get()
     || kind == ssasem.variant_get() || kind == ssasem.variant_up() || kind == ssasem.variant_as()
     || kind == ssasem.slice() || kind == ssasem.arr_slice() || kind == ssasem.str_as() || kind == ssasem.array_lend() || kind == ssasem.str_byte_view() || kind == ssasem.dyn_up() || kind == ssasem.dyn_as();
 }
 
-// Whether reading `arg` reads `w`: the value itself, or one anchored to it.
 function reads(a: ssasem.Analysis, arg: i32, w: i32): boolean {
   if (arg < 0) {
     return false;
@@ -1796,8 +1494,6 @@ function reads(a: ssasem.Analysis, arg: i32, w: i32): boolean {
   return false;
 }
 
-// Whether `w` is read after position `pos` of block `bi`: by a later
-// instruction, by the terminator, or on the way out of the block.
 function used_after(a: ssasem.Analysis, bi: i32, pos: i32, w: i32): boolean {
   if (ssalive.live_out_has(a.flow, bi, w) || ssasem.read_after(a.uses, bi, pos, w)) {
     return true;
@@ -1812,11 +1508,6 @@ function used_after(a: ssasem.Analysis, bi: i32, pos: i32, w: i32): boolean {
   return false;
 }
 
-// used_after over the DIRECT relation (`direct`, the flow over `a.parents`
-// alone): whether `v`, or a projection of it, is read after `pos`. The two
-// relations are the model's two questions: the anchored one asks whether the
-// storage behind a value is still needed, the direct one whether the value
-// itself is still in hand.
 function read_after_direct(a: ssasem.Analysis, direct: ssalive.Flow, bi: i32, pos: i32, v: i32): boolean {
   if (ssalive.live_out_has(direct, bi, v) || ssasem.read_after(a.uses, bi, pos, v)) {
     return true;
@@ -1836,22 +1527,6 @@ function other_field_get(ins: ssa.SInst, root: i32, field: i32): boolean {
   return ins.kind_tag == ssasem.record_get() && ins.args[0] == root && ins.imm != field;
 }
 
-// The record whose field the projection `v` names, when this frame reads
-// that field no further after the instruction at (`bi`, `pos`), or -1. The
-// record is one this frame holds as a parameter or owns outright, and after
-// the instruction it is read only through projections of its OTHER fields —
-// the functional update `R { ...r, xs: f(r.xs) }` — with nothing anchored to
-// the projected field, and nothing anchored to the record any other way,
-// still live. A later block may read the record only through its other
-// fields too (`named_after`), so a loop that reaches the same record again is
-// refused; a loop-carried record is a fresh phi each round.
-//
-// What this proves is that THIS frame never reads the field again, so the
-// buffer may be grown in place by the instruction, or by a callee it is
-// handed to without a bracket. Whether another holder reads it is answered at
-// run time — the record's own count, when it is shared — and by the
-// caller-side bracket (`grow_rows`) for the frame that lent the record and
-// still reads it.
 function projection_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[], bi: i32, pos: i32, v: i32): i32 {
   let none: i32 = 0 - 1;
   let get: ssa.SInst = defs[v];
@@ -1868,10 +1543,6 @@ function projection_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], d
   if (projection(defs[root].kind_tag)) {
     return none;
   }
-  // The field is read at `get` and taken or grown HERE, at a later use: the
-  // instruction's own other operands count (`own_root`), the record beside
-  // its field being the record read whole, and so does the field value
-  // itself used again later, since the slot is not moved out at the read.
   if (needed_past_slot(f, a, defs, bi, pos, get, false, true, false)) {
     return none;
   }
@@ -1882,58 +1553,16 @@ function other_tuple_get(ins: ssa.SInst, root: i32, field: i32): boolean {
   return ins.kind_tag == ssasem.tuple_get() && ins.args.len() == 1 && ins.args[0] == root && ins.imm != field;
 }
 
-// A source whose box this frame ALLOCATED, so nulling a slot in it is invisible
-// to everyone else. The take nulls without asking, so this and
-// `only_element_reads` are the whole of its safety: owning a unit is not
-// enough, the box has to be the frame's alone.
-//
-// Only a construction can define a TUPLE and qualify: `tuple_new` builds the
-// box here, refcount 1.
-//
-// Everything else that can define a tuple hands back a box someone else still
-// names, and is excluded:
-//
-//   - a counted PARAMETER. `own` transfers ONE unit, not exclusive ownership,
-//     so the box may have other holders. `steal` next door admits a parameter
-//     root only because it pays for it with a runtime `__fern_rc_is_unique`
-//     test before nulling; the take does not test.
-//   - `cell_get` and `map_get_or`, which RETAIN what they read (`cell_read`'s
-//     and `map_op`'s `__fern_rc_inc`) — the cell and the map's value column
-//     still hold the box, and a counted column may hold a tuple, so nulling
-//     here would show up in every later read through the container.
-//   - a CALL result, whose exclusivity this boundary cannot establish: a callee
-//     may return a retained alias of something it goes on holding.
-//   - a phi, because one of its incoming edges may be any of the above.
-//
-// The other `hands_out` operations answer an array, a map, an Option or a
-// closure box and so can never be a take's source; naming them here would
-// suggest a judgement about them that this predicate does not make.
 function takeable_root(kind: i32): boolean {
   return construction(kind);
 }
 
-// The element index a tuple read at (`bi`, `pos`) TAKES rather than borrows,
-// or -1. A projection borrows by default, so a consuming use of what it read
-// owes a retain, which a take saves (#9555).
-//
-// It takes when the source is a unit of this frame's own, dies at this read,
-// and is reached after it only through reads of its OTHER elements. The
-// element's unit then becomes the frame's for nothing: the physical lowering
-// nulls the slot, and the source's own drop — in this same step, since it dies
-// here — walks past the null rather than releasing what the frame now holds.
-//
-// Same shape as `projection_root` above and the same reasoning, over a tuple
-// rather than a record, and over the whole source rather than one field: a
-// tuple has no functional-update form, so a later read through another element
-// is the only way the source may still be mentioned.
 function tuple_take_field(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[], bi: i32, pos: i32): i32 {
   let none: i32 = 0 - 1;
   let ins: ssa.SInst = f.graph.blocks[bi].insts[pos];
   if (ins.kind_tag != ssasem.tuple_get()) {
     return none;
   }
-  // This runs BEFORE the graph is verified, so a malformed instruction has
-  // to answer "no take" rather than read past the end of its own operands.
   if (ins.args.len() != 1) {
     return none;
   }
@@ -1947,23 +1576,15 @@ function tuple_take_field(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], 
   if (!ssasem.reference(f.values[ins.result])) {
     return none;
   }
-  // A box this frame built has a count of 1 only until something else is
-  // handed it, so every use has to be an element read.
   if (!owned[root] || !takeable_root(defs[root].kind_tag) || !ssasem.uses_only(a.uses, root, [ssasem.tuple_get()])) {
     return none;
   }
-  // The untested take: the tuple must die in this block, so any liveness out
-  // of it refuses (`strict`); another element's read is let through.
   if (needed_past_slot(f, a, defs, bi, pos, ins, true, false, true)) {
     return none;
   }
   return ins.imm;
 }
 
-// The element each tuple read takes, indexed by the read's result value, and
-// -1 where it borrows. Computed before the step walk because the walk runs
-// BACKWARDS: a taken element is a unit of the frame's own, and the consuming
-// use that moves it is reached before the read that produced it.
 function tuple_takes(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[]): i32[] {
   let out: i32[] = [];
   let vi: i32 = 0;
@@ -1987,24 +1608,8 @@ function tuple_takes(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs:
   return out;
 }
 
-// What a take changes about the plan's inputs, derived once so the planner and
-// the independent replay below reach it the same way: the element becomes a
-// unit of this frame's own, and it stops being ANCHORED to the tuple it came
-// out of — the source is released in the same step, and leaving the dependency
-// would read every later use of the element as a borrow outliving its
-// container. A payload take says the same about an enum box's payload.
-// `reflow` marks a take whose box is released alone (`shell_root`), or whose
-// box was live out of the read's block only as the taken value's anchor: that
-// box has to die at the read, which the flow derived before the take cannot say.
 struct Units { owned: boolean[], parents: i32[][], deps: i32[][], takes: i32[], held: boolean[], payloads: boolean[], reflow: boolean, likely: boolean[] }
 
-// The payload takes are derived FIRST and folded into ownership before the
-// other two run: a taken payload is a unit of this frame's own, and the tuple
-// takes and the element holds both ask whether the value they read through is
-// owned. Deriving them against the base instead reads a taken payload as a
-// borrow, and an element read of one then pins the array it came out of
-// rather than taking its own unit — which is the whole of what a hold exists
-// to prevent (#9891).
 function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa.SInst[], sup: SupplyTable): Units {
   let pt: PayloadTakes = payload_takes(f, a, base, defs);
   let payloads: boolean[] = pt.taken;
@@ -2021,9 +1626,6 @@ function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa
   let held: boolean[] = held_elements(f, a, owned, defs, sup);
   let asked: boolean[] = twin_holds(f, a, defs, owned, held);
   let past: PayloadTakes = takes_past_holds(f, a, owned, asked, defs);
-  // A second take out of a read the ask took but slot_held refused would
-  // move the value out of a box something still holds, so a take goes in
-  // only once its source is owned.
   let added: boolean = false;
   let grew: boolean = true;
   while (grew) {
@@ -2041,16 +1643,9 @@ function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa
       i = i + 1;
     }
   }
-  // The second takes stand on the holds they were asked over, so those stay.
-  // A read of a newly taken value that outlives the use it is spent in is
-  // held as reads of the first takes are.
   if (added) {
     held = either(asked, held_elements(f, a, owned, defs, sup));
   }
-  // A taken payload or tuple element is a unit of its own at the read
-  // already, moved out of the box or retained there by the lowering's
-  // uniqueness test (ssarc.steal); the hold read it as still anchored to its
-  // source, and would retain it a second time.
   i = 0;
   while (i < held.len()) {
     if (held[i] && (payloads[i] || takes[i] >= 0)) {
@@ -2063,17 +1658,11 @@ function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa
   let reflow: boolean = pt.crossing;
   i = 0;
   while (i < takes.len()) {
-    // A taken record field reflows, as a taken payload does: the values
-    // read through it still chain to the record, which has to die at the
-    // read. option_layout already admits a record (it is not an enum), so
-    // the record_get test states that rather than widening the gate.
     if (payloads[i] && (defs[i].kind_tag == ssasem.record_get() || defs[i].kind_tag == ssasem.tuple_get() || option_layout(f, f.values[defs[i].args[0]]))) {
       reflow = true;
     }
     if (takes[i] >= 0 || held[i] || payloads[i]) {
       owned = owned.with(i, true);
-      // A view's bytes are its source's, not the box's it came out of, so
-      // a taken view stays anchored to what the box was.
       let up: i32[] = [];
       let chain: i32[] = [];
       if ((takes[i] >= 0 || payloads[i]) && ssasem.is_view(f.values[i])) {
@@ -2091,10 +1680,6 @@ function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa
   return Units { owned: owned, parents: parents, deps: deps, takes: takes, held: held, payloads: payloads, reflow: reflow, likely: likely };
 }
 
-// The payload takes a hold lets through: a read retained at its own read is
-// a unit of its own and no longer keeps its source alive, so a slot of that
-// source can be taken where the source dies, although the held read outlives
-// it. The takes are asked again over the chains the holds cut.
 function takes_past_holds(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], held: boolean[], defs: ssa.SInst[]): PayloadTakes {
   let none: PayloadTakes = PayloadTakes { taken: __alloc_bool(f.graph.nvals), crossing: false, likely: __alloc_bool(f.graph.nvals) };
   if (count_true(held) == 0) {
@@ -2119,11 +1704,6 @@ function takes_past_holds(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], 
   return payload_takes(f, cut, owned, defs);
 }
 
-// `held` with the reads the takes of second field reads need held. A record
-// field read twice, the second time where the record can give the field up,
-// is taken only if no read off the first read is still in hand past the
-// second: such a read holds its own unit, and the take moves the field out
-// from under the first read.
 function twin_holds(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], owned: boolean[], held: boolean[]): boolean[] {
   let out: boolean[] = held;
   let reads: i32[][] = field_reads(f, owned);
@@ -2146,8 +1726,6 @@ function twin_holds(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], owned
   return out;
 }
 
-// `out` with each read off `first` still in hand past (`bi`, `pos`), where
-// `r` reads the slot `first` reads.
 function holds_off(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bare: ssalive.Flow, first: i32, r: i32, bi: i32, pos: i32, own out: boolean[]): boolean[] {
   let k: i32 = a.anchored.start[first];
   while (k < a.anchored.start[first + 1]) {
@@ -2160,7 +1738,6 @@ function holds_off(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bare: 
   return out;
 }
 
-// The record field reads of each owned value, by the value read.
 function field_reads(f: ssasem.Func, owned: boolean[]): i32[][] {
   let out: i32[][] = empty_chains(f.graph.nvals);
   for b in f.graph.blocks {
@@ -2196,9 +1773,6 @@ function either(a: boolean[], b: boolean[]): boolean[] {
   return out;
 }
 
-// Whether a held read other than `r` reads the slot `r` reads. The hold cut
-// that read's chain, so the second ask of the takes no longer sees it as a
-// use of the root, but it loads the slot the take would empty.
 function slot_held(defs: ssa.SInst[], held: boolean[], r: i32): boolean {
   let d: ssa.SInst = defs[r];
   let w: i32 = 0;
@@ -2222,9 +1796,6 @@ function no_takes(n: i32): i32[] {
   return out;
 }
 
-// A value read through one that became a unit of its own reaches the storage
-// behind it only through that unit's new chain, so every chain stops at each
-// such value and continues with its chain.
 function through_takes(parents: i32[][], deps: i32[][], takes: i32[], held: boolean[], payloads: boolean[]): i32[][] {
   let out: i32[][] = deps;
   let w: i32 = 0;
@@ -2254,11 +1825,6 @@ function reach_through(parents: i32[][], deps: i32[][], takes: i32[], held: bool
   return out;
 }
 
-// The analysis the plan and its replay read once the takes and holds are in:
-// the reads that became units of their own anchor nothing. A hold shortens a
-// chain that is still live, so the flow is derived again over the new chains
-// and the array a held read came from dies where its own uses end; a take's
-// source dies at the read, so a take alone leaves the flow as it was.
 function units_analysis(f: ssasem.Func, a: ssasem.Analysis, units: Units): ssasem.Analysis {
   let any: boolean = units.reflow;
   for h in units.held {
@@ -2273,9 +1839,6 @@ function units_analysis(f: ssasem.Func, a: ssasem.Analysis, units: Units): ssase
   return ssasem.Analysis { ...a, ok: flow.ok, why: flow.why, parents: units.parents, dependencies: units.deps, flow: flow, anchored: ssasem.anchored_of(units.deps, f.graph.nvals) };
 }
 
-// A read of an array element, a record field or a tuple element, of a type
-// the frame can hold a unit of: a view is lent, never retained, and a scalar
-// has no unit.
 function retainable_read(f: ssasem.Func, defs: ssa.SInst[], w: i32): boolean {
   let k: i32 = defs[w].kind_tag;
   if (k != ssasem.array_get() && k != ssasem.record_get() && k != ssasem.tuple_get()) {
@@ -2285,14 +1848,6 @@ function retainable_read(f: ssasem.Func, defs: ssa.SInst[], w: i32): boolean {
   return ssasem.reference(t) && !ssasem.is_view(t);
 }
 
-// The reads anchored to `s` that are still in hand once `s` is
-// supplied: past the operation at (`bi`, `pos`), into block `si` when `s`
-// goes out along an edge, or as an operand of that same operation (`args`)
-// where `s` dies. A read handed to a call beside its own array would
-// otherwise keep the array alive through the call as its anchor, so the
-// array was retained for the call instead of moved into it, and every
-// append the callee made copied the buffer. A read already `owned` took its
-// slot (payload_root) and has its unit.
 function outliving(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], owned: boolean[], held: boolean[], s: i32, bi: i32, pos: i32, si: i32, args: i32[]): i32[] {
   let out: i32[] = [];
   let k: i32 = a.anchored.start[s];
@@ -2314,24 +1869,6 @@ function outliving(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], owned:
   return out;
 }
 
-// A read of an element or a field still in hand when its array, record or
-// tuple is consumed takes a unit of its own at the read: one that outlives
-// the consuming use, or one handed to that use beside its source
-// (`outliving`). Retained there, released when it dies, anchored to nothing.
-// As a borrow it kept the source alive past the use, so a `.with`, an append
-// or a call there retained the source instead of moving it, and the write
-// copied the whole buffer (#9849, #11834). A read that dies before any such
-// use stays a borrow and costs nothing.
-//
-// A read still in hand at its source's last read, where the source dies
-// unconsumed, takes a unit there too when it, or a read anchored to it, is
-// consumed later: as a borrow it kept the source alive to that use, so the
-// use retained it instead of moving it, and every write past it copied
-// (#11913). The source's last read is its own or one of its direct
-// projections', so a field an update keeps, consumed by the construction the
-// source donates its box to, is not in hand past it. A read only borrowed to
-// its death leaves the source to die with it. A held read is a unit of its
-// own, so what it is consumed beside is asked again until no read is added.
 function held_elements(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[], sup: SupplyTable): boolean[] {
   let out: boolean[] = __alloc_bool(f.graph.nvals);
   let direct: ssalive.Flow = ssalive.compute_checked(f.graph, a.parents);
@@ -2347,8 +1884,6 @@ function held_elements(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], def
   return out;
 }
 
-// The liveness the holds read: through a value's direct parents, and by its
-// own uses alone.
 struct Flows { direct: ssalive.Flow, bare: ssalive.Flow }
 
 function hold_pass(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], flows: Flows, consumed: boolean[], owned: boolean[], own out: boolean[], sup: SupplyTable): boolean[] {
@@ -2369,7 +1904,6 @@ function hold_pass(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], flows:
   return out;
 }
 
-// hold_pass at the instruction `ins`, `pos` in block `bi`.
 function hold_at(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], flows: Flows, consumed: boolean[], owned: boolean[], own out: boolean[], ins: ssa.SInst, bi: i32, pos: i32, supplies: Supply[]): boolean[] {
   for got in supplies {
     if (owned[got.value] || out[got.value]) {
@@ -2377,11 +1911,6 @@ function hold_at(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], flows: F
       out = mark_all(out, past);
     }
   }
-  // An owned record an update rebuilds is consumed there too, as its box is
-  // the update's to reuse, so a read of it still in hand past the update
-  // takes a unit of its own rather than keep the record alive. Only a read
-  // used past the update itself is held: one in hand only as the parent of
-  // such a read is not needed once that read holds its own unit.
   let donor: i32 = ssasem.update_base(ins);
   if (donor >= 0 && donor < owned.len() && owned[donor]) {
     for w in outliving(f, a, defs, owned, out, donor, bi, pos, 0 - 1, []) {
@@ -2403,7 +1932,6 @@ function hold_at(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], flows: F
   return out;
 }
 
-// hold_pass along the edges out of block `b`, `bi`.
 function hold_along(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], owned: boolean[], own out: boolean[], b: ssa.SBlock, bi: i32): boolean[] {
   let targets: i32[] = successors(b);
   for target in targets {
@@ -2436,10 +1964,6 @@ function count_true(flags: boolean[]): i32 {
   return n;
 }
 
-// The owned sources the operation at (`bi`, `pos`) reads for the last time
-// without consuming, itself or through a direct projection: no later
-// operation of the block, no terminator and no successor reads them or a
-// direct projection of them, whatever else still depends on them.
 function dying_reads(f: ssasem.Func, a: ssasem.Analysis, direct: ssalive.Flow, owned: boolean[], held: boolean[], supplies: Supply[], bi: i32, pos: i32): i32[] {
   let out: i32[] = [];
   for u in f.graph.blocks[bi].insts[pos].args {
@@ -2454,8 +1978,6 @@ function dying_reads(f: ssasem.Func, a: ssasem.Analysis, direct: ssalive.Flow, o
   return out;
 }
 
-// dying_read adds `v` to `out` when the operation at (`bi`, `pos`) reads it
-// for the last time, as dying_reads says.
 function dying_read(a: ssasem.Analysis, direct: ssalive.Flow, owned: boolean[], held: boolean[], supplies: Supply[], bi: i32, pos: i32, v: i32, own out: i32[]): i32[] {
   if (!(owned[v] || held[v]) || has_id(out, v) || supplied(supplies, v)) {
     return out;
@@ -2475,8 +1997,6 @@ function supplied(supplies: Supply[], v: i32): boolean {
   return false;
 }
 
-// The values some operation consumes: a supply of an operation, of an owned
-// phi along an edge, or of a return.
 function consumed_values(f: ssasem.Func, owned: boolean[], sup: SupplyTable): boolean[] {
   let out: boolean[] = __alloc_bool(f.graph.nvals);
   let bi: i32 = 0;
@@ -2502,7 +2022,6 @@ function consumed_values(f: ssasem.Func, owned: boolean[], sup: SupplyTable): bo
   return out;
 }
 
-// Whether `w` or a read anchored to it is consumed somewhere.
 function wanted(anchored: ssasem.Anchored, consumed: boolean[], w: i32): boolean {
   if (consumed[w]) {
     return true;
@@ -2517,28 +2036,10 @@ function wanted(anchored: ssasem.Anchored, consumed: boolean[], w: i32): boolean
   return false;
 }
 
-// A later read of a DIFFERENT payload slot of the same box: the box is
-// mentioned again, but not through the slot a take has emptied.
 function other_payload_get(ins: ssa.SInst, root: i32, slot: i32): boolean {
   return ins.kind_tag == ssasem.variant_get() && ins.args.len() == 1 && ins.args[0] == root && ins.imm != slot;
 }
 
-// The box whose slot the read at (`bi`, `pos`) may MOVE out of rather than
-// borrow, or -1: an enum's payload named by a variant read, or an array, map
-// or record held in a record's field, a tuple's element or an owned array's
-// element (field_takeable). Same shape as
-// `projection_root` above, over the one slot the read names: the box is a
-// unit of this frame's own, no later block names it, and after the read it
-// is reached only through reads of its OTHER slots (`needed_past_slot`).
-//
-// The untested tuple take next door demands more of its source —
-// `takeable_root`, a box this frame ALLOCATED — because it nulls without
-// asking, and keeps the tuples that qualify for it. Here the physical
-// lowering pays for a weaker source with a runtime uniqueness test on the box
-// (`ssarc.steal`): a box somebody else also holds keeps its payload and the
-// read retains, exactly as a borrow did. So what this predicate has to prove
-// is only that THIS frame reads the slot no further. The builtin Option
-// layout's slot is nulled with `op_opt_set_payload`.
 function payload_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], spec: boolean[], defs: ssa.SInst[], bi: i32, pos: i32): i32 {
   let none: i32 = 0 - 1;
   let ins: ssa.SInst = f.graph.blocks[bi].insts[pos];
@@ -2552,8 +2053,6 @@ function payload_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], spec
   if (ins.kind_tag != ssasem.variant_get() && !field && !element && !slot || ins.args.len() != arity) {
     return none;
   }
-  // This runs BEFORE the graph is verified, so a malformed instruction has
-  // to answer "no take" rather than read past the end of its own operands.
   if (ins.result < 0 || ins.result >= f.graph.nvals) {
     return none;
   }
@@ -2561,14 +2060,9 @@ function payload_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], spec
   if (root < 0 || root >= f.graph.nvals || root >= owned.len() || root >= defs.len()) {
     return none;
   }
-  // A struct-union's members live in the arrays and records that hold a
-  // program's tokens, nodes and types, so a member read out of one is shared
-  // with its holder; its take would test the box and retain every time.
   if (ins.kind_tag == ssasem.variant_get() && !spec[root] && member_union(f, f.values[root])) {
     return none;
   }
-  // A tuple this frame built is `tuple_take_field`'s, which nulls without
-  // asking; this tested take is for one it was handed.
   if (element && takeable_root(defs[root].kind_tag)) {
     return none;
   }
@@ -2578,18 +2072,12 @@ function payload_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], spec
   if (!owned[root] || projection(defs[root].kind_tag) && !taken_root(defs[root].kind_tag)) {
     return none;
   }
-  // Another slot's read is let through, and so is what the taken value
-  // carries: the slot is moved out, not borrowed.
   if (needed_past_slot(f, a, defs, bi, pos, ins, false, false, true)) {
     return none;
   }
   return root;
 }
 
-// Whether the box `root` can give up the slot the read `got` names: a
-// buffer, map or record field of a record, element of a tuple or element of
-// an owned array, or a reference payload of a union. A view, or a union whose
-// schema this function does not carry, needs a box nobody else sees.
 function slot_takeable(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], got: typeinfo.Type, root: i32, field: boolean, element: boolean, slot: boolean): boolean {
   let box: typeinfo.Type = f.values[root];
   if (field) {
@@ -2607,23 +2095,6 @@ function slot_takeable(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], go
   return !(ssasem.is_view(got) || unknown_layout(f, box)) || sole_box(a, defs, root, __alloc_bool(f.graph.nvals));
 }
 
-// Whether the box the read `take` reads from is still needed past position
-// `pos` of block `bi` other than through the slot `take` names: a later read
-// of it in the block, a value anchored to it that is used after `pos`, or a
-// block that can run later naming it (`named_after`). A read of another of its slots is let
-// through everywhere; so is a value that reaches it only through the taken
-// value, when `through_take` is set, since the take moves that value out.
-// `strict` refuses any liveness out of the block, a tuple take's rule.
-// `own_root` counts the instruction's own operands too, the root among them:
-// a call handed a record beside its field reads the record whole.
-//
-// The three takes and the field steal are this one question asked with
-// different allowances; what each allows is stated at its call.
-//
-// An array element's take also lets the array go whole into a record update
-// that keeps it, when the record is then rebuilt around the store-back at
-// the taken element and reached no other way (`kept_store_back`): the slot
-// is empty only between the take and that store.
 function needed_past_slot(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bi: i32, pos: i32, take: ssa.SInst, strict: boolean, own_root: boolean, through_take: boolean): boolean {
   let root: i32 = take.args[0];
   let b: ssa.SBlock = f.graph.blocks[bi];
@@ -2678,12 +2149,6 @@ function needed_past_slot(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[],
   return false;
 }
 
-// The values the array a take's element came out of reaches, when the record
-// update `update` keeps it in field `k` and that field is read back once,
-// only to store at the taken element and rebuild the record around the
-// result — `R { ...r, k: r.k.with(i, x) }` after `R { ...r, e: v }` — or to
-// keep it through another such update first. Empty when the record, or the
-// array through it, is reached any other way in the block, or leaves it.
 function kept_store_back(a: ssasem.Analysis, defs: ssa.SInst[], b: ssa.SBlock, bi: i32, update: ssa.SInst, k: i32, take: ssa.SInst, depth: i32): i32[] {
   let none: i32[] = [];
   if (depth > 3 || update.kind_tag != ssasem.record_new() || ssasem.update_base(update) < 0 || take.kind_tag != ssasem.array_get()) {
@@ -2693,8 +2158,6 @@ function kept_store_back(a: ssasem.Analysis, defs: ssa.SInst[], b: ssa.SBlock, b
   if (rec < 0 || ssalive.live_out_has(a.flow, bi, rec)) {
     return none;
   }
-  // The record's operand uses are its field reads; the rebuild names it as
-  // its donor, which is no operand, so the block is scanned for it.
   let field: i32 = 0 - 1;
   let u: i32 = ssasem.first_use_in(a.uses, rec, bi);
   while (u < a.uses.start[rec + 1] && a.uses.block[u] == bi) {
@@ -2731,8 +2194,6 @@ function kept_store_back(a: ssasem.Analysis, defs: ssa.SInst[], b: ssa.SBlock, b
   if (k >= final.args.len()) {
     return none;
   }
-  // The field read goes one place: the rebuild, keeping it through to the
-  // next update, or the store-back whose result the rebuild carries.
   let n: i32 = 0;
   let store: i32 = 0 - 1;
   u = ssasem.first_use_in(a.uses, field, bi);
@@ -2760,10 +2221,6 @@ function kept_store_back(a: ssasem.Analysis, defs: ssa.SInst[], b: ssa.SBlock, b
   return [rec, field, store];
 }
 
-// Whether `w` reaches `root` by a chain that passes no value of `kept`: a
-// record update that keeps the taken array, the field read out of it, and
-// the store-back are vetted by `kept_store_back`, and a value reached only
-// through them is not another reader of the slot.
 function reaches_past_kept(a: ssasem.Analysis, w: i32, root: i32, kept: i32[], seen: boolean[]): boolean {
   if (kept.len() == 0) {
     return true;
@@ -2783,15 +2240,6 @@ function reaches_past_kept(a: ssasem.Analysis, w: i32, root: i32, kept: i32[], s
   return false;
 }
 
-// Whether `w` reaches `root` other than through the slot `take` names: it is
-// anchored to the root, and its first hop towards it is neither a read of
-// another slot nor, with `through_take`, the taken value itself.
-//
-// The first hop is the projection of `root` that `w` reaches it through: `w`
-// itself when its parent is the root, else the chain element just before the
-// root. There is none when a value on the chain up to the root is anchored to
-// more than one, since the chain then names no one path. One pass over `w`'s
-// chain finds both the root and the hop.
 function reaches_root(a: ssasem.Analysis, defs: ssa.SInst[], take: ssa.SInst, root: i32, through_take: boolean, w: i32): boolean {
   if (w < 0 || w == root || through_take && w == take.result) {
     return false;
@@ -2819,17 +2267,6 @@ function reaches_root(a: ssasem.Analysis, defs: ssa.SInst[], take: ssa.SInst, ro
   return hop < 0 || !other_slot_get(defs[hop], take);
 }
 
-// A block after bi reads v. The walk stops at the block defining v — a loop's
-// header, for a phi — since past that definition v is a new value. A phi reads
-// an operand only on its own incoming edge, so it counts where the walk enters
-// its block by that edge: an arm that rebuilt v hands the join its new value,
-// whatever the join takes from the arms that left v alone. A later read of
-// another of v's slots is let through, as `needed_past_slot` lets it through
-// within the block: what keeps v live is then not the slot taken. A
-// read of the taken slot itself still counts, so a take a loop would run again
-// on the same box is refused. The walk keeps to v's live range: a block v is
-// not live out of hands it to no successor, phi edges included, and a block v
-// is not live into reads it nowhere.
 function named_after(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bi: i32, v: i32, take: ssa.SInst): boolean {
   let seen: boolean[] = __alloc_bool(f.graph.blocks.len());
   let work: i32[] = [bi];
@@ -2872,8 +2309,6 @@ function block_defines(blk: ssa.SBlock, v: i32): boolean {
   return false;
 }
 
-// A phi of blk, the block at index `k`, takes v on the edge from block
-// `pred`.
 function phi_reads_on(u: ssasem.Uses, blk: ssa.SBlock, k: i32, pred: i32, v: i32): boolean {
   let i: i32 = ssasem.first_use_in(u, v, k);
   while (i < u.start[v + 1] && u.block[i] == k) {
@@ -2885,10 +2320,6 @@ function phi_reads_on(u: ssasem.Uses, blk: ssa.SBlock, k: i32, pred: i32, v: i32
   return false;
 }
 
-// A non-phi instruction or the terminator of blk, the block at index `k`,
-// reads v other than through another of its slots, or through the with that
-// stores back at the taken element; a phi's reads are `phi_reads_on`'s, edge
-// by edge.
 function block_reads(u: ssasem.Uses, defs: ssa.SInst[], blk: ssa.SBlock, k: i32, v: i32, take: ssa.SInst): boolean {
   let i: i32 = ssasem.first_use_in(u, v, k);
   while (i < u.start[v + 1] && u.block[i] == k) {
@@ -2906,9 +2337,6 @@ function block_reads(u: ssasem.Uses, defs: ssa.SInst[], blk: ssa.SBlock, k: i32,
   return false;
 }
 
-// The with that stores back at the array element `take` read: the same
-// index value, or the same literal, since a `slots[1]` and a `.with(1, x)`
-// name their index with a literal each.
 function same_slot_with(defs: ssa.SInst[], later: ssa.SInst, take: ssa.SInst): boolean {
   return take.kind_tag == ssasem.array_get() && later.kind_tag == ssasem.with() && later.args.len() == 3 && later.args[0] == take.args[0]
     && same_index(defs, later.args[1], take.args[1]);
@@ -2926,7 +2354,6 @@ function same_index(defs: ssa.SInst[], x: i32, y: i32): boolean {
   return a.kind_tag == 1 && b.kind_tag == 1 && a.imm == b.imm && a.str == b.str;
 }
 
-// A later read of the box `take` reads that names a DIFFERENT slot of it.
 function other_slot_get(later: ssa.SInst, take: ssa.SInst): boolean {
   if (take.kind_tag == ssasem.record_get()) {
     return other_field_get(later, take.args[0], take.imm);
@@ -2937,10 +2364,6 @@ function other_slot_get(later: ssa.SInst, take: ssa.SInst): boolean {
   return other_payload_get(later, take.args[0], take.imm);
 }
 
-// A record field, tuple element or array element a take may move out: a
-// buffer, a map, a record or a union, whose slot is one word the take can
-// null. A string may be a view or a literal at run time, and is left to the
-// borrow.
 function field_takeable(t: typeinfo.Type): boolean {
   if (ssasem.is_view(t) || ssasem.is_text(t)) {
     return false;
@@ -2948,27 +2371,14 @@ function field_takeable(t: typeinfo.Type): boolean {
   return is_array(t) || ssasem.is_map(t) || is_record(t) && !semtypes.is_env(t) || is_union(t);
 }
 
-// A one-operand slot read that may itself be a take: a record field, a
-// variant payload or a tuple element. The reuse tables read a donor's slot
-// reads through it.
 function taken_read(kind: i32): boolean {
   return kind == ssasem.record_get() || kind == ssasem.variant_get() || kind == ssasem.tuple_get();
 }
 
-// A projection whose read may be a take, and so a unit of the frame's own
-// that a nested read can take from in turn: the slot reads, and an array
-// element's.
 function taken_root(kind: i32): boolean {
   return taken_read(kind) || kind == ssasem.array_get();
 }
 
-// A box nobody but this frame's tag tests and payload reads ever sees: built
-// here, or a phi of boxes that are, and never handed to anything else. Its
-// count is 1 when its payload is read, so the read may take the payload with no
-// runtime test — which a view needs, since the test's shared arm retains, and
-// a union whose schema this function does not carry, since its slot cannot be
-// nulled. The box's drop in that step then releases the box alone
-// (`shell_root`).
 function sole_box(a: ssasem.Analysis, defs: ssa.SInst[], v: i32, seen: boolean[]): boolean {
   if (v < 0 || v >= defs.len()) {
     return false;
@@ -2994,10 +2404,6 @@ function sole_box(a: ssasem.Analysis, defs: ssa.SInst[], v: i32, seen: boolean[]
   return true;
 }
 
-// The box whose drop at `ins` releases the box alone: the root of an
-// untested payload take, one out of a box nobody else sees (`sole_box`),
-// which leaves the slot as it is, or -1. A tested take empties the slot
-// (ssarc.steal), so its box is released whole.
 pub function shell_root(f: ssasem.Func, p: Plan, ins: ssa.SInst): i32 {
   if (ins.kind_tag != ssasem.variant_get() || ins.result < 0 || ins.result >= p.payloads.len() || !p.payloads[ins.result]) {
     return 0 - 1;
@@ -3023,8 +2429,6 @@ function is_union(t: typeinfo.Type): boolean {
   return false;
 }
 
-// True for the builtin Option/Result layout, and for a union whose schema this
-// function does not carry.
 function option_layout(f: ssasem.Func, t: typeinfo.Type): boolean {
   let at: i32 = semrecords.find_enum(f.enums, t);
   if (at < 0) {
@@ -3033,25 +2437,10 @@ function option_layout(f: ssasem.Func, t: typeinfo.Type): boolean {
   return f.enums[at].layout == semrecords.layout_option();
 }
 
-// A union whose schema this function does not carry: not a box a take may
-// null a slot in.
 function unknown_layout(f: ssasem.Func, t: typeinfo.Type): boolean {
   return semrecords.find_enum(f.enums, t) < 0;
 }
 
-// The variant and record reads that take their slot's unit, indexed by the
-// read's result value. Computed before the step walk for the same reason the tuple
-// takes are: the walk runs backwards, so the consuming use that moves the
-// payload is reached before the read that produced it.
-//
-// To a fixpoint: a take makes its read a unit of the frame's own, which a read
-// of one of ITS slots may take from in turn — `let ws = s.words; let xs =
-// ws.xs;`.
-//
-// `crossing` is set when a take's box is live out of the read's block in the
-// flow derived before the take — the taken value leaves the block, and the box
-// stayed live only as its anchor — so the flow has to be derived again for the
-// box to die at the read.
 struct PayloadTakes { taken: boolean[], crossing: boolean, likely: boolean[] }
 
 function payload_takes(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[]): PayloadTakes {
@@ -3085,25 +2474,11 @@ function payload_takes(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], def
   return PayloadTakes { taken: out, crossing: crossing, likely: spec };
 }
 
-// Whether `t` is a struct-union: a union whose variants are its members' own
-// boxes.
 function member_union(f: ssasem.Func, t: typeinfo.Type): boolean {
   let e: i32 = semrecords.find_enum(f.enums, t);
   return e >= 0 && f.enums[e].layout == semrecords.layout_member();
 }
 
-// Whether each value's box is plausibly this frame's alone where it is read: a
-// parameter declared `own`, whose callers hand over a fresh value, another
-// owned one or a local at its last use (E051), a construction, or a phi or
-// copy of such values alone. A projection read holds a retained reference
-// out of a container that still holds its own, so its box is shared where it
-// is read, until a payload take makes it the frame's; a call's result may be
-// one the callee handed out of its own holder; and a parameter the ownership
-// inference made owned is fed by whatever its callers last read, a retained
-// field as often as not. A speculation on a box shared by construction — a
-// payload take, a reuse pairing, an inline drop of a known variant — pays its
-// uniqueness test and loses it every time, and carries the code of the arm it
-// never takes: over the compiler's own sources that cost 2.4% of a compile.
 function likely_unique(f: ssasem.Func, defs: ssa.SInst[]): boolean[] {
   let out: boolean[] = __alloc_bool(f.graph.nvals);
   for b in f.graph.blocks {
@@ -3139,10 +2514,6 @@ function likely_unique(f: ssasem.Func, defs: ssa.SInst[]): boolean[] {
   return out;
 }
 
-// The record whose field buffer the append, with or string append at (`bi`,
-// `pos`) may grow or write in place, or -1: `projection_root` of its receiver.
-// A string append needs a record the frame owns: no caller brackets a text
-// field it lends (grow_rows), so a borrowed record's string is never grown.
 function field_grow_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[], bi: i32, pos: i32): i32 {
   let ins: ssa.SInst = f.graph.blocks[bi].insts[pos];
   if (string_append(f, ins)) {
@@ -3175,13 +2546,6 @@ pub function occurrences(xs: i32[], v: i32): i32 {
   return n;
 }
 
-// A direct call's counted slot fed by a projection of a record this frame
-// owns and reads no further through that field takes the field's unit rather
-// than a retained one (steal_unit): the callee then holds the buffer's only
-// count and grows it in place. `Emit { ...e, r: emit(e.r, op) }` is the shape,
-// and retaining there put a second count on every buffer the emit chain
-// threads, so the callee's first append copied it. A field read that took its
-// unit (payload_root) already owns it, and its record may be gone.
 function steals(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[], bi: i32, pos: i32, s: Step): Step {
   let ins: ssa.SInst = f.graph.blocks[bi].insts[pos];
   if (ins.kind_tag != ssasem.call()) {
@@ -3202,15 +2566,6 @@ function steals(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.
   return Step { ...s, supplies: out };
 }
 
-// The buffers a direct call at (`bi`, `pos`) is handed without a bracket:
-// an array operand this frame reads no further, either a borrowed parameter
-// of its own or a projection, not a take, whose record it reads no further
-// through that field (projection_root); or a whole record parameter this frame reads no
-// further, whose fields the callee grows under the record's own count. An
-// operand named twice is bracketed, since a callee growing one name would
-// move the other. The buffer's only later holder is then the callee's result
-// — retained on identity, fresh on a realloc — and the record or the caller
-// releases the old one.
 function hands(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[], bi: i32, pos: i32, s: Step): Step {
   let ins: ssa.SInst = f.graph.blocks[bi].insts[pos];
   if (ins.kind_tag != ssasem.call()) {
@@ -3242,10 +2597,6 @@ function hands(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.S
   return Step { ...s, hand_roots: roots, hand_fields: fields };
 }
 
-// choose_ids takes the dead values listed by id, each once, in any order: a
-// dead owned supply moves its unit (the last one to name it), every other
-// supply retains, and the other dead owned values drop, in ascending id order. A `pinned` value retains and
-// drops after the operation instead of moving.
 function choose_ids(s: Step, supplies: Supply[], dead: i32[], owned: boolean[], pinned: i32[]): Step {
   let moved: i32[] = [];
   let selected: Supply[] = supplies;
@@ -3292,7 +2643,6 @@ pub function plan(f: ssasem.Func, modes: i32[], view: SchemaView): Plan {
   return plan_analyzed(f, modes, ssasem.analyze(f), view);
 }
 
-// plan over an analysis the caller already holds of this very `f`.
 pub function plan_analyzed(f: ssasem.Func, modes: i32[], semantic: ssasem.Analysis, view: SchemaView): Plan {
   if (!semantic.ok) {
     return bad(semantic.why);
@@ -3315,11 +2665,7 @@ pub function plan_analyzed(f: ssasem.Func, modes: i32[], semantic: ssasem.Analys
   }
   let grows: i32[] = [];
   let grow_fields: i32[] = [];
-  // Per append or with result: whether its receiver is read after it, by
-  // this block or on the way out, directly or through a dependent.
   let kept: boolean[] = analysis.flow.none;
-  // Per parameter: whether an edge carries it into a phi while it, or a
-  // value depending on it, is still live in the target.
   let entry_kept: boolean[] = analysis.flow.none;
   let vi0: i32 = 0;
   while (vi0 < f.graph.nvals) {
@@ -3328,8 +2674,6 @@ pub function plan_analyzed(f: ssasem.Func, modes: i32[], semantic: ssasem.Analys
     vi0 = vi0 + 1;
   }
   let steps: Step[] = [];
-  // One row for every block: each block sets the values it marks live in
-  // `touched`, and clears them again once its steps are chosen.
   let live: boolean[] = analysis.flow.none;
   let bi: i32 = 0;
   while (bi < f.graph.blocks.len()) {
@@ -3418,9 +2762,6 @@ pub function plan_analyzed(f: ssasem.Func, modes: i32[], semantic: ssasem.Analys
   return Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads, likely: units.likely, kept: kept, entry_kept: entry_kept, frame_views: frame_views(f, defs), constants: consts, text_lens: text_lens(f), analysis: semantic, defs: defs, modes: modes, unit_analysis: analysis, unique_receivers: unique_receivers(f, steps, consts, no_fresh(), lent_withs(f, defs, owned, kept)), fresh_seeded: false, checked_writes: checked_writes(f), links: [], reuse: no_reuse() };
 }
 
-// without_constant_drops is `p` less its drops of static boxes, whose count is
-// immortal so that dropping one releases nothing. The ledger the verifier
-// replays still holds those drops; only the lowering skips them.
 pub function without_constant_drops(p: Plan): Plan {
   let out: Step[] = [];
   for st in p.steps {
@@ -3435,8 +2776,6 @@ pub function without_constant_drops(p: Plan): Plan {
   return Plan { ...p, steps: out };
 }
 
-// checked_writes marks, at a `with`'s result, a `with` whose index an element
-// read earlier in the same block already checked against the same receiver.
 function checked_writes(f: ssasem.Func): boolean[] {
   let out: boolean[] = __alloc_bool(f.graph.nvals);
   for b in f.graph.blocks {
@@ -3464,9 +2803,6 @@ function read_before(b: ssa.SBlock, end: i32, arr: i32, index: i32): boolean {
   return false;
 }
 
-// unique_receivers marks, at a `with`'s or an `append`'s result, one whose
-// receiver needs no uniqueness test: the receiver is moved into it and is
-// `sole`. `fresh` is the module's rows whose result is sole (`fresh_rows`).
 function unique_receivers(f: ssasem.Func, steps: Step[], consts: string[], fresh: FreshRows, lent: boolean[]): boolean[] {
   let out: boolean[] = __alloc_bool(f.graph.nvals);
   let sole: boolean[] = sole_boxes(f, steps, consts, fresh, 0 - 1, lent);
@@ -3482,10 +2818,6 @@ function unique_receivers(f: ssasem.Func, steps: Step[], consts: string[], fresh
   return out;
 }
 
-// FreshRows names the rows of a module whose result is a sole box: always
-// where `through` is -1, and where it is a parameter's index, whenever the
-// argument there arrives sole and moved, as an `append`'s receiver does.
-// `through` follows `rows.names`.
 pub struct FreshRows { rows: util.NameIndex, through: i32[] }
 
 pub function no_fresh(): FreshRows {
@@ -3493,7 +2825,6 @@ pub function no_fresh(): FreshRows {
   return FreshRows { rows: util.name_index(none), through: [] };
 }
 
-// fresh_through is `name`'s entry in `fresh`, or -2 for a row it does not name.
 function fresh_through(fresh: FreshRows, name: string): i32 {
   let i: i32 = fresh.rows.find(name);
   if (i < 0) {
@@ -3502,10 +2833,6 @@ function fresh_through(fresh: FreshRows, name: string): i32 {
   return fresh.through[i];
 }
 
-// fresh_rows is the module's FreshRows. A row joins once its returns are sole
-// with the rows already named as seeds, first with no assumption and then
-// with one owned array parameter assumed sole, so a helper built on another
-// joins a round later, and recursion, which never starts sole, adds nothing.
 pub function fresh_rows(keys: string[], funcs: ssasem.Func[], plans: Plan[]): FreshRows {
   let fresh: FreshRows = no_fresh();
   let named: boolean[] = __alloc_bool(keys.len());
@@ -3532,7 +2859,6 @@ pub function fresh_rows(keys: string[], funcs: ssasem.Func[], plans: Plan[]): Fr
       }
       i = i + 1;
     }
-    // A row can only join a later round through a call to one just named.
     let ix: util.NameIndex = util.name_index(added);
     i = 0;
     while (grew && i < keys.len()) {
@@ -3543,9 +2869,6 @@ pub function fresh_rows(keys: string[], funcs: ssasem.Func[], plans: Plan[]): Fr
   return fresh;
 }
 
-// sole_result is -1 when every return of `f`, which returns arrays, is sole,
-// else the first owned array parameter whose arriving sole makes them so,
-// else -2.
 function sole_result(f: ssasem.Func, p: Plan, fresh: FreshRows): i32 {
   let lent: boolean[] = lent_withs(f, p.defs, p.owned, p.kept);
   if (returns_sole(f, sole_boxes(f, p.steps, p.constants, fresh, 0 - 1, lent))) {
@@ -3583,8 +2906,6 @@ function returns_sole(f: ssasem.Func, sole: boolean[]): boolean {
   return true;
 }
 
-// with_fresh is `p` with its receivers proved again under the module's fresh
-// rows, for a row that calls one or whose receivers counted one before.
 pub function with_fresh(p: Plan, f: ssasem.Func, fresh: FreshRows): Plan {
   if (!p.ok) {
     return p;
@@ -3607,8 +2928,6 @@ function calls_any(f: ssasem.Func, names: util.NameIndex): boolean {
   return false;
 }
 
-// Whether two FreshRows say the same thing about `callees`, the names one
-// body calls: its receivers read them only through those.
 pub function fresh_rows_agree(a: FreshRows, b: FreshRows, callees: string[]): boolean {
   for callee in callees {
     if (fresh_through(a, callee) != fresh_through(b, callee)) {
@@ -3618,13 +2937,10 @@ pub function fresh_rows_agree(a: FreshRows, b: FreshRows, callees: string[]): bo
   return true;
 }
 
-// A with, an append, or a scalar concat: an update whose receiver's box may
-// become the result's.
 function box_update(ins: ssa.SInst): boolean {
   return ins.kind_tag == ssasem.with() || ins.kind_tag == ssasem.append() || ins.kind_tag == ssasem.arr_concat();
 }
 
-// moved_at says the step moves `v` into the operand at `slot`: its last use.
 function moved_at(st: Step, v: i32, slot: i32): boolean {
   for supply in st.supplies {
     if (supply.slot == slot && supply.value == v) {
@@ -3634,10 +2950,6 @@ function moved_at(st: Step, v: i32, slot: i32): boolean {
   return false;
 }
 
-// passed_slot is the operand whose box an operation hands on as its result
-// when that operand arrives sole and moved: an `append`'s or a scalar
-// concat's receiver, or a fresh row's owned parameter. -1 for any other
-// operation.
 function passed_slot(ins: ssa.SInst, fresh: FreshRows): i32 {
   if (ins.kind_tag == ssasem.append() || ins.kind_tag == ssasem.arr_concat()) {
     return 0;
@@ -3651,26 +2963,11 @@ function passed_slot(ins: ssa.SInst, fresh: FreshRows): i32 {
   return 0 - 1;
 }
 
-// sole_boxes marks the values whose box no unit but the frame's own one ever
-// holds. A box starts that way when a `with` not in `lent` hands it back, a fresh or empty
-// array is made, or a fresh row returns it; an operation that passes a box on
-// (`passed_slot`) keeps it when the box arrives sole and moved, and a phi
-// keeps it when every operand does. It stops at any unit retained on it, and
-// at any use that could hand it to another holder while the frame still reads
-// it: everything but reading an element or the length, flowing into a phi
-// that keeps it, being returned, and a use that moves it, which is its last.
-// `seed` is a parameter to assume sole, or -1.
-//
-// An empty constant is shared, but no write lands in it: a `with` on it fails
-// its bounds check, and a push onto it, having no room, copies.
 function sole_boxes(f: ssasem.Func, steps: Step[], consts: string[], fresh: FreshRows, seed: i32, lent: boolean[]): boolean[] {
   let sole: boolean[] = __alloc_bool(f.graph.nvals);
   if (seed >= 0) {
     sole = sole.with(seed, true);
   }
-  // pass[v] is the operand slot the operation defining v hands its box on
-  // from, or -1. The links are what the fixpoint below settles: a pass link
-  // from operand to result, and a phi link between operand and phi.
   let pass: i32[] = util.minus_ones(f.graph.nvals);
   let links: SoleLinks = SoleLinks { from: [], to: [], phi: [] };
   for b in f.graph.blocks {
@@ -3723,10 +3020,6 @@ function sole_boxes(f: ssasem.Func, steps: Step[], consts: string[], fresh: Fres
 
 struct SoleLinks { from: i32[], to: i32[], phi: boolean[] }
 
-// lent_withs marks the withs that may hand back a borrowed parameter's own
-// box: the receiver is carried from one and the frame reads it no further, so
-// the with may defer its retain and write in place (`deferred_retain`, and
-// ssarc's links), leaving the box the caller's as well as the frame's.
 function lent_withs(f: ssasem.Func, defs: ssa.SInst[], owned: boolean[], kept: boolean[]): boolean[] {
   let out: boolean[] = __alloc_bool(f.graph.nvals);
   let seen: boolean[] = __alloc_bool(f.graph.nvals);
@@ -3747,8 +3040,6 @@ function lent_withs(f: ssasem.Func, defs: ssa.SInst[], owned: boolean[], kept: b
   return out;
 }
 
-// settled clears, until nothing changes, a pass result whose operand is not
-// sole, and both ends of a phi link that disagree.
 function settled(own sole: boolean[], links: SoleLinks): boolean[] {
   let changed: boolean = true;
   while (changed) {
@@ -3770,9 +3061,6 @@ function settled(own sole: boolean[], links: SoleLinks): boolean[] {
   return sole;
 }
 
-// fresh_array is an array no other holder can have seen: a zero-filled or
-// reserved allocation, a literal built at run time, an empty one, or a fresh
-// row's result.
 function fresh_array(ins: ssa.SInst, consts: string[], fresh: FreshRows): boolean {
   if (ins.kind_tag == ssasem.bytes_new()) {
     return ins.imm == 0 || consts[ins.result] == "";
@@ -3834,8 +3122,6 @@ function invariant(f: ssasem.Func, bi: i32, owned: boolean[], flow: ssalive.Flow
   return state;
 }
 
-// holds_invariant is same_bits(state, invariant(f, bi, owned, flow)) without
-// building the invariant.
 function holds_invariant(state: boolean[], f: ssasem.Func, bi: i32, owned: boolean[], flow: ssalive.Flow): boolean {
   let want: i32 = 0;
   for v in ssalive.live_in_ids(flow, bi) {
@@ -3874,11 +3160,6 @@ function same_bits(a: boolean[], b: boolean[]): boolean {
   return true;
 }
 
-// step_index is, for each block id, the plan's steps at that block as step_at
-// reads them: the length n of a table holding the first step at each point
-// from return_point up with no target, that table, and then every other step
-// (an edge's) for a scan. A block of n instructions takes n lookups, so a
-// scan of the whole block per lookup made a long block quadratic.
 pub function step_index(p: Plan): i32[][] {
   let by_block: i32[][] = steps_by_block(p);
   let out: i32[][] = [];
@@ -3888,7 +3169,6 @@ pub function step_index(p: Plan): i32[][] {
   return out;
 }
 
-// The positions of the plan's steps at each block id.
 function steps_by_block(p: Plan): i32[][] {
   let top: i32 = 0 - 1;
   for s in p.steps {
@@ -3955,7 +3235,6 @@ function block_step_row(p: Plan, steps: i32[]): i32[] {
   return row;
 }
 
-// step_at is the first step at (block, point, target), or -1.
 pub function step_at(p: Plan, idx: i32[][], block: i32, point: i32, target: i32): i32 {
   if (block < 0 || block >= idx.len()) {
     return 0 - 1;
@@ -3978,9 +3257,6 @@ pub function step_at(p: Plan, idx: i32[][], block: i32, point: i32, target: i32)
   return 0 - 1;
 }
 
-// Replay slots are bounded by the graph, not by IDs supplied in a plan.
-// Each block has entry, return, instruction and two successor slots. Missing
-// slots are -1; duplicate slots stay -2 even after a third matching step.
 struct ReplayIndex { positions: i32[], offsets: i32[], slots: i32[] }
 
 function replay_point(b: ssa.SBlock, point: i32, target: i32): i32 {
@@ -4040,8 +3316,6 @@ function replay_index(f: ssasem.Func, p: Plan, flow: ssalive.Flow): ReplayIndex 
     }
     i = i + 1;
   }
-  // Unrecognized steps remain in p.steps: the final accounted-step count
-  // rejects them, including steps at parameters, phis or unreachable blocks.
   return ReplayIndex { positions: flow.at, offsets: offsets, slots: slots };
 }
 
@@ -4053,8 +3327,6 @@ function find_step(b: ssa.SBlock, idx: ReplayIndex, point: i32, target: i32): i3
   return idx.slots[idx.offsets[idx.positions[b.id]] + at];
 }
 
-// Acquisitions observe the original state: a later move in the same step
-// must not invalidate an earlier retain of the same value.
 function supply_error(state: boolean[], supplies: Supply[], wanted: Supply[], owned: boolean[], deps: i32[][]): string {
   if (supplies.len() != wanted.len()) {
     return "unit supply arity";
@@ -4077,11 +3349,6 @@ function supply_error(state: boolean[], supplies: Supply[], wanted: Supply[], ow
   return "";
 }
 
-// A step is checked on the row it reads and then applied to the row it
-// owns: replay_error reports every rejection without writing, apply_step
-// writes the moves, the result and the drops in place. The row flows between
-// them as a plain value, never through a record field, which the owned
-// parameter needs.
 function replay_error(state: boolean[], s: Step, wanted: Supply[], result: i32, owned: boolean[], deps: i32[][]): string {
   let why: string = supply_error(state, s.supplies, wanted, owned, deps);
   if (why != "") {
@@ -4117,7 +3384,6 @@ function replay_error(state: boolean[], s: Step, wanted: Supply[], result: i32, 
   return "";
 }
 
-// apply_step is the row after a step replay_error accepted.
 function apply_step(own state: boolean[], s: Step, result: i32, owned: boolean[]): boolean[] {
   for got in s.supplies {
     if (got.mode == move_unit()) {
@@ -4133,8 +3399,6 @@ function apply_step(own state: boolean[], s: Step, result: i32, owned: boolean[]
   return state;
 }
 
-// copy_row is a fresh row with `state`'s bits. The receiver is lent, so the
-// write reaches it by retaining and the runtime copies rather than mutates.
 function copy_row(state: boolean[]): boolean[] {
   if (state.len() == 0) {
     return state;
@@ -4148,8 +3412,6 @@ function progress_error(why: string): ReplayProgress {
   return ReplayProgress { why: why, state: [], count: 0 };
 }
 
-// verify_operations replays the entry step and then the block's operations
-// over one row it owns, so each step writes the row in place.
 function verify_operations(f: ssasem.Func, b: ssa.SBlock, p: Plan, idx: ReplayIndex, own state: boolean[], owned: boolean[], deps: i32[][]): ReplayProgress {
   let at0: i32 = find_step(b, idx, entry_point(), 0 - 1);
   if (at0 < 0) {
@@ -4191,10 +3453,6 @@ function verify_operations(f: ssasem.Func, b: ssa.SBlock, p: Plan, idx: ReplayIn
   return ReplayProgress { why: "", state: next, count: count };
 }
 
-// A call's lent operand borrows from units that must outlast the call's moves.
-// The units the step's moves clear are listed rather than replayed into a
-// copy of the row; a move the row cannot supply is move_supplies' rejection,
-// reported by the replay that follows, not here.
 function lent_error(state: boolean[], s: Step, ins: ssa.SInst, counted: Supply[], owned: boolean[], deps: i32[][]): string {
   if (s.supplies.len() != counted.len()) {
     return "";
@@ -4225,7 +3483,6 @@ function lent_cleared(value: i32, state: boolean[], owned: boolean[], cleared: i
   return owned[value] && (!state[value] || has_id(cleared, value));
 }
 
-// step_clears: the step moves or drops `value`.
 function step_clears(s: Step, value: i32): boolean {
   for got in s.supplies {
     if (got.mode == move_unit() && got.value == value) {
@@ -4235,8 +3492,6 @@ function step_clears(s: Step, value: i32): boolean {
   return util.index_of_i32(s.drops, value) >= 0;
 }
 
-// The return step is checked without applying it: a unit it leaves counted is
-// one the row holds that it neither moves nor drops.
 function verify_return(f: ssasem.Func, b: ssa.SBlock, p: Plan, idx: ReplayIndex, state: boolean[], owned: boolean[], deps: i32[][]): string {
   if (b.term.kind_tag == 1) {
     let why: string = read_error(state, b.term.value, owned, deps);
@@ -4295,12 +3550,8 @@ function verify_edge(f: ssasem.Func, b: ssa.SBlock, target: i32, p: Plan, idx: R
   return "";
 }
 
-// BlockProgress is a block's verdict: its rejection, or the number of plan
-// steps it accounted for.
 struct BlockProgress { why: string, count: i32 }
 
-// The row a block's operations leave is read by the return step, copied for
-// the first of two successor edges and moved into the last edge.
 function verify_block(f: ssasem.Func, bi: i32, p: Plan, idx: ReplayIndex, owned: boolean[], analysis: ssasem.Analysis): BlockProgress {
   let b: ssa.SBlock = f.graph.blocks[bi];
   let entry_row: boolean[] = invariant(f, bi, owned, analysis.flow);
@@ -4360,18 +3611,10 @@ pub function verify(f: ssasem.Func, modes: i32[], p: Plan): string {
   return verify_analyzed(f, modes, p, ssasem.analyze(f), true);
 }
 
-// verify_planned checks `p` against the analysis it was planned from, for a
-// caller that lowers the very `f` it planned: analyze is a function of `f`
-// alone, so a second run would only repeat the first, and so is the contract
-// on the values, result, schema tables and calls, which the plan's ok is the
-// answer to. The modes are this call's own input and are checked.
 pub function verify_planned(f: ssasem.Func, modes: i32[], p: Plan): string {
   return verify_analyzed(f, modes, p, p.analysis, false);
 }
 
-// `whole` runs the contract check on `f` as the planner did and derives the
-// definitions table from `f`, for a plan that may be checked against a
-// function other than the one it was planned from.
 function verify_analyzed(f: ssasem.Func, modes: i32[], p: Plan, semantic: ssasem.Analysis, whole: boolean): string {
   if (!p.ok || p.why != "") {
     return "missing successful unit plan";
@@ -4393,8 +3636,6 @@ function verify_analyzed(f: ssasem.Func, modes: i32[], p: Plan, semantic: ssasem
   if (why != "") {
     return why;
   }
-  // The plan's units are a function of `f`, the modes and the analysis, so
-  // for the function and modes it was planned with they are its own.
   let owned: boolean[] = p.owned;
   if (whole || !same_i32s(modes, p.modes)) {
     let units: Units = units_of(f, owned_values(f, modes, defs), analysis, defs, supply_table(f));
@@ -4435,42 +3676,16 @@ function verify_analyzed(f: ssasem.Func, modes: i32[], p: Plan, semantic: ssasem
   return verify_reuse(f, p, reachable);
 }
 
-// ---- Reuse: the tokens of the plan ----------------------------------------
-//
-// A construction may build in the box of a value dying before it, when the
-// box has the slot count the construction claims: the value's drop becomes
-// a TOKEN the construction spends (`reuse_pairs`, within a block;
-// `carried_pairs`, from a block to a construction in a later one), and a
-// record update keeps in place the fields it reads back from its donor
-// (`block_keeps`). The decisions are the plan's, read by `ssarc` and checked
-// by the replay (`verify_reuse`); the lowering emits a token step as it is
-// written here. `links` are the appends threaded through a borrowed
-// parameter whose unit is encoded at run time (`links_of`); a link is never
-// a donor, since its box may be the caller's.
-// `disabled` is reuse_layer_disabled's answer for the function, read once
-// here for the lowering's readers.
 pub struct Reuse { pairs: ReusePairs[], keeps: Keeps[], carry: Carry, reads: VariantReads, disabled: boolean }
 
 pub function no_reuse(): Reuse {
   return Reuse { pairs: [], keeps: [], carry: no_carry(), reads: VariantReads { at: [], dom: ssadeps.Dom { pre: [], post: [], idom: [], by_clock: [] }, sites: [], names: [], shared: [] }, disabled: false };
 }
 
-// reuse_layer_disabled: the #4350 §6.5 differential switch. When
-// FERN_SELFHOST_NO_REUSE is on in the compiler's environment no construction
-// builds in a donor's box and no map is updated in place: donors take their
-// normal drops and constructions allocate. Reuse on and off are
-// observationally identical (self_host_reuse_differential_test.go); off
-// trades only allocation count and peak heap. The decision bisect
-// (optbisect) can turn it off for one function.
 pub function reuse_layer_disabled(name: string): boolean {
   return envflag.on("FERN_SELFHOST_NO_REUSE") || !optbisect.allowed("reuse", name);
 }
 
-// `p` with its links and reuse tables. A static box, whose drop the lowering
-// skips, is never a donor (`static_box`). Made once the plan is final, at the
-// lowering's entry, rather than for every plan ownership inference tries and
-// discards; a plan that has them keeps them, so a table a test plants is the
-// one the replay reads.
 pub function with_reuse(f: ssasem.Func, p: Plan, idx: i32[][], dom: ssadeps.Dom): Plan {
   if (p.reuse.pairs.len() == f.graph.blocks.len()) {
     return p;
@@ -4493,8 +3708,6 @@ pub function with_reuse(f: ssasem.Func, p: Plan, idx: i32[][], dom: ssadeps.Dom)
   return Plan { ...p, links: links, reuse: Reuse { pairs: pairs, keeps: keeps, carry: carry, reads: vr, disabled: off } };
 }
 
-// A value built as static data: its count is immortal and its box is nobody's
-// to build in.
 function static_box(p: Plan, d: i32): boolean {
   return d >= 0 && d < p.constants.len() && p.constants[d] != "";
 }
@@ -4518,47 +3731,10 @@ function tuple_elements(t: typeinfo.Type): typeinfo.Type[] {
   return [];
 }
 
-// A payload read the plan takes out of its box at the read, emptying the
-// slot: not one through a shell, whose box is released whole.
 pub function payload_taken(f: ssasem.Func, p: Plan, ins: ssa.SInst): boolean {
   return ins.result < p.payloads.len() && p.payloads[ins.result] && shell_root(f, p, ins) < 0;
 }
 
-// An in-place update whose receiver this frame does not own: its unit arrives
-// as a RETAIN because the frame has to hold one while the operation runs, and
-// emitting that retain BEFORE `__fern_rc_is_unique` makes the test answer for
-// its own supply rather than for the box. It then says "shared" about a box
-// nobody else holds, every push takes the un-share copy, and a loop appending
-// through a borrowed parameter copies the whole buffer per element — 23 s and
-// 8.9 GB for 40,000 pushes where the AST lowering takes 2 ms (#9365).
-//
-// A receiver the frame DOES own keeps its retain up front: there it is the
-// same-frame bracket, held because the binding outlives the update and the
-// copy is what keeps the old value whole.
-//
-// The cross-frame bracket is `bracketed`, and it is what makes deferring safe
-// — so the deferral reaches exactly as far as that bracket does: a PARAMETER
-// this frame borrows, which its caller either bracketed or is done reading,
-// and a record FIELD the plan admitted (field_grow_root), where the
-// bracket is on the field and the record's own count answers for any holder
-// no caller names. The frame itself must be done reading the parameter too
-// (`kept`): growing its box in place would change the value it reads next.
-// Declining is enough because a borrowed parameter's unit is never moved:
-// its retain stands through the push, which the rc test then reads as shared.
-// An array reached any other way the frame does not own —
-// an element of a borrowed array of arrays, say — has no bracket standing
-// behind it, and growing it in place would rewrite what the container still
-// holds. A with defers on the same terms, writing in place only when its
-// count test finds the box sole and copying otherwise.
-//
-// A map mutation never defers. Its receiver's retain is what makes a map
-// the frame still reads count as shared, and core/map's copy-on-write then
-// copies: `let n = m.insert(k, v)` leaves `m` as it was, which is the value
-// the checker's E055 promises for every collection operation.
-//
-// A string append defers every retain of its left operand: a string the
-// frame still reads cannot grow in place, so it is lent to a plain
-// concatenation, which takes nothing (`grow_or_concat`).
 pub function deferred_retain(f: ssasem.Func, p: Plan, step: Step, ins: ssa.SInst): boolean {
   if (string_append(f, ins)) {
     return receiver_retained(step);
@@ -4587,61 +3763,12 @@ pub function receiver_retained(step: Step): boolean {
   return false;
 }
 
-// Where a block's constructions can build in a box already dying in it.
-//
-// Perceus places a drop at a value's last use, so the record a `with`-style
-// update supersedes dies BEFORE the record replacing it is built. Reuse is the
-// pairing of that drop with that later construction: instead of returning the
-// box to the allocator and taking another of the same shape, the drop keeps it
-// as a token and the construction builds in it. This is Koka's ParcReuse
-// applied to the plan's dying set rather than to syntax.
-//
-// `tokens[i]` is the value whose drop at instruction i becomes a token, and
-// `builds[i]` the token an instruction i construction builds in; -1 for
-// neither. A token waits in its donor's own local, from the drop to the
-// construction, which moves it into the frame's token slot just before it
-// builds, so any number of tokens may be held at once.
-//
-// The donor and the recipient need not share a TYPE, and the pairing does not
-// ask: a box is storage, and what separates two of them is the number of
-// SLOTS. `reuse_slots` is that number, matched against what the construction
-// claims. Measured over the compiler's own sources, pairing on shape alone —
-// any dying record, union or tuple to any construction — admits 839 sites of
-// which only 229 have counts the runtime can honour; pairing on the count
-// admits 390, all of them spendable, once the donor is held for whichever
-// construction claims it (`block_claims`, below) rather than taken first-come.
-// `selfs[i]` is a value dying AT instruction i whose box that same
-// instruction's construction builds in — the update chain's shape, where the
-// box a `T { ...a, f: v }` supersedes dies as the update consumes it rather
-// than at some earlier instruction. Its token is taken before the construction
-// instead of after, which is the only thing that separates it from the pairing
-// above; it is the same donor, the same runtime test and the same box.
-//
-// Measured over the compiler's own sources, 795 constructions have a
-// matching-slot value dying at their own instruction, against 390 pairings
-// from earlier drops. Most of them are the two native assemblers, which are
-// nothing but update chains.
 pub struct ReusePairs { tokens: i32[], builds: i32[], selfs: i32[] }
 
-// The slots a value's box has, or -1 where this frame cannot say. This is the
-// number `__fern_alloc_reuse` compares, and comparing it HERE is what makes a
-// pairing worth emitting: the runtime's own test is sound either way, but the
-// arm it takes when the counts disagree returns the donor block to its
-// freelist and allocates anyway, so the pairing has bought a uniqueness test
-// and a branch and changed nothing, at 25 lines of emitted text apiece.
-// Measured over the compiler's own sources, 610 of 839 pairings admitted on
-// shape alone were of that kind.
-//
-// A record's box is its shape word and one word per field, a tuple's one word
-// per element and no shape word. An environment is excluded: its fields are
-// addressed as array slots rather than struct ones, and its box is the
-// closure's. So is an array: its cap is a CAPACITY rather than its length, so
-// the slots the block has are not the slots its type names.
 function reuse_slots(t: typeinfo.Type, f: ssasem.Func): i32 {
   if (semtypes.is_env(t) || semtypes.is_cell(t)) {
     return 0 - 1;
   }
-  // A box handed on is not freed, and a finalizer is owed at the free.
   if (ssasem.has_finalizer(f, t)) {
     return 0 - 1;
   }
@@ -4660,18 +3787,6 @@ function reuse_slots(t: typeinfo.Type, f: ssasem.Func): i32 {
   return 0 - 1;
 }
 
-// A declared enum's box is the LIVE variant's, so its count is this frame's to
-// know only where every variant agrees — native's own enum reuse asks the same
-// question (`enum_all_variants_same_field_count`).
-//
-// A BUILTIN union's box has no count this boundary can state, and that is a
-// target fact rather than a conservatism. One lowering feeds all three
-// backends: the register ones build every Option/Result as `__fern_arr_box(2)`,
-// while wasm sizes the box by the payload AT THE SITE — eight bytes for a
-// narrow one and sixteen for an i64 or an f64 — so a `Result[i64, string]`
-// box is two slots built as Ok and one built as Err. There is no single answer
-// to give, and a wrong one is the pairing that emits its machinery and then
-// declines.
 function union_slots(t: typeinfo.Type, f: ssasem.Func): i32 {
   let at: i32 = semrecords.find_enum(f.enums, t);
   if (at < 0) {
@@ -4694,9 +3809,6 @@ function union_slots(t: typeinfo.Type, f: ssasem.Func): i32 {
   return n + 1;
 }
 
-// The slots one variant of a declared enum, or one member of a struct-union,
-// builds: its shape word and one per field, as `struct_make` allocates them.
-// -1 for the builtin Option layout.
 function variant_slots(t: typeinfo.Type, name: string, f: ssasem.Func): i32 {
   let at: i32 = semrecords.find_enum(f.enums, t);
   if (at < 0 || f.enums[at].layout == semrecords.layout_option()) {
@@ -4709,13 +3821,6 @@ function variant_slots(t: typeinfo.Type, name: string, f: ssasem.Func): i32 {
   return f.enums[at].variants[v].fields.len() + 1;
 }
 
-// The slots a dying value's box has in block `b`. A declared enum whose
-// variants disagree has no count of its own, but a payload read executes only
-// where the tag test chose its variant, so a block a read dominates holds a
-// box of that variant's count. That is the consuming match's shape: the arm
-// takes the payloads, the scrutinee dies, and the arm's construction builds
-// in its box. A nested pattern reads the payloads before its inner test and
-// builds below it.
 function donor_slots(f: ssasem.Func, vr: VariantReads, b: ssa.SBlock, d: i32): i32 {
   let t: typeinfo.Type = f.values[d];
   let n: i32 = reuse_slots(t, f);
@@ -4729,8 +3834,6 @@ function donor_slots(f: ssasem.Func, vr: VariantReads, b: ssa.SBlock, d: i32): i
   return variant_slots(t, name, f);
 }
 
-// The variant `d`'s box holds in block `b`, which a payload read of it in `b`
-// or in a block dominating `b` names, or "".
 pub function known_variant(vr: VariantReads, b: ssa.SBlock, d: i32): string {
   if (d < 0 || d >= vr.sites.len() || b.id < 0 || b.id >= vr.at.len() || vr.at[b.id] < 0) {
     return "";
@@ -4749,11 +3852,6 @@ pub function known_variant(vr: VariantReads, b: ssa.SBlock, d: i32): string {
   return "";
 }
 
-// Where each value's payloads are read: the blocks' positions by id, the
-// dominator tree, and per value the positions of the blocks reading one of
-// its payloads and the variant each read names. `shared` marks a struct-union
-// value whose box is shared where it is read (`likely_unique`): its variant is
-// not reported, so nothing speculates on its box.
 pub struct VariantReads { at: i32[], dom: ssadeps.Dom, sites: i32[][], names: string[][], shared: boolean[] }
 
 function variant_reads(f: ssasem.Func, p: Plan, dom: ssadeps.Dom): VariantReads {
@@ -4781,9 +3879,6 @@ function variant_reads(f: ssasem.Func, p: Plan, dom: ssadeps.Dom): VariantReads 
   return VariantReads { at: ssa.block_positions(f.graph), dom: dom, sites: sites, names: names, shared: shared };
 }
 
-// The slots a construction claims, or -1 where it is not one a token can be
-// spent at. An array construction is excluded for the reason a dying array is:
-// what it asks the allocator for is a capacity.
 function recipient_slots(f: ssasem.Func, p: Plan, ins: ssa.SInst): i32 {
   if (p.constants[ins.result] != "") {
     return 0 - 1;
@@ -4804,15 +3899,6 @@ function recipient_slots(f: ssasem.Func, p: Plan, ins: ssa.SInst): i32 {
   return 0 - 1;
 }
 
-// The last position in the block at which a construction claims each slot
-// count. A donor is worth holding while some construction still ahead of it
-// claims the count its box has, which this answers in one lookup where a scan
-// forward would cost a pass per candidate.
-//
-// Holding it for the NEXT construction alone is the version that looks right
-// and is not: a donor the next one cannot take is dropped, and the one two
-// instructions further down that could have taken it allocates. Measured over
-// the compiler's own sources, that reading pairs 287 where this one pairs 390.
 struct Claims { counts: i32[], last: i32[] }
 
 function block_claims(f: ssasem.Func, p: Plan, b: ssa.SBlock): Claims {
@@ -4840,45 +3926,12 @@ function claimed_after(c: Claims, slots: i32, pos: i32): boolean {
   return at >= 0 && c.last[at] > pos;
 }
 
-// Donors handed to constructions in later blocks. A value dying in a block
-// after the block's last construction may be held there instead of dropped,
-// and become the token of the first construction claiming its slot count in a
-// later block, as a value dying at a construction does. A carry is a donor
-// value, the blocks holding it (`from`, at `drop_at`), the constructions it is
-// handed to (`to`, at `build_at`), and the edges where it goes back instead
-// (`exit_from` to `exit_to`, freeing `dropped`).
-//
-// The blocks between the holding blocks and a construction, its way, claim
-// that count nowhere and are entered only from a holding block or a way, so
-// a path entering a way carries the token a holding block took. A path
-// leaves the ways at a construction, which spends the token, or at an edge to
-// any other block, which frees it, and can enter them again only through a
-// holding block. So one donor serves a construction in each arm of a branch,
-// and a donor dying in each arm of a match serves one construction past
-// their join.
-//
-// A holding block takes the donor's token where the donor dies
-// (`hold_token`): the box with its children released when it is unique
-// there, else null once the donor's unit is released. The token stays in the
-// donor's own local until `build_at` moves it to the token slot or an exit
-// edge frees it, so a pairing on the way, whose token is written and spent
-// within its block, is unaffected. Taking the token at the death rather than
-// at the construction is what keeps a shared donor from being held across
-// the blocks between: its other holder's box would stay shared through them.
-//
-// A predecessor of the construction's block in which the donor dies as a box
-// of another count is a null edge (`null_from` to `null_to`, for `nulled`):
-// that block drops the donor where it dies and the edge zeroes its local, so
-// the construction reads a null token on that path and the holding blocks'
-// token on the others. So a donor dying in match arms of different counts
-// still serves a construction past their join on the paths whose box fits.
 pub struct Carry { from: i32[], drop_at: i32[], held: i32[], to: i32[], build_at: i32[], donor: i32[], exit_from: i32[], exit_to: i32[], dropped: i32[], null_from: i32[], null_to: i32[], nulled: i32[] }
 
 function no_carry(): Carry {
   return Carry { from: [], drop_at: [], held: [], to: [], build_at: [], donor: [], exit_from: [], exit_to: [], dropped: [], null_from: [], null_to: [], nulled: [] };
 }
 
-// The first construction in `b` claiming `slots`, or -1.
 function first_claim_of(f: ssasem.Func, p: Plan, b: ssa.SBlock, slots: i32): i32 {
   let pos: i32 = 0;
   while (pos < b.insts.len()) {
@@ -4903,15 +3956,8 @@ function last_claim(f: ssasem.Func, p: Plan, b: ssa.SBlock): i32 {
   return 0 - 1;
 }
 
-// The constructions a box can be carried to from a set of holding blocks, by
-// block id, the way to each, and the null edges into each: the predecessors
-// of the construction's block in which the donor dies as a box of another
-// count, so arrive with it dropped.
 struct Routes { targets: i32[], ways: i32[][], nulls: i32[][] }
 
-// The per-function facts every route search reads: each block's position by
-// id, the slot counts its constructions claim, and the values dying in it
-// after its last construction.
 struct RouteGraph { at: i32[], claims: i32[][], dies: i32[][], reads: VariantReads }
 
 function route_graph(f: ssasem.Func, p: Plan, dying: Dying[], vr: VariantReads): RouteGraph {
@@ -4926,15 +3972,10 @@ function route_graph(f: ssasem.Func, p: Plan, dying: Dying[], vr: VariantReads):
   return RouteGraph { at: vr.at, claims: claims, dies: dies, reads: vr };
 }
 
-// Whether the block at position `k` builds something claiming `slots`.
 function claims_slots(g: RouteGraph, k: i32, slots: i32): boolean {
   return util.index_of_i32(g.claims[k], slots) >= 0;
 }
 
-// What the route searches of one function mark, by block position: `seen` the
-// blocks ahead of a search's start, `way` the blocks between it and a target.
-// A mark holds the stamp of the search that made it, and each search takes a
-// fresh stamp, so none is cleared between searches.
 struct RouteMarks { seen: i32[], way: i32[], stamp: i32 }
 
 struct Searched { routes: Routes, marks: RouteMarks }
@@ -4951,9 +3992,6 @@ function route_marks(n: i32): RouteMarks {
   return RouteMarks { seen: seen, way: way, stamp: 0 };
 }
 
-// Where a box of `slots` held in `sources` can be carried: each block claiming
-// that count first on some path out of the sources whose way is entered from
-// nowhere else.
 function carry_routes(f: ssasem.Func, g: RouteGraph, sources: i32[], own m: RouteMarks, slots: i32, d: i32): Searched {
   let ahead: i32 = m.stamp + 1;
   let seen: i32[] = m.seen;
@@ -4994,13 +4032,6 @@ function carry_routes(f: ssasem.Func, g: RouteGraph, sources: i32[], own m: Rout
   return Searched { routes: found, marks: m };
 }
 
-// The way to `target`, `ahead` being the stamp of the `seen` marks of the
-// search from `sources`. The walk takes the predecessors of the target and of
-// each block on the way, marked `way` at a fresh stamp. Each must be a source,
-// on the way, or a block ahead claiming nothing of the count, which joins the
-// way; any other enters the way from elsewhere. A predecessor of the target
-// itself may instead be a null edge: a block where the donor dies as a box
-// of another count, which drops it and arrives with its local null.
 function way_to(f: ssasem.Func, g: RouteGraph, sources: i32[], own m: RouteMarks, ahead: i32, target: i32, slots: i32, d: i32): Way {
   let stamp: i32 = m.stamp + 1;
   let seen: i32[] = m.seen;
@@ -5028,7 +4059,6 @@ function way_to(f: ssasem.Func, g: RouteGraph, sources: i32[], own m: RouteMarks
   return Way { ok: true, blocks: between, nulls: entry.nulls, marks: RouteMarks { seen: seen, way: way, stamp: stamp } };
 }
 
-// The target's predecessors, split into the null edges and the rest.
 struct Preds { carrying: i32[], nulls: i32[] }
 
 function split_preds(f: ssasem.Func, g: RouteGraph, sources: i32[], target: i32, slots: i32, d: i32): Preds {
@@ -5043,18 +4073,12 @@ function split_preds(f: ssasem.Func, g: RouteGraph, sources: i32[], target: i32,
   return out;
 }
 
-// Whether block `id` drops donor `d` as a box of a count other than `slots`
-// after its last construction: not a holding block, and one whose edge into
-// the construction's block brings no box.
 function null_edge(f: ssasem.Func, g: RouteGraph, sources: i32[], id: i32, slots: i32, d: i32): boolean {
   let k: i32 = g.at[id];
   return util.index_of_i32(sources, id) < 0 && util.index_of_i32(g.dies[k], d) >= 0
     && donor_slots(f, g.reads, f.graph.blocks[k], d) != slots;
 }
 
-// The values that die after position `claim` of `b`, and where each dies, in
-// order, leaving out the value the instruction there defines and one a link
-// keeps: the donors a later block's construction could take.
 struct Dying { at: i32[], values: i32[] }
 
 function dying_after_claims(p: Plan, idx: i32[][], links: i32[], b: ssa.SBlock, claim: i32): Dying {
@@ -5073,10 +4097,6 @@ function dying_after_claims(p: Plan, idx: i32[][], links: i32[], b: ssa.SBlock, 
   return out;
 }
 
-// The holding blocks of one carry: block `first` and every later block not yet
-// holding a donor in which `d` dies after the last construction, as a box of
-// the same count. A block that returns holds nothing: it has no edge to drop
-// the box on.
 struct Holds { blocks: i32[], at: i32[], slots: i32 }
 
 function holds_of(f: ssasem.Func, vr: VariantReads, dying: Dying[], holding: boolean[], first: i32, d: i32, at0: i32, slots: i32): Holds {
@@ -5111,9 +4131,6 @@ function carried_pairs(f: ssasem.Func, p: Plan, idx: i32[][], links: i32[], off:
   let marks: RouteMarks = route_marks(f.graph.blocks.len());
   let bi: i32 = 0;
   while (bi < dying.len()) {
-    // One donor leaves a block. The first dying value whose count some
-    // construction ahead claims goes; a count held in this block alone and
-    // without a route is tried once.
     let b: ssa.SBlock = f.graph.blocks[bi];
     let tried: i32[] = [];
     let i: i32 = 0;
@@ -5142,9 +4159,6 @@ function carried_pairs(f: ssasem.Func, p: Plan, idx: i32[][], links: i32[], off:
   return c;
 }
 
-// `c` with donor `d` held in `h` and handed to each construction of `r` that
-// does not read it and that no earlier carry serves; the rest are left, and
-// any edge into one drops the donor. Nothing is added when no construction is.
 function served_by(f: ssasem.Func, p: Plan, g: RouteGraph, own c: Carry, h: Holds, r: Routes, d: i32): Carry {
   let targets: i32[] = [];
   let builds: i32[] = [];
@@ -5199,9 +4213,6 @@ function with_null_edges(own c: Carry, from: i32[], to: i32, d: i32): Carry {
   return c;
 }
 
-// The donors arriving null over the edge from `from` to `to`: dropped in
-// `from` as boxes of another count, their locals are zeroed on the edge so
-// the construction's token test reads null rather than a freed box.
 pub function carry_nulls(c: Carry, from: i32, to: i32): i32[] {
   let out: i32[] = [];
   let e: i32 = 0;
@@ -5214,8 +4225,6 @@ pub function carry_nulls(c: Carry, from: i32, to: i32): i32[] {
   return out;
 }
 
-// The donors whose ways the edge from `from` to `to` leaves, their tokens
-// freed there.
 pub function carry_exits(c: Carry, from: i32, to: i32): i32[] {
   let out: i32[] = [];
   let e: i32 = 0;
@@ -5228,14 +4237,11 @@ pub function carry_exits(c: Carry, from: i32, to: i32): i32[] {
   return out;
 }
 
-// Whether the construction at position `pos` of block `b` is one a carry
-// hands its donor to.
 pub function carry_held_for(c: Carry, b: i32, pos: i32): boolean {
   let into: i32 = util.index_of_i32(c.to, b);
   return into >= 0 && c.build_at[into] == pos;
 }
 
-// The donor held rather than dropped at position `pos` of block `b`, or -1.
 pub function carry_held(c: Carry, b: i32, pos: i32): i32 {
   let i: i32 = 0;
   while (i < c.from.len()) {
@@ -5253,8 +4259,6 @@ function reuse_pairs(f: ssasem.Func, p: Plan, idx: i32[][], vr: VariantReads, b:
   let builds: i32[] = [];
   let selfs: i32[] = [];
   let claims_tab: Claims = block_claims(f, p, b);
-  // The donors held for a construction further down, each in its own local,
-  // and where each died.
   let pending: i32[] = [];
   let pending_at: i32[] = [];
   let pos: i32 = 0;
@@ -5282,21 +4286,6 @@ function reuse_pairs(f: ssasem.Func, p: Plan, idx: i32[][], vr: VariantReads, b:
           pending = without_at(pending, k);
           pending_at = without_at(pending_at, k);
         } else if (claims >= 0) {
-          // Nothing earlier serves this construction, so the box it
-          // supersedes may: a value dying HERE, of the count this
-          // construction claims, that the construction does not read.
-          // Not reading it is what makes it safe to hand on — the
-          // projections that carried its fields over are earlier
-          // instructions, and the plan has already proved it dead.
-          //
-          // `d != ins.result` excludes the degenerate donor: a
-          // construction whose value is never read has its drop at its
-          // own step, so the value dying here IS the result. Pairing it
-          // with itself reads a token slot for a value that does not
-          // exist yet, which always declines — and it costs the
-          // module its last allocating op, so the heap runtime block
-          // stopped being emitted and the link broke on an undefined
-          // `__fn___fern_arr_dec`.
           for d in step.drops {
             if (selfs[pos] < 0 && d != ins.result && !static_box(p, d)
               && donor_slots(f, vr, b, d) == claims
@@ -5305,9 +4294,6 @@ function reuse_pairs(f: ssasem.Func, p: Plan, idx: i32[][], vr: VariantReads, b:
             }
           }
         }
-        // A value dying here that this construction does not spend is
-        // held for one further down claiming its count. One donor is
-        // taken per position: `tokens` names one value there.
         let taken: boolean = false;
         for d in step.drops {
           let sl: i32 = donor_slots(f, vr, b, d);
@@ -5325,8 +4311,6 @@ function reuse_pairs(f: ssasem.Func, p: Plan, idx: i32[][], vr: VariantReads, b:
   return ReusePairs { tokens: tokens, builds: builds, selfs: selfs };
 }
 
-// The first held donor of `claims` slots that construction `ins` does not
-// read, or -1.
 function held_for(f: ssasem.Func, vr: VariantReads, b: ssa.SBlock, pending: i32[], ins: ssa.SInst, claims: i32): i32 {
   let k: i32 = 0;
   while (k < pending.len()) {
@@ -5350,39 +4334,6 @@ function without_at(xs: i32[], k: i32): i32[] {
   return out;
 }
 
-// A construction that rebuilds its own donor keeps in place every field it
-// reads from the donor's slot of the same index and takes a unit of, whether
-// by a take at the read (took_payload) or a retain at the construction: when
-// the donor is unique the field is already where the construction stores it,
-// so the unit the donor holds is the construction's, and neither the take's
-// null nor the retain nor the donor's release of that field is emitted. The
-// donor's uniqueness is read ONCE, at the first such read, into the token slot,
-// and the reads, the retains, the donor's release and the construction all
-// follow that one answer: a donor read as shared there has its kept fields
-// retained and is released whole, whatever its count says by the time it dies.
-// A scalar field read from the same slot is kept too: it holds no unit, so
-// only its store is skipped, and the uniqueness read waits for the donor's drop.
-//
-// The token slot is held from that first read to the construction, so a donor
-// is kept only where no other pairing's token is live in between. `start` is
-// the position of the first counted kept read or other take, else the
-// donor's drop, and `taken` the donor's drop.
-//
-// A kept field the construction alone reads is not read at all while the
-// donor is unique: its slot is already the construction's. `late` holds those
-// values; the construction copies them from the donor, a counted one retained,
-// under the token's null arm, where its box is fresh (reuse_construct).
-//
-// Any other take from the donor follows the same answer (`moved`, at the slots
-// `freed` marks): the construction overwrites the slot, so a unique donor's
-// child is the frame's with neither a null nor a second uniqueness read, and
-// the donor's release walks past it. The donor is only read between the first
-// such take and the construction, so nothing can raise its count while the
-// answer stands.
-//
-// A declared enum's variant is rebuilt as a record is: its box is the record
-// layout behind the variant's shape word, and a read naming the variant the
-// construction builds says the donor holds that shape already.
 pub struct Keeps { donors: i32[], slots: boolean[][], values: i32[][], late: i32[][], moved: i32[][], freed: boolean[][], start: i32[], taken: i32[], built: i32[] }
 
 function keep_slots(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, ins: ssa.SInst, built: i32, donor: i32, taken: i32, uses: ssasem.Uses): Keeps {
@@ -5410,16 +4361,11 @@ function keep_slots(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, ins: s
   let pos: i32 = 0;
   while (pos <= taken) {
     let get: ssa.SInst = b.insts[pos];
-    // A counted read keeps exactly one unit: one taken AND retained at the
-    // construction holds two, and keeping in place stands in for one. A
-    // scalar read has no unit and is kept as it stands.
     let read: boolean = rebuilt_read(f, ins, get, donor);
     let counted: boolean = read && ssasem.reference(f.values[get.result]);
     let kept: boolean = false;
     if (read && (!counted || payload_taken(f, p, get) != util.index_of_i32(retained, get.result) >= 0)) {
       let i: i32 = util.index_of_i32(ins.args, get.result);
-      // Once: the donor's slot holds one unit, which a second operand
-      // naming the same value would need a retain of its own for.
       if (i == get.imm && !slots[i] && occurrences(ins.args, get.result) == 1) {
         kept = true;
         values = values.append(get.result);
@@ -5427,7 +4373,6 @@ function keep_slots(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, ins: s
         if (ssasem.use_count(uses, get.result) == 1 && !held_read(p, get)) {
           late = late.append(get.result);
         }
-        // Only a counted read needs the donor's uniqueness at the read.
         if (!counted) {
           scalars = true;
         } else if (start < 0) {
@@ -5463,9 +4408,6 @@ pub function no_keeps(): Keeps {
   return Keeps { donors: [], slots: [], values: [], late: [], moved: [], freed: [], start: [], taken: [], built: [] };
 }
 
-// A construction that can be built in its donor's box as it stands: a record
-// of the donor's type, a variant of a declared enum, or a member of the
-// struct-union the donor is.
 function rebuilds(f: ssasem.Func, ins: ssa.SInst, donor: i32): boolean {
   if (ins.kind_tag == ssasem.record_new() && member_of(f, ins, donor) != "") {
     return true;
@@ -5480,9 +4422,6 @@ function rebuilds(f: ssasem.Func, ins: ssa.SInst, donor: i32): boolean {
   return ins.kind_tag == ssasem.variant_new() && e >= 0 && f.enums[e].layout == semrecords.layout_variant();
 }
 
-// The member a record construction builds of the struct-union `donor` is, or
-// "". A member's box is the union's, so the construction lays its fields out
-// as a payload read of the union names them.
 function member_of(f: ssasem.Func, ins: ssa.SInst, donor: i32): string {
   let e: i32 = semrecords.find_enum(f.enums, f.values[donor]);
   if (e < 0 || f.enums[e].layout != semrecords.layout_member()) {
@@ -5496,7 +4435,6 @@ function member_of(f: ssasem.Func, ins: ssa.SInst, donor: i32): string {
   return "";
 }
 
-// A read of one of the donor's fields as the construction lays them out.
 function rebuilt_read(f: ssasem.Func, ins: ssa.SInst, get: ssa.SInst, donor: i32): boolean {
   if (get.args.len() != 1 || get.args[0] != donor) {
     return false;
@@ -5510,7 +4448,6 @@ function rebuilt_read(f: ssasem.Func, ins: ssa.SInst, get: ssa.SInst, donor: i32
   return get.kind_tag == ssasem.variant_get() && get.str == ins.str;
 }
 
-// The reads of `v`'s field `slot` in the block up to `to`.
 function slot_reads(b: ssa.SBlock, v: i32, slot: i32, to: i32): i32 {
   let n: i32 = 0;
   let pos: i32 = 0;
@@ -5524,8 +4461,6 @@ function slot_reads(b: ssa.SBlock, v: i32, slot: i32, to: i32): i32 {
   return n;
 }
 
-// Whether every instruction from `from` to `to` that names `v` only reads it,
-// so none takes a unit of its box.
 function only_read(b: ssa.SBlock, v: i32, from: i32, to: i32): boolean {
   let pos: i32 = from;
   while (pos <= to && pos < b.insts.len()) {
@@ -5538,15 +4473,11 @@ function only_read(b: ssa.SBlock, v: i32, from: i32, to: i32): boolean {
   return true;
 }
 
-// A read the plan gives an effect of its own at its position: a take that
-// nulls a tuple slot, or a hold that retains the element.
 function held_read(p: Plan, ins: ssa.SInst): boolean {
   return ins.result < p.takes.len() && p.takes[ins.result] >= 0
     || ins.result < p.held.len() && p.held[ins.result];
 }
 
-// Every pairing's token interval in the block: `from` where the token is taken,
-// `to` where it is spent.
 function token_busy(pairs: ReusePairs, from: i32, to: i32, own_build: i32): boolean {
   let pos: i32 = 0;
   while (pos < pairs.builds.len()) {
@@ -5592,14 +4523,6 @@ function block_keeps(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, pairs
   return classified(f, p, idx, b, pairs, carry, links, out);
 }
 
-// A donor whose payload this block takes and which dies in the block, by its
-// drop or as a token held for a construction, without a construction here
-// that keeps its fields: its uniqueness is read once, at its first take, and
-// the takes and its death follow that answer. A type with a finalizer is left
-// to its drop helper, which runs it. It is a keep without a
-// construction (`built` -1): a unique donor's taken slots are the frame's,
-// and its death releases the other fields alone. One donor at a time holds
-// the token slot, so a window that would overlap another is left as it was.
 function classified(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, pairs: ReusePairs, carry: Carry, links: i32[], own out: Keeps): Keeps {
   let pos: i32 = 0;
   while (pos < b.insts.len()) {
@@ -5641,10 +4564,6 @@ function classified(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, pairs:
   return out;
 }
 
-// The position of the donor's first payload take when every read of it from
-// there to its death at `dies` is a take of one variant's slot, read once, or
-// a test: else -1. A record donor's reads are its fields; an enum donor's
-// name the variant whose fields its death walks.
 function first_classified_take(f: ssasem.Func, p: Plan, b: ssa.SBlock, d: i32, dies: i32, links: i32[]): i32 {
   if (d < 0 || d < links.len() && links[d] >= 0 || !ssasem.reference(f.values[d]) || ssasem.finalizer_of(f, f.values[d]) != "") {
     return 0 - 1;
@@ -5672,7 +4591,6 @@ function first_classified_take(f: ssasem.Func, p: Plan, b: ssa.SBlock, d: i32, d
   return first;
 }
 
-// A payload take out of a record's field or a declared variant's slot.
 function classified_take(f: ssasem.Func, p: Plan, ins: ssa.SInst, d: i32): boolean {
   if (ins.args.len() != 1 || ins.args[0] != d || !payload_taken(f, p, ins) || !ssasem.reference(f.values[ins.result])) {
     return false;
@@ -5684,7 +4602,6 @@ function classified_take(f: ssasem.Func, p: Plan, ins: ssa.SInst, d: i32): boole
   return ins.kind_tag == ssasem.variant_get() && e >= 0 && f.enums[e].layout == semrecords.layout_variant();
 }
 
-// The number of fields a donor read by `get` lays out, or -1.
 function donor_fields(f: ssasem.Func, get: ssa.SInst, d: i32): i32 {
   if (get.kind_tag == ssasem.record_get()) {
     return record_fields(f.values[d], f).len();
@@ -5715,7 +4632,6 @@ function keep_overlaps(k: Keeps, from: i32, to: i32): boolean {
   return false;
 }
 
-// The keep with no construction whose donor dies at `pos`, or -1.
 pub function classified_at(k: Keeps, pos: i32): i32 {
   let i: i32 = 0;
   while (i < k.donors.len()) {
@@ -5737,9 +4653,6 @@ pub function kept_values(k: Keeps): i32[] {
   return out;
 }
 
-// Whether a keep's donor dies at `pos` for a construction later in the block,
-// its box released at that construction, or is classified there: either way
-// its token is not taken as an ordinary one.
 pub function token_kept(k: Keeps, pos: i32, donor: i32): boolean {
   let i: i32 = 0;
   while (i < k.taken.len()) {
@@ -5771,23 +4684,6 @@ pub function late_values(k: Keeps): i32[] {
   return out;
 }
 
-// The links of a function, by value: the parameter each link's unit is owed
-// on, -1 for a value that is not one. A link is an append or a with onto the
-// parameter whose retain was deferred, one onto a link, a phi whose every input is
-// the parameter or a link of it, which is how a loop carries one, or the
-// result of a direct call lent the parameter or a link as the last reader of
-// its box (`call_root`), `b = f(b, v)`.
-//
-// Every use of a link has to understand the encoding, so a candidate stays
-// only while each supply naming it MOVES it into one of three places: the
-// receiver of an append or a with, a link phi, or the return, which takes the unit that
-// is owed. A read that takes no unit is fine, since the box is live either
-// way, and so is a drop, which releases only a box of the frame's own
-// (`drop_linked`). A loop's link reaches its phi by move only because
-// `ssalive` counts a phi's inputs on the incoming edge rather than as uses in
-// its block. A retain or a steal is not, and neither is a parameter the frame
-// reads anywhere else: it is removed, and whatever depended on it goes with it
-// on the next round.
 function links_of(f: ssasem.Func, p: Plan, idx: i32[][]): i32[] {
   let top: i32 = 0 - 2;
   let state: i32[] = [];
@@ -5847,11 +4743,6 @@ function is_array_type(t: typeinfo.Type): boolean {
   return false;
 }
 
-// The parameters a link may be owed on: borrowed arrays the frame is done
-// with wherever a link of theirs may grow the box. A deferred append already
-// requires the parameter dead after it (`deferred_retain`), and a phi edge
-// requires it dead in the loop it enters (`Plan.entry_kept`), so any read of
-// it, a return of it included, happens before the box can grow.
 function link_roots(f: ssasem.Func, p: Plan): boolean[] {
   let ok: boolean[] = [];
   let v: i32 = 0;
@@ -5862,8 +4753,6 @@ function link_roots(f: ssasem.Func, p: Plan): boolean[] {
   return ok;
 }
 
-// One round of the candidates' roots, read off their inputs. A root only
-// descends: unknown, then a parameter, then none.
 function propagate(f: ssasem.Func, p: Plan, idx: i32[][], state: i32[], roots: boolean[]): i32[] {
   let top: i32 = 0 - 2;
   let out: i32[] = state;
@@ -5877,7 +4766,6 @@ function propagate(f: ssasem.Func, p: Plan, idx: i32[][], state: i32[], roots: b
       let root: i32 = top;
       if (box_update(ins)) {
         root = input_root(f, state, roots, ins.args[0]);
-        // Straight onto the parameter, the update must be the deferred one.
         if (ins.args[0] < f.graph.nparams && !deferred_retain(f, p, step_of(p, idx, b.id, pos, 0 - 1), ins)) {
           root = 0 - 1;
         }
@@ -5901,11 +4789,6 @@ function propagate(f: ssasem.Func, p: Plan, idx: i32[][], state: i32[], roots: b
   return out;
 }
 
-// A call's result is a link of the one root among its operands, lent as the
-// last reader of the box: the parameter handed on (hands) or a link
-// dying at the call. The callee may grow that box in place, since nothing in
-// this frame reads it again, and what comes back is either the same box, at
-// the callee's retain, or one the frame holds a unit of.
 function call_root(f: ssasem.Func, step: Step, state: i32[], roots: boolean[], ins: ssa.SInst): i32 {
   let modes: i32[] = callee_modes(f, ins);
   let root: i32 = 0 - 1;
@@ -5947,7 +4830,6 @@ function input_root(f: ssasem.Func, state: i32[], roots: boolean[], a: i32): i32
   return state[a];
 }
 
-// Candidates with a use the encoding cannot reach, removed.
 function prune(f: ssasem.Func, p: Plan, state: i32[]): i32[] {
   let out: i32[] = state;
   let at: i32[] = ssa.block_positions(f.graph);
@@ -6001,20 +4883,9 @@ function same_root(a: i32, b: i32): boolean {
   return a == b || a == 0 - 2 || b == 0 - 2;
 }
 
-// ---- The replay of the tokens --------------------------------------------
-//
-// A token is a unit like any other: taken where its donor dies, spent by one
-// construction, and on the paths that reach no construction freed on the edge
-// that leaves. `verify_reuse` holds the plan's tables to that: a token is
-// taken from a value the step drops and never while the block's one slot is
-// held, a construction spends the token it was handed and reads nothing of
-// the box it builds in, a kept donor is that construction's token, and a
-// carried token is held on every path into a block or on none, spent where
-// the carry says, freed where its way leaves, and held at no return.
 function verify_reuse(f: ssasem.Func, p: Plan, reachable: boolean[]): string {
   let idx: i32[][] = step_index(p);
   let r: Reuse = p.reuse;
-  // A plan whose tables are not made yet plans no token.
   if (r.pairs.len() == 0 && r.keeps.len() == 0 && r.carry.from.len() == 0 && r.carry.to.len() == 0) {
     return "";
   }
@@ -6034,7 +4905,6 @@ function verify_reuse(f: ssasem.Func, p: Plan, reachable: boolean[]): string {
   return verify_carry(f, p, idx, r, reachable);
 }
 
-// The pairings of one block, replayed over its one token slot.
 function verify_block_tokens(f: ssasem.Func, p: Plan, idx: i32[][], bi: i32, r: Reuse): string {
   let b: ssa.SBlock = f.graph.blocks[bi];
   let pr: ReusePairs = r.pairs[bi];
@@ -6097,8 +4967,6 @@ function verify_block_tokens(f: ssasem.Func, p: Plan, idx: i32[][], bi: i32, r: 
   return verify_keeps(pr, r.keeps[bi]);
 }
 
-// A kept donor is the token of the construction that keeps its fields, and
-// the slot it holds from its first kept read is no other pairing's.
 function verify_keeps(pr: ReusePairs, k: Keeps): string {
   let i: i32 = 0;
   while (i < k.donors.len()) {
@@ -6159,8 +5027,6 @@ function same_tokens(a: i32[], b: i32[]): boolean {
   return true;
 }
 
-// The tokens held after block `k`'s instructions: those held at its entry,
-// plus the donors it holds, less the one its construction spends.
 function tokens_out(c: Carry, b: ssa.SBlock, entry: i32[]): i32[] {
   let out: i32[] = entry;
   let i: i32 = 0;
@@ -6180,9 +5046,6 @@ function tokens_out(c: Carry, b: ssa.SBlock, entry: i32[]): i32[] {
   return out;
 }
 
-// The tokens the edge from `from` to `to` delivers: those held at the end of
-// `from` less the ones it frees, plus the ones that arrive null, which the
-// construction ahead spends as a token all the same.
 function tokens_over(c: Carry, from: i32, to: i32, out: i32[]): i32[] {
   let over: i32[] = out;
   for d in carry_exits(c, from, to) {
@@ -6194,10 +5057,6 @@ function tokens_over(c: Carry, from: i32, to: i32, out: i32[]): i32[] {
   return over;
 }
 
-// The carries, replayed as a forward flow of the tokens held at each block's
-// entry: every edge into a block delivers the same tokens, a block spends
-// only a token it holds, frees only one it holds, and a block that leaves
-// the function holds none.
 function verify_carry(f: ssasem.Func, p: Plan, idx: i32[][], r: Reuse, reachable: boolean[]): string {
   let c: Carry = r.carry;
   let at: i32[] = ssa.block_positions(f.graph);
@@ -6223,8 +5082,6 @@ function verify_carry(f: ssasem.Func, p: Plan, idx: i32[][], r: Reuse, reachable
     known = known.append(false);
   }
   known = known.with(at[f.graph.entry], true);
-  // Each round marks the successors of the blocks entered so far, so the
-  // rounds end once every reachable block has its entry.
   let changed: boolean = true;
   while (changed) {
     changed = false;
@@ -6264,7 +5121,6 @@ function verify_carry(f: ssasem.Func, p: Plan, idx: i32[][], r: Reuse, reachable
   return "";
 }
 
-// A block's construction spends a token it holds at entry.
 function spent_held(c: Carry, b: ssa.SBlock, entry: i32[]): string {
   let i: i32 = 0;
   while (i < c.to.len()) {

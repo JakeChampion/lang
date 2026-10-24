@@ -1,48 +1,3 @@
-// Data-driven end-to-end fixtures. Each directory under
-// `conformance/cases/<name>/` is a self-contained program checked against
-// its expected stdout and exit code: here through the interpreter, and
-// through the self-host compiler on x86-64, arm64 and wasm in
-// fixture_selfhost_test.go. This is the declarative counterpart to the
-// inline-source backend tests: to add a case you drop a `.fern` file plus
-// a few sidecar files, no Go code required.
-//
-// Layout of a fixture directory:
-//
-//	main.fern        (required) entry point; `main(): i32`. May import
-//	                 sibling `.fern` files (`import "./helper";`) and
-//	                 stdlib modules.
-//	*.fern           (optional) sibling modules pulled in by main.fern.
-//	expected.stdout  (optional) expected stdout. Compared byte-for-byte
-//	                 in the default "exact" mode; treated as a list of
-//	                 required substrings (one per line) in "contains"
-//	                 mode. Defaults to empty.
-//	expected.exit    (optional) expected process exit code. Defaults to 0.
-//	stdin            (optional) bytes fed to the program's stdin.
-//	match            (optional) "exact" (default) or "contains".
-//	backends         (optional) whitespace-separated subset of
-//	                 {interp, x86_64, arm64, wasm}; lines starting with
-//	                 '#' are comments. Defaults to all four.
-//
-// Compile-error fixtures: if a directory contains an `expected.error`
-// file, the fixture is NOT run. Instead it is expected to FAIL the
-// front-end (parse / module-load / type-check). This gives declarative
-// coverage of the checker's rejection paths. Such fixtures ignore
-// expected.stdout / expected.exit / stdin / match / backends.
-//
-// `expected.error` holds one line per expected diagnostic, and both
-// directions are asserted: every line must be reported, and every code
-// reported must be named by some line. See checkExpectedDiagnostics for
-// why the second half is over distinct codes and what it found.
-//
-// Lowering-error fixtures: `expected.lowering-error` is the sibling for
-// a rejection the front end does NOT make. Such a fixture must be
-// ACCEPTED by parse / module-load / type-check and then rejected by the
-// self-host compiler, on a 32-bit and a 64-bit target. E068 (a `fbip`
-// function that allocates without a donor to reuse) is the case in point:
-// it comes out of compiler/irfipverify.fern during lowering, so the
-// front-end path above can never reach it. Asserting both halves is what stops a
-// program the checker already rejects from masquerading as a lowering
-// rule.
 package e2e
 
 import (
@@ -62,38 +17,23 @@ import (
 )
 
 type fixtureSpec struct {
-	name         string
-	mainPath     string
-	stdin        string
-	wantOut      string   // exact mode: full expected stdout
-	contains     []string // contains mode: required substrings
-	exact        bool     // true → byte-for-byte stdout match
-	wantExit     int
-	backends     map[string]bool
-	compileError bool // true → expected to fail the front-end
-	// loweringError → expected to PASS the front-end and fail during
-	// lowering. Kept separate from compileError because which stage
-	// rejected the program is exactly what such a case asserts.
+	name          string
+	mainPath      string
+	stdin         string
+	wantOut       string
+	contains      []string
+	exact         bool
+	wantExit      int
+	backends      map[string]bool
+	compileError  bool
 	loweringError bool
-	wantErrors    []string // one required substring per expected diagnostic
+	wantErrors    []string
 
-	// reclaimObservable marks a case whose output is DELIBERATELY different
-	// with reclamation off — a case about the allocator rather than about the
-	// language. The quarantine leg (FERN_RC_FREE_DEBUG=1, no block recycled)
-	// holds such a case to its exit code only, since its output there is the
-	// free-off output; every other leg holds the full expected output.
 	reclaimObservable bool
 }
 
 var allBackends = []string{"interp", "x86_64", "arm64", "wasm"}
 
-// rejectionCase reports whether the fixture asserts a diagnostic rather
-// than a run. Such a case has no output, no exit code and no backends,
-// so every runner that walks the corpus expecting to execute something
-// has to skip it. One predicate rather than a growing disjunction: a
-// third rejection kind would otherwise be skipped only by accident of
-// its empty backends set, which is the kind of implicit coupling that
-// lets a new case break a gate nobody thought to run.
 func (f *fixtureSpec) rejectionCase() bool { return f.compileError || f.loweringError }
 
 func loadFixture(t *testing.T, dir string) *fixtureSpec {
@@ -105,8 +45,6 @@ func loadFixture(t *testing.T, dir string) *fixtureSpec {
 		backends: map[string]bool{},
 	}
 
-	// Compile-error fixture: expected to fail the front-end. Skip all
-	// the run-oriented sidecar parsing.
 	if raw, ok := readOptionalFile(dir, "expected.error"); ok {
 		f.compileError = true
 		f.wantErrors = expectedDiagnosticLines(raw)
@@ -116,10 +54,6 @@ func loadFixture(t *testing.T, dir string) *fixtureSpec {
 		return f
 	}
 
-	// Lowering-error fixture: expected to PASS the front-end and fail
-	// during lowering. The two halves are both the point — a program the
-	// checker already rejects would be pinning a front-end rule, and
-	// belongs in expected.error.
 	if raw, ok := readOptionalFile(dir, "expected.lowering-error"); ok {
 		f.loweringError = true
 		f.wantErrors = expectedDiagnosticLines(raw)
@@ -177,9 +111,6 @@ func loadFixture(t *testing.T, dir string) *fixtureSpec {
 				t.Fatalf("%s: unknown backend %q in backends file", f.name, b)
 			}
 		}
-		// A `backends` file of only blanks and comments selects no backend, so
-		// the fixture's sub-test runs zero legs and PASSes. Omitting the file
-		// is how a case says "every backend"; an empty one says nothing.
 		if len(f.backends) == 0 {
 			t.Fatalf("%s: backends file names no backend, so the case would run on none of them "+
 				"(delete the file to opt into all of %v)", f.name, allBackends)
@@ -192,8 +123,6 @@ func loadFixture(t *testing.T, dir string) *fixtureSpec {
 	return f
 }
 
-// TestFernFixtures discovers every directory under conformance/cases and
-// runs it across the backends it opts into.
 func TestFernFixtures(t *testing.T) {
 	root := conformanceCases
 	entries, err := os.ReadDir(root)
@@ -234,9 +163,6 @@ func TestFernFixtures(t *testing.T) {
 				return
 			}
 			if f.loweringError {
-				// Both widths: a lowering rejection that fires on one
-				// target and not the other is a portability defect in its
-				// own right, so the case has to hold at each.
 				for _, target := range []string{e2eharness.TargetWasm32Wasi, e2eharness.TargetX86_64Linux} {
 					target := target
 					t.Run("lower-"+target, func(t *testing.T) {
@@ -282,8 +208,6 @@ func (f *fixtureSpec) check(t *testing.T, stdout string, exit int) {
 	}
 }
 
-// runFixtureArm64 compiles the fixture with the self-host compiler for
-// arm64-linux and runs it under qemu.
 func runFixtureArm64(t *testing.T, mainPath, stdin string) (string, int) {
 	t.Helper()
 	_, qemu := arm64Tooling(t)
@@ -291,8 +215,6 @@ func runFixtureArm64(t *testing.T, mainPath, stdin string) (string, int) {
 	return runBin(runArm64Bin(qemu, bin), stdin)
 }
 
-// runFixtureX86_64 compiles the fixture with the self-host compiler for
-// x86-64-linux and runs it.
 func runFixtureX86_64(t *testing.T, mainPath, stdin string) (string, int) {
 	t.Helper()
 	_, runner := x86_64Tooling(t)
@@ -303,11 +225,6 @@ func runFixtureX86_64(t *testing.T, mainPath, stdin string) (string, int) {
 	return runBin(exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...), stdin)
 }
 
-// runFixtureWasm compiles the fixture with the self-host compiler to a
-// wasi:cli/run component and runs it under wasmtime, so a program whose host
-// surface is preview 2 (clocks, sockets, http) finds its imports. It returns
-// the program's stdout and the component's exit status, which is 0 when main
-// returned 0 and 1 otherwise: a component reports ok or err and nothing wider.
 func runFixtureWasm(t *testing.T, mainPath, stdin string) (string, int) {
 	t.Helper()
 	skipIfPreview2Missing(t)
@@ -319,15 +236,7 @@ func runFixtureWasm(t *testing.T, mainPath, stdin string) (string, int) {
 	return stdout, ec
 }
 
-// runFixtureCompileError runs fixtureFrontEnd and returns the first error's
-// text plus whether it failed. Backend-agnostic: parse / module-load / type
-// errors are the same regardless of target, so this runs once per fixture.
 func runFixtureCompileError(mainPath string) (string, bool) {
-	// Rendered the way the CLI renders it, which is what puts the `error[EXXX]`
-	// code on each diagnostic. `err.Error()` alone gives "type error at L:C:
-	// message" with no code at all, so the completeness check in
-	// checkExpectedDiagnostics had nothing to read and a second diagnostic was
-	// invisible to the harness as well as to the sidecar (#9601).
 	render := func(err error) string {
 		src, rerr := os.ReadFile(mainPath)
 		if rerr != nil {
@@ -341,9 +250,6 @@ func runFixtureCompileError(mainPath string) (string, bool) {
 	return "", false
 }
 
-// fixtureFrontEnd runs what `fern -check` runs: load, then gates.Check, whose
-// type check of the instantiated program after monomorph is where an error
-// only an instance shows is reported.
 func fixtureFrontEnd(mainPath string) error {
 	prog, _, err := modload.Load(mainPath)
 	if err != nil {
@@ -353,10 +259,6 @@ func fixtureFrontEnd(mainPath string) error {
 	return err
 }
 
-// loweringStage is which stage a lowering-error fixture actually
-// reached. Distinguishing "the checker rejected it" from "lowering
-// rejected it" is the whole reason this path exists: only the second
-// is what such a case claims.
 type loweringStage int
 
 const (
@@ -365,9 +267,6 @@ const (
 	loweredCleanly
 )
 
-// runFixtureLoweringError requires the front end to accept the program
-// and the self-host compiler to reject it. Unlike the front-end path this
-// is per-target, because lowering is where the target starts to matter.
 func runFixtureLoweringError(t *testing.T, mainPath, target string) (string, loweringStage) {
 	if err := fixtureFrontEnd(mainPath); err != nil {
 		return err.Error(), frontEndRejected
@@ -399,17 +298,8 @@ func readOptionalFileDefault(dir, name, def string) string {
 	return def
 }
 
-// diagCodeLine matches the first line of a diagnostic — `path:line:col:
-// error[E123]: message` — and captures the code. The lines that follow are the
-// source echo and the caret, which belong to the diagnostic above them.
 var diagCodeLine = regexp.MustCompile(`^.*: error\[(E\d+)\]: `)
 
-// expectedDiagnosticLines splits an `expected.error` / `expected.lowering-error`
-// sidecar into one required substring per non-blank line.
-//
-// One line per expected DIAGNOSTIC is the contract (#9601). A message that
-// wraps across lines still works: each part is individually a substring of the
-// same diagnostic, so it matches the same one and contributes the same code.
 func expectedDiagnosticLines(raw string) []string {
 	var out []string
 	for _, ln := range strings.Split(raw, "\n") {
@@ -420,8 +310,6 @@ func expectedDiagnosticLines(raw string) []string {
 	return out
 }
 
-// splitDiagnostics cuts an error text into one block per coded diagnostic,
-// returning each block's code alongside its full text.
 func splitDiagnostics(errText string) (codes []string, blocks []string) {
 	var cur []string
 	flush := func() {
@@ -443,29 +331,11 @@ func splitDiagnostics(errText string) (codes []string, blocks []string) {
 	return codes, blocks
 }
 
-// checkExpectedDiagnostics asserts both halves of a negative fixture's claim:
-// every expected substring is reported, and every code reported is expected.
-//
-// The second half is what #9601 added. A negative fixture used to pass on a
-// substring match alone, so a SECOND diagnostic — from the functions a case
-// includes to show what IS allowed — was reported, matched past, and never
-// seen. `diag_e053` documented an in-place array write as the allocation-free
-// `fip` shape for months that way; the program did not compile, and the E056
-// saying so sat in the output the whole time.
-//
-// Repeats of the pinned code are the case doing its job — `diag_e034` reports
-// its E034 once per offending element — so the rule is over distinct CODES,
-// not over the number of diagnostics. A second code is either a cascade worth
-// recording in the sidecar or a defect worth fixing, and telling those apart is
-// a judgement per case rather than something a matcher can do.
 func checkExpectedDiagnostics(t *testing.T, stage string, want []string, errText string) {
 	t.Helper()
 	reportDiagnosticMismatches(stage, want, errText, t.Errorf)
 }
 
-// reportDiagnosticMismatches is checkExpectedDiagnostics with the report
-// routed through failf, so a leg with a known-divergence list can log
-// instead of failing.
 func reportDiagnosticMismatches(stage string, want []string, errText string, failf func(format string, args ...any)) {
 	codes, blocks := splitDiagnostics(errText)
 	matched := map[string]bool{}
@@ -477,8 +347,6 @@ func reportDiagnosticMismatches(stage string, want []string, errText string, fai
 				hit = true
 			}
 		}
-		// A sidecar line may also name something outside any coded block —
-		// a parse error with no code, say — so fall back to the whole text.
 		if !hit && strings.Contains(errText, w) {
 			hit = true
 		}

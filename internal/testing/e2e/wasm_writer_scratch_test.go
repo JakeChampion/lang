@@ -5,16 +5,6 @@ import (
 	"testing"
 )
 
-// Writer.write on wasm used to bump-allocate a 12-byte iovec scratch on
-// every call and never give it back, so a write loop grew the heap by 16
-// bytes per write with nothing to reclaim (#8705). The scratch is a static
-// slot now (writerScratchAddr), so the census must not move with the number
-// of writes: what a program keeps live after N writes is what it keeps after
-// 10N.
-//
-// The argument is a runtime concat so it is a heap-form string: an
-// inline-form argument still spills through a bump block in
-// emitStrNormalize, which is #8408 and not pinned here.
 func wasmWriterWriteSrc(writes int) string {
 	return fmt.Sprintf(`function main(): i32 {
     let w = stdout();

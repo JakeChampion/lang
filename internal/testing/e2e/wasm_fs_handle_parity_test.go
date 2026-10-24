@@ -7,18 +7,6 @@ import (
 	"testing"
 )
 
-// Three filesystem edges where native wasm answered differently from the
-// interpreter and native x86-64 (#11117). Each source checks its own answers
-// and returns a code naming the first wrong one, so every leg below asserts
-// the same thing: main returns 0. Each program creates what it needs under
-// the directory it runs in, which is how the wasm legs, whose harnesses only
-// preopen an empty directory, run the same source.
-
-// closedHandleSource uses a Reader and a Writer after close(). Every method
-// answers an error (bad file descriptor), io.read_line included, and a second
-// close reports the first. On a preview-2 component close drops the handle's
-// stream and descriptor, and a method that reached the host with one trapped
-// on the dropped handle instead.
 const closedHandleSource = `import "std/io";
 
 function main(): i32 {
@@ -65,8 +53,6 @@ function main(): i32 {
 }
 `
 
-// removeDirAllFileSource calls remove_dir_all on a plain file, which removes
-// it as rm -rf and os.RemoveAll do. Native wasm answered Ok and left the file.
 const removeDirAllFileSource = `function main(): i32 {
     match (write_file("plain.txt", "x")) { Ok(_) => {}, Err(_) => { return 1; } }
     match (remove_dir_all("plain.txt")) { Ok(_) => {}, Err(_) => { return 2; } }
@@ -82,12 +68,6 @@ const removeDirAllFileSource = `function main(): i32 {
 }
 `
 
-// failedReadSource reads from stdin, which the legs below open on a
-// directory: the read fails (EISDIR on a kernel and on preview 1,
-// `last-operation-failed` on preview 2), and read_chunk must report it as
-// an error rather than as end of input. Only the first read is asserted,
-// because after a failure wasmtime reports its stdin as closed. An empty
-// file is the end-of-input case beside it: Ok with nothing in it.
 const failedReadSource = `function main(): i32 {
     match (stdin().read_chunk(8)) { Ok(_) => { return 1; }, Err(_) => {} }
     match (write_file("empty.txt", "")) { Ok(_) => {}, Err(_) => { return 2; } }
@@ -102,7 +82,6 @@ const failedReadSource = `function main(): i32 {
 }
 `
 
-// dirStdin opens an empty directory to serve as a program's stdin.
 func dirStdin(t *testing.T) *os.File {
 	t.Helper()
 	f, err := os.Open(t.TempDir())
@@ -113,13 +92,9 @@ func dirStdin(t *testing.T) *os.File {
 	return f
 }
 
-// parityOpts is how a leg runs its program. The zero value is a fresh
-// empty directory and an empty stdin.
 type parityOpts struct {
-	dir   string   // the working directory, which wasm preopens; empty for a fresh one
-	stdin *os.File // nil for an empty stdin
-	// maxResources, when > 0, caps the preview-2 host's resource table, so
-	// a body that leaks a host resource per call runs out of keys.
+	dir          string
+	stdin        *os.File
 	maxResources int
 }
 
@@ -129,9 +104,6 @@ func (o parityOpts) runDir(t *testing.T) string {
 	}
 	return t.TempDir()
 }
-
-// The legs run src as `o` says and require main to return 0. The
-// self-host component reports main through its exit status alone.
 
 func runParityInterp(t *testing.T, src string, o parityOpts) {
 	t.Helper()
@@ -170,7 +142,6 @@ func runParityPreview1(t *testing.T, src string, o parityOpts) {
 	}
 }
 
-// runParitySelfHostComponent runs src as the self-host's preview-2 component.
 func runParitySelfHostComponent(t *testing.T, src string, o parityOpts) {
 	t.Helper()
 	stdout, stderr, ec := runCLIComponent(t, src, runOpts{workDir: o.runDir(t), stdinFile: o.stdin, maxResources: o.maxResources})

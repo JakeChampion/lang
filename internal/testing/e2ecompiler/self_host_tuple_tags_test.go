@@ -5,22 +5,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostTupleTags pins the self-hosted asmcore tuple type-tag decoders
-// (compiler/asmcore.fern's split_tuple_ret / tuple_ret_tag_at — SH-021
-// slice 3, docs/SELF-HOST-AUDIT.md T2). Both map a tuple type STRING to the
-// coarse asmcore Ty of its elements, now via the structured TypeRef
-// (parser.parse_type_ref + ty_from_ref — element idx is args[idx]) instead of the
-// former top-level-comma byte scan.
-//
-// The tuple_tags_run driver exercises both decoders' paths (2-element OK/first+
-// second, nested-generic and nested-tuple elements, non-tuple / single-element
-// fallbacks, the 3+-element first+rejoined-rest, every index + out-of-range) and
-// prints ty_tag of each result. The golden below is the EXACT output the old byte
-// scan produced (captured before the migration), so this is the byte-identical
-// guard: a shifted decoded Ty fails here rather than mis-tagging a tuple
-// destructure or a Result's OK type downstream.
-//
-// The driver is built natively via the Go x86-64 backend; its stdout is the map.
 func TestSelfHostTupleTags(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -30,8 +14,6 @@ func TestSelfHostTupleTags(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/tuple_tags_run.fern")
 	bin := buildSelfHostBin(t, gcc, dir, "drivers/tuple_tags_run.fern", "tuple_tags_run")
 
-	// Golden — the exact split_tuple_ret / tuple_ret_tag_at tag mapping the former
-	// byte scan produced, captured before the TypeRef migration. Byte-identical.
 	const want = "split((i32, string)) = {i32, string}\n" +
 		"split((string, i32)) = {string, i32}\n" +
 		"split((Map[string, i32], Err)) = {map:i32, unknown}\n" +

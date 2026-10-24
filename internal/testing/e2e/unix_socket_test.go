@@ -11,11 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The Unix-domain sockets (#9853) on the native backends and the
-// interpreter, raw and through std/net: one probe each over a socket file
-// under /tmp, exit 42 iff every check holds. There is no wasm leg: the
-// unix capability refuses the builtins there, which TestWASMUnixSocketRefused
-// pins.
 var unixProbes = []struct {
 	name string
 	src  func() string
@@ -54,7 +49,6 @@ func TestUnixSocketArm64(t *testing.T) {
 	}
 }
 
-// The Darwin leg: sun_len leads the address and the path limit is 104.
 func TestArm64DarwinUnixSocket(t *testing.T) {
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 		t.Skip("requires the Apple Silicon execution lane")
@@ -79,9 +73,6 @@ func TestArm64DarwinUnixSocket(t *testing.T) {
 	}
 }
 
-// Neither WASI world has a filesystem namespace for sockets, so no wasi
-// profile grants `unix` and E066 refuses the builtin with its name and the
-// call site's position.
 func TestWASMUnixSocketRefused(t *testing.T) {
 	fern := buildFernCLI(t)
 	dir := t.TempDir()

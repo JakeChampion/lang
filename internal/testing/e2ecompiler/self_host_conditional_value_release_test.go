@@ -2,11 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// A value-position if, match or block handed straight to a consumer that does
-// not bind it — a borrowing call's argument, a `.len()` receiver, an index or
-// field read — is released there when it is owned whichever arm ran (#10438):
-// a local its arm retained, or a fresh value. Arrays, strings, structs, and a
-// struct handed to a `dyn` parameter, through each form and each consumer.
 const condArrReleaseSrc = `function sum(xs: i32[]): i32 { let t: i32 = 0; for x in xs { t = t + x; } return t; }
 function mk(j: i32): i32[] { return [j, j, j]; }
 function main(): i32 {
@@ -87,9 +82,6 @@ function main(): i32 {
 }
 `
 
-// A struct array a value block declares keeps its element credit, and an
-// element bound out of one (`let p0 = qs[0]`) is a counted share rather than an
-// escape, so the array still releases its elements (#10438).
 const condStructArrLocalsSrc = `struct P { x: i32, y: i32 }
 function main(): i32 {
     let t: i32 = 0;
@@ -110,10 +102,6 @@ function main(): i32 {
 }
 `
 
-// A struct array passed to a callee that hands one of its elements back — a
-// struct return, a generic one, a dyn one — takes no element credit: the walk
-// would free the box the caller now holds. It used to take the credit on the
-// box flag alone, and the freed box then read as the next allocation.
 const condElemHandoutSrc = `struct P { x: i32, y: i32 }
 trait Shape { function area(self: Self): i32; }
 impl Shape for P { function area(self: Self): i32 { return self.x * self.y; } }
@@ -142,10 +130,6 @@ function main(): i32 {
 }
 `
 
-// An arm that yields a string, struct or dyn local declared outside the
-// conditional retains it, so a mix of such arms and fresh ones is owned
-// whichever arm ran (#10570): released by its consumer, credited as a binding,
-// and a counted return. The yielded local keeps its own release.
 const condAliasStrSrc = `function slen(s: string): i32 { return s.len(); }
 function tail(): string { return "xyz"; }
 function rets(j: i32): string { let s = "r" + tail(); return if (j > 1) { s } else { s + "q" }; }
@@ -199,9 +183,6 @@ function main(): i32 {
 }
 `
 
-// The fresh dyn arm is a local the arm declares and yields; a dyn producer's
-// result is not provably owned yet (#10572), and neither is a dyn local
-// re-declared in a loop body, so the bindings sit in functions of their own.
 const condAliasDynSrc = `trait Shape { function area(self: Self): i32; }
 struct Square { side: i32 }
 impl Shape for Square { function area(self: Self): i32 { return self.side * self.side; } }
@@ -231,8 +212,6 @@ function main(): i32 {
 }
 `
 
-// The yielded locals outlive every conditional that yields them, and a struct
-// parameter yielded at a call is retained and released there.
 const condAliasOutlivesSrc = `struct P { x: i32, y: i32 }
 function slen(s: string): i32 { return s.len(); }
 function px(p: P): i32 { return p.x; }
@@ -255,9 +234,6 @@ function main(): i32 {
 }
 `
 
-// A block of a bare name, `{ a }`, is the plain read of `a`: no arm store
-// retains it, so no consumer may release it. Releasing it freed `a`'s buffer
-// under the local.
 const condBareNameBlockSrc = `function sum(xs: i32[]): i32 { let t: i32 = 0; for x in xs { t = t + x; } return t; }
 function main(): i32 {
     let t: i32 = 0;
@@ -274,10 +250,6 @@ function main(): i32 {
 }
 `
 
-// Not provably owned, so each has to leak rather than be released under its
-// source: a parameter yielded by a conditional reads as escaping to the borrow
-// inference (#10571), a dyn producer's arm is not counted (#10572), and a
-// block hands its tail alias on without a count of its own.
 const condNotOwnedSrc = `trait Shape { function area(self: Self): i32; }
 struct Square { side: i32 }
 struct Rect { w: i32, h: i32, tag: string }
@@ -307,9 +279,6 @@ function main(): i32 {
 }
 `
 
-// A block tail or an arm that yields a string, struct or nested array is not
-// released by its consumer: that release is one buffer dec, which would free
-// the buffer and strand its elements; the value is released whole.
 const condNonScalarElemSrc = `struct P { x: i32, y: i32 }
 function tail(): string { return "xyz"; }
 function slen(xs: string[]): i32 { return xs.len(); }
@@ -337,9 +306,6 @@ function main(): i32 {
 }
 `
 
-// A row handed through a callee (`g(q[0])`) as a binding, an assignment, a
-// discarded statement and an operand: the element box is counted there, so
-// the array keeps its element credit and nothing is freed twice.
 const condRowHandoutSrc = `struct P { x: i32, y: i32 }
 trait Shape { function area(self: Self): i32; }
 impl Shape for P { function area(self: Self): i32 { return self.x * self.y; } }
@@ -371,9 +337,6 @@ function main(): i32 {
 }
 `
 
-// An Option consumed by a match expression in return position is released by
-// that match, whether or not its payload's source stays live. The value
-// block's credit view must not show the match a second time.
 const condOptionMatchReturnSrc = `struct P { xs: i32[], k: i32 }
 function moved(i: i32): i32 {
     let p: P = P { xs: [i, i + 1], k: i };
@@ -393,8 +356,6 @@ function main(): i32 {
 }
 `
 
-// A struct array a value block declares ahead of a tail if or match keeps its
-// element credit.
 const condBlockTailMatchSrc = `struct P { x: i32, y: i32 }
 function main(): i32 {
     let t: i32 = 0;
@@ -409,8 +370,6 @@ function main(): i32 {
 }
 `
 
-// A struct local rebound from a generic identity over a FRESH value owns the
-// result: nothing else holds what comes back, so it keeps its credit.
 const condHandbackFreshSrc = `struct P { x: i32, y: i32 }
 function idg[T](v: T): T { return v; }
 function mkp(j: i32): P { return P { x: 1000, y: j }; }
@@ -427,7 +386,6 @@ function main(): i32 {
 }
 `
 
-// Interpreter-confirmed answers.
 var condReleaseCases = []struct {
 	name     string
 	src      string
@@ -490,9 +448,6 @@ func checkConditionalValueRelease(t *testing.T, target string) {
 	}
 }
 
-// assertCondCensus requires a balanced census, or for a program that is
-// allowed to leak, no more frees than allocations. It reports whether the
-// census had to balance.
 func assertCondCensus(t *testing.T, stderr string, balanced bool) bool {
 	t.Helper()
 	if balanced {

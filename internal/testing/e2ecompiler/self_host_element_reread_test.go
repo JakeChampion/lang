@@ -7,14 +7,6 @@ import (
 	"testing"
 )
 
-// An element of an array field read in one block and updated back into its
-// record in a later one, with the record rebuilt around the update: the
-// shape of std/http/h2's stream table. semsink re-reads the element where
-// the record dies and semcse merges the block's two reads of the array, so
-// the plan takes the record, the array and the element apart and builds each
-// update in the box it replaces. Before, each round of `flush` and
-// `finished` copied the record, the array and the element: 12 allocations a
-// round.
 const elementRereadProg = `import "std/i32";
 import "std/i64";
 struct Strm { id: i32, pending: u8[], window: i32, done: boolean }

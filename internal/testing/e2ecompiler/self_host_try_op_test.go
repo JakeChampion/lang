@@ -7,10 +7,6 @@ import (
 	"testing"
 )
 
-// tryOpCases cover the `?` try operator: `expr?` unwraps a Some/Ok
-// payload, or early-returns the None/Err box from the enclosing
-// Option/Result-returning function. The parser desugars it to the unary
-// op "try_". Exit codes cross-checked vs the Go backend.
 const tryDivHelper = "function checked_div(a: i32, b: i32): Option[i32] { if (b == 0) { return None; } return Some(a / b); } "
 
 var tryOpCases = []struct {
@@ -23,8 +19,6 @@ var tryOpCases = []struct {
 	{"second-none", tryDivHelper + "function compute(): Option[i32] { let x: i32 = checked_div(40, 2)?; let y: i32 = checked_div(x, 0)?; return Some(y); } function main(): i32 { match (compute()) { Some(n) => { return n; }, None => { return 9; } } }", 9},
 }
 
-// TestSelfHostTryOpX86_64 — the `?` operator with the self-hosted
-// x86-64 compiler.
 func TestSelfHostTryOpX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -58,7 +52,6 @@ func TestSelfHostTryOpX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostTryOpArm64 — CI-gated arm64 counterpart.
 func TestSelfHostTryOpArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range tryOpCases {

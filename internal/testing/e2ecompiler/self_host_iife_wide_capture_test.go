@@ -2,11 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// A lambda capturing a wide scalar, wrapped in a generic passthrough call
-// inside an if-expression arm (#10927, shape 2). The wide-capture pass made
-// the lambda's i64 cell inside the if-expression's body, but the expression
-// walk reported no change, so the function-level gate discarded the rewrite
-// and the closure boxing met the bare i64 its env box cannot carry.
 const iifeWideCaptureSrc = `import "std/i32";
 import "core/map";
 function id[T](x: T): T { return x; }

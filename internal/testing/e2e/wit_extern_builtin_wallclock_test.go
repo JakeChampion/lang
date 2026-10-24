@@ -9,21 +9,6 @@ import (
 	"testing"
 )
 
-// TestExternImportWithBuiltinWallClockViaCLI pins that the world-driven
-// composer wires the wall-clock `now()` builtin. An `@import` extern routes
-// the whole module through ComposeFromWorldAuto, which classifies every
-// import against the embedded fern world; `now_ns()` imports
-// wasi:clocks/wall-clock@0.2.0::now, whose result is the `datetime` record
-// referenced through a `(type (eq N))` re-export.
-//
-// Before the world decoder followed that eq-alias (ResolveDef in
-// internal/wasm/componenttype), the datetime result resolved to nil and
-// `now` was misclassified as a no-opt lowering — so the emitted `canon
-// lower` dropped the required `memory` option and wasm-tools rejected the
-// component with "canonical option `memory` is required". This is the
-// regression gate for that fix (the analogue of the monotonic-clock `now`
-// the world gained earlier — wall-clock returns a record, so it exercises
-// the eq-aliased composite-result path specifically).
 func TestExternImportWithBuiltinWallClockViaCLI(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {

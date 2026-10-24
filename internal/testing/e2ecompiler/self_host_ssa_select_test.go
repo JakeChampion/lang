@@ -8,17 +8,6 @@ import (
 	"testing"
 )
 
-// A branch whose arms compute a few pure integer values and meet again is a
-// select (ssa.select_branches), emitted as a conditional move: the min, the
-// unsigned max, the clamp's two steps, the absolute value's return, the two
-// values one test orders and a boolean `&&` read as a value carry no
-// conditional jump, nor do selects whose result lives in a frame slot (spill)
-// or whose condition is a phi, the tag of an inlined variant (tagged, phi_tag:
-// the hoisted arms go after the join's phis, not between them). An arm
-// that divides or indexes may trap on the path that did not take it, so those
-// keep their branch, and the program runs them on exactly the inputs where
-// running the other arm would fault. A float the arms choose between stays in
-// its float register behind a branch.
 const ssaSelectProg = `@noinline function mn(a: i32, b: i32): i32 { return if (a < b) { a } else { b }; }
 @noinline function mx_u(a: u32, b: u32): u32 { return if (a > b) { a } else { b }; }
 @noinline function clamp(x: i64, lo: i64, hi: i64): i64 {
@@ -150,7 +139,6 @@ func TestSelfHostSSASelectsAreConditionalMoves(t *testing.T) {
 		{"arm64-linux", regexp.MustCompile(`(?m)^\s+csel `), regexp.MustCompile(`(?m)^\s+(?:b\.\w+|cbn?z|tbn?z) `)},
 	}
 	selects := []string{"mn", "mx_u", "clamp", "ab", "order", "both", "fpick", "busy", "spill"}
-	// The inlined probe's loop still branches; the match on its tag does not.
 	moves := []string{"tagged", "phi_tag"}
 	branches := []string{"safe_div", "at", "fmn"}
 	for _, c := range cases {

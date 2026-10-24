@@ -2,13 +2,6 @@ package e2e
 
 import "testing"
 
-// A local bound from `string_from_bytes_unchecked` (#10954). The builtin always
-// copies into a fresh string, but the taint rule took it for one that might
-// alias its argument, so the local was never free-eligible and its release
-// only decremented: every heap string it built (above the inline limit on
-// x86-64, any length on the two-word ABIs) leaked on the path that dropped
-// it. Both paths run here: the string dropped in the callee, and the string
-// handed back in an Option.
 const stringFromBytesLocalSrc = `function conv(b: u8[]): Option[string] {
     let s: string = string_from_bytes_unchecked(b);
     if (s.len() > 10) { return Some(s); }

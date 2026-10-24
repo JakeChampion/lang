@@ -9,9 +9,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostWasmIRStructDropEmitted retains constant nested structs as static
-// controls and exercises nested release-helper calls with runtime payloads.
-// Every module must define the release helper and execute the original result.
 func TestSelfHostWasmIRStructDropEmitted(t *testing.T) {
 	boxedProbes(t)
 	if _, err := exec.LookPath("wasmtime"); err != nil {
@@ -24,21 +21,15 @@ func TestSelfHostWasmIRStructDropEmitted(t *testing.T) {
 
 	cases := []struct {
 		name string
-		// drop is the struct type whose `$__sem_release_<drop>` definition the
-		// WAT must contain.
 		drop string
 		heap bool
 		want int
 		src  string
 	}{
-		// Constant Box{Point} is passed to bx() from static aggregate data.
 		{"nested-struct", "Box", false, 42,
 			`struct Point { x: i32, y: i32 } struct Box { p: Point } function bx(b: Box): i32 { return b.p.x + b.p.y; } function main(): i32 { let b = Box { p: Point { x: 30, y: 12 } }; return bx(b); }`},
-		// Keep the original three-deep static construction and result.
 		{"deep-nested", "Outer", false, 105,
 			`struct Inner { v: i32 } struct Mid { inner: Inner, n: i32 } struct Outer { mid: Mid } function f(o: Outer): i32 { return o.mid.inner.v + o.mid.n; } function main(): i32 { let o = Outer { mid: Mid { inner: Inner { v: 100 }, n: 5 } }; return f(o); }`},
-		// args includes the program name, so probe receives 1 and reconstructs
-		// the original payloads without constant aggregate lowering.
 		{"nested-runtime", "Box", true, 42,
 			`struct Point { x: i32, y: i32 } struct Box { p: Point } function bx(b: Box): i32 { return b.p.x + b.p.y; } @noinline function probe(n: i32): i32 { let b = Box { p: Point { x: n + 29, y: 12 } }; return bx(b); } function main(): i32 { return probe(args().len()); }`},
 		{"deep-runtime", "Outer", true, 105,
@@ -58,8 +49,6 @@ func TestSelfHostWasmIRStructDropEmitted(t *testing.T) {
 			if err != nil || len(wat) == 0 {
 				t.Fatalf("driver failed: %v", err)
 			}
-			// Scope runtime allocation/release checks to probe, excluding argv
-			// cleanup in main. The original constant programs use static data.
 			call := []byte("call $__sem_release_" + tc.drop)
 			def := []byte("(func $__sem_release_" + tc.drop)
 			name := "$main "

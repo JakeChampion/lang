@@ -6,11 +6,6 @@ import (
 	"testing"
 )
 
-// core/iter's lazy adapters and sinks (#6795), on the trait every iterator
-// implements: over an array, over a range, through a bound in a generic
-// function, and on a user's own iterator. The chains semfuse fuses run beside
-// the ones it leaves to `next` (`enumerate`, `zip`, `collect`, `find`, `any`,
-// `all`), and both kinds must agree with the interpreter.
 const iterLazyAdaptersSrc = `import "core/iter";
 import "std/i32";
 import "std/i64";

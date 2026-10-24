@@ -9,17 +9,6 @@ import (
 	"testing"
 )
 
-// #4375 item 1: the FFI __c_call<n> family (call a C-ABI function pointer with
-// up to four integer/pointer args) lowers on the self-hosted x86-64 IR path,
-// which is what makes std/jni compilable by the self-host. The shim
-// (emit_ccall_shim1) is entered like any stack-ABI callee — the generic
-// call_direct emit reverses the args so arg0/fn is on top (param0 @ 16(%rbp),
-// a_i @ (24+8i)(%rbp)) — and marshals fn into %r11 + a0..a{n-1} into the
-// System V arg registers, 16-aligns %rsp, and `call *%r11`s the pointer.
-// TestSharedLibX86CCallFFI runs real C callbacks through the primitive; this
-// pins the self-host emission + that every arity assembles + links. main
-// reaches each runN, which the reachability prune would otherwise drop with
-// its shim; no program here is run.
 func TestSelfHostCCallIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -43,8 +32,6 @@ function main(): i32 { return run0(0 as usize) + run1(0 as usize, 1 as usize) + 
 		t.Fatal("self-host compiler emitted 0 bytes")
 	}
 
-	// Each shim marshals fn @ 16(%rbp) into %r11, then a0..a{n-1} from
-	// (24+8i)(%rbp) into %rdi/%rsi/%rdx/%rcx, aligns, and `call *%r11`.
 	shimBody := func(n int) []string {
 		want := []string{"movq 16(%rbp), %r11"}
 		regs := []string{"%rdi", "%rsi", "%rdx", "%rcx"}
@@ -72,8 +59,6 @@ function main(): i32 { return run0(0 as usize) + run1(0 as usize, 1 as usize) + 
 		}
 	}
 
-	// Assemble + link: the shims must resolve every referenced arity (this was
-	// the undefined-reference failure before #4375).
 	_ = buildBin(t, gcc, dir, "ccall", asm)
 }
 
@@ -96,11 +81,6 @@ func itoa(n int) string {
 	return string(b)
 }
 
-// TestSelfHostCCallIRArm64 is the arm64 sibling: the __c_call<n> shims lower on
-// the self-hosted arm64 IR path (emit_ccall_shims_arm64, emitted by
-// asm_arm64.emit_runtime). The shim reads fn @ [x29,#16] and a_i @
-// [x29,#(32+16i)] (16-byte rt-stack slots), marshals fn into x9 and a0..a{n-1}
-// into the AAPCS64 arg registers x0..x3, and `blr x9`s the pointer.
 func TestSelfHostCCallIRArm64(t *testing.T) {
 	arm64gcc, _ := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -150,6 +130,5 @@ function main(): i32 { return run0(0 as usize) + run1(0 as usize, 1 as usize) + 
 			}
 		}
 	}
-	// Assemble + link with the aarch64 toolchain: the shims must resolve.
 	_ = buildBinArm64(t, arm64gcc, dir, "ccall_arm64", txt)
 }

@@ -6,21 +6,6 @@ import (
 	"testing"
 )
 
-// Self-host RC: a heap array payload of Ok()/Some()/Err() must be alias-inc'd.
-//
-// Regression guard for a UAF (#2649): `Ok(r)` / `Some(r)` where `r` is a local
-// array must retain the buffer it stores into the enum box. Without that the
-// payload aliases `r` at refcount 1: the match arm that extracts the payload
-// releases it at arm exit, and the constructing function's own exit sweep
-// releases `r` too — two owners over one +1, freeing the buffer out from under
-// the returned box. It only shows when the extracted array is held live ACROSS
-// an allocating call that reuses the freed store. rcMatchPayloadWorks /
-// rcMatchPayloadUAF are the isolating pair (var-binding vs match-extraction of
-// the SAME append-built array) — both must return 17.
-//
-// rcMatchPayloadWorks: the array is returned directly and bound to a `let` (no
-// enum wrapper). Held across the same allocating `eat` loop, it stays intact.
-// This is the ACTIVE guard — it must keep returning 17.
 const rcMatchPayloadWorks = `function eat(n: i32): i32 {
     let s: string = "x";
     let i: i32 = 0;
@@ -46,10 +31,6 @@ function main(): i32 {
     return total;
 }`
 
-// rcMatchPayloadUAF: the SAME array, but returned as Ok(r) and extracted via
-// `match`. Everything else is identical. Currently SIGSEGVs on the self-host IR
-// path (correct answer, matching rcMatchPayloadWorks + native, is 17). Un-skip
-// the subtest below when the self-host match-arm RC gains the ownership transfer.
 const rcMatchPayloadUAF = `function eat(n: i32): i32 {
     let s: string = "x";
     let i: i32 = 0;
@@ -79,14 +60,6 @@ function main(): i32 {
     }
 }`
 
-// rcOptStructPayloadUAF: the STRUCT-BOX sibling of rcMatchPayloadUAF.
-// `Some(p)` / `Ok(p)` where p is a struct LOCAL must retain the box: without
-// it p's exit sweep frees a box the RETURNED option still points at, and
-// `clobber`'s allocation reuses the cell, so the payload reads back 9999
-// instead of i.
-//
-// Both spellings are exercised. Correct answer is 0 (no round disagrees); a
-// missing retain returns 100.
 const rcOptStructPayloadUAF = `struct P { xs: i32[], k: i32 }
 
 function some_of(i: i32): Option[P] {
@@ -126,17 +99,6 @@ function main(): i32 {
     return bad;
 }`
 
-// rcQualifiedVariantPayloadUAF: #3720's bug, live on the spelling its fix never
-// reached. `Variant(args)` and `Enum.Variant(args)` build the same box through the
-// same op_struct_make but reached lower_expr on different arms, and the qualified
-// arm — added later, to keep a module IR-eligible — lowered its args with no
-// Perceus alias-inc at all. So `E.A(items)` handed the caller a box over memory
-// the source local's exit sweep had already freed, and `clobber`'s allocation
-// reused it.
-//
-// Both spellings run here against the same expectation, because measuring them
-// apart is what let them diverge: the bare form returned 0 while the qualified
-// form returned 100 (every round read the clobber value).
 const rcQualifiedVariantPayloadUAF = `enum E { A(i32[]), B }
 
 function qual_of(i: i32): E {
@@ -200,34 +162,24 @@ func compileAndRunSelfHostIR(t *testing.T, gcc string, runner []string, dir, dri
 	return run.ProcessState.ExitCode()
 }
 
-// TestSelfHostMatchPayloadRC pins the working half of the match-payload RC pair
-// (a heap array bound to a `let` and held across an allocating call stays intact)
-// and documents the broken half (the same array extracted via `match` is freed
-// prematurely — a self-host-only UAF, #2649) as a skipped target for the fix.
 func TestSelfHostMatchPayloadRC(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	// Active guard: the var-binding shape must stay correct (17 = 5+5+7).
 	t.Run("var_binding_across_alloc", func(t *testing.T) {
 		if code := compileAndRunSelfHostIR(t, gcc, runner, dir, driverBin, "rc_work", rcMatchPayloadWorks); code != 17 {
 			t.Errorf("var-binding array across an allocating call exited %d, want 17", code)
 		}
 	})
 
-	// #2649: the Option/Result construction retains its array payload,
-	// balancing the match-arm's reclaim so the extracted array survives an
-	// intervening allocation.
 	t.Run("match_payload_across_alloc", func(t *testing.T) {
 		if code := compileAndRunSelfHostIR(t, gcc, runner, dir, driverBin, "rc_uaf", rcMatchPayloadUAF); code != 17 {
 			t.Errorf("match-extracted array across an allocating call exited %d, want 17", code)
 		}
 	})
 
-	// The struct-box payload takes the same retain: a returned `Some(p)` / `Ok(p)`
-	// must outlive p's exit sweep.
 	t.Run("struct_payload_across_alloc", func(t *testing.T) {
 		if code := compileAndRunSelfHostIR(t, gcc, runner, dir, driverBin, "rc_optstruct_uaf", rcOptStructPayloadUAF); code != 0 {
 			t.Errorf("returned option carrying a struct local exited %d, want 0 "+
@@ -235,8 +187,6 @@ func TestSelfHostMatchPayloadRC(t *testing.T) {
 		}
 	})
 
-	// The two variant-ctor spellings take the same payload retains (#3720 reached
-	// only the bare one).
 	t.Run("qualified_variant_payload_across_alloc", func(t *testing.T) {
 		if code := compileAndRunSelfHostIR(t, gcc, runner, dir, driverBin, "rc_qualvariant_uaf", rcQualifiedVariantPayloadUAF); code != 0 {
 			t.Errorf("returned variant carrying an array local exited %d, want 0 "+

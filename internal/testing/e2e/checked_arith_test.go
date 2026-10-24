@@ -6,22 +6,6 @@ import (
 	"testing"
 )
 
-// The checked operators `+?` / `-?` / `*?` (#5542) evaluate to `Some(result)`
-// when the exact result fits the operand type and `None` on overflow. They are
-// additive surface: `+` / `-` / `*` keep their wrapping, never-trapping
-// semantics (docs/INTEGER-SEMANTICS.md). The operators desugar to an
-// `Option`-yielding block-expr (Binary.CheckedLowered), so every backend lowers
-// them through the ordinary Option / if / wrapping-arithmetic paths.
-//
-// The program returns 0 when every case holds and the index of the first
-// failing case otherwise, so a regression names itself in the exit code. Each
-// backend runs the identical source; the overflow bound is baked in at the
-// operand width, so i32 / i64 / u8 / u32 / u64 are all exercised. A `None`
-// where `Some` was expected (or vice versa) is a distinct failure code from a
-// wrong `Some` payload.
-//
-// `i32min` / `i64min` are spelled `0 - MAX - 1` because a bare `-2147483648`
-// literal is rejected (E047: the magnitude is checked before the unary minus).
 const checkedArithProgram = `
 function main(): i32 {
     let i32min: i32 = 0 - 2147483647 - 1;
@@ -90,11 +74,6 @@ function main(): i32 {
 }
 `
 
-// checkedShiftProgram exercises `<<?` / `>>?` (#5542): `None` when the shift
-// count is out of range (`< 0` or `>= width`), and for `<<?` also when bits are
-// shifted out (`255u8 <<? 1` is None), else `Some(a << b)`. `>>` stays
-// arithmetic for signed and logical for unsigned. Returns 0 on all-pass, else
-// the failing case index.
 const checkedShiftProgram = `
 function main(): i32 {
     match (1 <<? 4)         { Some(v) => { if (v != 16) { return 1; } }, None => { return 2; } }

@@ -9,14 +9,6 @@ import (
 	"testing"
 )
 
-// A call through a function value passes the arguments in the pool registers
-// and pushes them only past ssa_nregs(): six on x86-64, eight on arm64. On
-// x86-64 the value names the callee's `.r` entry; on arm64 its `.k` entry,
-// which takes every argument in an integer register and moves an f64 one into
-// the float register `.r` reads it from. `apply` calls a closure with its
-// environment and two arguments, so it pushes nothing. `seven`'s closure takes
-// its environment and seven arguments, two past x86-64's pool, so there every
-// argument is also pushed, and none on arm64.
 const closureRegCallProg = `@noinline function apply(f: (i32, i32) => i32, a: i32, b: i32): i32 { return f(a, b); }
 @noinline function seven(f: (i32, i32, i32, i32, i32, i32, i32) => i32): i32 { return f(1, 2, 3, 4, 5, 6, 7); }
 function main(): i32 {
@@ -28,9 +20,6 @@ function main(): i32 {
 }
 `
 
-// closureFloatCallProg passes f64 arguments between integer ones, through a
-// call that fits the pool and one, ten arguments with the environment, past
-// it on both targets.
 const closureFloatCallProg = `function applyf(f: (f64, i32, f64) => f64, a: f64, n: i32, b: f64): f64 { return f(a, n, b); }
 function many(f: (i32, f64, i32, i32, i32, i32, i32, f64, i32) => f64): f64 { return f(1, 2.5, 3, 4, 5, 6, 7, 0.25, 9); }
 function main(): i32 {
@@ -62,7 +51,6 @@ func TestSelfHostClosureCallInRegisters(t *testing.T) {
 		return string(asm)
 	}
 	asm := []byte(emit("x86-64-linux"))
-	// A push the CFI tracks is a frame save, not an argument.
 	argPush := regexp.MustCompile(`\n\s+pushq [^\n]+(\n\s+\.cfi_def_cfa_offset)?`)
 	pushes := func(body string) int {
 		n := 0
@@ -85,7 +73,6 @@ func TestSelfHostClosureCallInRegisters(t *testing.T) {
 		t.Errorf("no function value names a closure's .r entry")
 	}
 	arm := emit("arm64-linux")
-	// The prologue's callee-saved stores come before the body's first label.
 	armPush := regexp.MustCompile(`(?s)\.Lssa_\w+_0:.*str x\d+, \[sp, #-16\]!`)
 	for _, fn := range []string{"apply", "seven"} {
 		if body := condBranchBody(t, arm, fn); !strings.Contains(body, "blr x6") || armPush.MatchString(body) {
@@ -95,8 +82,6 @@ func TestSelfHostClosureCallInRegisters(t *testing.T) {
 	if !regexp.MustCompile(`__fn_\S*clo\d+\.k\b`).MatchString(arm) {
 		t.Errorf("arm64: no function value names a closure's .k entry")
 	}
-	// A Mach-O build is one unit, so `.k`, inside its function, is a local
-	// label there, as `.r` is: a symbol would split the function's CFI.
 	dar := emit("arm64-darwin")
 	if !regexp.MustCompile(`\bL__fn_\S*clo\d+\.k\b`).MatchString(dar) || regexp.MustCompile(`(^|[^L\w])__fn_\S*\.k\b`).MatchString(dar) {
 		t.Errorf("arm64-darwin: a .k entry is not a local label")

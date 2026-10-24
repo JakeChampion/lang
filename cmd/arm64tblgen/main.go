@@ -1,14 +1,3 @@
-// Command arm64tblgen writes the self-host arm64 assembler's vocabulary from
-// internal/tables/arm64tbl — the arm64 twin of cmd/x86tblgen.
-//
-// Two kinds of block are rewritten in place in
-// compiler/arm64_native.fern: one per Advanced SIMD class, and the
-// scalar vocabulary — the family lookup and the index constants the
-// dispatch compares it against, the base-word lookups the encoders read, and arm64_gas_known, the allow-list the
-// program loop consults. The staleness test fails if the committed output
-// stops matching the table.
-//
-//	go run ./cmd/arm64tblgen compiler/arm64_native.fern
 package main
 
 import (
@@ -21,27 +10,20 @@ import (
 	"github.com/jakechampion/lang/internal/tables/arm64tbl"
 )
 
-// markers brackets one generated block: the class name appears in both.
 func markers(t arm64tbl.VecTable) (begin, end string) {
 	name := strings.ToUpper(strings.TrimPrefix(t.FernFn, "arm64_"))
 	return "// BEGIN GENERATED ARM64 " + name + " TABLE (cmd/arm64tblgen) — do not edit by hand.",
 		"// END GENERATED ARM64 " + name + " TABLE"
 }
 
-// lintLimit is the complexity limit of compiler/lint.fern. A generated
-// table scores one more than its rows, so a long one carries an `allow`.
 const lintLimit = 10
 
 func allowLongTable(b *strings.Builder, rows int) {
 	if rows+1 > lintLimit {
-		b.WriteString("// fern-lint: allow cyclomatic-complexity\n// A generated table: one arm for each row.\n")
+		b.WriteString("// fern-lint: allow cyclomatic-complexity\n// Each table row has one match arm.\n")
 	}
 }
 
-// lookup renders a mnemonic-to-value function as a string match: one arm
-// per row and the wildcard returning -1, the shape a hand-written table
-// reads as. A string match lowers to the same str_eq chain an if-chain
-// would, so the form costs nothing at run time.
 func lookup(b *strings.Builder, fn, ret string, rows []string) {
 	allowLongTable(b, len(rows))
 	fmt.Fprintf(b, "function %s(mnem: string): %s {\n    match (mnem) {\n", fn, ret)
@@ -51,11 +33,9 @@ func lookup(b *strings.Builder, fn, ret string, rows []string) {
 	b.WriteString("        _ => { return 0 - 1; }\n    }\n}\n")
 }
 
-// genTable renders one lookup: the packed arm64_vec_entry(u, opcode, aux)
-// form every class but the permute one uses, whose entry is a bare opc.
 func genTable(t arm64tbl.VecTable) string {
 	var b strings.Builder
-	b.WriteString(t.Doc)
+
 	var rows []string
 	for _, o := range t.Ops {
 		if t.FernFn == "arm64_vpermute_opc" {
@@ -68,28 +48,18 @@ func genTable(t arm64tbl.VecTable) string {
 	return b.String()
 }
 
-// scalarMarkers brackets the scalar vocabulary block.
 const (
 	scalarBegin = "// BEGIN GENERATED ARM64 SCALAR VOCABULARY (cmd/arm64tblgen) — do not edit by hand."
 	scalarEnd   = "// END GENERATED ARM64 SCALAR VOCABULARY"
 )
 
-// familyID is the Fern constant naming a family's index in the table.
 func familyID(f arm64tbl.Family) string { return "arm64_fam_" + f.Name }
 
-// spelling is one mnemonic with the index of the family it belongs to.
 type spelling struct {
 	mnem string
 	fam  int
 }
 
-// genFamily renders arm64_gas_family: a mnemonic's family index, or -1.
-// The lookup narrows by length, then by one byte at a time from the front,
-// until at most leafSpellings candidates remain and are compared
-// outright — the shape ir.fern's kind_id takes — so a lookup costs a few
-// byte tests and one or two string compares instead of a compare against
-// every spelling in the table. Each narrowing step is its own function, so
-// no function's fork count outgrows the lint limit as the table grows.
 func genFamily(b *strings.Builder) {
 	byLen := map[int][]spelling{}
 	for i, f := range arm64tbl.Scalar {
@@ -102,9 +72,7 @@ func genFamily(b *strings.Builder) {
 		lens = append(lens, n)
 	}
 	sort.Ints(lens)
-	b.WriteString("// arm64_gas_family is the index in the table of the family a mnemonic\n")
-	b.WriteString("// belongs to, or -1: length first, then the leading bytes, then the\n")
-	b.WriteString("// spellings left. The dispatch and arm64_gas_known read it.\n")
+	b.WriteString("// arm64_gas_family returns the mnemonic family index, or -1 for an unknown mnemonic.\n")
 	b.WriteString("function arm64_gas_family(mnem: string): i32 {\n    let n: i32 = mnem.len();\n")
 	for _, n := range lens {
 		fmt.Fprintf(b, "    if (n == %d) { return arm64_gas_family_len%d(mnem); }\n", n, n)
@@ -115,16 +83,8 @@ func genFamily(b *strings.Builder) {
 	}
 }
 
-// leafSpellings is the largest group compared spelling by spelling rather
-// than narrowed by another byte: with the length and the leading bytes
-// already fixed, a few compares against near-identical spellings are
-// cheaper than another call. A narrowing step inlines only a byte that one
-// spelling alone starts with; the lint counts each `&&` as a fork, so
-// inlining more would put the wider steps over the complexity limit.
 const leafSpellings = 4
 
-// genFamilyGroup renders one narrowing step over `group`, which share
-// their first `depth` bytes, as function `name` and the steps under it.
 func genFamilyGroup(b *strings.Builder, name string, depth int, group []spelling) {
 	fmt.Fprintf(b, "function %s(mnem: string): i32 {\n", name)
 	if len(group) <= leafSpellings {
@@ -166,10 +126,6 @@ func genFamilyGroup(b *strings.Builder, name string, depth int, group []spelling
 	}
 }
 
-// genScalar renders the by-name vocabulary: an index constant per family,
-// the family lookup the dispatch compares them against, the base-word lookup
-// for the families whose encoders read one, and arm64_gas_known over all
-// of them plus the pattern-matched and table-dispatched rest.
 func genScalar() string {
 	var b strings.Builder
 	for i, f := range arm64tbl.Scalar {
@@ -180,28 +136,22 @@ func genScalar() string {
 		if f.Base == "" {
 			continue
 		}
-		// The shll family's word is a packed kind, an i32 like the class
-		// selectors; every other base is an encoding word.
 		var rows []string
 		if f.Name == "shll" {
-			fmt.Fprintf(&b, "// %s maps a widening-shift mnemonic to its packed kind; -1 = not one.\n", f.Base)
+			fmt.Fprintf(&b, "// %s returns the packed kind for a shift mnemonic, or -1 for an unknown mnemonic.\n", f.Base)
 			for _, o := range f.Ops {
 				rows = append(rows, fmt.Sprintf("%q => { return %d; }", o.Mnemonic, o.Word))
 			}
 			lookup(&b, f.Base, "i32", rows)
 			continue
 		}
-		fmt.Fprintf(&b, "// %s maps a mnemonic to its base word (every register field zero); -1 = not one.\n", f.Base)
+		fmt.Fprintf(&b, "// %s returns the base word with zero register fields, or -1 for an unknown mnemonic.\n", f.Base)
 		for _, o := range f.Ops {
 			rows = append(rows, fmt.Sprintf("%q => { return 0x%08x; }", o.Mnemonic, o.Word))
 		}
 		lookup(&b, f.Base, "i64", rows)
 	}
 	b.WriteString(`
-// arm64_gas_known reports whether a mnemonic is one the assembler handles,
-// so the program loop can record anything else rather than drop it: the
-// by-name families above, the across-lanes and general Advanced SIMD
-// classes, and the conditional branches in both spellings.
 function arm64_gas_known(mnem: string): boolean {
     if (arm64_gas_family(mnem) >= 0) { return true; }
     if (arm64_across_entry(mnem) >= 0) { return true; }
@@ -212,8 +162,6 @@ function arm64_gas_known(mnem: string): boolean {
 	return b.String()
 }
 
-// rewriteBlock replaces the region between begin and end with gen, when
-// the file carries the markers.
 func rewriteBlock(src, begin, end, gen string) (string, error) {
 	i := strings.Index(src, begin)
 	if i < 0 {
@@ -226,8 +174,6 @@ func rewriteBlock(src, begin, end, gen string) (string, error) {
 	return src[:i] + begin + "\n" + gen + src[j:], nil
 }
 
-// Rewrite replaces every marked block present in src. A file carrying none
-// is returned unchanged.
 func Rewrite(src string) (string, error) {
 	found := strings.Contains(src, scalarBegin)
 	var err error

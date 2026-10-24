@@ -21,8 +21,6 @@ import (
 	"github.com/jakechampion/lang/compiler"
 )
 
-// hostTarget is the -target the self-host compiler runs as on this machine,
-// "" for a host no stage0 is published for.
 func hostTarget() string {
 	switch runtime.GOOS + "/" + runtime.GOARCH {
 	case "linux/amd64":
@@ -35,7 +33,6 @@ func hostTarget() string {
 	return ""
 }
 
-// lockField is a stage0.lock value: `url`, or a host's sha256.
 func lockField(lock, key string) string {
 	sc := bufio.NewScanner(strings.NewReader(lock))
 	for sc.Scan() {
@@ -47,10 +44,6 @@ func lockField(lock, key string) string {
 	return ""
 }
 
-// built is the self-host compiler this `fern` built from its embedded
-// sources, building it first when the cache has none: the pinned stage0,
-// fetched and checked as `make bootstrap` does, compiles fern.fern once per
-// source, stdlib and pin.
 func built() (string, error) {
 	host := hostTarget()
 	if host == "" {
@@ -105,12 +98,6 @@ func built() (string, error) {
 	return out, nil
 }
 
-// stage0Env is env without the FERN_ variables. The compiler reads them as
-// build switches (FERN_SANITIZE, FERN_LEAKCHECK, FERN_BACKTRACE, ...), and
-// they are meant for the program this fern is asked to compile, not for the
-// compiler it builds once and caches by its sources alone: a self-host
-// compiler built under FERN_LEAKCHECK=1 frees nothing, and every later
-// compile from the cache would run it.
 func stage0Env(env []string) []string {
 	out := make([]string, 0, len(env))
 	for _, kv := range env {
@@ -121,8 +108,6 @@ func stage0Env(env []string) []string {
 	return out
 }
 
-// sourcesKey hashes what the built compiler depends on: its sources, the
-// stdlib it compiles against, the pin that builds it and the host.
 func sourcesKey(host string) (string, error) {
 	h := sha256.New()
 	fmt.Fprintf(h, "%s\x00%s\x00", host, bootstrap.Lock)
@@ -176,8 +161,6 @@ func writeFS(src fs.FS, dir string) error {
 	})
 }
 
-// fetchStage0 is the pinned stage0 for host under dir, downloaded and
-// checked against the lock's sha256 when it is not already there.
 func fetchStage0(dir, host string) (string, error) {
 	url := lockField(bootstrap.Lock, "url")
 	want := lockField(bootstrap.Lock, host)
@@ -227,8 +210,6 @@ func fetchStage0(dir, host string) (string, error) {
 	return path, os.Rename(tmp, path)
 }
 
-// download GETs url with a deadline, retrying a network error or a 5xx / 429
-// answer twice; any other status is final.
 func download(url string) (*http.Response, error) {
 	client := &http.Client{Timeout: 5 * time.Minute}
 	var err error
@@ -267,13 +248,8 @@ func fileSHA256(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// KeySuffix names the file beside a self-host compiler that records SourcesKey
-// for the sources it was built from. `make selfhost-cli` and `make bootstrap`
-// write it.
 const KeySuffix = ".key"
 
-// SourcesKey identifies the compiler and stdlib sources this `fern` embeds,
-// for its host.
 func SourcesKey() (string, error) {
 	host := hostTarget()
 	if host == "" {
@@ -282,9 +258,6 @@ func SourcesKey() (string, error) {
 	return sourcesKey(host)
 }
 
-// current reports whether the self-host compiler at p exists and its key file
-// names the sources this `fern` embeds. One left from an older tree, or with no
-// key, is not used: it would compile with sources other than these.
 func current(p string) bool {
 	if _, err := os.Stat(p); err != nil {
 		return false

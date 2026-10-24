@@ -9,41 +9,10 @@ import (
 	"testing"
 )
 
-// The self-host interpreter's OUTPUT, against the native interpreter as oracle.
-//
-// interp.fern implemented no I/O builtins at all — there was no `print`
-// anywhere in its 4,138 lines — so interp_run.fern could report an exit code
-// and nothing else. That made it the one playground entry point with no
-// self-host counterpart for the output pane (#6643): a program that computes
-// the right answer and a program that prints the right answer were
-// indistinguishable.
-//
-// TestSelfHostInterpDriverX86_64 next door asserts exit codes only, which is
-// why the gap survived: every case there passes whether or not anything was
-// written. These compare all three channels.
-//
-// # Why the native interpreter is the oracle
-//
-// print / write / eprint differ only in the newline and the stream, and those
-// are exactly the details a reimplementation gets subtly wrong — a trailing
-// newline on write, stderr merged into stdout. Asserting against literals
-// would pin whatever this implementation happens to do; asserting against
-// internal/oracle/interp pins that the two agree, which is the property that matters
-// for a second implementation of the same language.
-//
-// # One leg
-//
-// x86-64 only, unlike the exit-code driver test's two. What is under test is
-// evaluator logic — a `name == "print"` arm in interp.fern's call_func — with
-// no backend-specific lowering anywhere in it, so an arm64 leg would pay a
-// second driver build to re-run the same interpreter branch.
-
 var interpIOProgs = []struct {
 	name string
 	src  string
 }{
-	// print appends a newline; write does not. Both on stdout, so the
-	// concatenation is what distinguishes them.
 	{"print-adds-a-newline", `function main(): i32 {
   print("one");
   print("two");
@@ -62,8 +31,6 @@ var interpIOProgs = []struct {
   print("then a line");
   return 3;
 }`},
-	// eprint goes to the other stream. A test that merged the two would pass
-	// with eprint writing to stdout, so the streams are compared separately.
 	{"eprint-goes-to-stderr", `function main(): i32 {
   print("out");
   eprint("err");
@@ -73,33 +40,22 @@ var interpIOProgs = []struct {
   eprint("nothing on stdout");
   return 1;
 }`},
-	// The empty string is its own case on both: print("") is a bare newline,
-	// write("") is nothing at all.
 	{"empty-strings", `function main(): i32 {
   write("");
   print("");
   write("");
   return 0;
 }`},
-	// Output survives to the exit: a program that prints and then returns a
-	// value must do both, which is the shape a playground actually runs.
 	{"output-then-exit-code", `function main(): i32 {
   print("computed");
   return 42;
 }`},
-	// A string built at runtime rather than a literal, so the argument reaches
-	// the builtin as a VString the evaluator produced.
 	{"a-computed-string", `function main(): i32 {
   let a: string = "he";
   let b: string = "llo";
   print(a + b);
   return 0;
 }`},
-	// putchar writes ONE BYTE — the low 8 bits — not a codepoint. 65 agrees
-	// under either rule and is the control; the rest discriminate, and each was
-	// a real disagreement before internal/oracle/interp was fixed to match the three
-	// compiled backends (233 came out as the two UTF-8 bytes c3 a9, 321 as
-	// U+0141, -1 as U+FFFD).
 	{"putchar-writes-bytes-not-codepoints", `function main(): i32 {
   putchar(65);
   putchar(233);
@@ -110,7 +66,6 @@ var interpIOProgs = []struct {
   putchar(10);
   return 0;
 }`},
-	// putchar shares stdout with write, and neither adds anything of its own.
 	{"putchar-interleaved-with-write", `function main(): i32 {
   write("a");
   putchar(66);
@@ -118,8 +73,6 @@ var interpIOProgs = []struct {
   putchar(10);
   return 0;
 }`},
-	// Inside a loop and a call, so the builtin is reached from more than the
-	// top-level statement position.
 	{"from-a-loop-and-a-call", `function shout(s: string): i32 {
   print(s);
   return 1;
@@ -135,8 +88,6 @@ function main(): i32 {
 }`},
 }
 
-// runNativeInterp runs `src` through the Go interpreter, the oracle for the
-// three channels.
 func runNativeInterp(t *testing.T, fernBin, src string) (string, string, int) {
 	t.Helper()
 	dir := t.TempDir()

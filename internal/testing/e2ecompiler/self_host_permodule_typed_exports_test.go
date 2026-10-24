@@ -9,13 +9,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostPerModuleTypedHelpersLink: a typed body calls runtime helpers an
-// AST-lowered one never did (the packed-byte twins, a dead string view's
-// release, the raw floor's free, the map hash seed). Only the entry unit
-// defines them, so a library unit's call resolves only if the entry exports
-// them through emit_runtime_globls. They were missing from that list, and the
-// per-module whole-compiler build stopped linking when its units moved onto the
-// typed lowering.
 func TestSelfHostPerModuleTypedHelpersLink(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)
@@ -53,8 +46,6 @@ function main(): i32 { return leaf.score(["ab", "cb", "abc"]); }
 		"__fn___sem_byte_view_slice", "__fn___fern_string_from_bytes_u8",
 		"__fn___fern_str_view_free", "__fern_raw_free", "__fern_map_hash_seed",
 	}
-	// Byte subranges now use views. A shared owned-array update still needs
-	// the packed copy helper, so exercise its export in a separate program.
 	const copyLeaf = `@noinline pub function replace(own a: u8[]): u8[] {
     return a.with(0, 99 as u8);
 }
@@ -80,7 +71,6 @@ function main(): i32 {
 	}{
 		{"byte-view", viewLeaf, viewMain, helpers, 10},
 		{"byte-copy", copyLeaf, copyMain, []string{"__fn___fern_arr_slice_u8"}, 0},
-		// std/cli's colour gate asks isatty from a library unit.
 		{"isatty", "@noinline pub function tty(): i32 { if (isatty(1)) { return 1; } return 0; }\n", "import \"./leaf\";\nfunction main(): i32 { return leaf.tty() + 7; }\n", []string{"__fn___fern_isatty"}, 7},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -122,8 +112,6 @@ function main(): i32 {
 						}
 					}
 					sort.Strings(objs)
-					// Without these the fixture no longer reaches the helpers from a
-					// library unit, and cannot catch a missing export.
 					for _, h := range tc.helpers {
 						if !strings.Contains(library, h) {
 							t.Errorf("no library unit references %s", h)

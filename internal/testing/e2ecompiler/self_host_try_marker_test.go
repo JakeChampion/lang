@@ -8,19 +8,6 @@ import (
 	"testing"
 )
 
-// `?` on an `@try` enum, through the self-host IR path (#9302 part 3).
-//
-// An Option / Result box is `[tag@0, payload@8]`, so its discriminant is an
-// integer compare and its payload an offset-8 read. A marked enum's box is an
-// ordinary variant box carrying its shape at offset 0, so the self-host lowers
-// the same operator through `variant_is` + `struct_get` — the ops a `match` arm
-// already uses. These cases pin that second lowering against the exit codes
-// the interpreter produces for the identical sources
-// (internal/testing/e2e/try_marker_test.go), on both register backends.
-//
-// Every case is compiled with FERN_STRICT_IR=1, so a lowering that declines
-// rather than miscompiles fails here too: the driver names its bail site
-// instead of emitting.
 type tryMarkerCase struct {
 	name string
 	src  string
@@ -29,8 +16,6 @@ type tryMarkerCase struct {
 
 func tryMarkerCases() []tryMarkerCase {
 	return []tryMarkerCase{
-		// Build shape: the failure variant carries no payload, so the `?`
-		// failure edge constructs a fresh 0-field variant box.
 		{"build_ok", `
 @try
 enum Flag { On(i32), Off }
@@ -42,9 +27,6 @@ enum Flag { On(i32), Off }
 function pick(f: Flag): Flag { let v: i32 = f?; return On(v + 1); }
 function main(): i32 { match (pick(Off)) { On(v) => { return v; }, Off => { return 5; } } }`, 5},
 
-		// Forward shape: the failure variant carries a payload, so the failure
-		// edge forwards the source box — its tag and payload already satisfy
-		// the enclosing return, which the checker pinned to the same enum.
 		{"forward_ok", `
 @try
 enum Outcome { Good(i32), Bad(i32) }
@@ -56,8 +38,6 @@ enum Outcome { Good(i32), Bad(i32) }
 function step(o: Outcome): Outcome { let v: i32 = o?; return Good(v * 2); }
 function main(): i32 { match (step(Bad(3))) { Good(v) => { return v; }, Bad(e) => { return e + 10; } } }`, 13},
 
-		// A direct CALL scrutinee (`mk(n)?`), not a local — the scrutinee-type
-		// resolver has to answer for the call's return type as well as a slot.
 		{"call_scrutinee", `
 @try
 enum Outcome { Good(i32), Bad(i32) }
@@ -65,8 +45,6 @@ function mk(n: i32): Outcome { if (n > 0) { return Good(n); } return Bad(9); }
 function step(n: i32): Outcome { let v: i32 = mk(n)?; return Good(v * 2); }
 function main(): i32 { match (step(4)) { Good(v) => { return v; }, Bad(e) => { return e; } } }`, 8},
 
-		// Payload shapes. Each reads through struct_get at the field's own
-		// width, exactly as the matching `match` arm binds it.
 		{"payload_string", `
 @try
 enum Str { Got(string), Missing }
@@ -94,10 +72,6 @@ enum Tup { Pair((i32, i32)), NoPair }
 function sw(t: Tup): Tup { let v: (i32, i32) = t?; return Pair((v.1, v.0)); }
 function main(): i32 { match (sw(Pair((3, 9)))) { Pair(p) => { return p.0 * 10 + p.1; }, NoPair => { return 0; } } }`, 93},
 
-		// UNANNOTATED bindings. `let x = inner?` types its slot from the
-		// operand alone, so the width, str-tracking and slot-typing paths each
-		// have to resolve a marked enum's payload the same way the lowering
-		// does — an i64 read at width 32 is a miscompile, not a bail.
 		{"inferred_i64", `
 @try
 enum Big { Val(i64), Nope }
@@ -115,16 +89,11 @@ enum Tup { Pair((i32, i32)), NoPair }
 function sw(t: Tup): Tup { let v = t?; return Pair((v.1, v.0)); }
 function main(): i32 { match (sw(Pair((3, 9)))) { Pair(p) => { return p.0 * 10 + p.1; }, NoPair => { return 0; } } }`, 93},
 
-		// An enum that satisfies the `?` shape by ACCIDENT and is never marked.
-		// `?` is not what these programs use it for — they `match` on it — and
-		// the scrutinee must keep typing as a user enum rather than as
-		// something to unwrap.
 		{"unmarked_shape_match", `
 enum Tree { Leaf(i32), Node(Tree) }
 function depth(t: Tree): i32 { match (t) { Leaf(n) => { return n; }, Node(k) => { return depth(k) + 1; } } }
 function main(): i32 { return depth(Node(Node(Leaf(5)))); }`, 7},
 
-		// A marked enum on a method receiver, and `?` nested twice in one body.
 		{"method_receiver", `
 @try
 enum Flag { On(i32), Off }
@@ -137,10 +106,6 @@ function inner(f: Flag): Flag { let v: i32 = f?; return On(v + 1); }
 function outer(f: Flag): Flag { let v: i32 = inner(f)?; let w: i32 = inner(On(v))?; return On(w); }
 function main(): i32 { match (outer(On(1))) { On(v) => { return v; }, Off => { return 99; } } }`, 3},
 
-		// A GENERIC marked enum, instantiated at two payload types in one
-		// module. The self-host erases to uniform 8-byte slots, so both
-		// instantiations share one lowering and the payload read has to agree
-		// with what the `match` arm does for the same erased field.
 		{"generic_two_instantiations", `
 @try
 enum Maybe[T] { Yes(T), No }
@@ -152,8 +117,6 @@ function cs(): i32 { match (bumps(Yes("ab"))) { Yes(v) => { return v.len(); }, N
 function ds(): i32 { match (bumps(No)) { Yes(v) => { return v.len(); }, No => { return 9; } } }
 function main(): i32 { return ai() + bi() + cs() + ds(); }`, 70},
 
-		// Option and Result keep their own lowering, so the marked-enum arm
-		// must not have disturbed it.
 		{"option_result_unchanged", `
 function f(n: i32): Option[i32] { if (n > 0) { return Some(n); } return None; }
 function g(n: i32): Option[i32] { let v: i32 = f(n)?; return Some(v * 3); }
@@ -212,11 +175,6 @@ func TestSelfHostTryMarkerArm64(t *testing.T) {
 	}
 }
 
-// The `?` failure edge on a marked enum is an early return, so it replays the
-// defer pass's cleanup markers exactly as an explicit `return` does: every
-// registered plain defer, then the errdefers, and only on the failure path.
-// Both shapes of the operator share that code with Option / Result, so what
-// this pins is that the marked-enum arm reaches it at all.
 const tryMarkerDeferSrc = `
 @try
 enum Flag { On(i32), Off }
@@ -249,8 +207,6 @@ func TestSelfHostTryMarkerDeferX86_64(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	// Failure path: the defer fires, then the errdefer. Success path: the
-	// defer alone.
 	const want = "d\ne\n|\nd\n"
 	if got := string(out); got != want {
 		t.Errorf("stdout %q, want %q — an errdefer that fired on the success "+
@@ -260,10 +216,6 @@ func TestSelfHostTryMarkerDeferX86_64(t *testing.T) {
 	}
 }
 
-// The wasm backend reads a variant box's discriminant as a struct type id
-// rather than an interned shape pointer, and its struct_get offsets differ
-// from the register backends', so the marked-enum `?` needs its own end-to-end
-// run there rather than inheriting the x86-64 verdict.
 func TestSelfHostTryMarkerWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm @try `?` e2e")

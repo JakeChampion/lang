@@ -8,11 +8,6 @@ import (
 	"testing"
 )
 
-// A module the self-host cannot read is reported on one line with the import,
-// the file that wrote it, the path looked for, and the reason. An unreadable
-// module is not treated as absent: before #10142 the loader dropped the
-// IoError, so an invalid-UTF-8 import printed "cannot read module:" with no
-// reason, or was shadowed by a later candidate.
 func TestSelfHostUnreadableModuleIsReported(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
@@ -26,12 +21,8 @@ func TestSelfHostUnreadableModuleIsReported(t *testing.T) {
 	write("bad.fern", "pub function f(): i32 { let s: string = \"\xb2\"; return 0; }\n")
 	badEntry := write("uses_bad.fern", "import \"./bad\";\nfunction main(): i32 { return bad.f(); }\n")
 	missEntry := write("uses_gone.fern", "import \"./gone\";\nfunction main(): i32 { return 0; }\n")
-	// The import is reported in the module that wrote it, not the entry.
 	midModule := write("mid.fern", "import \"./gone\";\npub function f(): i32 { return 1; }\n")
 	transEntry := write("uses_mid.fern", "import \"./mid\";\nfunction main(): i32 { return mid.f(); }\n")
-	// Shadowing: mything.fern is present but unreadable and its literate
-	// sibling mything.fern.md is valid. The search must stop at the first
-	// rather than compile against the second.
 	write("mything.fern", "pub function f(): i32 { let s: string = \"\xb2\"; return 1; }\n")
 	write("mything.fern.md", "```fern\n<<*>>=\npub function f(): i32 { return 7; }\n```\n")
 	shadowEntry := write("uses_mything.fern", "import \"./mything\";\nfunction main(): i32 { return mything.f(); }\n")

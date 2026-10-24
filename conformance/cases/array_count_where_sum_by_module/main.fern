@@ -1,6 +1,6 @@
-// std/array's count_where (tally of matching elements) and sum_by (sum of an
-// i32 projection). Empty gives 0.
-// The shipped module's free and method forms.
+
+
+
 import "std/array" as arr;
 function is_even(x: i32): boolean { return x % 2 == 0; }
 function slen(s: string): i32 { return s.len(); }

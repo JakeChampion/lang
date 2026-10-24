@@ -9,18 +9,8 @@ import (
 	"testing"
 )
 
-// dropCallRE matches a call site of a resource-drop function in emitted WAT:
-// the synthesized `__resource_drop_R` wrapper or a declared `[resource-drop]`
-// import named `drop_*`. The wrappers' own calls to the import end in
-// `__import` and are not counted.
 var dropCallRE = regexp.MustCompile(`(?m)call \$(__resource_drop_\w+|drop_\w+)$`)
 
-// TestSelfHostSemanticResourceHandles drives WIT resource handles (`own R` /
-// `borrow R`) through the CLI's typed lowering to wasm, which must produce
-// every declaration. Each program's
-// drops are pinned by counting resource-drop call sites. Running them needs the poll world composed
-// around a component core (the P5 tests in self_host_p5_resource_handle_test.go),
-// which the CLI's preview1 core is not.
 func TestSelfHostSemanticResourceHandles(t *testing.T) {
 	gcc, _ := x86_64Tooling(t)
 	stdlibRoot, err := filepath.Abs("../../stdlib")
@@ -58,8 +48,6 @@ func TestSelfHostSemanticResourceHandles(t *testing.T) {
 		drops    int
 		src      string
 	}{
-		// An owned handle an import returns, lent to two borrow parameters and dropped
-		// automatically on return.
 		{name: "borrow-parameters-and-an-owned-import-result-auto-drop", declared: 5, drops: 1, src: `
 @import("wasi:io/poll@0.2.0", "pollable")
 resource Pollable;
@@ -80,7 +68,6 @@ function main(): i32 {
     return 0;
 }
 `},
-		// A bare resource name is an owned handle, dropped like `own R`.
 		{name: "a-bare-named-owned-local-auto-drops", declared: 5, drops: 1, src: `
 @import("wasi:io/poll@0.2.0", "pollable")
 resource Pollable;
@@ -101,8 +88,6 @@ function main(): i32 {
     return 0;
 }
 `},
-		// The program drops the handle itself: moved into the drop, so nothing else
-		// drops it.
 		{name: "an-explicit-drop-consumes-the-handle", declared: 5, drops: 1, src: `
 @import("wasi:io/poll@0.2.0", "pollable")
 resource Pollable;
@@ -151,7 +136,6 @@ function main(): i32 {
     return 0;
 }
 `},
-		// `q = p` moves the handle: only the explicit drop of `q` runs.
 		{name: "a-moved-handle-is-not-auto-dropped", declared: 5, drops: 1, src: `
 @import("wasi:io/poll@0.2.0", "pollable")
 resource Pollable;
@@ -177,8 +161,6 @@ function main(): i32 {
     return 0;
 }
 `},
-		// Fern functions with an owned result, a borrow parameter and an owned
-		// parameter that drops it.
 		{name: "fern-functions-take-and-return-handles", declared: 8, drops: 1, src: `
 @import("wasi:io/poll@0.2.0", "pollable")
 resource Pollable;
@@ -211,7 +193,6 @@ function main(): i32 {
     return 0;
 }
 `},
-		// The drop pass drops owned locals, not owned parameters.
 		{name: "an-owned-parameter-is-not-auto-dropped", declared: 5, drops: 0, src: `
 @import("wasi:io/poll@0.2.0", "pollable")
 resource Pollable;
@@ -236,7 +217,6 @@ function main(): i32 {
     return 0;
 }
 `},
-		// An `@export` taking a borrow, holding an owned local its `return;` drops.
 		{name: "an-export-lends-a-borrow-and-drops-a-local", declared: 3, drops: 1, src: `
 @import("local:test/res@0.1.0", "thing")
 resource Thing;
@@ -250,8 +230,6 @@ function on_request(t: borrow Thing): void {
 	return;
 }
 `},
-		// A generic instantiated at an owned handle and at a boolean: two
-		// instances, which share no key.
 		{name: "a-generic-instantiated-at-a-handle", declared: 6, drops: 1, src: `
 @import("wasi:io/poll@0.2.0", "pollable")
 resource Pollable;

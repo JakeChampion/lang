@@ -1,8 +1,8 @@
 import "./shadowlib";
 
-// Each shape contributes one bit, so a failure names which binder position
-// went missing: 1 + 2 + 4 + 8 + 16 + 32 = 63. The unshadowed control returns
-// 0 outright, so a rewriter that stopped mangling altogether cannot pass.
+
+
+
 function main(): i32 {
     if (shadowlib.unshadowed() != 100) { return 0; }
     let r: i32 = 0;

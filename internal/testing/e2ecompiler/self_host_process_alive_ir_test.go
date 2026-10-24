@@ -6,34 +6,6 @@ import (
 	"testing"
 )
 
-// `process_alive` (#8767) through the SELF-HOST IR path, on each backend that
-// emits it. The op pops a pid and pushes 0/1 from one `kill(pid, 0)` —
-// asmcore.rt_src_process_alive, reached as `call __fn___fern_process_alive`.
-//
-// The probe MEASURES against pids whose liveness the running program itself
-// established, rather than asserting the builtin compiles. Every wrong
-// lowering still compiles and links:
-//
-//   - lowering to nothing leaves the operand on the stack and answers with
-//     whatever was under it,
-//   - the wrong syscall number answers -ENOSYS for every pid, which is neither
-//     0 nor -EPERM, so everything reads dead,
-//   - dropping the -EPERM arm reads a process owned by another user as dead,
-//   - passing a non-positive pid through asks kill(2) about a process GROUP
-//     and reports the caller's own group as alive.
-//
-// The four probes between them separate all of those: the process's own pid is
-// alive, a pid the program forked and reaped is not, a pid above the kernel's
-// ceiling never was, and 0 / -1 are false without a syscall.
-//
-// EPERM is NOT reachable from here: this container runs as uid 0, so kill(1, 0)
-// succeeds outright rather than being refused, and a test process cannot drop
-// to another uid and still be the thing under test.
-// internal/testing/e2e/process_alive_test.go has the same gap for the same reason.
-//
-// wasm's whole answer is a refusal: a component has no process table, so
-// platforms.fern withholds the builtin on `proc`.
-// TestSelfHostProcessAliveIRWasmRefused is that half.
 const processAliveSelfHostSource = `function main(): i32 {
     // The process's OWN pid, read from the kernel rather than guessed: field 1
     // of /proc/self/stat is the pid of the process doing the reading.
@@ -69,15 +41,11 @@ const processAliveSelfHostSource = `function main(): i32 {
     return 0;
 }`
 
-// processAliveWasmProbe is the refusal probe: process_alive and nothing else,
-// so the refusal it draws is process_alive's own.
 const processAliveWasmProbe = `function main(): i32 {
     if (process_alive(1)) { return 0; }
     return 1;
 }`
 
-// TestSelfHostProcessAliveIRX86_64 compiles the probe through the production
-// x86-64 IR driver and runs it.
 func TestSelfHostProcessAliveIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -99,8 +67,6 @@ func TestSelfHostProcessAliveIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostProcessAliveIRArm64 runs the same probe through the arm64 IR
-// backend under qemu, where the helper's syscall number is asm-generic 129.
 func TestSelfHostProcessAliveIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -123,11 +89,6 @@ func TestSelfHostProcessAliveIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostProcessAliveIRWasmRefused pins the wasm answer, which is a
-// refusal NAMING THE BUILTIN. A component has no process table, so
-// platforms.fern withholds `proc`; the wasm driver has to say so itself,
-// because instruction selection downstream sees only an IR op and would frame
-// a deliberate gap as a missing lowering.
 func TestSelfHostProcessAliveIRWasmRefused(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

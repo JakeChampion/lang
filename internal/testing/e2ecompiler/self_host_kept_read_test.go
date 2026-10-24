@@ -7,14 +7,6 @@ import (
 	"testing"
 )
 
-// A loop reads two array fields of a record's member, rebuilds the record
-// around an update of that member, and then walks one of the two arrays,
-// keeping each element: the shape of std/http/h3q's applied loop. semsink
-// keeps the walked array's first read rather than read it again from the
-// record after the update, and takes the update's donor as spent there. So
-// the record dies at its update and is rebuilt in its own box. The planner
-// holds the walked array, so the member's second read is taken out of the
-// record and `taken` rebuilds it in its own box too. No call allocates.
 const keptReadProg = `import "std/i64";
 struct S { id: i64, actions: i32[], events: string[], name: string }
 struct C { session: S, total: i64, last: string }

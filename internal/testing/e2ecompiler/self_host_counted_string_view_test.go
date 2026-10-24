@@ -2,8 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// The descriptor has its own reference count; releasing a retained alias
-// must preserve both the descriptor and the borrowed source bytes.
 const countedStringViewProgram = `@noinline function join(a: string, b: string): string { return a + b; }
 @noinline function middle(s: string): str {
   return slice_unchecked(s, 1, s.len() - 1);

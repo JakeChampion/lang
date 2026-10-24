@@ -31,9 +31,6 @@ web-kit = { path = "libs/webkit" }
 	}
 }
 
-// A comment may follow a value on its line, as TOML allows (#11841): after a
-// string, a section header, an inline table and an array. A `#` inside a
-// quoted string is part of the value.
 func TestParseTrailingComments(t *testing.T) {
 	m, err := Parse(`[package]  # the package
 name = "app"
@@ -104,8 +101,6 @@ func TestParseDepCapabilitiesUnknownName(t *testing.T) {
 	}
 }
 
-// A refused manifest is E088 at the line it is on, named by its path once Load
-// has read it; a missing name is reported at the [package] header.
 func TestLoadErrorIsE088AtItsLine(t *testing.T) {
 	for _, c := range []struct{ src, want string }{
 		{"[package]\nname = \"app\"\n[dependencies]\nkv = { path = \"../kv\", capabilities = [\"nett\"] }\n", ":4:1: error[E088]: dependency \"kv\": capabilities: unknown capability \"nett\""},
@@ -128,8 +123,6 @@ func TestLoadErrorIsE088AtItsLine(t *testing.T) {
 	}
 }
 
-// A repeated table or key is refused, never resolved to one of the values: a
-// second, ungoverned entry for a dependency must not override its grant.
 func TestParseDuplicates(t *testing.T) {
 	for src, want := range map[string]string{
 		"[package]\nname = \"a\"\n[dependencies]\n[package]\n":                                                     `4:1: error[E088]: duplicate section [package]`,
@@ -145,8 +138,6 @@ func TestParseDuplicates(t *testing.T) {
 	}
 }
 
-// A comma or bracket inside a quoted value is part of the value, not an
-// inline-table separator.
 func TestParseDepQuotedSeparators(t *testing.T) {
 	m, err := Parse("[package]\nname = \"app\"\n[dependencies]\nkv = { path = \"a,b[c\", capabilities = [\"fs\"] }\n")
 	if err != nil {
@@ -272,7 +263,6 @@ func TestParseWorkspace(t *testing.T) {
 	if len(m.Members) != 2 || m.Members[0] != filepath.FromSlash("compiler/lexer") {
 		t.Errorf("members = %v", m.Members)
 	}
-	// Workspace-only manifest needs no [package] name.
 	if m.Name != "" {
 		t.Errorf("unexpected name %q", m.Name)
 	}
@@ -335,8 +325,6 @@ func TestParseWorkspaceErrors(t *testing.T) {
 	}
 }
 
-// The [lint] tables are accepted; what they configure is the linter's
-// (compiler/lint.fern) to check.
 func TestParseLintTables(t *testing.T) {
 	if _, err := Parse("[package]\nname = \"a\"\n[lint]\ncyclomatic-complexity = \"deny\"\n[lint.options]\ncyclomatic-complexity.max = 25\n"); err != nil {
 		t.Fatal(err)

@@ -4,27 +4,6 @@ import (
 	"testing"
 )
 
-// ln(1) writes almost nothing, so nearly every case here is about the TREE
-// the two implementations leave behind: which names exist, which of them
-// share an inode, and what a symbolic link holds. `seedTree` gives each side
-// its own freshly built working directory and compares everything under it,
-// so a stray temporary name fails as loudly as a missing link.
-//
-// The three places that comparison matters:
-//
-//   - A backup is the destination MOVED, not copied. `ln a b; ln -b a b`
-//     leaves a, b and b~ all on one inode with three links, and an
-//     implementation that copied or re-linked would show two groups.
-//   - GNU's replace path makes the new link beside the destination and
-//     renames it over — so `ln -sf <a target too long> b` leaves b exactly
-//     as it was, and the temporary name is never in the tree.
-//   - `ln -f d/a a` relinks one name of a pair to the same inode. rename(2)
-//     does nothing when both names already reach one file, so the temporary
-//     name has to be dealt with rather than renamed away.
-
-// lnBasic is the main fixture: two plain files, a directory, a symlink
-// to a file and a dangling one. `a` is the usual TARGET and `b` the usual
-// occupied destination.
 func lnBasic(t *testing.T, dir string) {
 	t.Helper()
 	seedWrite(t, dir, "a", "A\n")
@@ -34,15 +13,11 @@ func lnBasic(t *testing.T, dir string) {
 	seedSymlink(t, dir, "nowhere", "dangling")
 }
 
-// lnOne is one file and nothing else — the fixture for the operand-count
-// diagnostics, where anything more would be noise.
 func lnOne(t *testing.T, dir string) {
 	t.Helper()
 	seedWrite(t, dir, "a", "A\n")
 }
 
-// lnDir is a target DIRECTORY and two files to put in it, one of which is
-// already there so the 3rd form has a failing operand among the good ones.
 func lnDir(t *testing.T, dir string) {
 	t.Helper()
 	seedWrite(t, dir, "a", "A\n")
@@ -52,8 +27,6 @@ func lnDir(t *testing.T, dir string) {
 	seedWrite(t, dir, "d/b", "old b\n")
 }
 
-// lnSymDir is the `-n` fixture: a directory and a symbolic link to it, which
-// is the one destination whose meaning the option changes.
 func lnSymDir(t *testing.T, dir string) {
 	t.Helper()
 	seedWrite(t, dir, "a", "A\n")
@@ -61,9 +34,6 @@ func lnSymDir(t *testing.T, dir string) {
 	seedSymlink(t, dir, "d", "dl")
 }
 
-// lnPair is two names on ONE inode, plus a directory holding a third. The
-// same-file check is about directory ENTRIES, not inodes, and this is what
-// tells the two apart.
 func lnPair(t *testing.T, dir string) {
 	t.Helper()
 	seedWrite(t, dir, "a", "A\n")
@@ -71,8 +41,6 @@ func lnPair(t *testing.T, dir string) {
 	seedHardlink(t, dir, "a", "d/a")
 }
 
-// lnBackupSimple is the plain backup fixture, and lnBackupTaken adds a `b~`
-// that the backup has to replace.
 func lnBackupSimple(t *testing.T, dir string) {
 	t.Helper()
 	seedWrite(t, dir, "a", "A\n")
@@ -85,27 +53,18 @@ func lnBackupTaken(t *testing.T, dir string) {
 	seedWrite(t, dir, "b~", "OLD\n")
 }
 
-// lnBackupDir is the destination whose backup name is a DIRECTORY: the
-// rename is EISDIR, which nothing built out of link(2) and unlink(2) can
-// produce.
 func lnBackupDir(t *testing.T, dir string) {
 	t.Helper()
 	lnBackupSimple(t, dir)
 	seedMkdir(t, dir, "b~")
 }
 
-// lnLinked is a destination that is already a second name for the target —
-// the case where the backup moves the shared inode and the new link raises
-// its count to three.
 func lnLinked(t *testing.T, dir string) {
 	t.Helper()
 	seedWrite(t, dir, "a", "A\n")
 	seedHardlink(t, dir, "a", "b")
 }
 
-// The numbered-backup fixtures. GNU takes max(N)+1 over names matching
-// exactly `NAME.~<digits>~` with no leading zero, counts a DIRECTORY named
-// that way, and compares numerically rather than lexically.
 func lnNumbered(t *testing.T, dir string) {
 	t.Helper()
 	lnBackupSimple(t, dir)
@@ -140,9 +99,6 @@ func lnNumberedDir(t *testing.T, dir string) {
 	seedMkdir(t, dir, "b.~1~")
 }
 
-// lnNested is the `-r` fixture: two branches deep enough that the relative
-// answer needs `..`, plus a symbolic link on each side so the
-// canonicalisation is visible.
 func lnNested(t *testing.T, dir string) {
 	t.Helper()
 	seedMkdir(t, dir, "x/y")
@@ -155,9 +111,6 @@ func lnNested(t *testing.T, dir string) {
 	seedSymlink(t, dir, "x", "xl")
 }
 
-// lnLoop is a pair of symbolic links pointing at each other. Canonicalising
-// through them runs out of link budget, and GNU keeps the component as
-// written rather than failing — `realpath -m l1` answers `<cwd>/l1`.
 func lnLoop(t *testing.T, dir string) {
 	t.Helper()
 	seedWrite(t, dir, "a", "A\n")
@@ -166,8 +119,6 @@ func lnLoop(t *testing.T, dir string) {
 	seedMkdir(t, dir, "sub")
 }
 
-// lnSrcSlash is a target reached through a path with trailing slashes: the
-// destination's name drops them and a symbolic link's stored text keeps them.
 func lnSrcSlash(t *testing.T, dir string) {
 	t.Helper()
 	seedMkdir(t, dir, "s")
@@ -175,8 +126,6 @@ func lnSrcSlash(t *testing.T, dir string) {
 	seedMkdir(t, dir, "d")
 }
 
-// lnNotDir is a plain file where a directory operand is expected, the fault
-// GNU words two different ways depending on which form reached it.
 func lnNotDir(t *testing.T, dir string) {
 	t.Helper()
 	seedMkdir(t, dir, "n1")
@@ -185,25 +134,17 @@ func lnNotDir(t *testing.T, dir string) {
 	seedWrite(t, dir, "b", "B\n")
 }
 
-// lnQuoting is the names whose diagnostics differ between quote, quotef and
-// quoteaf: a space, an apostrophe (which makes gnulib use double
-// quotes), a leading `~`, and one that is not valid UTF-8.
 func lnQuoting(t *testing.T, dir string) {
 	t.Helper()
 	seedWrite(t, dir, "a", "A\n")
 	seedWrite(t, dir, "sp ace", "S\n")
 	seedWrite(t, dir, "ap'os", "Q\n")
-	// Only where the filesystem holds the name. This seed serves every
-	// quoting case and one names this file, so a fatal here takes the rest.
 	if rawByteNamesHeld(t) {
 		seedWrite(t, dir, "bad\xff", "N\n")
 	}
 	seedMkdir(t, dir, "d x")
 }
 
-// lnPrompt is the `-i` fixture with several occupied destinations, so one
-// decline among several answers still costs the exit status while the
-// accepted ones are relinked.
 func lnPrompt(t *testing.T, dir string) {
 	t.Helper()
 	seedWrite(t, dir, "a1", "A1\n")
@@ -217,10 +158,8 @@ func init() {
 	registerCorpus("ln", lnCases)
 }
 
-// lnCases is ln(1)'s corpus.
 func lnCases(t *testing.T) []invocation {
 	return []invocation{
-		// ---- the four forms ---------------------------------------------
 		{name: "two operands", args: []string{"a", "new"}, seedTree: lnBasic},
 		{name: "one operand", args: []string{"s/f"}, seedTree: lnSrcSlash},
 		{name: "one operand is verbose as ./NAME", args: []string{"-v", "s/f"}, seedTree: lnSrcSlash},
@@ -233,7 +172,6 @@ func lnCases(t *testing.T) []invocation {
 		{name: "the directory join uses one slash", args: []string{"-v", "s/f", "d///"}, seedTree: lnSrcSlash},
 		{name: "a directory operand repeated as a target", args: []string{"-v", "a", "d", "d"}, seedTree: lnDir},
 
-		// ---- -s ----------------------------------------------------------
 		{name: "symbolic", args: []string{"-sv", "a", "link"}, seedTree: lnBasic},
 		{name: "symbolic to a missing target", args: []string{"-sv", "nowhere-at-all", "link"}, seedTree: lnBasic},
 		{name: "symbolic into a directory", args: []string{"-sv", "a", "d"}, seedTree: lnDir},
@@ -246,7 +184,6 @@ func lnCases(t *testing.T) []invocation {
 		{name: "symbolic ignores -L", args: []string{"-sLv", "sl", "link"}, seedTree: lnBasic},
 		{name: "symbolic ignores -P", args: []string{"-sPv", "sl", "link"}, seedTree: lnBasic},
 
-		// ---- -L / -P -----------------------------------------------------
 		{name: "a hard link to a symlink is a second symlink", args: []string{"-v", "sl", "h"}, seedTree: lnBasic},
 		{name: "-L follows the target", args: []string{"-Lv", "sl", "h"}, seedTree: lnBasic},
 		{name: "-P is the default", args: []string{"-Pv", "sl", "h"}, seedTree: lnBasic},
@@ -256,7 +193,6 @@ func lnCases(t *testing.T) []invocation {
 		{name: "-P on a dangling symlink links the link", args: []string{"-Pv", "dangling", "h"}, seedTree: lnBasic},
 		{name: "-L names the operand as typed", args: []string{"-Lfv", "sl", "h"}, seedTree: lnBasic},
 
-		// ---- -f / -i -----------------------------------------------------
 		{name: "-f replaces", args: []string{"-fv", "a", "b"}, seedTree: lnBasic},
 		{name: "-f replaces a symlink", args: []string{"-fv", "a", "sl"}, seedTree: lnBasic},
 		{name: "-f replaces a dangling symlink", args: []string{"-fv", "a", "dangling"}, seedTree: lnBasic},
@@ -274,7 +210,6 @@ func lnCases(t *testing.T) []invocation {
 		{name: "-i once per operand", args: []string{"-iv", "a1", "a2", "dd"}, stdin: "n\ny\n", seedTree: lnPrompt},
 		{name: "-i with backups", args: []string{"-ivb", "a1", "a2", "dd"}, stdin: "y\ny\n", seedTree: lnPrompt},
 
-		// ---- the same-file rule ------------------------------------------
 		{name: "-f a file onto itself", args: []string{"-f", "a", "a"}, seedTree: lnOne},
 		{name: "-f the same entry spelled differently", args: []string{"-f", "./a", "a"}, seedTree: lnOne},
 		{name: "-f the same entry through dotdot", args: []string{"-f", "d/../a", "a"}, seedTree: lnPair},
@@ -288,7 +223,6 @@ func lnCases(t *testing.T) []invocation {
 		{name: "-sf a missing name onto itself", args: []string{"-sfv", "nosuch", "nosuch"}, seedTree: lnBasic},
 		{name: "-sf a dereferenced source onto itself", args: []string{"-sf", "./a", "a"}, seedTree: lnOne},
 
-		// ---- -n ------------------------------------------------------------
 		{name: "-n treats a symlinked directory as a file", args: []string{"-n", "a", "dl"}, seedTree: lnSymDir},
 		{name: "without -n the link lands inside", args: []string{"-v", "a", "dl"}, seedTree: lnSymDir},
 		{name: "-sfn replaces the symlink", args: []string{"-sfnv", "a", "dl"}, seedTree: lnSymDir},
@@ -299,7 +233,6 @@ func lnCases(t *testing.T) []invocation {
 		{name: "-t before -n still lstats", args: []string{"-t", "dl", "-n", "a"}, seedTree: lnSymDir},
 		{name: "-t on a symlinked directory follows it", args: []string{"-vt", "dl", "a"}, seedTree: lnSymDir},
 
-		// ---- -r ------------------------------------------------------------
 		{name: "-r without -s", args: []string{"-r", "a", "l"}, seedTree: lnNested},
 		{name: "-r across two branches", args: []string{"-srv", "x/y/f", "p/q/l"}, seedTree: lnNested},
 		{name: "-r into the target's own directory", args: []string{"-srv", "d", "d/self"}, seedTree: lnNested},
@@ -317,7 +250,6 @@ func lnCases(t *testing.T) []invocation {
 		{name: "-r out of a symlink loop with a tail", args: []string{"-srv", "l2/x", "sub/b"}, seedTree: lnLoop},
 		{name: "-r with the plain -s answer for comparison", args: []string{"-sv", "x/y/f", "p/q/l"}, seedTree: lnNested},
 
-		// ---- -t / -T -------------------------------------------------------
 		{name: "-t", args: []string{"-vt", "d", "a", "c"}, seedTree: lnDir},
 		{name: "-t collapses trailing slashes", args: []string{"-vt", "d///", "s/f"}, seedTree: lnSrcSlash},
 		{name: "-t twice", args: []string{"-t", "d", "-t", "d", "a"}, seedTree: lnDir},
@@ -342,7 +274,6 @@ func lnCases(t *testing.T) []invocation {
 		{name: "-T twice", args: []string{"-T", "-T", "a", "b"}, seedTree: lnBasic},
 		{name: "-T keeps the trailing slash", args: []string{"-T", "a", "d/"}, seedTree: lnDir},
 
-		// ---- -d / -F -------------------------------------------------------
 		{name: "a directory target is refused", args: []string{"adir", "e"}, seedTree: lnBasic},
 		{name: "-d asks the kernel anyway", args: []string{"-d", "adir", "e"}, seedTree: lnBasic},
 		{name: "-F is -d", args: []string{"-F", "adir", "e"}, seedTree: lnBasic},
@@ -352,7 +283,6 @@ func lnCases(t *testing.T) []invocation {
 		{name: "a directory name needing quotes", args: []string{"d x", "q"}, seedTree: lnQuoting},
 		{name: "-fT over a directory needing quotes", args: []string{"-fT", "a", "d x"}, seedTree: lnQuoting},
 
-		// ---- backups -------------------------------------------------------
 		{name: "-b", args: []string{"-bv", "a", "b"}, seedTree: lnBackupSimple},
 		{name: "-b over an existing backup", args: []string{"-bv", "a", "b"}, seedTree: lnBackupTaken},
 		{name: "-b moves the destination", args: []string{"-bv", "a", "b"}, seedTree: lnLinked},
@@ -389,7 +319,6 @@ func lnCases(t *testing.T) []invocation {
 		{name: "--backup=T is not t", args: []string{"--backup=T", "a", "b"}, seedTree: lnBackupSimple},
 		{name: "--backup on a blank argument", args: []string{"--backup= ", "a", "b"}, seedTree: lnBackupSimple},
 
-		// ---- -S / --suffix -------------------------------------------------
 		{name: "-S turns backups on", args: []string{"-S", ".bak", "-v", "a", "b"}, seedTree: lnBackupSimple},
 		{name: "-S glued", args: []string{"-S.bak", "-v", "a", "b"}, seedTree: lnBackupSimple},
 		{name: "--suffix glued", args: []string{"--suffix=.bak", "-v", "a", "b"}, seedTree: lnBackupSimple},
@@ -404,7 +333,6 @@ func lnCases(t *testing.T) []invocation {
 		{name: "--suffix with no argument", args: []string{"--suffix"}, seedTree: lnBackupSimple},
 		{name: "-S with no argument", args: []string{"-S"}, seedTree: lnBackupSimple},
 
-		// ---- the environment -----------------------------------------------
 		{name: "VERSION_CONTROL", args: []string{"-bv", "a", "b"}, env: []string{"VERSION_CONTROL=numbered"}, seedTree: lnBackupSimple},
 		{name: "--backup overrides VERSION_CONTROL", args: []string{"--backup=simple", "-v", "a", "b"}, env: []string{"VERSION_CONTROL=numbered"}, seedTree: lnBackupSimple},
 		{name: "an empty VERSION_CONTROL is existing", args: []string{"-bv", "a", "b"}, env: []string{"VERSION_CONTROL="}, seedTree: lnBackupSimple},
@@ -417,7 +345,6 @@ func lnCases(t *testing.T) []invocation {
 		{name: "an empty SIMPLE_BACKUP_SUFFIX is the default", args: []string{"-bv", "a", "b"}, env: []string{"SIMPLE_BACKUP_SUFFIX="}, seedTree: lnBackupSimple},
 		{name: "an unusable SIMPLE_BACKUP_SUFFIX is the default", args: []string{"-bv", "a", "b"}, env: []string{"SIMPLE_BACKUP_SUFFIX=x/y"}, seedTree: lnBackupSimple},
 
-		// ---- the two arrow rules --------------------------------------------
 		{name: "EEXIST has no arrow", args: []string{"a", "b"}, seedTree: lnBasic},
 		{name: "ENOENT has one", args: []string{"a", "nodir/x"}, seedTree: lnBasic},
 		{name: "ENOTDIR has one", args: []string{"a", "a/x"}, seedTree: lnBasic},
@@ -427,7 +354,6 @@ func lnCases(t *testing.T) []invocation {
 		{name: "a symbolic link's empty destination has no arrow", args: []string{"-s", "a", ""}, seedTree: lnBasic},
 		{name: "a symbolic link's empty target has one", args: []string{"-s", "", "link"}, seedTree: lnBasic},
 
-		// ---- the target's own access check -----------------------------------
 		{name: "a missing target", args: []string{"nosuch", "new"}, seedTree: lnBasic},
 		{name: "a missing target with a directory destination", args: []string{"nosuch", "adir"}, seedTree: lnBasic},
 		{name: "a missing target with an occupied destination", args: []string{"nosuch", "b"}, seedTree: lnBasic},
@@ -437,7 +363,6 @@ func lnCases(t *testing.T) []invocation {
 		{name: "a target with trailing slashes", args: []string{"s/f///", "d"}, seedTree: lnSrcSlash},
 		{name: "a symbolic link needs no target", args: []string{"-sv", "nosuch", "new"}, seedTree: lnBasic},
 
-		// ---- the target-directory check --------------------------------------
 		{name: "three operands with a missing last", args: []string{"a", "b", "nosuch"}, seedTree: lnNotDir},
 		{name: "three operands with a file last", args: []string{"a", "b", "n1/f"}, seedTree: lnNotDir},
 		{name: "three operands with a trailing slash last", args: []string{"a", "b", "nosuchdir/"}, seedTree: lnNotDir},
@@ -445,7 +370,6 @@ func lnCases(t *testing.T) []invocation {
 		{name: "two operands with a trailing slash last", args: []string{"a", "nosuchdir/"}, seedTree: lnNotDir},
 		{name: "two operands under a plain file", args: []string{"a", "b/x"}, seedTree: lnNotDir},
 
-		// ---- operand counts ---------------------------------------------------
 		{name: "no operands"},
 		{name: "dashdash alone", args: []string{"--"}},
 		{name: "a lone dash is an operand", args: []string{"-"}, seedTree: lnOne},
@@ -453,7 +377,6 @@ func lnCases(t *testing.T) []invocation {
 		{name: "dashdash then a real target", args: []string{"--", "a", "new"}, seedTree: lnBasic},
 		{name: "one symbolic operand after dashdash", args: []string{"-s", "--", "-x"}, seedTree: lnOne},
 
-		// ---- -v ----------------------------------------------------------------
 		{name: "-v on a hard link", args: []string{"-v", "a", "new"}, seedTree: lnBasic},
 		{name: "-v on a symbolic link", args: []string{"-sv", "a", "new"}, seedTree: lnBasic},
 		{name: "-v with a backup", args: []string{"-vb", "a", "b"}, seedTree: lnBackupSimple},
@@ -461,7 +384,6 @@ func lnCases(t *testing.T) []invocation {
 		{name: "--verbose long", args: []string{"--verbose", "a", "new"}, seedTree: lnBasic},
 		{name: "-v is silent on a failure", args: []string{"-v", "a", "b"}, seedTree: lnBasic},
 
-		// ---- quoting -------------------------------------------------------------
 		{name: "a name with a space", args: []string{"-v", "sp ace", "out"}, seedTree: lnQuoting},
 		{name: "a name with an apostrophe", args: []string{"-v", "ap'os", "out"}, seedTree: lnQuoting},
 		{name: "a name that is not valid UTF-8", args: []string{"-v", "bad\xff", "out"}, seedTree: lnQuoting, rawByteName: true},
@@ -472,7 +394,6 @@ func lnCases(t *testing.T) []invocation {
 		{name: "a leading hash", args: []string{"-v", "a", "#hash"}, seedTree: lnQuoting},
 		{name: "an extra operand with a newline", args: []string{"-T", "a", "b", "c\nd"}, seedTree: lnQuoting},
 
-		// ---- the option scan --------------------------------------------------------
 		{name: "an invalid short option", args: []string{"-x", "a", "b"}},
 		{name: "an invalid short option in a cluster", args: []string{"-sx", "a", "b"}},
 		{name: "an unrecognized long option", args: []string{"--foo"}},
@@ -505,7 +426,6 @@ func lnCases(t *testing.T) []invocation {
 		{name: "POSIXLY_CORRECT set to one", args: []string{"a", "new", "-v"}, env: []string{"POSIXLY_CORRECT=1"}, seedTree: lnBasic},
 		{name: "an option after the operands", args: []string{"a", "new", "--foo"}, seedTree: lnBasic},
 
-		// ---- the write-failure paths -------------------------------------------------
 		{name: "stdout closed with nothing to write", args: []string{"a", "b"}, seedTree: lnBasic, stdout: stdoutClosed},
 		{name: "stdout closed with a verbose line", args: []string{"-v", "a", "new"}, seedTree: lnBasic, stdout: stdoutClosed},
 		{name: "stdout closed on a symbolic verbose line", args: []string{"-sv", "a", "new"}, seedTree: lnBasic, stdout: stdoutClosed},

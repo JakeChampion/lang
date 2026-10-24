@@ -10,8 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// A literal-first join must not let destination context overwrite the concrete
-// width of its other arm. Both source orders have the same committed type.
 func TestNumericJoinDestinationCannotWidenConcreteArm(t *testing.T) {
 	forms := []struct{ name, decl, tag, expr string }{
 		{"literal", "", "i32", "match (tag) { 0 => %s, _ => %s }"},
@@ -43,8 +41,6 @@ func TestNumericJoinDestinationCannotWidenConcreteArm(t *testing.T) {
 	}
 }
 
-// These are the literal annotations the compiled backends consume, independent
-// of whether the native interpreter happens to coerce a value at another site.
 func TestNumericJoinStampsResolvedArmWidths(t *testing.T) {
 	forms := []struct{ name, decl, tag, expr string }{
 		{"literal", "", "i32", "match (tag) { 0 => %s, _ => %s }"},

@@ -7,12 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// A method call on an array used to bottom out in "field access on
-// non-struct value of type i32[]" — a message that names neither the
-// method nor anything the receiver can actually do. Two situations
-// produce it, and both deserve better: a typo, and a spelling that was
-// deliberately retired (`push` became `append` when the mutable-looking
-// collection API was removed, and nothing said so).
 func TestUnknownMethodDiagnostics(t *testing.T) {
 	for _, tc := range []struct {
 		name, src string
@@ -56,10 +50,6 @@ func TestUnknownMethodDiagnostics(t *testing.T) {
 	}
 }
 
-// The two diagnostics this sits between must not regress: the scalar
-// path still names the import to add, and an ordinary struct still
-// reports a missing FIELD (with its replacement suggestion) rather than
-// being re-described as a method.
 func TestUnknownMethodDiagnosticsLeaveNeighboursAlone(t *testing.T) {
 	for _, tc := range []struct{ name, src, want string }{
 		{"scalar method still names the missing import",
@@ -86,8 +76,6 @@ func TestUnknownMethodDiagnosticsLeaveNeighboursAlone(t *testing.T) {
 	}
 }
 
-// An imported struct is named as the program spells it, never by its
-// mangled `mod__Name`, and a member access says "field or method" (#11842).
 func TestUnknownMemberNamesTheImportedStruct(t *testing.T) {
 	err := checkModuleSource(t, `import "core/iter" as it;
 function main(): i32 { let total: i32 = it.of([1, 2, 3]).sum(); return total; }`)

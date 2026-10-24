@@ -8,17 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostX86Encode exercises the self-hosted x86-64 machine-code
-// encoding primitives (compiler/x86_native.fern) — slice 2a of
-// the native binary backend (the assembler half; the container half is
-// elf.fern).
-//
-// x86_native.fern is import-free, so this test concatenates it with a
-// self-test main() that encodes each instruction and asserts the bytes
-// against the ground-truth encodings (cross-checked with `as`/objdump),
-// then runs the combined program through the self-host wasm pipeline
-// (wasm_run -> WAT -> wasmtime). Exit 0 = all checks pass; a failing
-// check returns its 1-based id.
 func TestSelfHostX86Encode(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host x86_encode e2e")
@@ -50,45 +39,22 @@ func TestSelfHostX86Encode(t *testing.T) {
 	}
 }
 
-// TestSelfHostX86ElfExitRuns is the first true end-to-end proof of the
-// native-binary track: a Fern program (x86_native.fern + elf.fern + a
-// driver) assembles an exit(42) program to machine code, wraps it in a
-// static ELF via elf.fern, and writes the raw binary to stdout. The Go
-// test captures that binary, writes it 0o755, and runs it *natively* on
-// x86-64 — asserting the process exits 42. This exercises the whole chain
-// (Fern instruction encoder -> ELF writer -> kernel load -> syscall) with
-// no external assembler or linker.
 func TestSelfHostX86ElfExitRuns(t *testing.T) {
 	runX86NativeDriver(t, "exit42", x86ElfExitDriverMain, 42)
 }
 
-// TestSelfHostX86LoopRuns extends the end-to-end proof to control flow: a
-// Fern program assembles a real loop (acc=0; repeat 7×: acc += 6;
-// exit(acc)) — exercising the immediate ALU encoders and a backward
-// conditional branch (jne rel32) — wraps it in an ELF via elf.fern, and
-// the binary runs natively on x86-64 exiting 42 (= 6 × 7).
 func TestSelfHostX86LoopRuns(t *testing.T) {
 	runX86NativeDriver(t, "loop42", x86ElfLoopDriverMain, 42)
 }
 
-// TestSelfHostX86MaxRuns exercises a *forward* conditional branch (jge
-// over the else-arm), resolved via the placeholder + x86_patch_rel32
-// path: max(42, 17) exits 42.
 func TestSelfHostX86MaxRuns(t *testing.T) {
 	runX86NativeDriver(t, "max42", x86ElfMaxDriverMain, 42)
 }
 
-// TestSelfHostX86CallRuns exercises a forward `call` + `ret`: main calls a
-// subroutine (defined after the call site, so the rel32 is patched) that
-// sets the result to 42 and returns; main exits with it.
 func TestSelfHostX86CallRuns(t *testing.T) {
 	runX86NativeDriver(t, "call42", x86ElfCallDriverMain, 42)
 }
 
-// TestSelfHostX86Labels byte-checks the named-label assembler (slice 2d):
-// forward branch, backward branch and forward call (each patched by
-// x86_resolve), and label lookup. Same wasm self-test shape
-// as TestSelfHostX86Encode.
 func TestSelfHostX86Labels(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host x86 labels e2e")
@@ -120,40 +86,18 @@ func TestSelfHostX86Labels(t *testing.T) {
 	}
 }
 
-// TestSelfHostX86LabelProgramRuns is the end-to-end proof of the label
-// assembler: a Fern program uses the named-label API to assemble
-// main { call compute; exit(result) } compute { loop 7×: acc += 6; ret }
-// — a forward `call` and a backward loop branch, both resolved by name —
-// wraps it in an ELF via elf.fern, and the binary runs natively exiting 42.
 func TestSelfHostX86LabelProgramRuns(t *testing.T) {
 	runX86NativeDriver(t, "label42", x86ElfLabelDriverMain, 42)
 }
 
-// TestSelfHostX86FrameRuns is the end-to-end proof of the memory operands
-// (slice 2e): a Fern program assembles a stack-frame round-trip — set up
-// rbp, store 42 to [rbp-8], clobber the register, reload it, tear the
-// frame down — exercising mov reg,reg (rbp/rsp), push/pop, sub rsp, and
-// rbp-relative store/load, then runs natively on x86-64 exiting 42.
 func TestSelfHostX86FrameRuns(t *testing.T) {
 	runX86NativeDriver(t, "frame42", x86ElfFrameDriverMain, 42)
 }
 
-// TestSelfHostX86RodataRuns is the end-to-end proof of rip-relative
-// addressing + a .rodata section (slice 2f): a Fern program interns a
-// `.quad 42` in .rodata, loads its address via `lea rax, [rip+answer]`,
-// dereferences it, and exits with the value — wrapped in an R+W+X ELF via
-// elf_static_executable_data_x86. A wrong rip displacement or .rodata base
-// would not exit 42.
 func TestSelfHostX86RodataRuns(t *testing.T) {
 	runX86NativeDriver(t, "rodata42", x86ElfRodataDriverMain, 42)
 }
 
-// runX86NativeDriver compiles x86_native.fern + elf.fern + driverMain
-// through the self-host wasm emitter, runs the resulting WAT under
-// wasmtime to obtain the raw ELF the Fern program assembled and wrote to
-// stdout, then executes that ELF natively on x86-64 and asserts its exit
-// code — the whole chain (Fern encoder -> ELF writer -> kernel -> syscall)
-// with no external assembler or linker.
 func runX86NativeDriver(t *testing.T, name, driverMain string, wantExit int) {
 	t.Helper()
 	if runtime.GOARCH != "amd64" {
@@ -178,7 +122,6 @@ func runX86NativeDriver(t *testing.T, name, driverMain string, wantExit int) {
 	}
 	source := string(nat) + "\n" + string(elf) + toU8Src + driverMain
 
-	// Stage 1: compile the driver source to WAT via the self-host emitter.
 	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
 	if len(wat) == 0 {
 		t.Fatalf("wasm emitter produced 0 bytes for the %s driver", name)
@@ -188,8 +131,6 @@ func runX86NativeDriver(t *testing.T, name, driverMain string, wantExit int) {
 		t.Fatalf("write wat: %v", err)
 	}
 
-	// Stage 2: run the WAT under wasmtime; its stdout is the raw ELF binary
-	// the Fern program assembled and wrote via write(string_from_bytes_unchecked(...)).
 	bin, err := exec.Command("wasmtime", "run", watPath).Output()
 	if err != nil {
 		t.Fatalf("wasmtime run (driver): %v", err)
@@ -215,11 +156,6 @@ func runX86NativeDriver(t *testing.T, name, driverMain string, wantExit int) {
 	}
 }
 
-// x86EncodeSelfTestMain asserts each encoder against the ground-truth
-// bytes (verified with `as` / objdump). Each `return N` is a distinct
-// failing-check id (0 = all pass). Decimal byte values: 0xB8=184,
-// 0x3C=60, 0xBF=191, 0x2A=42, 0x48=72, 0x89=137, 0xF8=248, 0x01=1,
-// 0xC8=200, 0x29=41, 0x55=85, 0x5D=93, 0x0F=15, 0x05=5, 0xC3=195.
 const x86EncodeSelfTestMain = `
 function x86enc_selftest_1(): i32 {
     // mov eax, 60  ->  B8 3C 00 00 00
@@ -665,9 +601,6 @@ function main(): i32 {
 }
 `
 
-// x86ElfExitDriverMain assembles exit(42) (mov edi,42 ; mov eax,60 ;
-// syscall), wraps it in a static x86-64 ELF, and writes the raw binary to
-// stdout for the Go test to run natively.
 const x86ElfExitDriverMain = `
 function main(): i32 {
     let code: i32[] = [];
@@ -680,11 +613,6 @@ function main(): i32 {
 }
 `
 
-// x86ElfLoopDriverMain assembles a real loop — acc=0; for i in 7 { acc +=
-// 6 }; exit(acc) — exercising the immediate ALU + a backward conditional
-// branch (jne rel32, target known) end-to-end. 6 * 7 = 42. The branch
-// displacement is computed from the recorded loop offset via
-// x86_branch_rel, the same math a label resolver will use.
 const x86ElfLoopDriverMain = `
 function main(): i32 {
     let code: i32[] = [];
@@ -706,14 +634,6 @@ function main(): i32 {
 }
 `
 
-// x86ElfMaxDriverMain assembles max(42, 17) using a FORWARD conditional
-// branch (jge skips the else-arm), resolved via a placeholder + patch:
-//
-//	eax = 42 ; ecx = 17 ; cmp eax, ecx ; jge done ; eax = ecx ; done:
-//	exit(eax)
-//
-// The jge's rel32 is emitted as 0, its field offset recorded, then patched
-// to reach `done` once that offset is known.
 const x86ElfMaxDriverMain = `
 function main(): i32 {
     let code: i32[] = [];
@@ -735,12 +655,6 @@ function main(): i32 {
 }
 `
 
-// x86ElfCallDriverMain assembles a forward call + ret:
-//
-//	call setval ; mov rdi, rax ; exit ; setval: mov eax, 42 ; ret
-//
-// The call targets a subroutine defined after the call site, so its rel32
-// is a patched forward reference.
 const x86ElfCallDriverMain = `
 function main(): i32 {
     let code: i32[] = [];
@@ -760,12 +674,6 @@ function main(): i32 {
 }
 `
 
-// x86LabelsSelfTestMain byte-checks the named-label assembler. Each
-// `return N` is a distinct failing-check id (0 = all pass). 0x0F=15,
-// 0x8D=141 (jge), 0x85=133 (jne), 0xE8=232 (call); rel32s: forward jge to
-// done=22 with field at 15 -> 3; backward jne to loop=0 with field at 9 ->
-// -13 (0xF3,FF,FF,FF = 243,255,255,255); forward call to sub=6 with field
-// at 1 -> 1.
 const x86LabelsSelfTestMain = `
 function main(): i32 {
     // forward conditional: cmp then jge done (placeholder, resolved later).
@@ -860,10 +768,6 @@ function main(): i32 {
 }
 `
 
-// x86ElfLabelDriverMain assembles, via the named-label API, a two-routine
-// program: main calls compute (forward call), which loops acc += 6 seven
-// times (backward jne to a label) and returns; main exits with the result
-// (42). Both references resolve by name through x86_resolve.
 const x86ElfLabelDriverMain = `
 function main(): i32 {
     let a: X86Asm = x86_asm_new();
@@ -887,14 +791,6 @@ function main(): i32 {
 }
 `
 
-// x86ElfFrameDriverMain assembles a stack-frame round-trip:
-//
-//	push rbp ; mov rbp, rsp ; sub rsp, 16
-//	rax = 42 ; [rbp-8] = rax ; rax = 0 ; rax = [rbp-8]
-//	mov rsp, rbp ; pop rbp ; exit(rax)
-//
-// The value survives only via the store/reload through [rbp-8], so a wrong
-// memory encoding would not exit 42.
 const x86ElfFrameDriverMain = `
 function main(): i32 {
     let code: i32[] = [];
@@ -916,13 +812,6 @@ function main(): i32 {
 }
 `
 
-// x86ElfRodataDriverMain assembles a program that reads a .rodata constant
-// via rip-relative addressing:
-//
-//	lea rax, [rip+answer] ; rax = [rax] ; exit(rax) ; .rodata answer: .quad 42
-//
-// The rip displacement and the .rodata base (padded .text length) are
-// resolved by x86_resolve, and the image is built with the R+W+X data ELF.
 const x86ElfRodataDriverMain = `
 function main(): i32 {
     let a: X86Asm = x86_asm_new();

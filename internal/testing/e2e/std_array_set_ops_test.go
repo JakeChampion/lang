@@ -2,13 +2,6 @@ package e2e
 
 import "testing"
 
-// TestStdArraySetOps pins the Eq-driven set-algebra verbs
-// (`count` / `union` / `intersection` / `difference`) as they ship in
-// std/array — called qualified through `import "std/array"`. They share
-// the `[T: cmp.Eq]` bound (and per-element-type monomorphisation) with
-// `contains` / `distinct`, so `i32` keeps the scalar `==` while `string`
-// dispatches byte equality, on interp + x86-64 + wasm. The self-host IR
-// path is pinned separately in self_host_set_ops_ir_test.go.
 func TestStdArraySetOps(t *testing.T) {
 	cases := []struct {
 		name string
@@ -23,7 +16,7 @@ function main(): i32 {
     let ss: string[] = ["x", "y", "x"];
     return array.count(a, 2) * 10 + array.count(ss, "x") + array.count(a, 9);
 }`,
-			want: 32, // 3 twos -> 30, 2 x -> +2, no 9 -> +0
+			want: 32,
 		},
 		{
 			name: "union dedups across both",

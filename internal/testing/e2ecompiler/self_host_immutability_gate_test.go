@@ -8,31 +8,19 @@ import (
 	"testing"
 )
 
-// TestSelfHostImmutabilityGateX86_64 verifies the self-host compile driver
-// (asm_load_run) ENFORCES the immutable-data cycle rules: a program that
-// violates E048 (field assign) / E049 (reference-capture write-back) / E055
-// (discarded pure result) / E056 (subscript assign) / E057 (Cell over a
-// value that can reach a cell) is rejected with a formatted diagnostic on
-// stderr and a non-zero exit, instead of silently compiling — the full cycle-rule set #2678 requires
-// the self-host drivers to gate. The valid (functional-update / scalar-Cell)
-// forms compile cleanly. This is the self-host enforcement that the Go
-// reference compiler has via its checker (docs/IMMUTABILITY-MIGRATION-PLAN.md
-// §4). These five were the first codes the gate enforced; it now enforces every
-// coded diagnostic except the partial-port rules measured to false-positive
-// (#6961), so this test pins the cycle-rule half of a wider set.
 func TestSelfHostImmutabilityGateX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
 		t.Skip("file-loading driver test runs only natively (argv paths)")
 	}
-	dir := writeSelfHostAsmProject(t) // lexer, parser, asm
+	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "drivers/asm_load_run.fern")
 	mmc := buildSelfHostBin(t, gcc, dir, "drivers/asm_load_run.fern", "mmc")
 
 	cases := []struct {
 		name     string
 		src      string
-		wantDiag string // non-empty ⇒ expect rejection (exit≠0) with this on stderr
+		wantDiag string
 	}{
 		{
 			name:     "field-assign-E048",
@@ -45,9 +33,6 @@ func TestSelfHostImmutabilityGateX86_64(t *testing.T) {
 			wantDiag: "error[E056]",
 		},
 		{
-			// E049: a reference-typed value (here an i32[]) captured by a closure
-			// is read-only — reassigning it inside the closure could close a
-			// reference cycle, so the build gate rejects it before codegen.
 			name:     "captured-ref-assign-E049",
 			src:      "function main(): i32 { let xs: i32[] = [1]; let f = (): i32 => { xs = xs.append(2); return xs.len(); }; return f(); }\n",
 			wantDiag: "error[E049]",
@@ -58,22 +43,16 @@ func TestSelfHostImmutabilityGateX86_64(t *testing.T) {
 			wantDiag: "error[E055]",
 		},
 		{
-			// E057: a Cell[T] element must be cycle-free — a struct holding a
-			// function value could capture the cell, so the build gate
-			// rejects it before codegen.
 			name:     "cell-fn-field-E057",
 			src:      "struct P { f: () => i32 }\nfunction main(): i32 { let c = cell_new(P { f: () => 1 }); return 0; }\n",
 			wantDiag: "error[E057]",
 		},
 		{
-			// A Cell over a scalar is cycle-free and still compiles cleanly —
-			// guards against the gate over-rejecting valid Cell uses.
 			name:     "cell-scalar-ok",
 			src:      "function main(): i32 { let c = cell_new(0); c.set(c.get() + 1); return c.get(); }\n",
 			wantDiag: "",
 		},
 		{
-			// The functional-update forms compile cleanly (no diagnostic).
 			name:     "valid-functional-update",
 			src:      "struct P { x: i32 }\nfunction main(): i32 { let p: P = P { x: 1 }; p = P { ...p, x: 5 }; let a: i32[] = [1, 2, 3]; a = a.with(0, 9); return p.x + a[0]; }\n",
 			wantDiag: "",
@@ -96,7 +75,6 @@ func TestSelfHostImmutabilityGateX86_64(t *testing.T) {
 				}
 				return
 			}
-			// Expect rejection: non-zero exit + the diagnostic on stderr.
 			ee, ok := err.(*exec.ExitError)
 			if !ok {
 				t.Fatalf("expected rejection (exit≠0), got success with %d bytes of asm", len(out))

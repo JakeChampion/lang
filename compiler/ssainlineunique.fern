@@ -1,12 +1,4 @@
-// Scoped machine-fragment proof, not a caller/SSA/whole-output certificate.
-// Boundary obligations: input names the actual incoming pointer location;
-// aligned eight-byte frame slots remain stable and disjoint from the heap;
-// non-tagged pointers >=65536 have a readable
-// signed32 RC header at (pointer & ~2)-8. ARM x4..x7 or x86 rcx/rdx/r11
-// scratch registers are dead; only these and the declared result may change. No
-// cached-input or alignment annotation is accepted as evidence here.
-// An x30 data home requires the caller to save its return address outside
-// this fragment. The frame and return path remain caller obligations.
+// If x30 holds data, the caller must save its return address outside this fragment.
 import "./util";
 import "./ssaproofnames" as names;
 import "./ssacredithelper" as helper;
@@ -37,7 +29,7 @@ function label(line: string): boolean {
 
 function location(name: string, arm: boolean): boolean {
   let r = isa.reg(name, arm, 64);
-  // Frame bases must stay fixed. x30 is a data home in a framed caller.
+  // Frame bases must stay fixed. A caller with a frame can use x30 for data.
   if (r >= 0) {
     return if (arm) { r != 29 } else { r != 4 && r != 5 };
   }
@@ -117,8 +109,6 @@ function path(p: Program, b: flow.Boundary, c: flow.Case): boolean {
 }
 
 function paths(p: Program, b: flow.Boundary): boolean {
-  // The admitted ISA only compares RC with one, making these two RC classes
-  // exhaustive (including negative/static, zero, and shared positive counts).
   for tagged in [false, true] {
     for view in [false, true] {
       for low in [false, true] {

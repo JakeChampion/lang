@@ -7,19 +7,6 @@ import (
 	"testing"
 )
 
-// TestWasmSelfHostRandom is a CI-runnable regression guard for the self-host
-// wasm IR path's randomness builtins (random_bytes / random_i32). Like
-// TestWasmSelfHostArrPush it is named TestWasm* on purpose so the test-e2e-wasm
-// workflow (which installs wasmtime and runs ^Test(WASM|Wasm)) executes it —
-// the TestSelfHostWasmRun suite is skipped in CI for lack of wasmtime.
-//
-// The bug it guards: the IR wasm backend lowered random_bytes/random_i32 to
-// `call $__fern_random_bytes` / `$__fern_random_i32` and the `random_get` wasi
-// import, but the IR runtime section never emitted those helper
-// definitions or the import, so any program drawing randomness produced an
-// invalid module (undefined function / import → wasmtime exits 1). Fixed by
-// gating random_get_import / random_bytes_ir_func / random_i32_func on the
-// random ops.
 func TestWasmSelfHostRandom(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host wasm random e2e")
@@ -30,8 +17,6 @@ func TestWasmSelfHostRandom(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
-	// All cases assert deterministic facts about non-deterministic data
-	// (length, byte range, that the call runs without trapping).
 	cases := []struct {
 		name   string
 		source string

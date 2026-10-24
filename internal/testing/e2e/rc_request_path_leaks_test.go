@@ -6,13 +6,6 @@ import (
 	"testing"
 )
 
-// Three shapes the serve loop and the request parser are built from, each
-// of which stranded one allocation per request on the Go compiler while the
-// self-host build was flat: a fresh buffer handed to a pair-form parser whose
-// payload holds a copy of it, a local seeded from an element of a parameter's
-// array field and then reassigned, and a match payload passed to a method
-// that copies its bytes out. Each program's answer is checked, and the
-// census must balance on every backend.
 func TestRequestPathTempsAreReleased(t *testing.T) {
 	cases := []struct {
 		name string
@@ -64,14 +57,6 @@ function main(): i32 {
     }
     return t;
 }`},
-		// A pair-form payload handed to a callee whose parameter is
-		// owned-by-default is retained for the callee's exit release, so the
-		// payload's own count is still the arm's to drop. The arm withheld it
-		// (the occurrence was not an excused use), the callee's dec only took
-		// the retained count back, and the record leaked once per match.
-		// `bs` owns `r` because a field of it escapes into the result; the
-		// `@noinline` keeps the call a call, since the inlined form folds the
-		// pair into one frame and hides the shape.
 		{"pair-form-payload-handed-to-an-owning-callee", 30, `struct S { data: u8[] }
 struct R { path: string, body: S }
 function mkr(n: i32): Option[R] { return Some(R { path: "abc", body: S { data: __alloc_u8(n) } }); }
@@ -89,13 +74,6 @@ function main(): i32 {
     }
     return t;
 }`},
-		// The heap-box form of the same shape: a failure payload handed to a
-		// helper that returns a string out of it. The helper owns the payload
-		// (the oracle counts the returned field as an escape), so the call
-		// retains it and the returned string takes its own transfer count;
-		// the box, the variant and the string are then the arm's to release.
-		// The `defer` keeps `mk` off the pair-form ABI so the scrutinee is a
-		// box, which is the shape every builtin returning Result has.
 		{"failure-payload-handed-to-a-helper-that-returns-it", 5, `import "std/i32";
 enum E { Missing(i32), Detail(i32, string) }
 function keeps(e: E): string { match (e) { Detail(_, msg) => { return msg; }, _ => { return "other"; } } return ""; }
@@ -108,8 +86,6 @@ function main(): i32 {
     while (i < 10) { t = t + handsBack(i); i = i + 1; }
     return t;
 }`},
-		// The same shape through std/http, where it was found: a parsed
-		// request read as text by a method whose parameter owns it.
 		{"parsed-request-body-read-as-text", 45, `import "std/http";
 function wire(n: i32): string { return "POST /x HTTP/1.1\r\nHost: h\r\nContent-Length: " + n.to_string() + "\r\n\r\n" + "0123456789".take(n); }
 function main(): i32 {
@@ -124,12 +100,6 @@ function main(): i32 {
     }
     return t;
 }`},
-		// A pair-form callee's pointer payload arrives counted by the return
-		// ABI, so the caller owns it whether the callee built it or retained
-		// an alias of a parameter's element (`Some(h.values[i])`, the shape
-		// every HeaderMap lookup takes). Each consumer of that count: the
-		// statement match, the expression match, a local, a `?` binding, and
-		// a return from inside the arm.
 		{"pair-form-alias-payload-consumed-five-ways", 40, `struct H { names: string[], values: string[] }
 function heap(i: i32): string { let s: string = "keep-alive-"; return s + ("!" + "!") + (if (i % 2 == 0) { "x" } else { "yy" }); }
 function get(h: H, name: string): Option[string] {
@@ -154,11 +124,6 @@ function main(): i32 {
     }
     return t - 540;
 }`},
-		// A fresh array handed to a callee that reassigns and returns its
-		// parameter comes back one count heavy when the callee hands it
-		// straight back (no rebind, or a push that kept the pointer): the
-		// bare return carries the transfer inc. The serve loop's
-		// `__with_backlog(conns, drv.wait(...))` is this shape on every wait.
 		{"fresh-array-returned-unchanged-by-a-threading-callee", 40, `function grow(a: i32[], more: boolean): i32[] { if (more) { a = a.append(7); } return a; }
 function mk(n: i32): i32[] { let v: i32[] = []; let i: i32 = 0; while (i < n) { v = v.append(i); i = i + 1; } return v; }
 function main(): i32 {

@@ -12,20 +12,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostWasmIRTcpStream pins tcp_send_bytes / tcp_recv_into on the
-// self-host wasm-IR path — slice 2 of #4318, against a real echo server the
-// test runs itself.
-//
-// Two host-side constraints shape the helpers:
-//
-//   - wasmtime caps blocking-write-and-flush at 4 KiB per call, so
-//     tcp_send_bytes drains through a chunked loop. The large-payload case
-//     below is what actually exercises it: 10000 bytes is three chunks, and an
-//     off-by-one in the loop shows up as a short write rather than a crash.
-//   - a read lends the caller's buffer to the host through the exported
-//     cabi_realloc (the canonical ABI materialises the list<u8> in guest
-//     memory) — shared with wasm_poll's list<u32> through a single gate, since
-//     a second definition is a duplicate-export error.
 func TestSelfHostWasmIRTcpStream(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -52,8 +38,6 @@ func TestSelfHostWasmIRTcpStream(t *testing.T) {
 		t.Fatalf("abs wit dir: %v", err)
 	}
 
-	// serve accepts one connection, reads until it has `want` bytes, then
-	// replies with reply(received). Returns the port.
 	serve := func(t *testing.T, want int, reply func(got []byte) string) int {
 		t.Helper()
 		ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -132,14 +116,10 @@ func TestSelfHostWasmIRTcpStream(t *testing.T) {
 	run := func(t *testing.T, name, src string) string {
 		return runWith(t, name, src, []string{"call $__fern_tcp_send_bytes", "call $__fern_tcp_recv_into"})
 	}
-	// runSendOnly asserts only the send symbol — the send-only module has no
-	// read in it, which is the whole point of that case.
 	runSendOnly := func(t *testing.T, name, src string) string {
 		return runWith(t, name, src, []string{"call $__fern_tcp_send_bytes"})
 	}
 
-	// Round-trip: send a short payload, read the echo back into the caller's
-	// buffer intact.
 	t.Run("send_recv_roundtrip", func(t *testing.T) {
 		port := serve(t, 5, func(got []byte) string { return "ECHO:" + string(got) })
 		src := fmt.Sprintf(wasmRecvHelper+`function main(): i32 {
@@ -157,11 +137,6 @@ func TestSelfHostWasmIRTcpStream(t *testing.T) {
 		}
 	})
 
-	// A send ALONE, with no read in the module. A read's cabi_realloc gate
-	// would satisfy the requirement a send also has (its
-	// blocking-write-and-flush takes a list<u8>), so only a send-only program
-	// shows a missing "cabi_realloc" export. Asserting the compose succeeds is
-	// the point; the byte count confirms it still works.
 	t.Run("send_only_composes_without_recv", func(t *testing.T) {
 		port := serve(t, 4, func(got []byte) string { return "" })
 		src := fmt.Sprintf(`function main(): i32 {
@@ -177,10 +152,6 @@ func TestSelfHostWasmIRTcpStream(t *testing.T) {
 		}
 	})
 
-	// 10000 bytes is three 4 KiB chunks, so this is the case that actually
-	// exercises tcp_send_bytes's drain loop. The server reports the byte count it
-	// received, so a short write shows up as a mismatch rather than silently
-	// passing.
 	t.Run("send_spans_multiple_4k_chunks", func(t *testing.T) {
 		const payloadLen = 10000
 		port := serve(t, payloadLen, func(got []byte) string { return fmt.Sprintf("%d", len(got)) })
@@ -204,10 +175,6 @@ func TestSelfHostWasmIRTcpStream(t *testing.T) {
 	})
 }
 
-// wasmRecvHelper is a Fern recv(c, max): it waits for c to be readable,
-// since a wasi:sockets read never blocks, then reads, waiting again while a
-// wake finds nothing (-EAGAIN, 6 in the WASI numbering), and answers the
-// bytes as text, none at the end of the stream or on an error.
 const wasmRecvHelper = `function recv(c: i32, max: i32): string {
     let buf: u8[] = __alloc_u8(max);
     let n: i32 = 0 - 6;

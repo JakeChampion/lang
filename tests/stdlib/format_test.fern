@@ -1,20 +1,9 @@
 import "std/test";
 import "std/format" as format;
-// For `@derive(cmp.Display)` on the user-type arg case below.
 import "core/cmp";
-
-// tests/stdlib/format_test.fern — exercise std/format's dynamic
-// template substitution and the human-readable byte / duration
-// formatters through the test runner. std/format had only Go-side
-// coverage; this is the pure-Fern, std/test-driven shape, gated through
-// the self-host IR path (TestSelfHostStdTestE2E) so the string-build /
-// integer-division lowering is proven end to end on the self-hosted
-// compiler.
 
 @derive(cmp.Display)
 struct Point { x: i32, y: i32 }
-
-// ---- format(fmt, args) — positional `{}` substitution ----
 
 function test_format_positional(): test.TestOutcome {
   return test.assert_eq(format.format("{} + {} = {}", ["1", "2", "3"]), "1 + 2 = 3");
@@ -24,14 +13,10 @@ function test_format_no_placeholders(): test.TestOutcome {
   return test.assert_eq(format.format("plain text", []), "plain text");
 }
 
-// `{{` / `}}` escape to literal braces (Python/Rust convention).
 function test_format_escaped_braces(): test.TestOutcome {
   return test.assert_eq(format.format("{{}} literal", []), "{} literal");
 }
 
-// ---- Display args, not pre-stringified (#2684) ----
-
-// format_values: one element type, rendered through its Display impl.
 function test_format_values_ints(): test.TestOutcome {
   return test.assert_eq(format.format_values("{} + {} = {}", [40, 2, 42]), "40 + 2 = 42");
 }
@@ -40,8 +25,6 @@ function test_format_values_floats(): test.TestOutcome {
   return test.assert_eq(format.format_values("{} and {}", [0.5, 1.25]), "0.5 and 1.25");
 }
 
-// format1..format4 bind each arg's type separately, which is what makes
-// one call's args heterogeneous.
 function test_format1(): test.TestOutcome {
   return test.assert_eq(format.format1("n={}", 7), "n=7");
 }
@@ -58,8 +41,6 @@ function test_format4_mixed(): test.TestOutcome {
   return test.assert_eq(format.format4("{}/{}/{}/{}", 1, "a", true, 0.5), "1/a/true/0.5");
 }
 
-// A user type is a legal arg as soon as it has a Display impl —
-// `@derive(cmp.Display)` here, rendered field-wise.
 function test_format_derived_struct(): test.TestOutcome {
   return test.assert_eq(
     format.format1("at {}", Point { x: 1, y: 2 }),
@@ -67,13 +48,10 @@ function test_format_derived_struct(): test.TestOutcome {
   );
 }
 
-// Specs apply to the Display output, so an alignment spec works on a raw
-// value exactly as it does on a pre-stringified one.
 function test_format_raw_with_spec(): test.TestOutcome {
   return test.assert_eq(format.format1("[{:>5}]", 42), "[   42]");
 }
 
-// Width specs: `{:>w}` right-aligns, `{:<w}` left-aligns to width w.
 function test_format_right_align(): test.TestOutcome {
   return test.assert_eq(format.format("{:>5}", ["42"]), "   42");
 }
@@ -82,10 +60,6 @@ function test_format_left_align(): test.TestOutcome {
   return test.assert_eq(format.format("{:<5}", ["42"]), "42   ");
 }
 
-// Center-align `{:^w}` splits the padding, and a custom fill char
-// (`{:*^w}`) replaces the default space — both exercise __repeat_char,
-// the padding builder rewritten to the two-pass exact-size buffer
-// (#4379) so wide fields no longer recopy the growing pad each step.
 function test_format_center_align(): test.TestOutcome {
   return test.assert_eq(format.format("{:^8}", ["hi"]), "   hi   ");
 }
@@ -98,14 +72,10 @@ function test_format_custom_fill_right(): test.TestOutcome {
   return test.assert_eq(format.format("{:.>5}", ["x"]), "....x");
 }
 
-// A multibyte fill char is captured whole (é is 2 bytes); width still
-// counts bytes, so pad 2 emits two copies of the 2-byte é.
 function test_format_multibyte_fill(): test.TestOutcome {
   return test.assert_eq(format.format("{:é>4}", ["ab"]), "ééab");
 }
 
-// Sign flag `+`: forces a leading `+` on a non-negative number; a
-// value that already carries `-`, or a non-numeric one, is untouched.
 function test_format_sign_plus(): test.TestOutcome {
   return test.assert_eq(format.format("{:+}", ["42"]), "+42");
 }
@@ -118,8 +88,6 @@ function test_format_sign_nonnumeric_untouched(): test.TestOutcome {
   return test.assert_eq(format.format("{:+}", ["ok"]), "ok");
 }
 
-// Zero-pad flag `0`: sign-aware — zeros pad after a leading sign,
-// and the sign counts toward the width.
 function test_format_zero_pad(): test.TestOutcome {
   return test.assert_eq(format.format("{:05}", ["42"]), "00042");
 }
@@ -132,16 +100,9 @@ function test_format_sign_zero_pad(): test.TestOutcome {
   return test.assert_eq(format.format("{:+06}", ["42"]), "+00042");
 }
 
-// The `0` flag overrides fill/align (matching Rust), so a left-align
-// spec still right-pads with zeros.
 function test_format_zero_pad_overrides_align(): test.TestOutcome {
   return test.assert_eq(format.format("{:<05}", ["42"]), "00042");
 }
-
-// ---- `.N` precision ----
-// On a decimal numeral `.N` counts FRACTIONAL DIGITS, rounding
-// half-away-from-zero and zero-filling to exactly N of them. On anything
-// else it truncates to N bytes.
 
 function test_precision_float_truncating(): test.TestOutcome {
   return test.assert_eq(format.format1("{:.2}", 3.14159), "3.14");
@@ -151,18 +112,14 @@ function test_precision_float_rounds_up(): test.TestOutcome {
   return test.assert_eq(format.format1("{:.2}", 3.999), "4.00");
 }
 
-// Rounding that carries out of the leading digit widens the integer part.
 function test_precision_carry_widens(): test.TestOutcome {
   return test.assert_eq(format.format1("{:.0}", 9.9), "10");
 }
 
-// `.0` drops the fractional part entirely — no trailing dot.
 function test_precision_zero_places(): test.TestOutcome {
   return test.assert_eq(format.format1("{:.0}", 3.7), "4");
 }
 
-// Fewer fractional digits than asked for zero-fills, so an integer-valued
-// arg still renders to the requested width.
 function test_precision_pads_integer(): test.TestOutcome {
   return test.assert_eq(format.format1("{:.2}", 3), "3.00");
 }
@@ -171,18 +128,13 @@ function test_precision_negative(): test.TestOutcome {
   return test.assert_eq(format.format1("{:>8.2}", 0.0 - 2.5), "   -2.50");
 }
 
-// A non-numeral keeps Rust's string-precision meaning: at most N bytes.
 function test_precision_string_truncates(): test.TestOutcome {
   return test.assert_eq(format.format("{:>8.3}", ["hello"]), "     hel");
 }
 
-// A cut that would land mid-code-point snaps back to the char boundary:
-// "héllo" is h(1) é(2) l l o, so .2 keeps only "h" — never half an é.
 function test_precision_string_snaps_multibyte(): test.TestOutcome {
   return test.assert_eq(format.format("{:.2}", ["héllo"]), "h");
 }
-
-// ---- format_bytes(n) — binary IEC units (B / KiB / MiB / GiB / TiB) ----
 
 function test_bytes_below_kib(): test.TestOutcome {
   return test.assert_eq(format.format_bytes(0), "0 B");
@@ -204,13 +156,11 @@ function test_bytes_negative(): test.TestOutcome {
   return test.assert_eq(format.format_bytes(0 - 2048), "-2 KiB");
 }
 
-// Past i32's 2 GiB ceiling, as a file size can be.
 function test_bytes_past_two_gib(): test.TestOutcome {
   let n: i64 = 5368709120;
   return test.assert_eq(format.format_bytes(n), "5 GiB");
 }
 
-// One minus sign at i64's minimum, which has no positive counterpart.
 function test_bytes_i64_min(): test.TestOutcome {
   let n: i64 = -9223372036854775807 - 1;
   return test.assert_eq(format.format_bytes(n), "-8388608 TiB");
@@ -220,8 +170,6 @@ function test_bytes_tib(): test.TestOutcome {
   let n: i64 = 3298534883328;
   return test.assert_eq(format.format_bytes(n), "3 TiB");
 }
-
-// ---- format_duration_ms(ms) — h/m/s/ms, non-zero components only ----
 
 function test_duration_zero(): test.TestOutcome {
   return test.assert_eq(format.format_duration_ms(0), "0ms");
@@ -243,8 +191,6 @@ function test_duration_full(): test.TestOutcome {
   return test.assert_eq(format.format_duration_ms(3661001), "1h 1m 1s 1ms");
 }
 
-// Past the ~24.8 days an i32 of milliseconds holds, which parse_duration_ms
-// already returned (#5347).
 function test_duration_past_i32(): test.TestOutcome {
   return test.assert_eq(format.format_duration_ms(2592000001 as i64), "720h 1ms");
 }
@@ -264,12 +210,6 @@ function test_duration_round_trips_parse(): test.TestOutcome {
   }
 }
 
-// A longer, mixed template that exercises the growable-u8[] output buffer
-// across several reallocations in one call (#4379): a long literal run, many
-// placeholders, an escaped-brace pair, a non-placeholder `{"k":..}` JSON run
-// that renders verbatim, a missing-arg placeholder emitted as-is, and a
-// multi-byte UTF-8 literal — the branches that each append to the buffer
-// differently. Pins the byte-for-byte output of the rewrite.
 function test_format_mixed_long(): test.TestOutcome {
   let got: string = format.format(
     "user={} role={} {{n}}={} cfg={\"k\":1} tail={} name={} done",

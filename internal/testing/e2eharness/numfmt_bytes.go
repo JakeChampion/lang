@@ -43,8 +43,6 @@ func RunNumfmtByteCases(t *testing.T, bin string, runner []string, census func(*
 		{name: "empty"},
 		{name: "abort after output", data: "1000 2000\n3000 x 4000\n5000\n", args: []string{"--field=-", "--to=si", "--debug"}},
 		{name: "abort operands", args: []string{"--to=si", "--debug", "1000", "x", "2000"}},
-		// Exact scaled integers have the same digits on the host GNU oracle
-		// and guest targets with different long-double formats.
 		{name: "long format stdin", data: "1000\n999000\n1000\n", args: []string{"--to=si", "--format=%.123f"}},
 		{name: "long format fields", args: []string{"--field=-", "--to=si", "--format=%.123f", "1000 999000 1000"}},
 		{name: "precision refusal stdin", data: "1000\n2000\n", args: []string{"--format=%.100f"}},

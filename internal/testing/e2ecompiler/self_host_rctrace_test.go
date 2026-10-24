@@ -12,30 +12,6 @@ import (
 	"testing"
 )
 
-// --- Self-host heap event tracer (#6068) --------------------------
-//
-// The self-host x86-64 runtime's port of FERN_RC_TRACE / FERN_LEAKCHECK.
-// __fern_alloc and every freelist-push site call __fern_hev_a / __fern_hev_f,
-// which write one line to stderr:
-//
-//	rctrace <a|f> <ptr> <size> <site>
-//
-// three fixed-width 16-hex numbers, and tick the leakcheck counters that
-// __fern_lc_report prints at exit.
-//
-// The native side has had this since #6076; the self-host runtime had only the
-// over-release detector, so it could see a block freed twice but never one that
-// was never freed. These tests pin the properties that make the pair usable as
-// a differential against native: (1) allocs pair with frees by POINTER with
-// matching sizes on a balanced program, (2) sites are per-call-site rather than
-// a constant, (3) the trace's own tallies reproduce every number leakcheck
-// reports independently, (4) a retaining program's unpaired allocs account for
-// live_bytes exactly, and (5) a flag-off build carries no trace of the feature.
-//
-// x86-64 only, like the native original.
-
-// hevBalancedSrc allocates and drops: every box it makes is dead before main
-// returns, so a correct trace pairs completely and live_bytes is 0.
 const hevBalancedSrc = `function sum(xs: i32[]): i32 {
     let t: i32 = 0;
     let i: i32 = 0;
@@ -49,13 +25,6 @@ function main(): i32 {
     return a + s.len();
 }`
 
-// hevExitLeakSrc leaves memory unreclaimed by calling exit() while `keep` is
-// still live in main, since main reads it again after the call. The process
-// terminates without unwinding, so the blocks are genuinely never freed.
-//
-// A probe asserting a leak needs one that is structural like this, not a
-// reclaim gap someone will close. Calling exit() from main itself is not
-// enough: a local dead before the call is released before it.
 const hevExitLeakSrc = `function bail(n: i32): i32 { exit(n); return 0; }
 function main(): i32 {
     let keep: i32[][] = [];
@@ -65,22 +34,14 @@ function main(): i32 {
     return r + keep.len();
 }`
 
-// hevEvent is one parsed `rctrace` line.
 type hevEvent struct {
-	kind string // "a" | "f"
-	ptr  uint64
-	size uint64
-	site uint64
-	// caller is the return address one frame above site — native's 5th
-	// number. It is what separates two call sites that share a runtime
-	// helper: every append allocates at one address inside
-	// __fern_arr_push, so site cannot tell them apart and caller can.
+	kind   string
+	ptr    uint64
+	size   uint64
+	site   uint64
 	caller uint64
 }
 
-// runCaptureEnv is RunCapture with environment overrides — the self-host
-// compiler reads FERN_RC_TRACE / FERN_LEAKCHECK at EMIT time, so the flags go
-// to the driver process, not to the program it produces.
 func runCaptureEnv(t *testing.T, runner []string, bin string, stdin []byte, env []string, extraArgs ...string) []byte {
 	t.Helper()
 	var cmd *exec.Cmd
@@ -106,8 +67,6 @@ func runCaptureEnv(t *testing.T, runner []string, bin string, stdin []byte, env 
 	return out
 }
 
-// hevCompile emits asm for src with the given diagnostic env applied to the
-// self-host driver.
 func hevCompile(t *testing.T, runner []string, driverBin, src string, env []string) string {
 	t.Helper()
 	full := append([]string{"PATH=/usr/bin:/bin"}, env...)
@@ -118,11 +77,6 @@ func hevCompile(t *testing.T, runner []string, driverBin, src string, env []stri
 	return string(asm)
 }
 
-// loadCompile compiles src with the asm_load_run driver against the stdlib
-// and returns its output, or the error with the driver's stderr. A map needs
-// a loading compile: the typed lowering routes it onto core/map, which a
-// stdin driver has no loader to reach. env is the driver's whole environment
-// beside PATH; args follow the stdlib root (`-target`, …).
 func loadCompile(t *testing.T, runner []string, driverBin, src string, env []string, args ...string) (string, string, error) {
 	t.Helper()
 	stdlibRoot, err := filepath.Abs("../../stdlib")
@@ -150,8 +104,6 @@ func loadCompile(t *testing.T, runner []string, driverBin, src string, env []str
 	return string(out), stderr.String(), err
 }
 
-// mustLoadCompile is loadCompile that fails the test, with the driver's
-// stderr, when the compile does.
 func mustLoadCompile(t *testing.T, runner []string, driverBin, src string, env []string, args ...string) string {
 	t.Helper()
 	out, stderr, err := loadCompile(t, runner, driverBin, src, env, args...)
@@ -161,7 +113,6 @@ func mustLoadCompile(t *testing.T, runner []string, driverBin, src string, env [
 	return out
 }
 
-// hevRun runs a built binary and returns its stderr plus exit code.
 func hevRun(t *testing.T, runner []string, bin string) (string, int) {
 	t.Helper()
 	var cmd *exec.Cmd
@@ -176,10 +127,6 @@ func hevRun(t *testing.T, runner []string, bin string) (string, int) {
 	return errBuf.String(), cmd.ProcessState.ExitCode()
 }
 
-// parseHev pulls the `rctrace` lines and the `leakcheck` summary out of a
-// program's stderr. The fixed-width hex is the point of the format: a pairing
-// consumer needs no field-splitting beyond whitespace to match an `a` line to
-// its `f` line by pointer.
 func parseHev(t *testing.T, stderr string) ([]hevEvent, string) {
 	t.Helper()
 	var evs []hevEvent
@@ -225,8 +172,6 @@ func parseHev(t *testing.T, stderr string) ([]hevEvent, string) {
 	return evs, summary
 }
 
-// TestSelfHostRcTracePairsX86_64 — a balanced program's allocs pair with its
-// frees by pointer, at matching sizes, and the sites are per-call-site.
 func TestSelfHostRcTracePairsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -242,9 +187,6 @@ func TestSelfHostRcTracePairsX86_64(t *testing.T) {
 		t.Fatal("FERN_RC_TRACE=1 produced no rctrace lines")
 	}
 
-	// Pair by pointer. A live block's alloc has no matching free; a size
-	// mismatch means the two hooks disagree about the block, which would make
-	// live_bytes drift even on a program that frees everything.
 	live := map[uint64]hevEvent{}
 	allocs, frees := 0, 0
 	for _, e := range evs {
@@ -271,7 +213,6 @@ func TestSelfHostRcTracePairsX86_64(t *testing.T) {
 		t.Fatalf("want both allocs and frees, got %d/%d", allocs, frees)
 	}
 
-	// Sites must name the code that asked for the memory, not a constant.
 	sites := map[uint64]bool{}
 	for _, e := range evs {
 		if e.kind == "a" {
@@ -286,11 +227,6 @@ func TestSelfHostRcTracePairsX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostLeakCheckAgreesX86_64 — the trace's own tallies reproduce every
-// number the leakcheck summary reports. Two independent counting paths over
-// the same events (leakcheck accumulates in .bss as it goes; the trace is
-// re-derived here from the emitted lines), so a drift in either shows up as a
-// disagreement rather than as two consistent wrong answers.
 func TestSelfHostLeakCheckAgreesX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -338,17 +274,6 @@ func TestSelfHostLeakCheckAgreesX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostRcTraceLocatesLeakX86_64 — the property the whole feature exists
-// for. A program that leaves memory unreclaimed produces unpaired allocs, and
-// they must account for live_bytes exactly and each carry a resolvable site.
-// That is what turns "live_bytes=224" from a true statement nothing can act on
-// into a pointer at the code that asked for the memory.
-//
-// The site COUNT is deliberately not asserted: the blocks here come from two
-// sites (the row literals and the outer buffer's growth inside
-// __fern_arr_push), and pinning a number would tie this test to
-// allocation shape rather than to attribution working. That sites are
-// per-call-site at all is covered by TestSelfHostRcTracePairsX86_64.
 func TestSelfHostRcTraceLocatesLeakX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -398,10 +323,6 @@ func TestSelfHostRcTraceLocatesLeakX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostHeapEventFlagOffX86_64 — with neither flag set the emitted asm
-// must carry no trace of the feature: no hook symbol, no call, no format
-// string. A diagnostic build mode that leaks into ordinary output is a
-// diagnostic that changes what it measures.
 func TestSelfHostHeapEventFlagOffX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -419,8 +340,6 @@ func TestSelfHostHeapEventFlagOffX86_64(t *testing.T) {
 		}
 	}
 
-	// And the hooks really do appear when asked for, so the check above is
-	// testing a gate rather than a typo.
 	on := hevCompile(t, runner, driverBin, hevBalancedSrc, []string{"FERN_RC_TRACE=1", "FERN_LEAKCHECK=1"})
 	for _, marker := range []string{"__fern_hev_a", "__fern_hev_f", "__fern_lc_report", "__fern_alloc_inner"} {
 		if !strings.Contains(on, marker) {
@@ -429,11 +348,6 @@ func TestSelfHostHeapEventFlagOffX86_64(t *testing.T) {
 	}
 }
 
-// parseLeakcheck finds the leakcheck summary in a run's stderr and returns its
-// three counts. The LAST matching line wins — a probe that prints its own
-// diagnostics is still readable — and a missing summary is fatal rather than
-// three zeroes, because "FERN_LEAKCHECK did not take effect" and "nothing
-// leaked" are the same numbers otherwise.
 func parseLeakcheck(t *testing.T, name, stderr string) (int64, int64, int64) {
 	t.Helper()
 	summary := ""
@@ -452,8 +366,6 @@ func parseLeakcheck(t *testing.T, name, stderr string) (int64, int64, int64) {
 	return allocs, frees, live
 }
 
-// fmtSscan pulls the three numbers out of a leakcheck summary line without
-// depending on its exact spacing.
 func fmtSscan(summary string, allocs, frees, live *int64) (int, error) {
 	fields := map[string]*int64{"allocs=": allocs, "frees=": frees, "live_bytes=": live}
 	n := 0
@@ -482,19 +394,6 @@ type errSummary string
 
 func (e errSummary) Error() string { return string(e) }
 
-// hevTwoAppendSrc: two appends that grow an array and share one allocation
-// address inside __fern_arr_push, so `site` is identical for both and only
-// `caller` separates them — the property the field exists for.
-//
-// One appends a LOCAL and one a PARAMETER on purpose. The two take different
-// pushes (the sole-owner local reclaims through __fern_arr_push_owned, the
-// parameter cannot and takes the plain one), which puts a different number of
-// frames between the allocation and user code. That asymmetry is the point:
-// with both appending a local, both callers are __fern_arr_push_owned and the
-// field looks useless — a walk of fixed depth cannot reach user code through
-// every path, and this pins the depth that the leaking path needs. Both are
-// kept out of line so each is its own frame, and the local grows to 64,
-// filling its buffer, so the parameter's first push is the one that allocates.
 const hevTwoAppendSrc = `@noinline
 function grow_local(n: i32): i32[] {
     let xs: i32[] = [];
@@ -515,15 +414,6 @@ function main(): i32 {
     return 0;
 }`
 
-// TestSelfHostRcTraceCallerX86_64 — `caller` names a frame ABOVE `site`, so two
-// call sites sharing a runtime helper are told apart.
-//
-// The regression this pins is specific and was live during development: reading
-// the frame pointer one link short (`8(%rbp)`) yields the box shim's own return
-// address, which IS the claimed site. Every line then carries caller == site —
-// a field that looks like attribution, parses fine, and answers nothing. So the
-// assertion is not "a caller field exists" but "it disagrees with site, and
-// takes more than one value across two appending functions".
 func TestSelfHostRcTraceCallerX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -539,8 +429,6 @@ func TestSelfHostRcTraceCallerX86_64(t *testing.T) {
 		t.Fatal("FERN_RC_TRACE=1 produced no rctrace lines")
 	}
 
-	// Group the callers seen per site, over allocations only: a free's site is
-	// a shared drop helper and carries no attribution either way.
 	perSite := map[uint64]map[uint64]bool{}
 	differ := 0
 	for _, e := range evs {
@@ -560,7 +448,6 @@ func TestSelfHostRcTraceCallerX86_64(t *testing.T) {
 			"so the field duplicates site instead of attributing past the helper")
 	}
 
-	// The point of the field: one site, several callers.
 	best := 0
 	for _, callers := range perSite {
 		if len(callers) > best {
@@ -573,34 +460,18 @@ func TestSelfHostRcTraceCallerX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostRcTraceDeepX86_64 — FERN_RC_TRACE_DEEP appends a sixth field
-// reaching one frame further than `caller`, and the default stays at five.
-//
-// The default is half the contract: five fields is native's format, so one
-// parser reads both compilers' traces, and a self-host that widened it
-// unconditionally would emit something nothing else understands.
-//
-// The sixth exists because one frame is not always enough. A sole-owner append
-// reaches the allocator as Fern code -> __fern_arr_push_owned -> __fern_arr_push
-// -> __fern_arr_box, so `caller` is that wrapper for every owned append in the
-// program and they all collapse to one name. The assertion is therefore not
-// "a sixth field exists" but "it disagrees with caller" — the same trap the
-// caller field itself fell into, where a walk one link short produced a field
-// that parsed fine and duplicated its neighbour.
 func TestSelfHostRcTraceDeepX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	// Default: five numbers, unchanged.
 	plain := hevCompile(t, runner, driverBin, hevTwoAppendSrc, []string{"FERN_RC_TRACE=1"})
 	plainBin := buildBin(t, gcc, dir, "hev_deep_off", plain)
 	if _, err := hevRows(t, runner, plainBin, 6); err != nil {
 		t.Fatalf("FERN_RC_TRACE alone: %v", err)
 	}
 
-	// Deep: six, and the extra one is a different frame.
 	deep := hevCompile(t, runner, driverBin, hevTwoAppendSrc,
 		[]string{"FERN_RC_TRACE=1", "FERN_RC_TRACE_DEEP=1"})
 	deepBin := buildBin(t, gcc, dir, "hev_deep_on", deep)
@@ -622,8 +493,6 @@ func TestSelfHostRcTraceDeepX86_64(t *testing.T) {
 	}
 }
 
-// hevRows returns the hex numbers of each `rctrace` ALLOCATION line, requiring
-// every trace line to carry exactly wantFields whitespace-separated fields.
 func hevRows(t *testing.T, runner []string, bin string, wantFields int) ([][]uint64, error) {
 	t.Helper()
 	stderr, _ := hevRun(t, runner, bin)

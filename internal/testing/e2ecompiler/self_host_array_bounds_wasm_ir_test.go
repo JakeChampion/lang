@@ -9,22 +9,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostArrayBoundsIRWasm — wasm counterpart of TestSelfHostArrayBoundsIR
-// (x86-64) and TestSelfHostArrayBoundsIRArm64. It completes ARRAY-BOUNDS.md
-// parity across all three self-host codegen backends: an out-of-range array
-// index — read or write, over-large or negative — TRAPS instead of reading /
-// writing past the end.
-//
-// Before this, wasm_ir.fern's arr_get / arr_set (kind_tag 88 / 89) formed the
-// element address `base + 8 + idx*esz` with no length check, so the wasm
-// self-host silently read/wrote past the end while the register backends
-// aborted — a policy violation. The IR emit now checks the index against the
-// length prefix (len @ base+0) with a single unsigned compare
-// (`i32.le_u` of `len <= idx`, catching both negative and `idx >= len`) and
-// `unreachable` on failure, which wasmtime surfaces as exit 134.
-//
-// In-range indexing (the "in-range-ok" leg) is unaffected — the sum probe
-// walks the array and returns a real value.
 func TestSelfHostArrayBoundsIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host array-bounds wasm IR e2e")
@@ -47,7 +31,6 @@ func TestSelfHostArrayBoundsIRWasm(t *testing.T) {
 			`function main(): i32 { let a: i32[] = [1, 2, 3]; return a[3]; }`, 134},
 		{"write-past-end",
 			`function main(): i32 { let a: i32[] = [1, 2, 3]; a = a.with(5, 9); return a[0]; }`, 134},
-		// In-range: every element read + a write, no trap. 10+20+30 -> exit 60.
 		{"in-range-ok",
 			`function main(): i32 { let a: i32[] = [10, 20, 30]; a = a.with(1, 20); let s: i32 = 0; let i: i32 = 0; while (i < 3) { s = s + a[i]; i = i + 1; } return s; }`, 60},
 	}

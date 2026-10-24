@@ -41,9 +41,7 @@ function actual(s: string, entry: string, local: string): void {
   check(change(s, "subl $1, %ecx", "subl $1, %ecx\nsubl $1, %ecx"), entry, false);
   check(change(s, local + "_ret:\n    ret", local + "_ret:\nret $8"), entry, false);
   check(change(s, local + "_ret:\n    ret", local + "_ret:\nmovl %eax, %eax\nret"), entry, false);
-  // Reload sees the current decremented expression, including its zero extension.
   check(change(s, store, store + "\nmovl -8(%rax), %ecx\nmovl %ecx, %ecx\nmovq %rcx, %rcx"), entry, true);
-  // Unsupported free/underflow instructions remain outside these families.
   check(change(s, local + "_ret:\n    ret", local + "_ret:\nret\nunknown_instruction"), entry, true);
 }
 
@@ -56,8 +54,6 @@ function registers_preserved(s: string, entry: string): void {
   let words = registers.registers(false, 32);
   let i = 2;
   while (i < regs.len()) {
-    // Every non-scratch identity matters, including RSP. A saved original
-    // may be restored, but a 32-bit save cannot recover its high half.
     check(prefix(s, entry, "movq %rax, " + regs[i]), entry, false);
     check(prefix(s, entry, "movq " + regs[i] + ", %rcx\nmovq %rax, " + regs[i] + "\nmovq %rcx, " + regs[i]), entry, true);
     check(prefix(s, entry, "movl " + words[i] + ", %ecx\nmovq %rcx, " + regs[i]), entry, false);
@@ -82,7 +78,6 @@ function entry_mutations(s: string, entry: string): void {
 
 function flag_mutations(s: string, entry: string, local: string): void {
   for line in ["je", "jz", "jne", "jnz"] {
-    // P can equal the floor. Never invent ZF from the known non-borrow.
     check(prefix(s, entry, "cmpq $65536, %rax\n" + line + " " + local + "_ret"), entry, false);
   }
   check(prefix(s, entry, "je " + local + "_ret"), entry, false);
@@ -92,8 +87,6 @@ function flag_mutations(s: string, entry: string, local: string): void {
 }
 
 function aliases(s: string, entry: string, local: string): void {
-  // Each always-false predicate must fall through; its inverse must jump
-  // over an unsupported operation. This checks every accepted alias.
   let false_names = ["jne", "jnz", "js", "jb", "jc", "jnae", "jl", "jnge", "jg", "jnle", "jo"];
   let true_names = ["je", "jz", "jns", "jae", "jnb", "jnc", "jge", "jnl", "jle", "jng", "jno", "jmp"];
   for name in false_names {
@@ -102,8 +95,6 @@ function aliases(s: string, entry: string, local: string): void {
   for name in true_names {
     check(prefix(s, entry, "testb $1, %al\n" + name + " .Lmachine_skip\nunknown_instruction\n.Lmachine_skip:"), entry, true);
   }
-  // CMP's signed-less correlation remains exact across overflow even
-  // though SF and OF individually vary over the negative-count interval.
   check(change(s, "testl %ecx, %ecx\n    js " + local + "_ret", "cmpl $1, %ecx\njl " + local + "_ret"), entry, true);
   check(change(s, "cmpl $1, %ecx", "cmpl $2147483647, %ecx"), entry, false);
 }

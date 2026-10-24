@@ -10,8 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The emitted constant-byte arrays use .balign 8 between adjacent arrays.
-// Its argument is a byte count, while ARM64 .align/.p2align use exponents.
 const arm64ByteAlignmentProgram = `
 function main(): i32 {
     let directives: string[] = [".balign 0", ".balign 1", ".balign 2", ".balign 4", ".balign 8", ".balign 16", ".align 0", ".align 1", ".align 3", ".p2align 4"];

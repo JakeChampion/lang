@@ -43,8 +43,6 @@ func loadChecked(t *testing.T, entry string) *ast.Program {
 	return prog
 }
 
-// rootOnly folds everything (stdlib included) into a single "(root)"
-// row, the manifest-less shape.
 func rootOnly(module string) string {
 	if strings.HasPrefix(module, "stdlib://") {
 		return ""
@@ -52,9 +50,6 @@ func rootOnly(module string) string {
 	return "(root)"
 }
 
-// A capability reached only via a transitive callee in another module
-// (here: another package) is attributed to the calling package with
-// the full example chain — and the declaring package reports it too.
 func TestAnalyzeTransitiveAcrossModules(t *testing.T) {
 	root := writeTree(t, map[string]string{
 		"main.fern": `import "./util";
@@ -93,10 +88,6 @@ function main(): i32 {
 	}
 }
 
-// A closure counts at its DEFINITION package: the app's lambda calls
-// tcp_close and is handed to the helper package, which invokes it.
-// `net` lands on app's row; helper — which only calls the closure
-// value — reports nothing.
 func TestAnalyzeClosureDefinitionSiteAttribution(t *testing.T) {
 	root := writeTree(t, map[string]string{
 		"app/fern.toml": "[package]\nname = \"app\"\n[dependencies]\nhelper = { path = \"../helper\" }\n",
@@ -142,9 +133,6 @@ function main(): i32 {
 	}
 }
 
-// Declared reachability: an uncalled-but-declared function still
-// counts toward its package — Phase 1 reports what the package's code
-// could do, not just this program's live paths.
 func TestAnalyzeUncalledDeclaredFunctionCounts(t *testing.T) {
 	root := writeTree(t, map[string]string{
 		"main.fern": `function main(): i32 { return 0; }
@@ -163,8 +151,6 @@ function stray(): i32 {
 	}
 }
 
-// A function value passed by name (not called directly) still creates
-// a reachability edge.
 func TestAnalyzeFunctionValueEdge(t *testing.T) {
 	root := writeTree(t, map[string]string{
 		"main.fern": `function probe(host: i32): i32 {
@@ -200,11 +186,6 @@ func TestFormat(t *testing.T) {
 	}
 }
 
-// The call graph internal/check/effects builds records EVERY builtin call, not
-// just the capability-tagged ones, so one walk can be projected through
-// several vocabularies. This report must therefore skip the untagged
-// ones: reading BuiltinCaps with a bare map index yields "" for an
-// ungated builtin, which reported as a capability with an empty name.
 func TestUngatedBuiltinsAreNotCapabilities(t *testing.T) {
 	root := writeTree(t, map[string]string{
 		"main.fern": `function main(): i32 {

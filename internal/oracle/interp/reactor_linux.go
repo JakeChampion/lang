@@ -18,8 +18,6 @@ func (r *reactor) watch(raw int, interest int) error {
 		ev.Events |= syscall.EPOLLOUT
 	}
 	if interest&4 != 0 {
-		// EPOLLEXCLUSIVE: of the processes watching one descriptor, a
-		// readiness wakes one.
 		ev.Events |= 1 << 28
 	}
 	if interest == 0 {
@@ -57,8 +55,6 @@ func (r *reactor) wait(cap int, timeoutMs int) ([]reactorEvent, error) {
 	return out, nil
 }
 
-// watchParent has the kernel send SIGTERM when the parent exits, which the
-// SIGTERM watch reports. A parent already gone is ESRCH.
 func watchParent() error {
 	if _, _, e := syscall.RawSyscall(syscall.SYS_PRCTL, syscall.PR_SET_PDEATHSIG, uintptr(syscall.SIGTERM), 0); e != 0 {
 		return e

@@ -8,14 +8,6 @@ import (
 	"testing"
 )
 
-// unionOnlyChildReclaimCases pin a tuple whose ONLY rc child is a tagged union
-// (#7147): the tuple box is released along with the union. Leaked, that was per
-// round, as x86-64 | arm64 | wasm: 80 | 80 | 40 for `(i, Some(i))` and
-// 80 | 80 | 48 for a user-enum variant.
-//
-// A tuple carrying a union position is never all-scalar, so this release and
-// the shallow scalar-tuple release must never both claim the same local and
-// free its box twice.
 var unionOnlyChildReclaimCases = []struct {
 	name string
 	src  string
@@ -41,8 +33,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
 }`, 0},
-	// The user-enum tag resolves through decl_is_enum rather than the built-in
-	// `Option[` / `Result[` prefixes, so it is a separate path from the row above.
 	{"user-enum-only-rc-child-reclaimed", `enum Tag { Num(i32), Nil }
 function churn(n: i32): i32 {
     let acc: i32 = 0;
@@ -64,10 +54,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
 }`, 0},
-	// ALIASING negative: the element is a bare IDENT of union type, not a
-	// construction, so the count must not fire — the box belongs to `o`, which
-	// is read after the tuple's reclaim point. Crediting here would free a live
-	// local's box: an over-release, not a leak.
 	{"ident-union-elem-not-credited", `function churn(n: i32): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;

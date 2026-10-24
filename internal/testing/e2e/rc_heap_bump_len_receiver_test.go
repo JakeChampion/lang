@@ -4,24 +4,6 @@ import (
 	"testing"
 )
 
-// Statement-temporary reclamation, stage (c): a value-consuming op whose
-// RECEIVER is a fresh owned rc temporary — the canonical `(a + b).len()` —
-// now stashes the receiver and DECs it after the op. Before this slice the
-// length load (OpStrLen) consumed the concat's (data,len) and returned an
-// i32, leaving the buffer unreclaimed with nothing to dec it. Measured on
-// wasm: linear 1600 → 160000 → 1600000, no plateau (docs/RC-PERCEUS-PLAN.md
-// "Value-consuming ops"). The receiver is created solely for the call and is
-// dead after it (the i32 can't alias it), so reclaiming it is as safe as a
-// discarded stage-(a) temp.
-//
-// Backend split (matching the shipped string-reclaim tests): wasm two-word
-// strings always heap-allocate, so the bump high-water is the meaningful
-// bounded-growth gate there (flat 64512 with the dec, linear 240000 →
-// 2400000 without). Native single-word strings (x86_64) / deferred-reclaim
-// arm64 (slice 5g) report a flat bump regardless, so they assert
-// value-correctness + 0-over-release over a long-concat loop instead — which
-// drives the real str_dec/rc_dec path and would surface any double-free.
-
 func lenRecvBumpSrc(n string) string {
 	return `function main(): i32 {
     let before: i32 = (__heap_bump_bytes() as i32);
@@ -38,10 +20,6 @@ func lenRecvBumpSrc(n string) string {
 }`
 }
 
-// Value-correct + no over-release: the consumed concat must be reclaimed
-// without disturbing `a` / `b`, reused every iteration. The operands total
-// 37 chars (20 + 17), so acc == 37*200 == 7400; an over-release of a / b /
-// the concat shows up as a wrong sum (999) or non-zero underflow count.
 const lenRecvUnderflowSrc = `function main(): i32 {
     let a: string = "hello there friend, ";
     let b: string = "general kenobi!!!";
@@ -62,10 +40,6 @@ func TestX86_64LenReceiverReclaim(t *testing.T) {
 }
 
 func TestArm64LenReceiverReclaim(t *testing.T) {
-	// arm64 heap-string reclaim is deferred (RC-Perceus slice 5g), so the
-	// receiver str_dec is a safe no-op there — codegen stays byte-identical
-	// to main. Only value-correctness + 0-over-release are checked, matching
-	// the other string-reclaim tests' arm64 stance.
 	if _, code := compileAndRunArm64FreeOn(t, lenRecvUnderflowSrc); code != 0 {
 		t.Errorf("len-receiver reclaim: code=%d", code)
 	}
@@ -85,23 +59,6 @@ func TestWASMLenReceiverReclaim(t *testing.T) {
 	}
 }
 
-// A USER-CALL receiver — `f(i).len()` — is the same dead-after-consume temp,
-// but it never matched freshOwnedRcTempType (that classifier covers concat /
-// slice / literal shapes only), and the len site had no ownedCallResultType
-// fallback like the discarded-stmt / index-of-fresh / field-access / call-arg
-// sites, so the callee's returned heap value leaked every call: ~32-128 B for
-// strings above the SSO inline threshold (sub-threshold results return inline
-// and masked the leak in short-chain probes), one buffer per call for arrays.
-// This is the shape that fell out of #4357's SSA-emit RSS localization.
-//
-// The fix adds the fallback; safety is the same is_unique-gated argument as
-// every other ownedCallResultType site — an aliased return carries the
-// return-transfer inc, so the drop only dec's it (the alias negative below).
-// The `tail` closes main() after `g` holds the bump growth: native runners
-// read the process EXIT CODE (mod-256), so they scale + guard-cap the value;
-// the wasm runner reads main's full i32 result via `--invoke`, so it returns
-// raw growth (wasm's two-word strings put the bounded high-water at ~65 KB
-// after a few-thousand-iteration freelist warm-up — far past any exit code).
 const lenCallRecvNativeTail = `    if (g > 900) { return 119; }
     return g / 8;
 }`
@@ -137,9 +94,6 @@ function main(): i32 {
 ` + tail
 }
 
-// SOUNDNESS NEGATIVE — identity callees hand back the CALLER's value at
-// rc >= 2 (return-transfer inc), so the len-receiver drop must only dec it:
-// base / arr survive every iteration value-intact, over-release detector 0.
 const lenCallRecvAliasSrc = `@noinline function id(s: string): string { return s; }
 @noinline function idarr(xs: i32[]): i32[] { return xs; }
 function main(): i32 {
@@ -157,15 +111,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// BUILTIN — `random_bytes(n)` lives in FuncSigs like a user function but is
-// NOT one: a builtin's allocation contract is per-helper, so
-// ownedCallResultType rejects non-user-declared callees outright, and
-// random_bytes is admitted by name in freshOwnedRcTempType instead, whose
-// contract is that it allocates a headered rc=1 u8[] on every backend.
-// Historically the darwin helper returned a buffer with NO rc header and the
-// is_unique gate reading the missing header word crashed the darwin lane on
-// `random_bytes(32).len()`; 200 reclaimed receivers must neither crash nor
-// underflow.
 const lenCallRecvBuiltinSrc = `function main(): i32 {
     let i: i32 = 0;
     let acc: i32 = 0;
@@ -212,10 +157,6 @@ func TestArm64LenCallReceiverReclaim(t *testing.T) {
 }
 
 func TestWASMLenCallReceiverReclaim(t *testing.T) {
-	// The wasm high-water plateaus only after a few thousand iterations
-	// (freelist size-class warm-up; verified flat 5000 -> 200000, vs the
-	// pre-fix ~131 B/iter linear growth), so the fixpoint compares
-	// N=5000/50000 on the raw growth `--invoke main` hands back.
 	runLenCallReceiverChecks(t, func(t *testing.T, src string) int {
 		return runWasm(t, src)
 	}, "5000", "50000", lenCallRecvRawTail)

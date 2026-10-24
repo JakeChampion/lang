@@ -9,15 +9,6 @@ import (
 	"testing"
 )
 
-// The coreutils lane joins derived names into a `-run` alternation, and a
-// utility name is not a Go identifier: coreutils/[.fern is in the catalogue.
-// A bare `[` opens an unterminated character class, so the shard holding it
-// exits at regexp parse having run NOTHING — red start to finish rather than
-// quietly wrong, and the reaper then cancels the rest of the run.
-//
-// This runs the lane's own escaper over every name the catalogue actually
-// holds plus a metacharacter sweep, and holds it to regexp.QuoteMeta: the
-// escaped name must compile, and must still match the name it came from.
 func TestCoreutilsShardEscaperHandlesEveryMetacharacter(t *testing.T) {
 	src := workflowSource(t, "test-coreutils.yml")
 	var escaper string

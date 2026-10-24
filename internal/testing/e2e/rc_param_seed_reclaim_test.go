@@ -2,22 +2,6 @@ package e2e
 
 import "testing"
 
-// `let s: S = src` where `src` is a PARAMETER is a borrow for the SEED and an
-// owned value for every assignment after it. Ownership was one verdict per
-// local, so the seed's verdict governed the whole slot and each later value it
-// held was released with a plain dec that frees nothing — one leaked box per
-// iteration, unbounded (#6403).
-//
-// The binding already emits the transfer inc (needsRcIncOnAlias holds for a
-// pointer-shaped ident), so the local genuinely owns a reference and each of
-// its drops is is_unique-gated; what was missing was crediting it with that.
-//
-// This file pins both halves: the ANSWERS on the shapes where a wrongly
-// narrowed verdict would over-release (the caller's value read after the call,
-// an alias taken before the reassignment, escapes via return and via a
-// container, a conditional reassignment), and the BYTES, which is the half no
-// correctness suite can see.
-
 const rcParamSeedAnswerProg = `
 import "std/i32";
 import "std/string";
@@ -120,16 +104,6 @@ func TestRcParamSeedAnswersArm64(t *testing.T) {
 	}
 }
 
-// The bytes. `step(state) -> (T, State)` with the loop factored into a helper
-// is what puts the carried state on a parameter seed, and it is the ordinary
-// way to write anything incremental.
-//
-// The work per round is CONSTANT, so the assertion is that doubling the rounds
-// adds nothing rather than a growth ratio: measured 0 B after the fix and
-// 6368 / 12768 B before it, on both arm64-darwin and wasm.
-//
-// __rc_underflow_count() is included in the other direction — narrowing the
-// verdict too far would release the caller's value and show up here.
 const rcParamSeedBoundedProg = `
 import "std/i32";
 import "std/i64";

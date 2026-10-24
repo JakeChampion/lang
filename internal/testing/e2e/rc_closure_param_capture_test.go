@@ -2,9 +2,6 @@ package e2e
 
 import "testing"
 
-// A closure that captures one of its maker's parameters, rebound in a loop
-// body. The capture is a counted store, so the caller may release what it
-// passed and drop the closure on every trip (#10112). Six trips per shape.
 func TestClosureCapturingAParameterReboundInALoop(t *testing.T) {
 	cases := []struct {
 		name, decls, body string

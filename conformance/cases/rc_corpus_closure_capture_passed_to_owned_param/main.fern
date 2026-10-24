@@ -1,9 +1,9 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// A closure forwards its captured struct to a callee that keeps the
-// param (owned), and runs more than once: the env's reference is
-// retained at each call, or the second run reads a freed ctx.
+
+
+
+
+
+
 struct Ctx { decls: string[] }
 struct Txn { headers: string[] }
 struct Out { ctx: Ctx, txn: Txn, n: i32 }

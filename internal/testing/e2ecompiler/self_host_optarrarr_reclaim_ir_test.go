@@ -7,22 +7,11 @@ import (
 	"testing"
 )
 
-// optArrArrReclaimCases pin the #4365 `Option[<scalar-arr-of-arr>]` reclaim: a
-// `let o: Option[i32[][]] = Some([[i, i+1], ...])` consumed by a borrow-only match
-// releases its payload (inner row buffers + outer buffer) and the option box at
-// the loop rebind and at exit.
-//
-// SOUNDNESS: in the Some arm, a doubly-indexed scalar read (g[i][j]), g.len()
-// and g[i].len() are borrows (reclaim proceeds); a BARE outer `g` or a BARE row
-// `g[i]` extraction (store / return / pass / alias / slice) escapes and the
-// local is left leak-safe (never over-released). The escape-store / escape-call
-// negatives cover the over-release guard.
 var optArrArrReclaimCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// Core churn: rebuilt per iteration, doubly-indexed scalar read only.
 	{"optarrarr-churn", `function main(): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -36,7 +25,6 @@ var optArrArrReclaimCases = []struct {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// Full borrow set: g[i][j], g.len() and g[i].len() are all admitted — still reclaims.
 	{"optarrarr-borrow-full", `function main(): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -50,8 +38,6 @@ var optArrArrReclaimCases = []struct {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// PAYLOAD-ESCAPE-STORE negative: `Some(g) => keep = g[0]` extracts an inner ROW out of
-	// the arm — the local is NOT credited (leak-safe), and MUST NOT be over-released.
 	{"optarrarr-escape-store-safe", `function main(): i32 {
     let keep: i32[] = [0, 0];
     let i: i32 = 0;
@@ -65,8 +51,6 @@ var optArrArrReclaimCases = []struct {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// PAYLOAD-ESCAPE-CALL negative: `take(g[0])` passes an inner row to a call (a retain)
-	// — un-credited, leak-safe, detector zero.
 	{"optarrarr-escape-call-safe", `function take(a: i32[]): i32 { return a[0]; }
 function main(): i32 {
     let acc: i32 = 0;
@@ -82,8 +66,6 @@ function main(): i32 {
 }`, 0},
 }
 
-// TestSelfHostOptArrArrReclaimIRX86_64 drives the cases through the self-hosted x86-64
-// compiler (asm_run), heap-bump + underflow guarded.
 func TestSelfHostOptArrArrReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

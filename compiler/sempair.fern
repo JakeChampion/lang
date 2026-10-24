@@ -1,19 +1,3 @@
-// A variant returned as its position and one payload word, and a pair as
-// its first element and the second beside it.
-//
-// A function whose result is an enum, an Option or a Result with at most one
-// word-sized payload per variant returns the position of its variant as its
-// result and the payload beside it (ir.op_ret_word), and each call to it
-// rebuilds the variant as a branch on the position that joins one
-// construction per variant. seminline's split then reads a match on the call
-// straight off those constructions, so a variant built only for its caller to
-// take apart is never built. A function whose result is a tuple of two values,
-// the second of which fits a word, returns the first as its result and the
-// second beside it, and each call rebuilds the pair from the two, which split
-// reads the caller's projections off. A function is paired only where every
-// call to it is rewritten with it (nothing outside the bodies names it and
-// every body naming it calls it directly) and every caller takes the value
-// apart, so pairing never builds a box the callee did not.
 import "./ssa";
 import "./util";
 import "./ssasem";
@@ -24,20 +8,12 @@ import "./semscalarreturn";
 
 pub struct Paired { funcs: ssasem.Func[], changed: boolean[] }
 
-// A paired result's variants in declaration order, the order that numbers
-// them, and each one's payload type where it has one. A pair (`tuple`) has
-// no variants: its payloads are its two elements.
 struct Shape { ty: typeinfo.Type, names: string[], payloads: typeinfo.Type[], has: boolean[], tuple: boolean, lanes: boolean }
 
-// Each variant past the first costs a caller a comparison.
 function max_variants(): i32 {
   return 16;
 }
 
-// `funcs` with every pairable function paired and every call to one rebuilt.
-// `rewrite[i]` says whether `funcs[i]` may be rewritten at all, `unnamed[i]`
-// whether nothing outside the bodies names it, and `names[i]` is the key a
-// call to it carries.
 pub function pair_returns(funcs: ssasem.Func[], names: string[], rewrite: boolean[], unnamed: boolean[]): Paired {
   let ix: util.NameIndex = util.name_index(names);
   let paired: boolean[] = pairable(funcs, names, ix, rewrite, unnamed);
@@ -80,14 +56,6 @@ function pairable(funcs: ssasem.Func[], names: string[], ix: util.NameIndex, rew
   return taken_apart(funcs, ix, ok, dead);
 }
 
-// `ok` less every function some caller needs the variant of whole: kept,
-// passed on, or returned by a function that is not paired itself. A caller
-// that takes the variant apart builds nothing, where one that keeps it would
-// build the box the callee no longer does, and could no longer build it in
-// a box the callee was releasing anyway. Dropping one candidate can make a
-// return in it a whole use of another, so this runs until nothing drops. A
-// `dead` body, one spliced into every caller and named by nothing, is not a
-// caller: what it keeps whole is never built.
 function taken_apart(funcs: ssasem.Func[], ix: util.NameIndex, ok0: boolean[], dead: boolean[]): boolean[] {
   let ok: boolean[] = ok0;
   let changed: boolean = true;
@@ -122,14 +90,10 @@ function taken_apart(funcs: ssasem.Func[], ix: util.NameIndex, ok0: boolean[], d
   return ok;
 }
 
-// A scalar record also stays boxed when a caller can donate its existing
-// storage to another kept record. Its scalar projections alone do not show
-// that use; the ownership planner can infer it without an explicit spread.
 function keeps_result(callee: ssasem.Func, value: i32, whole: boolean[], scalar_whole: boolean[]): boolean {
   return whole[value] || semscalarreturn.eligible(callee, callee.result) && scalar_whole[value];
 }
 
-// The function a call to a candidate names, or -1.
 function paired_callee(ins: ssa.SInst, ix: util.NameIndex, ok: boolean[]): i32 {
   if (ins.kind_tag != ssasem.call()) {
     return 0 - 1;
@@ -141,12 +105,6 @@ function paired_callee(ins: ssa.SInst, ix: util.NameIndex, ok: boolean[]): i32 {
   return 0 - 1;
 }
 
-// The values of `f` something needs whole: an operand of anything but a
-// variant test or projection, a copy or a phi; a return, unless `f` is paired
-// itself and so returns its variant apart; and
-// what a copy or phi needed whole copies. A phi is needed whole too where it
-// joins anything split cannot read through: only constructions, calls to
-// candidates and other such phis can be read apart.
 pub function whole_values(f: ssasem.Func, ix: util.NameIndex, ok: boolean[], paired: boolean): boolean[] {
   let defs: ssa.SInst[] = defs_of(f.graph);
   return through_joins(defs, seeded(f, defs, ix, ok, paired));
@@ -163,9 +121,6 @@ function seeded(f: ssasem.Func, defs: ssa.SInst[], ix: util.NameIndex, ok: boole
       if (ins.kind_tag == 8 && !joins_apart(ins, defs, ix, ok)) {
         whole = marked_all(whole, [ins.result]);
       }
-      // Reusing an existing record is a whole-box use even though its base
-      // lives in metadata, outside the field operands. Scalarizing the donor
-      // would require materializing a replacement box in this caller.
       let donor: i32 = ssasem.update_base(ins);
       if (donor >= 0) {
         whole = marked_all(whole, [donor]);
@@ -178,9 +133,6 @@ function seeded(f: ssasem.Func, defs: ssa.SInst[], ix: util.NameIndex, ok: boole
   return whole;
 }
 
-// `whole` with what each copy or phi needed whole copies marked too: a
-// worklist of the marked values, each spreading once to the operands of the
-// copy or phi defining it.
 function through_joins(defs: ssa.SInst[], whole0: boolean[]): boolean[] {
   let whole: boolean[] = whole0;
   let work: i32[] = [];
@@ -212,13 +164,10 @@ function through_joins(defs: ssa.SInst[], whole0: boolean[]): boolean[] {
   return whole;
 }
 
-// A read of one part of a box: split answers it off the construction.
 pub function reads_apart(k: i32): boolean {
   return k == ssasem.variant_is() || k == ssasem.variant_get() || k == ssasem.tuple_get() || k == ssasem.record_get();
 }
 
-// Whether every operand of `phi` is, past copies, something split reads
-// apart: a construction, a stand-in, a call to a candidate, or a phi.
 function joins_apart(phi: ssa.SInst, defs: ssa.SInst[], ix: util.NameIndex, ok: boolean[]): boolean {
   for a in phi.args {
     let d: ssa.SInst = through_copies(defs, a);
@@ -249,9 +198,6 @@ function all_marked(flags: boolean[], vs: i32[]): boolean {
   return true;
 }
 
-// How each function is named in the bodies: `calls` counts the direct calls
-// from bodies that may be rewritten, and `other` marks a function named any
-// other way, or from a body that may not.
 struct Refs { calls: i32[], other: boolean[] }
 
 function refs_of(funcs: ssasem.Func[], ix: util.NameIndex, rewrite: boolean[]): Refs {
@@ -278,8 +224,6 @@ function refs_of(funcs: ssasem.Func[], ix: util.NameIndex, rewrite: boolean[]): 
   return Refs { calls: calls, other: other };
 }
 
-// Whether `f`'s result is a union whose every variant carries at most one
-// payload a word holds, and which no finalizer watches, or a pair.
 function shaped(f: ssasem.Func): boolean {
   if (pair_type(f, f.result) || semscalarreturn.eligible(f, f.result)) {
     return true;
@@ -298,8 +242,6 @@ function shaped(f: ssasem.Func): boolean {
   return !ssasem.has_finalizer(f, f.result) && (payloads_fit(f, e) || semscalarreturn.variant_in_lanes(e));
 }
 
-// Whether `t` is a tuple of two elements whose first any result can carry
-// and whose second fits a word.
 function pair_type(f: ssasem.Func, t: typeinfo.Type): boolean {
   if let typeinfo.TypeTuple(tup) = t {
     return tup.elements.len() == 2 && carried(f, tup.elements[0]) && word(f, tup.elements[1]);
@@ -316,8 +258,6 @@ function payloads_fit(f: ssasem.Func, e: semrecords.Enum): boolean {
   return true;
 }
 
-// Whether a `t` fits the word beside the result on every target: a pointer,
-// or an integer no wider than one.
 function word(f: ssasem.Func, t: typeinfo.Type): boolean {
   if (ssasem.reference(t)) {
     return !ssasem.holds_view(f, t);
@@ -328,8 +268,6 @@ function word(f: ssasem.Func, t: typeinfo.Type): boolean {
   return ssasem.is_integer(t) || ssasem.is_bool(t) || ssasem.is_char(t) || semtypes.is_handle(t);
 }
 
-// Whether a `t` can be a paired function's own result: a word, or a value a
-// result register carries whole though the word beside it could not.
 function carried(f: ssasem.Func, t: typeinfo.Type): boolean {
   return word(f, t) || ssasem.is_wide(t) || ssasem.is_float(t);
 }
@@ -355,15 +293,6 @@ function shape_of(f: ssasem.Func, ty: typeinfo.Type): Shape {
   return Shape { ty: ty, names: names, payloads: payloads, has: has, tuple: false, lanes: semscalarreturn.variant_in_lanes(e) };
 }
 
-// ---- the callee -------------------------------------------------------------
-
-// Every return of a variant returns its position, with its payload handed to
-// `__pair_set` (ssarc), which sets the word as the return's last act. A
-// return of a construction reads it directly; any other value is tested
-// variant by variant, and split reads the tests off a phi of constructions.
-// Every return of a pair returns its first element with the second handed to
-// `__pair_set`, read off the construction where the return is one and
-// projected off the value otherwise.
 function pair_callee(f0: ssasem.Func, sh: Shape): ssasem.Func {
   let f: ssasem.Func = f0;
   let defs: ssa.SInst[] = defs_of(f.graph);
@@ -396,8 +325,6 @@ function pair_callee(f0: ssasem.Func, sh: Shape): ssasem.Func {
   return ssasem.Func { ...f, result: pair_result(sh), calls: calls };
 }
 
-// What a paired function returns as its result: a variant's position, or a
-// pair's first element.
 function pair_result(sh: Shape): typeinfo.Type {
   if (sh.tuple) {
     return sh.payloads[0];
@@ -408,9 +335,6 @@ function pair_result(sh: Shape): typeinfo.Type {
   return t_i32();
 }
 
-// Block `bi`'s return of a pair, as its first element with the second set
-// beside it: the construction `d`'s operands where the return is one, and
-// the value's two projections otherwise.
 function pair_return(f0: ssasem.Func, bi: i32, sh: Shape, d: ssa.SInst): ssasem.Func {
   let f: ssasem.Func = f0;
   let b: ssa.SBlock = f.graph.blocks[bi];
@@ -433,11 +357,8 @@ function pair_return(f0: ssasem.Func, bi: i32, sh: Shape, d: ssa.SInst): ssasem.
   return with_block(f, bi, ssa.SBlock { ...b, insts: insts, term: ret(first) });
 }
 
-// The instructions of one return so far, and the position it returns.
 struct Arm { f: ssasem.Func, insts: ssa.SInst[], tag: i32 }
 
-// `a` ending in variant `at`'s return: its payload set beside the result, then
-// the position.
 function arm_return(a: Arm, sh: Shape, at: i32, payload: i32[]): Arm {
   if (sh.lanes) {
     return arm_lanes(a, sh, at, payload);
@@ -455,8 +376,6 @@ function arm_return(a: Arm, sh: Shape, at: i32, payload: i32[]): Arm {
   return Arm { f: f, insts: insts, tag: tag };
 }
 
-// `a` ending in variant `at`'s return in lanes: its payload's parts set in
-// the scalar lanes, then the position as the result word.
 function arm_lanes(a: Arm, sh: Shape, at: i32, payload: i32[]): Arm {
   let l: semscalarreturn.Lanes = semscalarreturn.Lanes { f: a.f, insts: a.insts, value: 0 - 1 };
   if (payload.len() == 1) {
@@ -466,8 +385,6 @@ function arm_lanes(a: Arm, sh: Shape, at: i32, payload: i32[]): Arm {
   return Arm { f: l.f, insts: l.insts, tag: l.value };
 }
 
-// Block `bi`'s return of a value split into one return per variant, each
-// reached by testing the value for it.
 function return_tested(f0: ssasem.Func, bi: i32, sh: Shape): ssasem.Func {
   let f: ssasem.Func = f0;
   let b: ssa.SBlock = f.graph.blocks[bi];
@@ -491,8 +408,6 @@ function return_tested(f0: ssasem.Func, bi: i32, sh: Shape): ssasem.Func {
   return tests_on(f, bi, tests, first, n, v, sh);
 }
 
-// ---- the callers ------------------------------------------------------------
-
 function calls_paired(f: ssasem.Func, ix: util.NameIndex, paired: boolean[]): boolean {
   for b in f.graph.blocks {
     if (paired_call_at(b, ix, paired) >= 0) {
@@ -502,7 +417,6 @@ function calls_paired(f: ssasem.Func, ix: util.NameIndex, paired: boolean[]): bo
   return false;
 }
 
-// The position in `b` of a call to a paired function not yet rebuilt, or -1.
 function paired_call_at(b: ssa.SBlock, ix: util.NameIndex, paired: boolean[]): i32 {
   let k: i32 = 0;
   while (k < b.insts.len()) {
@@ -518,19 +432,12 @@ function paired_call_at(b: ssa.SBlock, ix: util.NameIndex, paired: boolean[]): i
   return 0 - 1;
 }
 
-// Every call to a paired function becomes the call, its word, and a branch on
-// the position to one construction per variant, joined where the call's
-// result was. The join is appended, so the walk reaches the rest of the block
-// in it.
 function rebuild_calls(f0: ssasem.Func, funcs: ssasem.Func[], ix: util.NameIndex, paired: boolean[]): ssasem.Func {
   let f: ssasem.Func = f0;
   let bi: i32 = 0;
   while (bi < f.graph.blocks.len()) {
     let k: i32 = paired_call_at(f.graph.blocks[bi], ix, paired);
     if (k >= 0) {
-      // A rebuilt pair stays in its block, so the block is read again for
-      // the next call; a rebuilt variant moves the rest of the block to
-      // its join, which the walk reaches later.
       let callee: ssasem.Func = funcs[ix.find(f.graph.blocks[bi].insts[k].str)];
       f = rebuild_at(f, bi, k, callee);
     } else {
@@ -554,8 +461,6 @@ function rebuild_at(f0: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssas
   return dispatched(bi, k, sh, captured(f, call, sh), callee);
 }
 
-// A rebuilt call so far: the instructions that replace it, the position it
-// returned, and where the payloads come from: the word `w`, or the lane words.
 struct Captured { f: ssasem.Func, insts: ssa.SInst[], tag: i32, w: i32, words: i32[] }
 
 function captured(f0: ssasem.Func, call: ssa.SInst, sh: Shape): Captured {
@@ -569,8 +474,6 @@ function captured(f0: ssasem.Func, call: ssa.SInst, sh: Shape): Captured {
   return Captured { f: f, insts: insts, tag: tag, w: w, words: [] };
 }
 
-// The call returns its position as a word and its payload in the lanes,
-// which ssarc reads into the values after the word as the call returns.
 function captured_lanes(f0: ssasem.Func, call: ssa.SInst, sh: Shape): Captured {
   let count: i32 = 0;
   for t in sh.payloads {
@@ -598,7 +501,6 @@ function captured_lanes(f0: ssasem.Func, call: ssa.SInst, sh: Shape): Captured {
   return Captured { f: l.f, insts: l.insts, tag: l.value, w: w, words: words };
 }
 
-// Variant `i`'s payload rebuilt from what the call returned.
 function arm_payload(f: ssasem.Func, insts: ssa.SInst[], sh: Shape, i: i32, c: Captured): semscalarreturn.Lanes {
   if (sh.lanes) {
     return semscalarreturn.from_lanes(f, insts, c.words, sh.payloads[i]);
@@ -608,8 +510,6 @@ function arm_payload(f: ssasem.Func, insts: ssa.SInst[], sh: Shape, i: i32, c: C
   return semscalarreturn.Lanes { f: g, insts: insts.append(ssa.SInst { kind_tag: ssasem.call(), result: x, args: [c.w], imm: 0, str: word_as_name(sh.payloads[i]) }), value: x };
 }
 
-// The call at `k` in block `bi` replaced by `c`, a branch on the position to
-// one construction per variant, and a join of them where its result was.
 function dispatched(bi: i32, k: i32, sh: Shape, c: Captured, callee: ssasem.Func): ssasem.Func {
   let f: ssasem.Func = c.f;
   let b: ssa.SBlock = f.graph.blocks[bi];
@@ -665,8 +565,6 @@ function after(insts: ssa.SInst[], k: i32): ssa.SInst[] {
   return out;
 }
 
-// The caller's contracts with the paired callee's result changed, and the
-// word's reads where the payloads come from the word.
 function dispatch_contracts(calls0: ssasem.Contract[], name: string, sh: Shape): ssasem.Contract[] {
   let calls: ssasem.Contract[] = calls0;
   let at: i32 = ssasem.find_contract_in(calls, name);
@@ -688,10 +586,6 @@ function with_callee_enum(f: ssasem.Func, callee: ssasem.Func, sh: Shape): ssase
   return ssasem.Func { ...f, enums: f.enums.append(callee.enums[semrecords.find_enum(callee.enums, sh.ty)]) };
 }
 
-// A call to a paired pair-returning function becomes the call, its word, and
-// the pair built from the result and the word where the call's result was.
-// The word was stored as the call returned, so `__pair_word` reads it with no
-// operand of its own: the constant stands for the one its contract names.
 function rebuild_pair(f0: ssasem.Func, bi: i32, k: i32, sh: Shape): ssasem.Func {
   let f: ssasem.Func = f0;
   let b: ssa.SBlock = f.graph.blocks[bi];
@@ -724,10 +618,6 @@ function rebuild_pair(f0: ssasem.Func, bi: i32, k: i32, sh: Shape): ssasem.Func 
   return ssasem.Func { ...f, calls: calls };
 }
 
-// ---- the dispatch both sides share -----------------------------------------
-
-// The blocks that test for variants 0 .. n-2: the block the dispatch starts
-// in, then fresh ids from `next`. The last variant is what is left.
 function test_ids(start: i32, next: i32, n: i32): i32[] {
   let out: i32[] = [start];
   let j: i32 = 1;
@@ -738,8 +628,6 @@ function test_ids(start: i32, next: i32, n: i32): i32[] {
   return out;
 }
 
-// The test that branches to variant `i`'s arm: its own, or for the last
-// variant the one before it.
 function arm_test(i: i32, n: i32): i32 {
   if (i < n - 1) {
     return i;
@@ -750,9 +638,6 @@ function arm_test(i: i32, n: i32): i32 {
   return 0;
 }
 
-// The dispatch on `v`, the value or the position, from block `bi`: each test
-// branches to its variant's arm (first + j) or on to the next test, and the
-// last variant's arm takes what no test claimed.
 function tests_on(f0: ssasem.Func, bi: i32, tests: i32[], first: i32, n: i32, v: i32, sh: Shape): ssasem.Func {
   let f: ssasem.Func = f0;
   if (n == 1) {
@@ -781,7 +666,6 @@ function tests_on(f0: ssasem.Func, bi: i32, tests: i32[], first: i32, n: i32, v:
 
 struct Test { f: ssasem.Func, insts: ssa.SInst[], cond: i32 }
 
-// Whether `v` is variant `j`: on the variant itself, or on its position.
 function test(f0: ssasem.Func, v: i32, j: i32, sh: Shape): Test {
   let f: ssasem.Func = f0;
   let cond: i32 = f.values.len();
@@ -799,10 +683,6 @@ function test(f0: ssasem.Func, v: i32, j: i32, sh: Shape): Test {
   return Test { f: f, insts: insts, cond: cond };
 }
 
-// ---- names the lowering reads ----------------------------------------------
-
-// The call that names the word a paired call returned; ssarc stores the word
-// as the call returns, and this reads it back.
 pub function pair_word_name(): string {
   return "__pair_word";
 }
@@ -823,8 +703,6 @@ function pair_set_name(t: typeinfo.Type): string {
   return pair_set_prefix() + typeinfo.spelling(t);
 }
 
-// The payload is the caller's from the return, so a reference is handed over
-// counted.
 function pair_set_contract(t: typeinfo.Type): ssasem.Contract {
   let mode: i32 = ssasem.value_mode();
   if (semtypes.needs_anchor(t)) {
@@ -832,8 +710,6 @@ function pair_set_contract(t: typeinfo.Type): ssasem.Contract {
   }
   return ssasem.Contract { name: pair_set_name(t), params: [t], modes: [mode], result: t_i32() };
 }
-
-// ---- graph helpers ----------------------------------------------------------
 
 function t_i32(): typeinfo.Type {
   return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
@@ -875,7 +751,6 @@ function next_block_id(g: ssa.SFunc): i32 {
   return hi;
 }
 
-// The values array is read last, so the append grows it in place.
 function with_value(f: ssasem.Func, t: typeinfo.Type): ssasem.Func {
   let n: i32 = f.values.len() + 1;
   return ssasem.Func { ...f, graph: ssa.SFunc { ...f.graph, nvals: n }, values: f.values.append(t) };
@@ -889,7 +764,6 @@ function with_new_block(f: ssasem.Func, b: ssa.SBlock): ssasem.Func {
   return ssasem.Func { ...f, graph: ssa.SFunc { ...f.graph, blocks: f.graph.blocks.append(b) } };
 }
 
-// `f` with `from` in the predecessors of each of `targets` replaced by `to`.
 function repointed(f: ssasem.Func, targets: i32[], from: i32, to: i32): ssasem.Func {
   let blocks: ssa.SBlock[] = [];
   for b in f.graph.blocks {
@@ -943,7 +817,6 @@ function defs_of(g: ssa.SFunc): ssa.SInst[] {
   return out;
 }
 
-// What defines `v`, past any copies.
 function through_copies(defs: ssa.SInst[], v: i32): ssa.SInst {
   let x: i32 = v;
   let steps: i32 = 0;

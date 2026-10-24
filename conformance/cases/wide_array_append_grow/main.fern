@@ -1,6 +1,6 @@
 import "std/i32";
-// A sole-owner i64[], u64[] or f64[] grown by appending in a loop reclaims
-// each superseded buffer as an i32[] does; the values read back intact.
+
+
 function grow_i64(n: i32): i64 {
     let xs: i64[] = [];
     let i: i32 = 0;

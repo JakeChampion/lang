@@ -1,109 +1,8 @@
-// std/wasm/component — WebAssembly Component Model binary
-// encoder primitives.
-//
-// Spec: https://github.com/WebAssembly/component-model/blob/main/design/mvp/Binary.md
-//
-// Phase 2 of docs/TOOLCHAIN-SELF-HOSTING.md. The std/wasm/* modules
-// cover the Core 1.0 binary format that the production compiler
-// used to feed `wasm-tools parse`; this module is the layer above —
-// wrapping a core module in the Component Model envelope (the
-// production driver's current need, fulfilled today by
-// `wasm-tools component embed` + `wasm-tools component new`).
-//
-// Surface area shipped so far (each composer was verified against
-// `wasm-tools parse` output for a hand-rolled WAT shape; many are
-// also exercised end-to-end via `wasm-tools validate` + `wasmtime
-// run --invoke` in the e2e suite):
-//
-//   Preamble:
-//     put_component_header
-//
-//   Sections (one composer per shipped section ID, plus
-//   multi-entry variants where useful):
-//     1  core-module:    put_core_module_section
-//     2  core-instance:  put_core_instance_section_instantiate,
-//                        ..._instantiate_with_one_instance_arg,
-//                        ..._instantiate_with_instance_args,
-//                        ..._from_one_func_export,
-//                        ..._from_func_exports
-//     6  alias:          put_alias_section_core_export_func,
-//                        put_alias_section_core_exports
-//     7  type:           put_type_section_one_func,
-//                        put_type_section_one_func_no_param,
-//                        put_type_section_one_func_no_result,
-//                        put_type_section_funcs (multi-functype),
-//                        plus one composer per defvaltype form:
-//                        _resource, _list, _option, _tuple,
-//                        _result_ok_err, _enum, _flags, _record,
-//                        _variant, _own, _borrow
-//     8  canon:          put_canon_section_lift_no_opts,
-//                        ..._lifts_no_opts (multi),
-//                        ..._lift_mem_realloc,
-//                        ..._lift_mem_realloc_post_return,
-//                        ..._lift_mem_realloc_encoding,
-//                        ..._lower_no_opts, ..._lowers_no_opts,
-//                        ..._lower_mem_realloc,
-//                        ..._resource_{new,drop,rep},
-//                        ..._resource_{news,drops,reps} (multi)
-//     9  start:          put_start_section_no_args_no_results
-//    10  import:         put_import_section_one_func,
-//                        put_import_section_funcs
-//    11  export:         put_export_section_one_func,
-//                        put_export_section_funcs
-//     0  custom:         put_component_type_section
-//                        (writes the `component-type` payload
-//                        wasm-tools embeds for a WIT world)
-//
-//   High-level helpers — collapse a recipe of section composers
-//   into one call:
-//     build_lifted_export_component (no-param shape)
-//     build_lifted_export_component_with_params
-//
-//   Supporting byte-constant exports:
-//     section_*        — component section IDs (1..11)
-//     core_sort_*      — core-sortidx bytes (func/table/memory/...)
-//     cvaltype_*       — component primitive valtype bytes (bool,
-//                        s8..s64, u8..u64, f32/f64, char, string)
-//     canonopt_*       — canon-opt discriminator bytes (string
-//                        encodings + memory/realloc/post-return)
-//
-// What's NOT covered yet (gaps for actual WIT-world wrapping):
-//   - Interface-form imports (importname kind 0x01,
-//     `wasi:cli/exit@0.2.0`-style)
-//   - Instance types (externdesc kind 0x04) — needed for the
-//     interface-form import shape
-//   - Multi-sort component-level aliases (the existing alias
-//     composer covers only core-sort exports)
-//   - core-type section (id 3) — for declaring core wasm types
-//     inline in a component
-//   - Multi-entry type sections that mix functype + defvaltype
-//     forms in a single vec (currently each composer emits its
-//     own type section)
-//
-// Layout of the preamble:
-//
-//   Component preamble (8 bytes):
-//     00 61 73 6d   magic ("\0asm")
-//     0d 00         version 0x000d (component-model preview)
-//     01 00         layer 0x0001  (component, vs 0x0000 for core)
+// This module constructs WebAssembly components in binary format.
 
 import "std/wasm/leb128";
 import "std/wasm/encode";
 
-// Component section IDs from the Binary.md spec table. The
-// earlier version of this file (when only section_core_module was
-// exercised) had the rest of the IDs off by one — they were copied
-// from an older draft of the spec that had a separate `core-alias`
-// section and an explicit `component-type` section. The current
-// MVP binary format folded core-alias into the unified `alias`
-// section (id 6) and the `component-type` payload lives in a
-// custom section, not a top-level section. The constants below
-// were verified against `wasm-tools parse` output for a handful of
-// shapes (`(core module …)`, `(core instance …)`, `(alias …)`).
-//
-// One section ID is not present: section 4 = `component`, the
-// recursive case where one component embeds another. The
-// production driver doesn't need it; left out until something does.
 pub function section_core_module(): u8 {
   return 1u8;
 }
@@ -144,29 +43,19 @@ pub function section_export(): u8 {
   return 11u8;
 }
 
-// put_component_header — append the Component Model preamble:
-// `\0asm` + version 0x000d + layer 0x0001. Always 8 bytes.
-// Layer = 0x01 is what distinguishes a component from a core
-// module (which uses layer 0x00 — i.e. its version field is
-// 0x01000000 and there's no layer field).
 pub function put_component_header(buf: u8[]): u8[] {
   let out: u8[] = buf;
   out = out.append(0u8);
-  out = out.append(97u8);  // 'a'
-  out = out.append(115u8);  // 's'
-  out = out.append(109u8);  // 'm'
-  out = out.append(13u8);  // version low byte (0x0d)
-  out = out.append(0u8);  // version high byte
-  out = out.append(1u8);  // layer low byte (0x01 — component)
-  out = out.append(0u8);  // layer high byte
+  out = out.append(97u8);
+  out = out.append(115u8);
+  out = out.append(109u8);
+  out = out.append(13u8);
+  out = out.append(0u8);
+  out = out.append(1u8);
+  out = out.append(0u8);
   return out;
 }
 
-// put_core_module_section — append a complete core wasm module
-// as a core-module section: `id : u8 + size : uleb + body`.
-// `core_bytes` is the entire core module starting with its own
-// preamble (00 61 73 6d 01 00 00 00 ...) as produced by
-// std/wasm/module.build.
 pub function put_core_module_section(buf: u8[], core_bytes: u8[]): u8[] {
   let out: u8[] = buf;
   out = out.append(section_core_module());
@@ -174,35 +63,10 @@ pub function put_core_module_section(buf: u8[], core_bytes: u8[]): u8[] {
   return encode.put_bytes(out, core_bytes);
 }
 
-// put_core_type_section_one_func — emit a component-level
-// core-type section (id 3) containing a single core wasm functype.
-// Core types declared at the component level are addressed by
-// core-typeidx and used in places like core-instance instantiation
-// args (for declaring the expected core-import signatures of a
-// core module being instantiated). The encoding is the standard
-// core wasm functype: `0x60 vec(<valtype>) vec(<valtype>)`.
-//
-// `param_valtypes` and `result_valtypes` carry core wasm valtype
-// bytes (NOT component cvaltype bytes) — i.e. `encode.valtype_i32`
-// / `_i64` / `_f32` / `_f64`. Same as the params/results used by
-// std/wasm/module's type section.
-//
-// Spec (Binary.md):
-//   core-type ::= core:type
-//   core:type ::= functype | moduletype
-//   core:functype ::= 0x60 vec(<valtype>) vec(<valtype>)
-//
-// Encoded body for one functype:
-//
-//   03 <size>           // section id 3 = core-type
-//   01                  // vec(1) core-type entries
-//   60                  // functype form
-//   <P:uleb> <params>*  // vec(P) param valtypes
-//   <R:uleb> <results>* // vec(R) result valtypes
 pub function put_core_type_section_one_func(buf: u8[], param_valtypes: u8[], result_valtypes: u8[]): u8[] {
   let body: u8[] = [];
-  body = leb128.uleb_u32(body, 1u32);  // vec(1) core types
-  body = body.append(96u8);  // functype form (0x60)
+  body = leb128.uleb_u32(body, 1u32);
+  body = body.append(96u8);
   let np: i32 = param_valtypes.len();
   body = leb128.uleb_u32(body, np as u32);
   let i: i32 = 0;
@@ -224,68 +88,22 @@ pub function put_core_type_section_one_func(buf: u8[], param_valtypes: u8[], res
   return encode.put_bytes(out, body);
 }
 
-// put_component_type_section — append a `component-type` custom
-// section carrying the given precomputed payload bytes. This is
-// the same operation `wasm-tools component embed -w <world>`
-// performs on a core module: write a section with id 0x00, name
-// "component-type", and the world's encoded type payload. The
-// section is opaque to the wasm validator — engines that don't
-// know about the Component Model just skip it as a custom section.
-//
-// The payload bytes are deterministic per WIT world and
-// independent of the surrounding component. Generating them
-// requires walking a WIT world; that's out of scope for std/wasm
-// (and the production driver already ships precomputed payloads
-// in internal/wasm/componenttype/{fern,http,proxy}.bin). This composer
-// just wraps whatever payload the caller hands in.
-//
-// Spec: custom sections in components share the same wire shape
-// as in core wasm — section id 0x00 + uleb size + uleb name length
-// + UTF-8 name + raw payload bytes.
-//
-// Encoded body:
-//
-//   00 <size>           // section id 0 (custom)
-//   <name-len:uleb>     // 14 = strlen("component-type")
-//   "component-type"
-//   <payload bytes...>
 pub function put_component_type_section(buf: u8[], payload: u8[]): u8[] {
   let body: u8[] = encode.put_name([], "component-type");
   body = encode.put_bytes(body, payload);
 
   let out: u8[] = buf;
-  out = out.append(0u8);  // section id 0 (custom)
+  out = out.append(0u8);
   out = leb128.uleb_u32(out, body.len() as u32);
   return encode.put_bytes(out, body);
 }
 
-// put_core_instance_section_instantiate — emit a core-instance
-// section that contains a single "instantiate" entry: instantiate
-// a core module by index, with no `instantiation-arg`s. This is
-// the minimum shape needed by a self-contained core module (one
-// with no imports, e.g. the fern CLI core after every WASI import
-// is satisfied by canonical-ABI host imports at the component
-// level).
-//
-// Spec (Binary.md, `core:instance` production):
-//   core-instance ::= 0x00 m:module-idx args:vec(core-instantiation-arg)
-//                   | 0x01 e:vec(core-instance-export)
-//
-// We emit the first form with `args = []`. Encoded body for one
-// instance with module_idx=0:
-//
-//   01           // vec length = 1 instance
-//   00           // tag = 0 (instantiate)
-//   00           // module_idx (uleb) = 0
-//   00           // args vec length = 0
-//
-// Section header wrapped on top: `id=2 + uleb size + body`.
 pub function put_core_instance_section_instantiate(buf: u8[], module_idx: u32): u8[] {
   let body: u8[] = [];
-  body = leb128.uleb_u32(body, 1u32);  // one instance entry
-  body = body.append(0u8);  // tag: instantiate
-  body = leb128.uleb_u32(body, module_idx);  // which core module
-  body = leb128.uleb_u32(body, 0u32);  // no args
+  body = leb128.uleb_u32(body, 1u32);
+  body = body.append(0u8);
+  body = leb128.uleb_u32(body, module_idx);
+  body = leb128.uleb_u32(body, 0u32);
 
   let out: u8[] = buf;
   out = out.append(section_core_instance());
@@ -293,8 +111,6 @@ pub function put_core_instance_section_instantiate(buf: u8[], module_idx: u32): 
   return encode.put_bytes(out, body);
 }
 
-// Core sort discriminator bytes (used inside `core-sortidx` inside
-// alias and core-instance section entries).
 pub function core_sort_func(): u8 {
   return 0u8;
 }
@@ -311,69 +127,24 @@ pub function core_sort_global(): u8 {
   return 3u8;
 }
 
-pub function core_sort_type(): u8 {  // 0x10
+pub function core_sort_type(): u8 {
   return 16u8;
 }
 
-pub function core_sort_module(): u8 {  // 0x11
+pub function core_sort_module(): u8 {
   return 17u8;
 }
 
-pub function core_sort_instance(): u8 {  // 0x12
+pub function core_sort_instance(): u8 {
   return 18u8;
 }
 
-// put_core_instance_section_from_one_func_export — emit a core-
-// instance section containing one "instance-from-exports" entry
-// that packages a single core function under the given export
-// name. Used to package a `canon lower`-produced core function so
-// it can be passed as an instantiation arg to a core module's
-// import (core module imports take instances, not raw funcs).
-//
-// Spec (Binary.md, `core:instance` production, second form):
-//   core-instance ::= 0x01 e:vec(core-instance-export)
-//   core-instance-export ::= n:<name> i:<core-sortidx>
-//   core-sortidx ::= s:<core-sort> i:<u32>
-//
-// Encoded body for one instance from one func export:
-//
-//   01           // vec(1) instance entries
-//   01           // tag = 0x01 (instance-from-exports)
-//   01           // vec(1) exports
-//   <name>       // uleb-prefixed UTF-8
-//   00           // core-sort = func
-//   <func-idx>   // uleb
-// put_core_instance_section_from_func_exports — emit a core-
-// instance section containing one "instance-from-exports" entry
-// that packages N core functions into a single core instance,
-// each surfaced under its own export name. Generalises
-// `put_core_instance_section_from_one_func_export` for the case
-// where many lowered host funcs need to be bundled together —
-// typically every preview-2 WASI import after `canon lower` runs,
-// since the core module imports them via a single instance under
-// names like "stdout", "exit", "random-get", etc.
-//
-// Spec (Binary.md, `core:instance` production, second form):
-//   core-instance ::= 0x01 e:vec(core-instance-export)
-//   core-instance-export ::= n:<name> i:<core-sortidx>
-//   core-sortidx ::= s:<core-sort> i:<u32>
-//
-// All exports are of core-sort = func. (Memory / table / global
-// exports inside one instance would require a multi-sort variant;
-// not needed for WASI-world wrapping today.)
-//
-// Encoded body for one instance with N func exports:
-//
-//   01           // vec(1) instance entries
-//   01           // tag = 0x01 (instance-from-exports)
-//   <N:uleb>     // vec(N) exports
-//   (<name> 00 <core-func-idx:uleb>)*  // each: name + core-sort func + idx
 pub function put_core_instance_section_from_func_exports(buf: u8[], export_names: string[], core_func_idxs: u32[]): u8[] {
   let body: u8[] = [];
-  body = leb128.uleb_u32(body, 1u32);  // vec(1) instances
-  body = body.append(1u8);  // form: from-exports
+  body = leb128.uleb_u32(body, 1u32);
+  body = body.append(1u8);
   let n: i32 = export_names.len();
-  body = leb128.uleb_u32(body, n as u32);  // vec(N) exports
+  body = leb128.uleb_u32(body, n as u32);
   let i: i32 = 0;
   while (i < n) {
     body = encode.put_name(body, export_names[i]);
@@ -388,74 +159,19 @@ pub function put_core_instance_section_from_func_exports(buf: u8[], export_names
   return encode.put_bytes(out, body);
 }
 
-// put_core_instance_section_from_one_func_export — convenience
-// wrapper over put_core_instance_section_from_func_exports for the
-// single-export case. Existing call sites in the e2e tests use
-// this; new multi-export code should reach for the funcs variant
-// directly.
 pub function put_core_instance_section_from_one_func_export(buf: u8[], export_name: string, core_func_idx: u32): u8[] {
   let names: string[] = [export_name];
   let idxs: u32[] = [core_func_idx];
   return put_core_instance_section_from_func_exports(buf, names, idxs);
 }
 
-// put_core_instance_section_instantiate_with_one_instance_arg —
-// emit a core-instance section containing one "instantiate" entry
-// that instantiates a core module passing exactly one
-// instance-typed argument. The arg is the instance built (typically
-// by put_core_instance_section_from_one_func_export) to package a
-// lowered host function for use as a core-module import.
-//
-// Spec:
-//   core-instance ::= 0x00 m:module-idx args:vec(core-instantiation-arg)
-//   core-instantiation-arg ::= n:<name> i:<core-sortidx>
-//   core-sortidx ::= s:<core-sort> i:<u32>
-//
-// `core-sort` for an instance argument is 0x12. (Core module
-// imports take an instance, even if the instance only carries one
-// function — that matches the (module $m (import "host" "f" ...))
-// shape, where "host" names the instance.)
-//
-// Encoded body for "instantiate module M with arg `arg_name` →
-// instance `instance_idx`":
-//
-//   01                  // vec(1) instance entries
-//   00                  // tag = 0x00 (instantiate)
-//   <module-idx>        // uleb
-//   01                  // args vec count = 1
-//   <arg_name>          // uleb-prefixed UTF-8
-//   12                  // core-sort = instance
-//   <instance-idx>      // uleb
-// put_core_instance_section_instantiate_with_instance_args — emit
-// a core-instance section containing one "instantiate" entry that
-// instantiates a core module passing N instance-typed arguments.
-// Each arg has its own (name, instance_idx); the two parallel
-// arrays must have equal length.
-//
-// This is the form needed when the core module imports from
-// multiple distinct host instances — e.g. a future WASI world
-// component that pulls "wasi" + "user-host" or similar. Single-arg
-// case (the common WASI shape) is handled by the
-// `_with_one_instance_arg` convenience wrapper below.
-//
-// Spec:
-//   core-instance ::= 0x00 m:module-idx args:vec(core-instantiation-arg)
-//   core-instantiation-arg ::= n:<name> i:<core-sortidx>
-//
-// Encoded body for "instantiate module M with N instance args":
-//
-//   01                  // vec(1) instance entries
-//   00                  // form: instantiate
-//   <module-idx>        // uleb
-//   <N:uleb>            // args vec count = N
-//   (<name> 12 <instance-idx>)*   // N (name, core-sort=instance, idx)
 pub function put_core_instance_section_instantiate_with_instance_args(buf: u8[], module_idx: u32, arg_names: string[], instance_idxs: u32[]): u8[] {
   let body: u8[] = [];
-  body = leb128.uleb_u32(body, 1u32);  // vec(1) instances
-  body = body.append(0u8);  // form: instantiate
+  body = leb128.uleb_u32(body, 1u32);
+  body = body.append(0u8);
   body = leb128.uleb_u32(body, module_idx);
   let n: i32 = arg_names.len();
-  body = leb128.uleb_u32(body, n as u32);  // args vec count = N
+  body = leb128.uleb_u32(body, n as u32);
   let i: i32 = 0;
   while (i < n) {
     body = encode.put_name(body, arg_names[i]);
@@ -470,131 +186,82 @@ pub function put_core_instance_section_instantiate_with_instance_args(buf: u8[],
   return encode.put_bytes(out, body);
 }
 
-// put_core_instance_section_instantiate_with_one_instance_arg —
-// convenience wrapper over
-// put_core_instance_section_instantiate_with_instance_args for the
-// single-arg case. Existing call sites in the e2e tests use this;
-// new multi-arg code should reach for the args variant directly.
 pub function put_core_instance_section_instantiate_with_one_instance_arg(buf: u8[], module_idx: u32, arg_name: string, instance_idx: u32): u8[] {
   let names: string[] = [arg_name];
   let idxs: u32[] = [instance_idx];
   return put_core_instance_section_instantiate_with_instance_args(buf, module_idx, names, idxs);
 }
 
-// Component primitive valtype bytes. Distinct numbering from the
-// core wasm valtypes (which live in std/wasm/encode); core i32 is
-// 0x7f whereas component bool is also 0x7f. Each space is parsed
-// independently — the same byte means different things inside a
-// core type section vs a component type section.
-//
-// The numbering counts down from 0x7f. Bytes confirmed against
-// `wasm-tools parse` output for `(component (type (func (result X))))`
-// across every variant below.
-pub function cvaltype_bool(): u8 {  // 0x7f
+pub function cvaltype_bool(): u8 {
   return 127u8;
 }
 
-pub function cvaltype_s8(): u8 {  // 0x7e
+pub function cvaltype_s8(): u8 {
   return 126u8;
 }
 
-pub function cvaltype_u8(): u8 {  // 0x7d
+pub function cvaltype_u8(): u8 {
   return 125u8;
 }
 
-pub function cvaltype_s16(): u8 {  // 0x7c
+pub function cvaltype_s16(): u8 {
   return 124u8;
 }
 
-pub function cvaltype_u16(): u8 {  // 0x7b
+pub function cvaltype_u16(): u8 {
   return 123u8;
 }
 
-pub function cvaltype_s32(): u8 {  // 0x7a
+pub function cvaltype_s32(): u8 {
   return 122u8;
 }
 
-pub function cvaltype_u32(): u8 {  // 0x79
+pub function cvaltype_u32(): u8 {
   return 121u8;
 }
 
-pub function cvaltype_s64(): u8 {  // 0x78
+pub function cvaltype_s64(): u8 {
   return 120u8;
 }
 
-pub function cvaltype_u64(): u8 {  // 0x77
+pub function cvaltype_u64(): u8 {
   return 119u8;
 }
 
-pub function cvaltype_f32(): u8 {  // 0x76
+pub function cvaltype_f32(): u8 {
   return 118u8;
 }
 
-pub function cvaltype_f64(): u8 {  // 0x75
+pub function cvaltype_f64(): u8 {
   return 117u8;
 }
 
-pub function cvaltype_char(): u8 {  // 0x74
+pub function cvaltype_char(): u8 {
   return 116u8;
 }
 
-pub function cvaltype_string(): u8 {  // 0x73
+pub function cvaltype_string(): u8 {
   return 115u8;
 }
 
-// put_type_section_one_func — emit a component-level type section
-// that defines a single functype with the given parameter list and
-// one anonymous result. Each parameter has a name + a valtype byte;
-// the two parallel arrays must have equal length.
-//
-// Spec (Binary.md):
-//   functype   ::= 0x40 ps:vec(<paramname valtype>) rs:resultlist
-//   paramname  ::= <name>                              -- uleb-prefixed UTF-8
-//   resultlist ::= 0x00 t:<valtype>                    -- single anonymous
-//                | 0x01 lts:vec(<labelvaltype>)        -- named results
-//
-// Encoded body for one functype with N params:
-//
-//   01                  // vec(1) types
-//   40                  // functype form
-//   <N:uleb>            // params vec count
-//   (<name> <valtype>)* // N pairs, each: uleb-prefixed name + valtype byte
-//   00                  // resultlist tag = single anonymous
-//   <result_valtype>    // result valtype byte
-//
-// Section header: `id=7 + uleb size + body`.
-// put_type_section_funcs — emit a component-level type section
-// containing N functype entries. Each entry has its own parameter
-// list (name + valtype pairs, given as parallel inner arrays) and
-// a single anonymous result. The three top-level arrays MUST have
-// equal length; the i-th entry of each describes the i-th functype.
-//
-// Spec (Binary.md):
-//   functype   ::= 0x40 ps:vec(<paramname valtype>) rs:resultlist
-//   resultlist ::= 0x00 t:<valtype>          -- single anonymous
-//                | 0x01 lts:vec(<labelvaltype>) -- named results
-//
-// This composer covers the "single anonymous result" form, which
-// is what every WASI function in the fern / http worlds uses. The
-// named-result form lands in a later slice if/when a world needs it.
 pub function put_type_section_funcs(buf: u8[], param_names_per_func: string[][], param_valtypes_per_func: u8[][], result_valtype_per_func: u8[]): u8[] {
   let body: u8[] = [];
   let n: i32 = result_valtype_per_func.len();
-  body = leb128.uleb_u32(body, n as u32);  // vec(N) types
+  body = leb128.uleb_u32(body, n as u32);
   let t: i32 = 0;
   while (t < n) {
-    body = body.append(64u8);  // functype form (0x40)
+    body = body.append(64u8);
     let p_names: string[] = param_names_per_func[t];
     let p_valtypes: u8[] = param_valtypes_per_func[t];
     let pn: i32 = p_names.len();
-    body = leb128.uleb_u32(body, pn as u32);  // params vec count
+    body = leb128.uleb_u32(body, pn as u32);
     let i: i32 = 0;
     while (i < pn) {
       body = encode.put_name(body, p_names[i]);
       body = body.append(p_valtypes[i]);
       i = i + 1;
     }
-    body = body.append(0u8);  // resultlist tag: single anon
+    body = body.append(0u8);
     body = body.append(result_valtype_per_func[t]);
     t = t + 1;
   }
@@ -605,10 +272,6 @@ pub function put_type_section_funcs(buf: u8[], param_names_per_func: string[][],
   return encode.put_bytes(out, body);
 }
 
-// put_type_section_one_func — convenience wrapper over
-// put_type_section_funcs for the single-functype case. Existing call
-// sites in the e2e tests use this; new multi-type code should reach
-// for put_type_section_funcs directly.
 pub function put_type_section_one_func(buf: u8[], param_names: string[], param_valtypes: u8[], result_valtype: u8): u8[] {
   let names_per: string[][] = [param_names];
   let valtypes_per: u8[][] = [param_valtypes];
@@ -616,57 +279,26 @@ pub function put_type_section_one_func(buf: u8[], param_names: string[], param_v
   return put_type_section_funcs(buf, names_per, valtypes_per, results_per);
 }
 
-// put_type_section_one_func_no_param — thin convenience wrapper
-// over `put_type_section_one_func` for the zero-parameter case.
-// Retained as a named entry point because earlier slices already
-// call it from the e2e tests; new code with params should reach for
-// `put_type_section_one_func` directly.
 pub function put_type_section_one_func_no_param(buf: u8[], result_valtype: u8): u8[] {
   let no_names: string[] = [];
   let no_valtypes: u8[] = [];
   return put_type_section_one_func(buf, no_names, no_valtypes, result_valtype);
 }
 
-// put_type_section_one_func_no_result — emit a component-level type
-// section that defines a single functype with the given parameter
-// list and NO result (`() -> ()`-shaped). The existing single- and
-// multi-functype composers always emit the "single anonymous
-// result" form (resultlist tag 0x00 + valtype); this composer emits
-// the alternative "named results" form with an empty vec
-// (resultlist tag 0x01 + vec(0)), which the component-model spec
-// uses to represent absence of any result.
-//
-// Needed for WASI functions that don't return anything — e.g.
-// `wasi:cli/exit::exit(status: u32)`, `wasi:io/streams::write(...)`
-// in some shapes. Without this, real WASI worlds can't be expressed.
-//
-// Spec (Binary.md):
-//   functype   ::= 0x40 ps:vec(<paramname valtype>) rs:resultlist
-//   resultlist ::= 0x00 t:<valtype>          -- single anonymous result
-//                | 0x01 lts:vec(<labelvaltype>) -- named results
-//
-// Encoded body for one no-result functype with N params:
-//
-//   01                  // vec(1) types
-//   40                  // functype form
-//   <N:uleb>            // params vec count
-//   (<name> <valtype>)* // N pairs
-//   01                  // resultlist tag: named results
-//   00                  // vec(0) labels = no results
 pub function put_type_section_one_func_no_result(buf: u8[], param_names: string[], param_valtypes: u8[]): u8[] {
   let body: u8[] = [];
-  body = leb128.uleb_u32(body, 1u32);  // vec(1) of types
-  body = body.append(64u8);  // functype form (0x40)
+  body = leb128.uleb_u32(body, 1u32);
+  body = body.append(64u8);
   let n: i32 = param_names.len();
-  body = leb128.uleb_u32(body, n as u32);  // params vec count
+  body = leb128.uleb_u32(body, n as u32);
   let i: i32 = 0;
   while (i < n) {
     body = encode.put_name(body, param_names[i]);
     body = body.append(param_valtypes[i]);
     i = i + 1;
   }
-  body = body.append(1u8);  // resultlist tag: named
-  body = leb128.uleb_u32(body, 0u32);  // vec(0) named results
+  body = body.append(1u8);
+  body = leb128.uleb_u32(body, 0u32);
 
   let out: u8[] = buf;
   out = out.append(section_type());
@@ -674,30 +306,12 @@ pub function put_type_section_one_func_no_result(buf: u8[], param_names: string[
   return encode.put_bytes(out, body);
 }
 
-// put_type_section_one_resource — emit a component-level type
-// section that defines a single resource type with the given
-// representation valtype and no destructor. Resources are the
-// component-model handle type used pervasively in the HTTP world
-// (incoming-request, outgoing-response, fields, …); the rep
-// valtype is the core wasm representation (typically i32 for
-// pointer-shaped handles).
-//
-// Spec (Binary.md, `defvaltype` production):
-//   defvaltype ::= ... | 0x3f rep:<valtype> dtor?:<funcidx>
-//                  -- resource (rep + optional destructor)
-//
-// Encoded body for one no-dtor resource:
-//
-//   01           // vec(1) defvaltype entries
-//   3f           // resource form
-//   <rep>        // core valtype byte (e.g. 0x7f for i32)
-//   00           // dtor: absent (0x01 + uleb funcidx if present)
 pub function put_type_section_one_resource(buf: u8[], rep_valtype: u8): u8[] {
   let body: u8[] = [];
-  body = leb128.uleb_u32(body, 1u32);  // vec(1)
-  body = body.append(63u8);  // resource form (0x3f)
+  body = leb128.uleb_u32(body, 1u32);
+  body = body.append(63u8);
   body = body.append(rep_valtype);
-  body = body.append(0u8);  // no destructor
+  body = body.append(0u8);
 
   let out: u8[] = buf;
   out = out.append(section_type());
@@ -705,29 +319,10 @@ pub function put_type_section_one_resource(buf: u8[], rep_valtype: u8): u8[] {
   return encode.put_bytes(out, body);
 }
 
-// put_type_section_one_list — emit a component-level type section
-// that defines a single `list<elem>` type. Lists are heavily used
-// in WASI for byte buffers (`list<u8>`), environment variables
-// (`list<tuple<string, string>>`), HTTP headers, etc.
-//
-// `elem_valtype` is either a primitive cvaltype byte (0x73..0x7f
-// for string / char / floats / ints / bool) or a uleb-encoded
-// typeidx referencing a previously-declared component-level type
-// (uleb values for small typeidxs are single bytes 0x00..0x7f
-// that don't collide with the primitive byte range).
-//
-// Spec (Binary.md, `defvaltype` production):
-//   defvaltype ::= ... | 0x70 t:<valtype>          -- list
-//
-// Encoded body:
-//
-//   01           // vec(1) defvaltype entries
-//   70           // list form
-//   <elem>       // valtype byte
 pub function put_type_section_one_list(buf: u8[], elem_valtype: u8): u8[] {
   let body: u8[] = [];
-  body = leb128.uleb_u32(body, 1u32);  // vec(1)
-  body = body.append(112u8);  // list form (0x70)
+  body = leb128.uleb_u32(body, 1u32);
+  body = body.append(112u8);
   body = body.append(elem_valtype);
 
   let out: u8[] = buf;
@@ -736,27 +331,10 @@ pub function put_type_section_one_list(buf: u8[], elem_valtype: u8): u8[] {
   return encode.put_bytes(out, body);
 }
 
-// put_type_section_one_option — emit a component-level type
-// section that defines a single `option<inner>` type. Options
-// appear pervasively in WASI worlds — e.g. an HTTP request's
-// `pathname` field, `wasi:cli/environment::get-arguments()`'s
-// implicit absence, any "may or may not be present" return.
-//
-// `inner_valtype` is either a primitive cvaltype byte or a uleb-
-// encoded typeidx (same rules as `put_type_section_one_list`).
-//
-// Spec (Binary.md, `defvaltype` production):
-//   defvaltype ::= ... | 0x6b t:<valtype>          -- option
-//
-// Encoded body:
-//
-//   01           // vec(1) defvaltype entries
-//   6b           // option form (0x6b)
-//   <inner>      // valtype byte
 pub function put_type_section_one_option(buf: u8[], inner_valtype: u8): u8[] {
   let body: u8[] = [];
-  body = leb128.uleb_u32(body, 1u32);  // vec(1)
-  body = body.append(107u8);  // option form (0x6b)
+  body = leb128.uleb_u32(body, 1u32);
+  body = body.append(107u8);
   body = body.append(inner_valtype);
 
   let out: u8[] = buf;
@@ -765,28 +343,10 @@ pub function put_type_section_one_option(buf: u8[], inner_valtype: u8): u8[] {
   return encode.put_bytes(out, body);
 }
 
-// put_type_section_one_tuple — emit a component-level type section
-// that defines a single `tuple<t0, t1, …>` type with N positional
-// elements. Tuples are the canonical pair / triple shape in WASI:
-// e.g. `wasi:cli/environment::get-environment()` returns
-// `list<tuple<string, string>>` for the (name, value) entries.
-//
-// Each entry of `elem_valtypes` is a primitive cvaltype byte or a
-// uleb-encoded typeidx — same rules as `put_type_section_one_list`.
-//
-// Spec (Binary.md, `defvaltype` production):
-//   defvaltype ::= ... | 0x6f ts:vec(<valtype>)          -- tuple
-//
-// Encoded body for an N-element tuple:
-//
-//   01           // vec(1) defvaltype entries
-//   6f           // tuple form (0x6f)
-//   <N:uleb>     // vec(N) element types
-//   <e0> <e1> …  // N valtype bytes
 pub function put_type_section_one_tuple(buf: u8[], elem_valtypes: u8[]): u8[] {
   let body: u8[] = [];
-  body = leb128.uleb_u32(body, 1u32);  // vec(1)
-  body = body.append(111u8);  // tuple form (0x6f)
+  body = leb128.uleb_u32(body, 1u32);
+  body = body.append(111u8);
   let n: i32 = elem_valtypes.len();
   body = leb128.uleb_u32(body, n as u32);
   let i: i32 = 0;
@@ -801,36 +361,13 @@ pub function put_type_section_one_tuple(buf: u8[], elem_valtypes: u8[]): u8[] {
   return encode.put_bytes(out, body);
 }
 
-// put_type_section_one_result_ok_err — emit a component-level type
-// section that defines a single `result<ok, err>` type, with both
-// the ok arm and err arm explicitly typed. This is the most common
-// result shape in WASI worlds: HTTP request handlers, file ops,
-// network ops all return `result<T, error-code>` or similar.
-//
-// The four-way matrix (ok present, err present) collapses to
-// separate functions; only the both-present form ships in this
-// slice. Ok-only / err-only / empty results will land as later
-// composers if a real consumer needs them.
-//
-// Spec (Binary.md, `defvaltype` production):
-//   defvaltype ::= ... | 0x6a t?:<valtype> e?:<valtype>          -- result
-//
-// Each optional valtype is encoded as `0x01 + valtype` (present)
-// or `0x00` (absent). This composer always emits both as present.
-//
-// Encoded body for one `result<ok, err>`:
-//
-//   01           // vec(1) defvaltype entries
-//   6a           // result form (0x6a)
-//   01 <ok>      // ok present + valtype byte
-//   01 <err>     // err present + valtype byte
 pub function put_type_section_one_result_ok_err(buf: u8[], ok_valtype: u8, err_valtype: u8): u8[] {
   let body: u8[] = [];
-  body = leb128.uleb_u32(body, 1u32);  // vec(1)
-  body = body.append(106u8);  // result form (0x6a)
-  body = body.append(1u8);  // ok present
+  body = leb128.uleb_u32(body, 1u32);
+  body = body.append(106u8);
+  body = body.append(1u8);
   body = body.append(ok_valtype);
-  body = body.append(1u8);  // err present
+  body = body.append(1u8);
   body = body.append(err_valtype);
 
   let out: u8[] = buf;
@@ -839,30 +376,10 @@ pub function put_type_section_one_result_ok_err(buf: u8[], ok_valtype: u8, err_v
   return encode.put_bytes(out, body);
 }
 
-// put_type_section_one_enum — emit a component-level type section
-// that defines a single `enum` type with the given case labels.
-// Enums are "tag-only" variants — each case has a name and no
-// payload, like Rust's `enum Color { Red, Green, Blue }` (or this
-// language's bare-tag enum variants).
-//
-// WASI uses enums for status codes (`wasi:filesystem/types::error-code`)
-// and small finite-set selectors.
-//
-// Spec (Binary.md, `defvaltype` production):
-//   defvaltype ::= ... | 0x6d ls:vec(<label>)          -- enum
-//
-// Each <label> is a uleb-prefixed UTF-8 string.
-//
-// Encoded body for an N-case enum:
-//
-//   01           // vec(1) defvaltype entries
-//   6d           // enum form (0x6d)
-//   <N:uleb>     // vec(N) labels
-//   <label0> <label1> …    // N uleb-prefixed UTF-8 names
 pub function put_type_section_one_enum(buf: u8[], labels: string[]): u8[] {
   let body: u8[] = [];
-  body = leb128.uleb_u32(body, 1u32);  // vec(1)
-  body = body.append(109u8);  // enum form (0x6d)
+  body = leb128.uleb_u32(body, 1u32);
+  body = body.append(109u8);
   let n: i32 = labels.len();
   body = leb128.uleb_u32(body, n as u32);
   let i: i32 = 0;
@@ -877,30 +394,10 @@ pub function put_type_section_one_enum(buf: u8[], labels: string[]): u8[] {
   return encode.put_bytes(out, body);
 }
 
-// put_type_section_one_flags — emit a component-level type section
-// that defines a single `flags` type with the given label list. A
-// flags value carries any subset of the labelled bits — like a
-// Rust `bitflags!` or a C bitmask. Semantically a bitset; encoding-
-// wise identical to enum (same labels vec), only the form byte
-// changes (0x6e vs 0x6d).
-//
-// WASI uses flags for permission-style values like
-// `wasi:filesystem/types::descriptor-flags` (read / write /
-// file-integrity-sync / data-integrity-sync / ...).
-//
-// Spec (Binary.md, `defvaltype` production):
-//   defvaltype ::= ... | 0x6e ls:vec(<label>)          -- flags
-//
-// Encoded body for an N-flag type:
-//
-//   01           // vec(1) defvaltype entries
-//   6e           // flags form (0x6e)
-//   <N:uleb>     // vec(N) labels
-//   <label0> <label1> …    // N uleb-prefixed UTF-8 names
 pub function put_type_section_one_flags(buf: u8[], labels: string[]): u8[] {
   let body: u8[] = [];
-  body = leb128.uleb_u32(body, 1u32);  // vec(1)
-  body = body.append(110u8);  // flags form (0x6e)
+  body = leb128.uleb_u32(body, 1u32);
+  body = body.append(110u8);
   let n: i32 = labels.len();
   body = leb128.uleb_u32(body, n as u32);
   let i: i32 = 0;
@@ -915,35 +412,10 @@ pub function put_type_section_one_flags(buf: u8[], labels: string[]): u8[] {
   return encode.put_bytes(out, body);
 }
 
-// put_type_section_one_record — emit a component-level type section
-// that defines a single `record` type with N named typed fields.
-// Records are the structural product type — like a struct, with
-// each field carrying a name + a valtype.
-//
-// `field_names` and `field_valtypes` are parallel arrays describing
-// the i-th field's name and type respectively; they must have equal
-// length.
-//
-// Records appear in WASI for things like `wasi:filesystem/types::
-// descriptor-stat` (file metadata: size, modified-at, link-count, …)
-// and `wasi:http/types::field-entry` (header name + value).
-//
-// Spec (Binary.md, `defvaltype` production):
-//   defvaltype   ::= ... | 0x72 lts:vec(<labelvaltype>)          -- record
-//   labelvaltype ::= label:<name> t:<valtype>
-//
-// The per-field encoding is identical to functype params: each
-// `<labelvaltype>` is a uleb-prefixed UTF-8 name followed by one
-// valtype byte. The full body for an N-field record:
-//
-//   01                       // vec(1) defvaltype entries
-//   72                       // record form (0x72)
-//   <N:uleb>                 // vec(N) fields
-//   (<name> <valtype>)*      // N (name, valtype) pairs
 pub function put_type_section_one_record(buf: u8[], field_names: string[], field_valtypes: u8[]): u8[] {
   let body: u8[] = [];
-  body = leb128.uleb_u32(body, 1u32);  // vec(1)
-  body = body.append(114u8);  // record form (0x72)
+  body = leb128.uleb_u32(body, 1u32);
+  body = body.append(114u8);
   let n: i32 = field_names.len();
   body = leb128.uleb_u32(body, n as u32);
   let i: i32 = 0;
@@ -959,54 +431,22 @@ pub function put_type_section_one_record(buf: u8[], field_names: string[], field
   return encode.put_bytes(out, body);
 }
 
-// put_type_section_one_variant — emit a component-level type
-// section that defines a single `variant` type with N named cases.
-// Each case has a name and an optional payload valtype; cases
-// without payloads are tag-only (closer to enum cases). Refines —
-// the optional pointer to a "parent" case — is not supported by
-// this composer; every case emits `refines absent`.
-//
-// Variants are the structural sum type — like Rust's `enum` with
-// payloads. WASI uses them heavily for error encodings
-// (`wasi:http/types::error-code` has dozens of cases, many with
-// payloads) and option-like return shapes.
-//
-// `case_has_payload[i]` selects whether case i carries a payload:
-//   - true  → emit `01 <case_payload_valtypes[i]>`
-//   - false → emit `00` (payload absent); the corresponding entry
-//             in `case_payload_valtypes` is ignored.
-//
-// The three top-level arrays must have equal length.
-//
-// Spec (Binary.md, `defvaltype` production):
-//   defvaltype ::= ... | 0x71 cases:vec(<case>)          -- variant
-//   case ::= name:<name> t?:<valtype> refines?:<u32>
-//
-// Each optional field is encoded as `0x01 + value` (present) or
-// `0x00` (absent).
-//
-// Encoded body for an N-case variant (no refines):
-//
-//   01           // vec(1) defvaltype entries
-//   71           // variant form (0x71)
-//   <N:uleb>     // vec(N) cases
-//   (<name> <payload_flag> [<valtype>] 00)*
 pub function put_type_section_one_variant(buf: u8[], case_names: string[], case_has_payload: boolean[], case_payload_valtypes: u8[]): u8[] {
   let body: u8[] = [];
-  body = leb128.uleb_u32(body, 1u32);  // vec(1)
-  body = body.append(113u8);  // variant form (0x71)
+  body = leb128.uleb_u32(body, 1u32);
+  body = body.append(113u8);
   let n: i32 = case_names.len();
   body = leb128.uleb_u32(body, n as u32);
   let i: i32 = 0;
   while (i < n) {
     body = encode.put_name(body, case_names[i]);
     if (case_has_payload[i]) {
-      body = body.append(1u8);  // payload present
+      body = body.append(1u8);
       body = body.append(case_payload_valtypes[i]);
     } else {
-      body = body.append(0u8);  // payload absent
+      body = body.append(0u8);
     }
-    body = body.append(0u8);  // refines absent
+    body = body.append(0u8);
     i = i + 1;
   }
 
@@ -1016,24 +456,10 @@ pub function put_type_section_one_variant(buf: u8[], case_names: string[], case_
   return encode.put_bytes(out, body);
 }
 
-// put_type_section_one_own — emit a component-level type section
-// that defines a single `own<$t>` handle, where `$t` is a
-// previously-declared resource type at index `resource_typeidx`.
-// An `own` handle is a unique, transferable handle to a resource;
-// its destructor runs when the handle is dropped.
-//
-// Spec (Binary.md, `defvaltype` production):
-//   defvaltype ::= ... | 0x69 i:<typeidx>          -- own
-//
-// Encoded body:
-//
-//   01                         // vec(1) defvaltype entries
-//   69                         // own form (0x69)
-//   <resource_typeidx:uleb>
 pub function put_type_section_one_own(buf: u8[], resource_typeidx: u32): u8[] {
   let body: u8[] = [];
-  body = leb128.uleb_u32(body, 1u32);  // vec(1)
-  body = body.append(105u8);  // own form (0x69)
+  body = leb128.uleb_u32(body, 1u32);
+  body = body.append(105u8);
   body = leb128.uleb_u32(body, resource_typeidx);
 
   let out: u8[] = buf;
@@ -1042,25 +468,10 @@ pub function put_type_section_one_own(buf: u8[], resource_typeidx: u32): u8[] {
   return encode.put_bytes(out, body);
 }
 
-// put_type_section_one_borrow — emit a component-level type section
-// that defines a single `borrow<$t>` handle, where `$t` is a
-// previously-declared resource type at index `resource_typeidx`.
-// A `borrow` handle is a temporary, non-owning reference — used
-// for function parameters where the callee doesn't take ownership
-// of the resource (mirror of Rust's `&T`).
-//
-// Spec (Binary.md, `defvaltype` production):
-//   defvaltype ::= ... | 0x68 i:<typeidx>          -- borrow
-//
-// Encoded body:
-//
-//   01                         // vec(1) defvaltype entries
-//   68                         // borrow form (0x68)
-//   <resource_typeidx:uleb>
 pub function put_type_section_one_borrow(buf: u8[], resource_typeidx: u32): u8[] {
   let body: u8[] = [];
-  body = leb128.uleb_u32(body, 1u32);  // vec(1)
-  body = body.append(104u8);  // borrow form (0x68)
+  body = leb128.uleb_u32(body, 1u32);
+  body = body.append(104u8);
   body = leb128.uleb_u32(body, resource_typeidx);
 
   let out: u8[] = buf;
@@ -1069,36 +480,6 @@ pub function put_type_section_one_borrow(buf: u8[], resource_typeidx: u32): u8[]
   return encode.put_bytes(out, body);
 }
 
-// put_type_section_one_instance_one_func_export — emit a component-
-// level type section containing one instance type. The instance
-// type declares a single inline functype with the given parameter
-// list and no result (the WASI pattern: `wasi:cli/exit::exit` has
-// `(param "code" u32)` and no return), then exports it under
-// `export_name`.
-//
-// This is the building block for WASI interface imports: an
-// `import "wasi:cli/exit@0.2.0" (instance ...)` needs an instance
-// type to describe what's inside, and this composer produces the
-// simplest single-function shape.
-//
-// Spec (Binary.md, component instance types):
-//   instancetype ::= 0x42 ds:vec(<instancedecl>)
-//   instancedecl ::= 0x00 t:<core:type>
-//                | 0x01 t:<type>
-//                | 0x02 a:<alias>
-//                | 0x04 ed:<exportname> ed2:<externdesc>
-//
-// Encoded body for an instance type that inline-declares one
-// no-result functype + exports it:
-//
-//   01                       // vec(1) type entries (the instance type)
-//   42                       // instance-type form
-//   02                       // vec(2) decls
-//   01                       // decl 0: type
-//   40 <P:uleb> (n,v)* 01 00 // inline functype: P params, no result
-//   04                       // decl 1: export with externdesc
-//   00 <export_name>         // exportname kind=label
-//   01 00                    // externdesc func, typeidx 0 (the inline one)
 pub function put_type_section_one_instance_one_func_export(buf: u8[], export_name: string, param_names: string[], param_valtypes: u8[]): u8[] {
   let names_per: string[][] = [param_names];
   let valtypes_per: u8[][] = [param_valtypes];
@@ -1106,39 +487,14 @@ pub function put_type_section_one_instance_one_func_export(buf: u8[], export_nam
   return put_type_section_one_instance_with_func_exports(buf, export_names, names_per, valtypes_per);
 }
 
-// put_type_section_one_instance_one_func_with_result_export — like
-// `put_type_section_one_instance_one_func_export` but the inline-
-// declared functype returns one anonymous result of the given
-// valtype.
-//
-// This handles WASI funcs like `wasi:io/streams::blocking-read(len:
-// u64) -> result<list<u8>, stream-error>` or any single-result
-// return shape. The simpler no-result variant only handles funcs
-// like `exit`.
-//
-// `result_valtype` is a component cvaltype byte (or a typeidx into
-// previously-declared component-level types).
-//
-// Encoded body for an instance type that inline-declares one
-// functype with result + exports it:
-//
-//   01                       // vec(1) type entries
-//   42                       // instance-type form
-//   02                       // vec(2) decls
-//   01                       // decl 0: type
-//   40 <P:uleb> (n,v)* 00 <result>  // inline functype with result
-//   04                       // decl 1: export with externdesc
-//   00 <export_name>         // exportname kind = label
-//   01 00                    // externdesc func, typeidx 0
 pub function put_type_section_one_instance_one_func_with_result_export(buf: u8[], export_name: string, param_names: string[], param_valtypes: u8[], result_valtype: u8): u8[] {
   let body: u8[] = [];
-  body = leb128.uleb_u32(body, 1u32);  // vec(1) type entries
-  body = body.append(66u8);  // instance-type form (0x42)
-  body = leb128.uleb_u32(body, 2u32);  // vec(2) decls
+  body = leb128.uleb_u32(body, 1u32);
+  body = body.append(66u8);
+  body = leb128.uleb_u32(body, 2u32);
 
-  // decl 0: inline functype with single anonymous result.
-  body = body.append(1u8);  // type decl
-  body = body.append(64u8);  // functype form (0x40)
+  body = body.append(1u8);
+  body = body.append(64u8);
   let np: i32 = param_names.len();
   body = leb128.uleb_u32(body, np as u32);
   let i: i32 = 0;
@@ -1147,15 +503,14 @@ pub function put_type_section_one_instance_one_func_with_result_export(buf: u8[]
     body = body.append(param_valtypes[i]);
     i = i + 1;
   }
-  body = body.append(0u8);  // resultlist tag: single anon
-  body = body.append(result_valtype);  // result valtype byte
+  body = body.append(0u8);
+  body = body.append(result_valtype);
 
-  // decl 1: export — surface the inline-declared func.
-  body = body.append(4u8);  // export decl
-  body = body.append(0u8);  // exportname kind = label
+  body = body.append(4u8);
+  body = body.append(0u8);
   body = encode.put_name(body, export_name);
-  body = body.append(1u8);  // externdesc kind = func
-  body = leb128.uleb_u32(body, 0u32);  // typeidx 0
+  body = body.append(1u8);
+  body = leb128.uleb_u32(body, 0u32);
 
   let out: u8[] = buf;
   out = out.append(section_type());
@@ -1163,48 +518,17 @@ pub function put_type_section_one_instance_one_func_with_result_export(buf: u8[]
   return encode.put_bytes(out, body);
 }
 
-// put_type_section_one_instance_with_func_exports — emit a
-// component-level type section containing one instance type that
-// inline-declares N no-result functypes and exports each under
-// the corresponding name. Generalisation of the single-func
-// composer.
-//
-// Most WASI interfaces ship multiple functions:
-// `wasi:cli/std{in,out,err}` each export `get-{stdin,stdout,stderr}`;
-// `wasi:io/streams` exports `read` / `write` / `blocking-flush` / …;
-// `wasi:filesystem/types` exports a couple dozen methods on the
-// descriptor resource. This composer encodes any of those shapes
-// in a single type-section entry.
-//
-// The three top-level arrays must have equal length (= the number
-// of functions in the instance). The inner arrays carry each
-// function's parameter list. All functions are assumed to return
-// no result; mixed-return-shape instance types aren't supported by
-// this slice (each return shape would need a separate composer or
-// a richer per-func type signature).
-//
-// Encoded body (for the simple case of two functions, each
-// `() -> nothing`):
-//
-//   01                       // vec(1) type entries
-//   42                       // instance-type form
-//   <2N:uleb>                // vec(2N) decls: per func, a type +
-//                            // an export
-//   (01 40 <P> ...           // decl 2i: inline functype
-//      01 00                 //          named results, vec(0)
-//    04 00 <name> 01 i)*     // decl 2i+1: export func, typeidx i
 pub function put_type_section_one_instance_with_func_exports(buf: u8[], export_names: string[], param_names_per_func: string[][], param_valtypes_per_func: u8[][]): u8[] {
   let body: u8[] = [];
-  body = leb128.uleb_u32(body, 1u32);  // vec(1) type entries
-  body = body.append(66u8);  // instance-type form (0x42)
+  body = leb128.uleb_u32(body, 1u32);
+  body = body.append(66u8);
   let n: i32 = export_names.len();
-  body = leb128.uleb_u32(body, (n * 2) as u32);  // 2N decls
+  body = leb128.uleb_u32(body, (n * 2) as u32);
 
   let f: i32 = 0;
   while (f < n) {
-    // decl 2f: inline functype with the given params, no result.
-    body = body.append(1u8);  // type decl
-    body = body.append(64u8);  // functype form (0x40)
+    body = body.append(1u8);
+    body = body.append(64u8);
     let p_names: string[] = param_names_per_func[f];
     let p_valtypes: u8[] = param_valtypes_per_func[f];
     let np: i32 = p_names.len();
@@ -1215,15 +539,14 @@ pub function put_type_section_one_instance_with_func_exports(buf: u8[], export_n
       body = body.append(p_valtypes[i]);
       i = i + 1;
     }
-    body = body.append(1u8);  // resultlist: named
-    body = leb128.uleb_u32(body, 0u32);  // vec(0) = no result
+    body = body.append(1u8);
+    body = leb128.uleb_u32(body, 0u32);
 
-    // decl 2f+1: export — surface the inline-declared func.
-    body = body.append(4u8);  // export decl
-    body = body.append(0u8);  // exportname kind = label
+    body = body.append(4u8);
+    body = body.append(0u8);
     body = encode.put_name(body, export_names[f]);
-    body = body.append(1u8);  // externdesc kind = func
-    body = leb128.uleb_u32(body, f as u32);  // typeidx = f
+    body = body.append(1u8);
+    body = leb128.uleb_u32(body, f as u32);
 
     f = f + 1;
   }
@@ -1234,28 +557,12 @@ pub function put_type_section_one_instance_with_func_exports(buf: u8[], export_n
   return encode.put_bytes(out, body);
 }
 
-// put_import_section_one_instance — emit a component-level import
-// section with one entry: a label-form name + externdesc kind 0x05
-// (instance) referring to a previously-declared instance type.
-//
-// This is the WASI-shape import: `import "wasi:cli/exit@0.2.0"
-// (instance ...)`. Pair with `put_type_section_one_instance_*` to
-// declare the instance type first.
-//
-// Spec:
-//   externdesc ::= ... | 0x05 i:<typeidx>          -- instance
-//
-// Encoded body:
-//
-//   01                       // vec(1) imports
-//   00 <name>                // importname kind = label
-//   05 <typeidx:uleb>        // externdesc instance + typeidx
 pub function put_import_section_one_instance(buf: u8[], name: string, instance_typeidx: u32): u8[] {
   let body: u8[] = [];
-  body = leb128.uleb_u32(body, 1u32);  // vec(1)
-  body = body.append(0u8);  // importname kind = label
+  body = leb128.uleb_u32(body, 1u32);
+  body = body.append(0u8);
   body = encode.put_name(body, name);
-  body = body.append(5u8);  // externdesc kind = instance
+  body = body.append(5u8);
   body = leb128.uleb_u32(body, instance_typeidx);
 
   let out: u8[] = buf;
@@ -1264,50 +571,18 @@ pub function put_import_section_one_instance(buf: u8[], name: string, instance_t
   return encode.put_bytes(out, body);
 }
 
-// put_canon_section_resource_drop — emit a canon section
-// containing a single `canon resource.drop` entry. The dropped
-// resource type is given by typeidx. resource.drop is one of
-// three resource operations the canon section supports
-// (resource.new, resource.drop, resource.rep); drop is the one
-// every consumer of a host-supplied resource needs, since failing
-// to drop a resource leaks its host-side state.
-//
-// Spec (Binary.md):
-//   canon ::= ... | 0x03 rt:<typeidx>   -- resource.drop
-//
-// Encoded body:
-//
-//   01           // vec(1) canon entries
-//   03           // canon resource.drop tag
-//   <typeidx>    // uleb
 pub function put_canon_section_resource_drop(buf: u8[], resource_typeidx: u32): u8[] {
   let idxs: u32[] = [resource_typeidx];
   return put_canon_section_resource_drops(buf, idxs);
 }
 
-// put_canon_section_resource_drops — emit a canon section with N
-// `canon resource.drop` entries, one per typeidx in the input vec.
-// Real WASI worlds drop many resource types in one component —
-// the HTTP world alone has ~10 (incoming-request,
-// outgoing-response, fields, request-options, response-outparam,
-// future-trailers, future-incoming-response, incoming-body,
-// outgoing-body, future-incoming-body); a multi-entry composer
-// avoids emitting one section header per drop.
-//
-// Spec: each entry is `0x03 + typeidx:uleb`; the vec count is at
-// the front of the body.
-//
-// Encoded body:
-//
-//   <N:uleb>            // vec(N) canon entries
-//   (03 <typeidx:uleb>)*
 pub function put_canon_section_resource_drops(buf: u8[], resource_typeidxs: u32[]): u8[] {
   let body: u8[] = [];
   let n: i32 = resource_typeidxs.len();
   body = leb128.uleb_u32(body, n as u32);
   let i: i32 = 0;
   while (i < n) {
-    body = body.append(3u8);  // canon resource.drop
+    body = body.append(3u8);
     body = leb128.uleb_u32(body, resource_typeidxs[i]);
     i = i + 1;
   }
@@ -1318,44 +593,18 @@ pub function put_canon_section_resource_drops(buf: u8[], resource_typeidxs: u32[
   return encode.put_bytes(out, body);
 }
 
-// put_canon_section_resource_new — emit a canon section containing
-// a single `canon resource.new` entry. The created resource type
-// is given by typeidx. resource.new produces the core function
-// that, called with a representation value (an i32 for the
-// `(rep i32)` case), creates a new owned handle to the resource.
-//
-// Used by the component that DEFINES a resource (the host side of
-// a resource); a consumer of someone else's resource only needs
-// resource.drop. resource.new + resource.rep + resource.drop
-// together let a component implement the full resource lifecycle.
-//
-// Spec (Binary.md):
-//   canon ::= ... | 0x02 rt:<typeidx>   -- resource.new
-//
-// Encoded body:
-//
-//   01           // vec(1) canon entries
-//   02           // canon resource.new tag
-//   <typeidx>    // uleb
 pub function put_canon_section_resource_new(buf: u8[], resource_typeidx: u32): u8[] {
   let idxs: u32[] = [resource_typeidx];
   return put_canon_section_resource_news(buf, idxs);
 }
 
-// put_canon_section_resource_news — emit a canon section with N
-// `canon resource.new` entries. Multi-entry counterpart of
-// put_canon_section_resource_new — used by components that define
-// multiple resource types (e.g. an HTTP-server host needs to
-// `new` outgoing-response, fields, outgoing-body, etc.).
-//
-// Spec: each entry is `0x02 + typeidx:uleb`.
 pub function put_canon_section_resource_news(buf: u8[], resource_typeidxs: u32[]): u8[] {
   let body: u8[] = [];
   let n: i32 = resource_typeidxs.len();
   body = leb128.uleb_u32(body, n as u32);
   let i: i32 = 0;
   while (i < n) {
-    body = body.append(2u8);  // canon resource.new
+    body = body.append(2u8);
     body = leb128.uleb_u32(body, resource_typeidxs[i]);
     i = i + 1;
   }
@@ -1366,38 +615,18 @@ pub function put_canon_section_resource_news(buf: u8[], resource_typeidxs: u32[]
   return encode.put_bytes(out, body);
 }
 
-// put_canon_section_resource_rep — emit a canon section containing
-// a single `canon resource.rep` entry. Produces the core function
-// that, called with a handle, returns the underlying
-// representation value (e.g. the i32 for `(rep i32)`). Used by
-// resource implementations to recover the backing data from a
-// caller-supplied handle.
-//
-// Spec (Binary.md):
-//   canon ::= ... | 0x04 rt:<typeidx>   -- resource.rep
-//
-// Encoded body:
-//
-//   01           // vec(1) canon entries
-//   04           // canon resource.rep tag
-//   <typeidx>    // uleb
 pub function put_canon_section_resource_rep(buf: u8[], resource_typeidx: u32): u8[] {
   let idxs: u32[] = [resource_typeidx];
   return put_canon_section_resource_reps(buf, idxs);
 }
 
-// put_canon_section_resource_reps — emit a canon section with N
-// `canon resource.rep` entries. Multi-entry counterpart of
-// put_canon_section_resource_rep.
-//
-// Spec: each entry is `0x04 + typeidx:uleb`.
 pub function put_canon_section_resource_reps(buf: u8[], resource_typeidxs: u32[]): u8[] {
   let body: u8[] = [];
   let n: i32 = resource_typeidxs.len();
   body = leb128.uleb_u32(body, n as u32);
   let i: i32 = 0;
   while (i < n) {
-    body = body.append(4u8);  // canon resource.rep
+    body = body.append(4u8);
     body = leb128.uleb_u32(body, resource_typeidxs[i]);
     i = i + 1;
   }
@@ -1408,34 +637,11 @@ pub function put_canon_section_resource_reps(buf: u8[], resource_typeidxs: u32[]
   return encode.put_bytes(out, body);
 }
 
-// put_start_section_no_args_no_results — emit a component-level
-// start section that calls `funcidx` once at component
-// instantiation time, with no value arguments and binding no
-// component-level value results.
-//
-// The component-level start section differs from the core wasm
-// start section: it can take and return component-level values
-// (used for build-time constant computation). This composer covers
-// the simplest case — no values either way — which matches the
-// shape of a setup hook that runs side effects (initialisation,
-// logging, …) and binds nothing.
-//
-// Spec (Binary.md):
-//   start ::= f:<funcidx> args:vec(<value-idx>) results:u32
-//
-// `results` is the COUNT of resulting value bindings to declare,
-// not their indices; we always emit 0.
-//
-// Encoded body:
-//
-//   <funcidx:uleb>      // function to call
-//   00                  // args vec count = 0
-//   00                  // results count = 0
 pub function put_start_section_no_args_no_results(buf: u8[], funcidx: u32): u8[] {
   let body: u8[] = [];
   body = leb128.uleb_u32(body, funcidx);
-  body = leb128.uleb_u32(body, 0u32);  // args vec count
-  body = leb128.uleb_u32(body, 0u32);  // results count
+  body = leb128.uleb_u32(body, 0u32);
+  body = leb128.uleb_u32(body, 0u32);
 
   let out: u8[] = buf;
   out = out.append(section_start());
@@ -1443,75 +649,15 @@ pub function put_start_section_no_args_no_results(buf: u8[], funcidx: u32): u8[]
   return encode.put_bytes(out, body);
 }
 
-// put_alias_section_core_export_func — emit an alias section
-// containing one entry that surfaces a core function export of a
-// core instance as a top-level core-sort func. After this alias
-// runs, the alias-defined core function can be referenced by a
-// later canon-lift to turn it into a component-level function.
-//
-// Spec (Binary.md, `alias` production):
-//   alias ::= s:sort t:aliastarget
-//   sort  ::= 0x00 cs:core-sort     -- core sort, with sub-kind
-//           | 0x01 -- func          | 0x02 -- value
-//           | 0x03 -- type          | 0x04 -- component
-//           | 0x05 -- instance
-//   core-sort   ::= 0x00 -- func    | 0x01 -- table
-//                 | 0x02 -- memory  | 0x03 -- global
-//                 | 0x10 -- type    | 0x11 -- module
-//                 | 0x12 -- instance
-//   aliastarget ::= 0x00 i:instance-idx       n:name  -- from instance export
-//                 | 0x01 i:core-instance-idx  n:name  -- from core instance export
-//                 | 0x02 ct:u32 idx:u32               -- outer-component
-//
-// Encoded body for "alias core export `core_instance_idx` `name` as
-// a core func":
-//
-//   01           // vec(1) alias entries
-//   00 00        // sort = core (0x00) + core-sort = func (0x00)
-//   01           // aliastarget = core-instance-export
-//   <idx:uleb>   // core-instance-idx
-//   <name>       // uleb-prefixed UTF-8
-// put_alias_section_core_exports — emit an alias section with N
-// entries, each surfacing a core-sort export of a core instance as
-// a top-level core-sort item. Each entry has its own (core_sort,
-// core_instance_idx, name); the three parallel arrays must have
-// equal length.
-//
-// Mix of sorts is supported: a single section can alias a core
-// memory + several core funcs + a core global, etc. This is the
-// shape `canon lift`-with-opts needs in practice, where the lift
-// has to reference both an aliased core-func (the target) and an
-// aliased core-memory + core-func (the memory + realloc opts).
-//
-// Spec (Binary.md, `alias` production):
-//   alias       ::= s:sort t:aliastarget
-//   sort        ::= 0x00 cs:core-sort  -- core, with sub-kind
-//                 | 0x01 -- func | 0x02 -- value | 0x03 -- type
-//                 | 0x04 -- component | 0x05 -- instance
-//   core-sort   ::= 0x00 -- func | 0x01 -- table | 0x02 -- memory
-//                 | 0x03 -- global | 0x10 -- type | 0x11 -- module
-//                 | 0x12 -- instance
-//   aliastarget ::= 0x00 i:instance-idx       n:name
-//                 | 0x01 i:core-instance-idx  n:name
-//                 | 0x02 ct:u32 idx:u32
-//
-// Encoded body for N core-sort export aliases:
-//
-//   <N:uleb>            // vec(N) entries
-//   (00 <core-sort> 01 <core-instance-idx:uleb> <name>)*
-//
-// Each entry: sort=core (0x00) + the supplied core-sort byte +
-// aliastarget=core-instance-export (0x01) + instance idx +
-// uleb-prefixed name.
 pub function put_alias_section_core_exports(buf: u8[], core_sorts: u8[], core_instance_idxs: u32[], names: string[]): u8[] {
   let body: u8[] = [];
   let n: i32 = core_sorts.len();
   body = leb128.uleb_u32(body, n as u32);
   let i: i32 = 0;
   while (i < n) {
-    body = body.append(0u8);  // sort: core
-    body = body.append(core_sorts[i]);  // core-sort: func/table/mem/...
-    body = body.append(1u8);  // target: core-instance-export
+    body = body.append(0u8);
+    body = body.append(core_sorts[i]);
+    body = body.append(1u8);
     body = leb128.uleb_u32(body, core_instance_idxs[i]);
     body = encode.put_name(body, names[i]);
     i = i + 1;
@@ -1523,10 +669,6 @@ pub function put_alias_section_core_exports(buf: u8[], core_sorts: u8[], core_in
   return encode.put_bytes(out, body);
 }
 
-// put_alias_section_core_export_func — convenience wrapper over
-// put_alias_section_core_exports for the single-func-alias case.
-// Existing call sites in the e2e tests use this; new multi-alias
-// code should reach for put_alias_section_core_exports directly.
 pub function put_alias_section_core_export_func(buf: u8[], core_instance_idx: u32, name: string): u8[] {
   let sorts: u8[] = [core_sort_func()];
   let instance_idxs: u32[] = [core_instance_idx];
@@ -1534,39 +676,11 @@ pub function put_alias_section_core_export_func(buf: u8[], core_instance_idx: u3
   return put_alias_section_core_exports(buf, sorts, instance_idxs, names);
 }
 
-// put_alias_section_instance_export_func — emit an alias section
-// with one entry that surfaces a component-level function exported
-// by a COMPONENT instance (not a core instance) as a top-level
-// component-level func. The sibling of
-// `put_alias_section_core_export_func` for the component-sort
-// alias case.
-//
-// This is how WASI imports are consumed: after
-// `import "wasi:cli/exit@0.2.0" (instance ...)` declares an
-// imported instance, the component aliases its `exit` export to
-// get a callable top-level func, which is then `canon lower`ed
-// into a core function that gets threaded down into the core
-// module's instantiation.
-//
-// Spec (Binary.md, `alias` production):
-//   alias       ::= s:sort t:aliastarget
-//   sort        ::= ... | 0x01 -- func
-//   aliastarget ::= 0x00 i:<instance-idx>      n:<name>   -- from component instance
-//                 | 0x01 i:<core-instance-idx> n:<name>   -- from core instance
-//                 | 0x02 ct:u32 idx:u32                   -- outer
-//
-// Encoded body:
-//
-//   01                       // vec(1) alias entries
-//   01                       // sort = func
-//   00                       // aliastarget = from-instance-export
-//   <instance-idx:uleb>
-//   <name>                   // uleb-prefixed UTF-8
 pub function put_alias_section_instance_export_func(buf: u8[], instance_idx: u32, name: string): u8[] {
   let body: u8[] = [];
-  body = leb128.uleb_u32(body, 1u32);  // vec(1)
-  body = body.append(1u8);  // sort = func
-  body = body.append(0u8);  // target: from-instance-export
+  body = leb128.uleb_u32(body, 1u32);
+  body = body.append(1u8);
+  body = body.append(0u8);
   body = leb128.uleb_u32(body, instance_idx);
   body = encode.put_name(body, name);
 
@@ -1576,36 +690,16 @@ pub function put_alias_section_instance_export_func(buf: u8[], instance_idx: u32
   return encode.put_bytes(out, body);
 }
 
-// put_canon_section_lifts_no_opts — emit a canon section containing
-// N `canon lift` entries with `opts = []`. Lifts a vec of core
-// functions into the component-level function space, each with its
-// own signature given by its typeidx. The two parallel arrays must
-// have equal length.
-//
-// `opts = []`: no `memory`, `realloc`, `post-return`, or non-default
-// string encoding. Sufficient for callee functions whose signature
-// only mentions scalar valtypes (no strings, no lists, no resources).
-//
-// Spec (Binary.md):
-//   canon ::= 0x00 0x00 f:<core-func-idx> opts:vec(<canonopt>) ft:<typeidx>  -- lift
-//           | 0x01 0x00 f:<func-idx>      opts:vec(<canonopt>)                 -- lower
-//           | 0x02 rt:<typeidx>           -- resource.new
-//           ... etc.
-//
-// Encoded body for N canon-lift entries:
-//
-//   <N:uleb>            // vec(N) canon entries
-//   (00 00 <core-func-idx:uleb> 00 <typeidx:uleb>)*
 pub function put_canon_section_lifts_no_opts(buf: u8[], core_func_idxs: u32[], typeidxs: u32[]): u8[] {
   let body: u8[] = [];
   let n: i32 = core_func_idxs.len();
-  body = leb128.uleb_u32(body, n as u32);  // vec(N)
+  body = leb128.uleb_u32(body, n as u32);
   let i: i32 = 0;
   while (i < n) {
-    body = body.append(0u8);  // canon-lift
-    body = body.append(0u8);  // function-lift sub-tag
+    body = body.append(0u8);
+    body = body.append(0u8);
     body = leb128.uleb_u32(body, core_func_idxs[i]);
-    body = leb128.uleb_u32(body, 0u32);  // no opts
+    body = leb128.uleb_u32(body, 0u32);
     body = leb128.uleb_u32(body, typeidxs[i]);
     i = i + 1;
   }
@@ -1616,19 +710,12 @@ pub function put_canon_section_lifts_no_opts(buf: u8[], core_func_idxs: u32[], t
   return encode.put_bytes(out, body);
 }
 
-// put_canon_section_lift_no_opts — convenience wrapper over
-// put_canon_section_lifts_no_opts for the single-lift case.
-// Existing call sites in the e2e tests use this; new multi-lift
-// code should reach for put_canon_section_lifts_no_opts directly.
 pub function put_canon_section_lift_no_opts(buf: u8[], core_func_idx: u32, typeidx: u32): u8[] {
   let core_idxs: u32[] = [core_func_idx];
   let type_idxs: u32[] = [typeidx];
   return put_canon_section_lifts_no_opts(buf, core_idxs, type_idxs);
 }
 
-// Canonical-ABI option discriminator bytes (canonopt production in
-// Binary.md). 0x00 / 0x01 / 0x02 are standalone (string-encoding
-// selection); 0x03 / 0x04 / 0x05 are followed by a uleb index.
 pub function canonopt_string_encoding_utf8(): u8 {
   return 0u8;
 }
@@ -1653,38 +740,13 @@ pub function canonopt_post_return(): u8 {
   return 5u8;
 }
 
-// put_canon_section_lower_mem_realloc — emit a canon section with
-// one `canon lower` entry carrying the two most common opts:
-// `(memory $mem)` and `(realloc (func $alloc))`. Default utf8
-// string encoding is left implicit. The mirror of
-// `put_canon_section_lift_mem_realloc`.
-//
-// This is the lower shape needed any time the lowered host
-// function takes a string or list parameter — the canonical-ABI
-// has to materialise those into core memory before the core can
-// see them, and `realloc` is the growth helper. Most preview-2
-// WASI imports (those that take strings: `print`, `write-file`,
-// the HTTP request handler's body, …) lower through this shape.
-//
-// Spec: see `put_canon_section_lower_no_opts` for the no-opts
-// counterpart; lower with N opts just bumps the opts vec count
-// and appends the encoded opts.
-//
-// Encoded body:
-//
-//   01                  // vec(1) canon entries
-//   01 00               // canon-lower + function sub-tag
-//   <func-idx:uleb>
-//   02                  // opts vec count = 2
-//   03 <mem-idx:uleb>     // memory option
-//   04 <realloc-idx:uleb> // realloc option
 pub function put_canon_section_lower_mem_realloc(buf: u8[], func_idx: u32, mem_idx: u32, realloc_func_idx: u32): u8[] {
   let body: u8[] = [];
-  body = leb128.uleb_u32(body, 1u32);  // vec(1)
-  body = body.append(1u8);  // canon-lower
-  body = body.append(0u8);  // function-lower sub-tag
+  body = leb128.uleb_u32(body, 1u32);
+  body = body.append(1u8);
+  body = body.append(0u8);
   body = leb128.uleb_u32(body, func_idx);
-  body = leb128.uleb_u32(body, 2u32);  // opts vec count = 2
+  body = leb128.uleb_u32(body, 2u32);
   body = body.append(canonopt_memory());
   body = leb128.uleb_u32(body, mem_idx);
   body = body.append(canonopt_realloc());
@@ -1696,39 +758,13 @@ pub function put_canon_section_lower_mem_realloc(buf: u8[], func_idx: u32, mem_i
   return encode.put_bytes(out, body);
 }
 
-// put_canon_section_lift_mem_realloc_post_return — emit a canon
-// section with one `canon lift` entry carrying three opts:
-// `(memory $mem)`, `(realloc (func $alloc))`, and
-// `(post-return (func $cleanup))`. Adds post-return to the
-// mem+realloc shape — needed when the lifted function returns a
-// string or list backed by memory the canonical-ABI shouldn't
-// keep around past the call (the host invokes post-return on the
-// canonical-ABI handle after copying out, freeing the core-side
-// storage).
-//
-// post-return signature is `(<flat result types>) -> ()` —
-// receives the lowered return value (e.g. pointer + length for a
-// string) and is responsible for freeing whatever the lift
-// returned. The compiler that emits the core module owns the
-// post-return implementation.
-//
-// Encoded body:
-//
-//   01                  // vec(1) canon entries
-//   00 00               // canon-lift + function sub-tag
-//   <core-func-idx:uleb>
-//   03                  // opts vec count = 3
-//   03 <mem-idx:uleb>     // memory option
-//   04 <realloc-idx:uleb> // realloc option
-//   05 <post-return-idx:uleb> // post-return option
-//   <typeidx:uleb>
 pub function put_canon_section_lift_mem_realloc_post_return(buf: u8[], core_func_idx: u32, typeidx: u32, mem_idx: u32, realloc_func_idx: u32, post_return_func_idx: u32): u8[] {
   let body: u8[] = [];
-  body = leb128.uleb_u32(body, 1u32);  // vec(1)
-  body = body.append(0u8);  // canon-lift
-  body = body.append(0u8);  // function-lift sub-tag
+  body = leb128.uleb_u32(body, 1u32);
+  body = body.append(0u8);
+  body = body.append(0u8);
   body = leb128.uleb_u32(body, core_func_idx);
-  body = leb128.uleb_u32(body, 3u32);  // opts vec count = 3
+  body = leb128.uleb_u32(body, 3u32);
   body = body.append(canonopt_memory());
   body = leb128.uleb_u32(body, mem_idx);
   body = body.append(canonopt_realloc());
@@ -1743,42 +779,14 @@ pub function put_canon_section_lift_mem_realloc_post_return(buf: u8[], core_func
   return encode.put_bytes(out, body);
 }
 
-// put_canon_section_lift_mem_realloc_encoding — emit a canon
-// section with one `canon lift` entry carrying an explicit
-// string-encoding opt plus `(memory $mem)` + `(realloc (func
-// $alloc))`. `encoding_tag` is one of:
-//   - canonopt_string_encoding_utf8()         (0x00)
-//   - canonopt_string_encoding_utf16()        (0x01)
-//   - canonopt_string_encoding_latin1_utf16() (0x02)
-//
-// utf8 is the default (selected by the no-encoding-opt path in
-// `put_canon_section_lift_mem_realloc`). This variant is for
-// components that lift strings in utf16 or latin1+utf16 — needed
-// when the core module expects to materialise strings with a
-// non-default encoding.
-//
-// The string-encoding canonopt is a single byte — no following
-// index — and appears alongside the memory + realloc opts in the
-// opts vec.
-//
-// Encoded body:
-//
-//   01                  // vec(1) canon entries
-//   00 00               // canon-lift + function sub-tag
-//   <core-func-idx:uleb>
-//   03                  // opts vec count = 3
-//   <encoding_tag>      // 0x00 utf8 / 0x01 utf16 / 0x02 latin1+utf16
-//   03 <mem-idx:uleb>     // memory option
-//   04 <realloc-idx:uleb> // realloc option
-//   <typeidx:uleb>
 pub function put_canon_section_lift_mem_realloc_encoding(buf: u8[], core_func_idx: u32, typeidx: u32, mem_idx: u32, realloc_func_idx: u32, encoding_tag: u8): u8[] {
   let body: u8[] = [];
-  body = leb128.uleb_u32(body, 1u32);  // vec(1)
-  body = body.append(0u8);  // canon-lift
-  body = body.append(0u8);  // function-lift sub-tag
+  body = leb128.uleb_u32(body, 1u32);
+  body = body.append(0u8);
+  body = body.append(0u8);
   body = leb128.uleb_u32(body, core_func_idx);
-  body = leb128.uleb_u32(body, 3u32);  // opts vec count = 3
-  body = body.append(encoding_tag);  // string-encoding
+  body = leb128.uleb_u32(body, 3u32);
+  body = body.append(encoding_tag);
   body = body.append(canonopt_memory());
   body = leb128.uleb_u32(body, mem_idx);
   body = body.append(canonopt_realloc());
@@ -1791,35 +799,13 @@ pub function put_canon_section_lift_mem_realloc_encoding(buf: u8[], core_func_id
   return encode.put_bytes(out, body);
 }
 
-// put_canon_section_lift_mem_realloc — emit a canon section with
-// one `canon lift` entry carrying the two most common opts:
-// `(memory $mem)` and `(realloc (func $realloc))`. Default string
-// encoding (utf8) — left implicit by omitting the
-// `string-encoding-*` discriminators. No post-return.
-//
-// This is the canonical shape for lifting a core function whose
-// signature mentions strings or lists: the canonical-ABI needs
-// somewhere in core memory to materialize the bytes (`memory`) and
-// a way to grow that storage (`realloc`, signature
-// `(i32 i32 i32 i32) -> i32`). HTTP-handler exports and any CLI
-// world function returning strings all go through this lift shape.
-//
-// Encoded body for one canon-lift entry with two opts:
-//
-//   01                  // vec(1) canon entries
-//   00 00               // canon-lift + function sub-tag
-//   <core-func-idx:uleb>
-//   02                  // opts vec count = 2
-//   03 <mem-idx:uleb>     // memory option + core-mem-idx
-//   04 <realloc-idx:uleb> // realloc option + core-func-idx
-//   <typeidx:uleb>
 pub function put_canon_section_lift_mem_realloc(buf: u8[], core_func_idx: u32, typeidx: u32, mem_idx: u32, realloc_func_idx: u32): u8[] {
   let body: u8[] = [];
-  body = leb128.uleb_u32(body, 1u32);  // vec(1) canon entries
-  body = body.append(0u8);  // canon-lift
-  body = body.append(0u8);  // function-lift sub-tag
+  body = leb128.uleb_u32(body, 1u32);
+  body = body.append(0u8);
+  body = body.append(0u8);
   body = leb128.uleb_u32(body, core_func_idx);
-  body = leb128.uleb_u32(body, 2u32);  // opts vec count = 2
+  body = leb128.uleb_u32(body, 2u32);
   body = body.append(canonopt_memory());
   body = leb128.uleb_u32(body, mem_idx);
   body = body.append(canonopt_realloc());
@@ -1832,68 +818,15 @@ pub function put_canon_section_lift_mem_realloc(buf: u8[], core_func_idx: u32, t
   return encode.put_bytes(out, body);
 }
 
-// put_import_section_one_func — emit a component-level import
-// section with a single entry that declares an imported function
-// at the given name, of the given component-level functype.
-//
-// Spec (Binary.md):
-//   import     ::= n:<importname> ed:<externdesc>
-//   importname ::= 0x00 <name>   -- "label" form: plain UTF-8 name
-//                | 0x01 <name>   -- "interface name" (a:b/c@x.y.z form)
-//   externdesc ::= 0x00 0x11 i:<u32>  -- core-module type
-//                | 0x01 i:<u32>       -- func type
-//                | 0x02 b:<typebound>  -- type
-//                | 0x03 i:<u32>       -- component type
-//                | 0x04 i:<u32>       -- instance type
-//                | 0x05 i:<u32>       -- value type
-//
-// Encoded body for "import label `name` as a func of type `typeidx`":
-//
-//   01           // vec(1) imports
-//   00 <name>    // importname kind=0 (label) + uleb-prefixed UTF-8
-//   01           // externdesc kind = func type
-//   <typeidx>    // uleb
-//
-// The label form (kind 0x00) is the right choice for plain function
-// imports. WASI-style interface imports — e.g.
-// `wasi:cli/exit@0.2.0` — use the kind-0x01 "interface name" form
-// and externdesc kind 0x04 (instance type); those land in a later
-// slice once instance-type section support exists.
-// put_import_section_funcs — emit a component-level import section
-// containing N function-typed import entries, all of the label-form
-// importname kind (0x00). Each entry has its own name + typeidx;
-// the two parallel arrays must have equal length.
-//
-// For WASI-style interface imports — the kind 0x01 form, e.g.
-// `wasi:cli/exit@0.2.0` — see the future interface-import slice
-// once instance-type section support exists.
-//
-// Spec (Binary.md):
-//   import     ::= n:<importname> ed:<externdesc>
-//   importname ::= 0x00 <name>   -- label form
-//                | 0x01 <name>   -- interface name form
-//   externdesc ::= 0x00 0x11 i:<u32>  -- core-module type
-//                | 0x01 i:<u32>       -- func type
-//                | 0x02 b:<typebound>  -- type
-//                | 0x03 i:<u32>       -- component type
-//                | 0x04 i:<u32>       -- instance type
-//                | 0x05 i:<u32>       -- value type
-//
-// Encoded body for N label-form func imports:
-//
-//   <N:uleb>            // vec(N) imports
-//   (00 <name> 01 <typeidx>)*  // N entries, each: kind label +
-//                              //   uleb-prefixed name + externdesc
-//                              //   func + typeidx uleb
 pub function put_import_section_funcs(buf: u8[], names: string[], typeidxs: u32[]): u8[] {
   let body: u8[] = [];
   let n: i32 = names.len();
-  body = leb128.uleb_u32(body, n as u32);  // vec(N) imports
+  body = leb128.uleb_u32(body, n as u32);
   let i: i32 = 0;
   while (i < n) {
-    body = body.append(0u8);  // importname kind = label
+    body = body.append(0u8);
     body = encode.put_name(body, names[i]);
-    body = body.append(1u8);  // externdesc kind = func type
+    body = body.append(1u8);
     body = leb128.uleb_u32(body, typeidxs[i]);
     i = i + 1;
   }
@@ -1904,40 +837,22 @@ pub function put_import_section_funcs(buf: u8[], names: string[], typeidxs: u32[
   return encode.put_bytes(out, body);
 }
 
-// put_import_section_one_func — convenience wrapper over
-// put_import_section_funcs for the single-import case. Existing
-// call sites in the e2e tests use this; new multi-import code
-// should reach for put_import_section_funcs directly.
 pub function put_import_section_one_func(buf: u8[], name: string, typeidx: u32): u8[] {
   let names: string[] = [name];
   let typeidxs: u32[] = [typeidx];
   return put_import_section_funcs(buf, names, typeidxs);
 }
 
-// put_canon_section_lowers_no_opts — emit a canon section containing
-// N `canon lower` entries with `opts = []`. Lowers a vec of
-// component-level functions (typically imports) into the core
-// function space. Unlike canon-lift, the lower form carries NO
-// trailing typeidx — the core function's signature is derived from
-// the component-level function's signature via the canonical-ABI
-// lowering rules. The caller has to ensure each component-level
-// signature only mentions types the no-opts lowering supports
-// (scalar valtypes; no strings, no lists, no resources).
-//
-// Encoded body for N canon-lower entries:
-//
-//   <N:uleb>            // vec(N) canon entries
-//   (01 00 <func-idx:uleb> 00)*   // each: lower + sub-tag + idx + no opts
 pub function put_canon_section_lowers_no_opts(buf: u8[], func_idxs: u32[]): u8[] {
   let body: u8[] = [];
   let n: i32 = func_idxs.len();
   body = leb128.uleb_u32(body, n as u32);
   let i: i32 = 0;
   while (i < n) {
-    body = body.append(1u8);  // canon-lower
-    body = body.append(0u8);  // function-lower sub-tag
+    body = body.append(1u8);
+    body = body.append(0u8);
     body = leb128.uleb_u32(body, func_idxs[i]);
-    body = leb128.uleb_u32(body, 0u32);  // no opts
+    body = leb128.uleb_u32(body, 0u32);
     i = i + 1;
   }
 
@@ -1947,60 +862,22 @@ pub function put_canon_section_lowers_no_opts(buf: u8[], func_idxs: u32[]): u8[]
   return encode.put_bytes(out, body);
 }
 
-// put_canon_section_lower_no_opts — convenience wrapper over
-// put_canon_section_lowers_no_opts for the single-lower case.
 pub function put_canon_section_lower_no_opts(buf: u8[], func_idx: u32): u8[] {
   let func_idxs: u32[] = [func_idx];
   return put_canon_section_lowers_no_opts(buf, func_idxs);
 }
 
-// put_export_section_one_func — emit a component-level export
-// section with a single entry that exposes a component-level
-// function (created by canon-lift) under the given name.
-//
-// Spec (Binary.md):
-//   export     ::= n:<exportname> si:<sortidx> [t:<externdesc>]?
-//   exportname ::= 0x00 <name>   -- "label" form: plain UTF-8 name
-//                | 0x01 <name>   -- "deprecated label"
-//                | ...           -- interface name, etc.
-//   sortidx    ::= s:<sort> i:<u32>
-//
-// Encoded body for one func export named `name` at component-func
-// index `func_idx`:
-//
-//   01                  // vec(1) exports
-//   00 <name>           // exportname kind=0 (label) + uleb-prefixed UTF-8
-//   01                  // sort = func (0x01)
-//   <func_idx:uleb>
-//   00                  // no externdesc tag
-// put_export_section_funcs — emit a component-level export section
-// containing N function exports, all of the label-form exportname
-// kind (0x00). Each entry has its own name + component-level
-// func-idx; the two parallel arrays must have equal length.
-//
-// Spec (Binary.md):
-//   export     ::= n:<exportname> si:<sortidx> [t:<externdesc>]?
-//   exportname ::= 0x00 <name>   -- label
-//                | 0x01 <name>   -- deprecated label
-//                | ...           -- interface name, etc.
-//   sortidx    ::= s:<sort> i:<u32>
-//
-// Encoded body for N label-form func exports:
-//
-//   <N:uleb>            // vec(N) exports
-//   (00 <name> 01 <func-idx> 00)*  // N entries: kind label + name +
-//                                  //   sort func + idx + no externdesc
 pub function put_export_section_funcs(buf: u8[], names: string[], func_idxs: u32[]): u8[] {
   let body: u8[] = [];
   let n: i32 = names.len();
-  body = leb128.uleb_u32(body, n as u32);  // vec(N) exports
+  body = leb128.uleb_u32(body, n as u32);
   let i: i32 = 0;
   while (i < n) {
-    body = body.append(0u8);  // exportname kind = label
+    body = body.append(0u8);
     body = encode.put_name(body, names[i]);
-    body = body.append(1u8);  // sort: func
+    body = body.append(1u8);
     body = leb128.uleb_u32(body, func_idxs[i]);
-    body = body.append(0u8);  // no externdesc
+    body = body.append(0u8);
     i = i + 1;
   }
 
@@ -2010,57 +887,18 @@ pub function put_export_section_funcs(buf: u8[], names: string[], func_idxs: u32
   return encode.put_bytes(out, body);
 }
 
-// put_export_section_one_func — convenience wrapper over
-// put_export_section_funcs for the single-export case. Existing
-// call sites in the e2e tests use this; new multi-export code
-// should reach for put_export_section_funcs directly.
 pub function put_export_section_one_func(buf: u8[], name: string, func_idx: u32): u8[] {
   let names: string[] = [name];
   let func_idxs: u32[] = [func_idx];
   return put_export_section_funcs(buf, names, func_idxs);
 }
 
-// build_lifted_export_component — high-level recipe for the most
-// common Component-Model shape: wrap a self-contained core module
-// so that one of its exported functions is callable as a
-// component-level function.
-//
-// Given a core module that exports a no-param func named
-// `core_export_name`, produces a component that:
-//   - embeds the core module
-//   - instantiates it
-//   - aliases the chosen core export as a core-func
-//   - declares a component-level functype `() -> result_valtype`
-//     (no params, single anonymous result)
-//   - canon-lifts the aliased core-func into a component-level fn
-//   - exports the lifted fn as `export_name` at the component level
-//
-// Skips: imports, multi-param signatures, mem/realloc opts. Those
-// shapes still go through the individual section composers; this
-// helper is for the no-import / no-string case that
-// `TestWASMComponentRunnableViaWasmtime` exercises today by
-// stitching six calls together.
-//
-// Returns the complete component bytes ready to write to disk or
-// hand to `wasmtime run --invoke`.
 pub function build_lifted_export_component(core_bytes: u8[], core_export_name: string, export_name: string, result_valtype: u8): u8[] {
   let no_names: string[] = [];
   let no_valtypes: u8[] = [];
   return build_lifted_export_component_with_params(core_bytes, core_export_name, export_name, no_names, no_valtypes, result_valtype);
 }
 
-// build_lifted_export_component_with_params — generalisation of
-// build_lifted_export_component that supports a non-empty
-// parameter list. The core function being aliased + lifted MUST
-// have a core signature compatible with the canonical-ABI lowering
-// of `(param_names, param_valtypes) -> result_valtype` — for
-// scalar valtypes that means a one-to-one mapping (i32/u32 → i32,
-// i64/u64 → i64, f32 → f32, f64 → f64).
-//
-// Skipped: imports, mem/realloc/post-return canon opts, multi-result
-// functions. Those shapes still go through the individual section
-// composers; this helper is for "one core function with scalar
-// params + scalar result" surfaced as a component-level export.
 pub function build_lifted_export_component_with_params(core_bytes: u8[], core_export_name: string, export_name: string, param_names: string[], param_valtypes: u8[], result_valtype: u8): u8[] {
   let comp: u8[] = put_component_header([]);
   comp = put_core_module_section(comp, core_bytes);
@@ -2072,48 +910,6 @@ pub function build_lifted_export_component_with_params(core_bytes: u8[], core_ex
   return comp;
 }
 
-// build_wasi_imported_component — high-level recipe for the
-// canonical "core module that calls a single WASI function" shape.
-// Bundles the seven-step pipeline into one call:
-//
-//   1. type section: instance type containing one no-result func
-//      with the given params
-//   2. import section: `interface_name` (instance of type 0)
-//   3. alias section: alias instance 0's `func_name` export as
-//      component-level func 0
-//   4. canon section: lower func 0 into core func 0
-//   5. core-instance section: wrap core func 0 as
-//      `(export func_name (func 0))` core instance (instance 0)
-//   6. core-module section: the supplied core module bytes
-//      (which must import `core_import_module.func_name`
-//      with the matching core signature)
-//   7. core-instance section: instantiate the core passing
-//      core-instance 0 as the `core_import_module` arg
-//
-// Concrete example — wrapping a core module that calls
-// `wasi:cli/exit::exit(0)`:
-//
-//   build_wasi_imported_component(
-//     core_bytes,
-//     "wasi:cli/exit@0.2.0",      // WASI interface name
-//     "exit",                      // function name within the interface
-//     ["code"],                    // component-level param names
-//     [cvaltype_u32()],            // component-level param valtypes
-//     "wasi",                      // core module's import module name
-//   );
-//
-// The core module must declare `(import "wasi" "exit" (func (param
-// i32)))` (or similar — see canonical-ABI lowering rules for
-// non-scalar types).
-//
-// What this skips:
-//   - Multiple WASI imports (one per call only)
-//   - Functions with results (params only, no return)
-//   - WASI imports with non-scalar params (string/list need
-//     mem+realloc canon-lower opts)
-//   - Component-level exports — the wrapped component has no
-//     surface area exposed beyond its WASI imports; useful for
-//     a CLI handler that just runs side effects.
 pub function build_wasi_imported_component(core_bytes: u8[], interface_name: string, func_name: string, wasi_param_names: string[], wasi_param_valtypes: u8[], core_import_module: string): u8[] {
   let interface_names: string[] = [interface_name];
   let func_names: string[] = [func_name];
@@ -2123,45 +919,10 @@ pub function build_wasi_imported_component(core_bytes: u8[], interface_name: str
   return build_wasi_multi_imported_component(core_bytes, interface_names, func_names, names_per, valtypes_per, core_modules);
 }
 
-// build_wasi_multi_imported_component — multi-import generalisation
-// of `build_wasi_imported_component`. Wraps a core module that
-// imports from N distinct WASI interfaces, threading each WASI
-// import through the full type / import / alias / canon-lower /
-// core-instance pipeline.
-//
-// All five "per-import" arrays must have equal length N:
-//   interface_names[i]      — e.g. "wasi:cli/exit@0.2.0"
-//   func_names[i]           — function name within the interface
-//   wasi_param_names_per[i] — component-level param names
-//   wasi_param_valtypes_per[i] — component-level param valtypes
-//   core_import_modules[i]  — name the core module uses for the
-//                             instance arg (e.g. "wasi" or whatever
-//                             the (import "X" "Y" ...) "X" is)
-//
-// The core module is instantiated with N instance args wired to
-// the N lowered host instances.
-//
-// Pipeline per import i:
-//   - type i:    instance type { export func_names[i](...) }
-//   - import i:  (instance i) of type i, named interface_names[i]
-//   - alias 2i:  alias instance i's func export -> component func i
-//   - lower i:   canon lower component func i -> core func i
-//   - core-inst i: wrap core func i as a core instance with one
-//                  export named func_names[i]
-//
-// Then a single core-module + a single core-instance "instantiate"
-// with N args (core_import_modules[i] -> core-instance i).
-//
-// Note: each canon-lower currently emits its own section (the
-// existing API is one-entry-per-call); same for alias and
-// core-instance. wasm-tools accepts repeated sections at component
-// level so this still produces a valid component, just with more
-// section headers than a hand-optimised one would have.
 pub function build_wasi_multi_imported_component(core_bytes: u8[], interface_names: string[], func_names: string[], wasi_param_names_per: string[][], wasi_param_valtypes_per: u8[][], core_import_modules: string[]): u8[] {
   let comp: u8[] = put_component_header([]);
   let n: i32 = interface_names.len();
 
-  // For each import: type, import, alias, lower, core-instance.
   let i: i32 = 0;
   while (i < n) {
     comp = put_type_section_one_instance_one_func_export(comp, func_names[i], wasi_param_names_per[i], wasi_param_valtypes_per[i]);
@@ -2172,7 +933,6 @@ pub function build_wasi_multi_imported_component(core_bytes: u8[], interface_nam
     i = i + 1;
   }
 
-  // Embed the core module + instantiate with N instance args.
   comp = put_core_module_section(comp, core_bytes);
   let instance_idxs: u32[] = [];
   let j: i32 = 0;

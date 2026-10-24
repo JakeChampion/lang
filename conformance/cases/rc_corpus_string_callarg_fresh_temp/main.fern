@@ -1,12 +1,12 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Fresh string temp passed to a non-retaining call, in a loop.
-// Exercises the native single-word x86-64 owned-temp string drop
-// (emitOwnedSlotDrop call-arg path → __fern_str_dec): `a + "cd"` is
-// a fresh heap buffer (sole owner) consumed by `consume`, then freed
-// after the call so the loop does not leak. `a` is a param so the
-// concat is not constant-folded. 3 × len("abcd") = 12.
+
+
+
+
+
+
+
+
+
 import "core/int";
 import "std/string";
 function consume(s: string): i32 { return s.len(); }

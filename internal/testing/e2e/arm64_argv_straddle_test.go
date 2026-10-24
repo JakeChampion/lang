@@ -2,25 +2,9 @@ package e2e
 
 import "testing"
 
-// The argv strings __fern_args builds are the #6554 producer that recorded a
-// string's LENGTH where __fern_alloc_rc1 had recorded length + 1 (the trailing
-// NUL) — the payload size __fern_str_dec frees with. The lengths below are the
-// ones where the two round to different 16-byte classes (len ≡ 8 mod 16), so
-// a free at `len` would push each block onto the list one class below the one
-// it was allocated from.
-//
-// What this pins today is the argv strings' whole life on arm64 under the
-// freelist: bound, compared, concatenated and re-bound across rounds with
-// every small class populated between them, with the answer and the
-// over-release counter folded into the exit code, and a balanced leak
-// census. `args()` builds a fresh array of counted boxes over the argv bytes
-// on each call, and the frame releases it at its last use, so a box freed
-// into the wrong class or released twice reads as a census imbalance or an
-// over-release here.
-
-const argvStraddleA = "aaaaaaaa"                                 // 8
-const argvStraddleB = "bbbbbbbbbbbbbbbbbbbbbbbb"                 // 24
-const argvStraddleC = "cccccccccccccccccccccccccccccccccccccccc" // 40
+const argvStraddleA = "aaaaaaaa"
+const argvStraddleB = "bbbbbbbbbbbbbbbbbbbbbbbb"
+const argvStraddleC = "cccccccccccccccccccccccccccccccccccccccc"
 
 const argvStraddleSrc = `
 // Leave one block on every small freelist class (16..2048) so a block freed
@@ -74,8 +58,6 @@ func TestArm64ArgvStraddleFreeOn(t *testing.T) {
 		t.Fatalf("leakcheck build: exit %d, want 0: %q", code, stderr)
 	}
 	allocs, frees, live := parseLeakCheckLine(t, stderr)
-	// The args() array, its four boxes (argv[0] and the three above) and
-	// everything the rounds allocate all come back.
 	if allocs < 5 || allocs != frees || live != 0 {
 		t.Errorf("leakcheck: allocs=%d frees=%d live_bytes=%d, want at least the args() array and its 4 boxes, all released", allocs, frees, live)
 	}

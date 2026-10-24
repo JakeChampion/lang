@@ -1,6 +1,5 @@
 import "./dsp_core";
 
-// Ordinary indexed replacement, with identical arithmetic and final scratch state.
 pub function process(own g: dsp_core.Graph, input: f64[], count: i32): dsp_core.Graph {
   if (!dsp_core.fits(g, input, count)) {
     return dsp_core.refuse(g);

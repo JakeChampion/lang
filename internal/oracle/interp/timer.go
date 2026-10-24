@@ -4,10 +4,6 @@ import (
 	"syscall"
 )
 
-// builtinTimerFd answers `timer_fd(ms)`: a CLOCK_MONOTONIC timer that becomes
-// readable once, `ms` milliseconds from now, as a handle poll and tcp_close
-// take; -errno when the host refuses. A host without timerfd answers -1, as
-// the arm64-darwin runtime does.
 func builtinTimerFd(i *Interp, args []Value) (Value, error) {
 	ms, err := numberArgs("timer_fd", args, 1)
 	if err != nil {

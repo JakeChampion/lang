@@ -8,11 +8,6 @@ import (
 	"testing"
 )
 
-// An `own` string parameter stored into a struct literal is released at the
-// callee's exit (#10268): the store retains the parameter, since a
-// construction moves only a local, so the store is not an escape. The literal
-// is returned, bound and returned, and bound to a local that is read and
-// dropped; the last function stores nothing.
 const ownStringFieldStoreSrc = `import "std/i32";
 struct Box { s: string }
 function store(own s: string): Box { return Box { s: s }; }
@@ -35,7 +30,6 @@ function main(): i32 {
 }
 `
 
-// 4 x (10 x 2 + 90 x 3) = 1160.
 const ownStringFieldStoreWant = 1160 % 101
 
 func writeOwnStringFieldStoreSrc(t *testing.T) string {

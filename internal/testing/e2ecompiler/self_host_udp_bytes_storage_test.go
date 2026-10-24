@@ -10,8 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// Every setup/send failure must close owned resources and reclaim guest
-// scratch. Repeating the same operation also detects packing-buffer leaks.
 func TestSelfHostUDPBytesStorage(t *testing.T) {
 	primary, stdlib := witSelfHostCLI(t)
 	bootstrap := buildLangBinForInterp(t)

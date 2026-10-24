@@ -8,14 +8,6 @@ import (
 	"testing"
 )
 
-// nestedArrPayloadCases pin the NESTED-array (`T[][]`) Option/Result match
-// payload on the IR path (the std/fuzz corpus shape: `match
-// (corpus_from_dir(d)) { Ok(seeds) => … }` over a `Result[u8[][], E]`).
-// The payload binding types as the nested array, as a `let m: T[][]` binding
-// does, so nested reads (`seeds[0][1]`), inner string dispatch
-// (`rows[0][1].len()`), and a lambda CAPTURING the binding all resolve.
-// Strict-IR drives each case so a refusal (`did not lower: match`) fails the
-// test.
 var nestedArrPayloadCases = []struct {
 	name string
 	src  string
@@ -50,8 +42,6 @@ function main(): i32 {
     }
     return 94;
 }`, 42},
-	// Err-side nested payload with a string inner element: `rows[0][1]` must
-	// type as a string for `.len()` to route to str_len.
 	{"string-nested-err-payload", `function mk(): Result[i32, string[][]] {
     let rows: string[][] = [];
     rows = rows.append(["ab", "cdef"]);
@@ -64,8 +54,6 @@ function main(): i32 {
     }
     return 94;
 }`, 41},
-	// A lambda capturing the nested-array payload binding (the fuzz corpus
-	// test's `() => test.assert_eq_array(seeds[0], …)` shape, minus stdlib).
 	{"lambda-captures-nested-payload", `function mk(): Result[u8[][], i32] {
     let one: u8[] = [40 as u8, 42 as u8];
     let seeds: u8[][] = [];
@@ -84,8 +72,6 @@ function main(): i32 {
 }`, 42},
 }
 
-// TestSelfHostNestedArrPayloadIRX86_64 drives the cases through the
-// self-hosted x86-64 compiler under FERN_STRICT_IR.
 func TestSelfHostNestedArrPayloadIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -119,9 +105,6 @@ func TestSelfHostNestedArrPayloadIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostNestedArrPayloadIRArm64 is the arm64 leg: the fix lives in the
-// shared lowering, so the leg differs only in which backend lowers it.
-// Case table shared with the x86-64 leg; binaries run under qemu.
 func TestSelfHostNestedArrPayloadIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -145,8 +128,6 @@ func TestSelfHostNestedArrPayloadIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostNestedArrPayloadWasmIR is the wasm leg, run under wasmtime.
-// Skips without wasmtime on PATH.
 func TestSelfHostNestedArrPayloadWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host nested-arr-payload wasm IR e2e")

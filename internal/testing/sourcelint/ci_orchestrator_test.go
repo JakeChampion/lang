@@ -10,28 +10,19 @@ import (
 	"testing"
 )
 
-// ci.yml starts lint independently and calls ci-suite.yml after lane selection.
-// Pin complete lane coverage, the two full-suite queue lanes, unchanged
-// required lint checks, and lossless queuing of ready PR suites.
-
 const ciFile = "ci.yml"
 const ciSuiteFile = "ci-suite.yml"
 const ciMainFile = "ci-main.yml"
 
-// The reusable failure reaper called once per lane.
 const reaperFile = "cancel-on-failure.yml"
 
-// ciJob is one entry of a workflow's `jobs:` mapping, read textually like every
-// other gate here: the scalar keys, plus the `with:` and `permissions:`
-// sub-mappings.
 type ciJob struct {
 	id    string
-	keys  map[string]string // name, uses, needs, if, secrets, ...
+	keys  map[string]string
 	with  map[string]string
 	perms map[string]string
 }
 
-// ciJobs returns both orchestration layers; lane and reaper IDs are disjoint.
 func ciJobs(t *testing.T) []ciJob {
 	t.Helper()
 	return append(workflowJobs(t, ciFile), workflowJobs(t, ciSuiteFile)...)
@@ -84,8 +75,6 @@ func workflowJobs(t *testing.T, file string) []ciJob {
 	return jobs
 }
 
-// usesFile returns the workflow filename a `uses: ./.github/workflows/X` job
-// calls, or "" for a job that runs steps of its own.
 func (j ciJob) usesFile() string {
 	const prefix = "./.github/workflows/"
 	u := j.keys["uses"]
@@ -95,8 +84,6 @@ func (j ciJob) usesFile() string {
 	return strings.TrimPrefix(u, prefix)
 }
 
-// ciLanes returns leaf lane callers across both orchestration layers,
-// excluding the suite wrapper and failure reapers, keyed by job id.
 func ciLanes(t *testing.T) map[string]ciJob {
 	t.Helper()
 	lanes := map[string]ciJob{}
@@ -111,16 +98,11 @@ func ciLanes(t *testing.T) map[string]ciJob {
 	return lanes
 }
 
-// laneFilter is one entry of ci.yml's lane table: the `paths:` or
-// `paths-ignore:` filter the lane ran under when it triggered itself.
 type laneFilter struct {
 	Paths       []string `json:"paths"`
 	PathsIgnore []string `json:"paths-ignore"`
 }
 
-// laneTable returns ci.yml's lane table, the JSON block under `LANES: |` in
-// the `changes` job. It is the single place a lane's path filter lives now, so
-// every gate that used to read a lane's `on:` block reads this instead.
 func laneTable(t *testing.T) map[string]laneFilter {
 	t.Helper()
 	src := workflowSource(t, ciFile)
@@ -156,11 +138,6 @@ func laneTable(t *testing.T) map[string]laneFilter {
 	return table
 }
 
-// Only ci.yml may trigger on a pull request's pushes. A lane with its own
-// `pull_request:` trigger runs outside the lock, so two pull requests would be
-// running CI at once again — silently, since the lane would still report.
-// Lifecycle hooks (`types: [closed]`, `synchronize`) launch no suite and are
-// exempt.
 func TestCIIsTheOnlyPullRequestLane(t *testing.T) {
 	for _, wf := range workflowFiles(t) {
 		src := workflowSource(t, wf)
@@ -188,8 +165,6 @@ func TestCIIsTheOnlyPullRequestLane(t *testing.T) {
 			t.Errorf("%s is a called lane that also triggers on push: main would run it "+
 				"twice, once on its own and once inside %s", wf, ciFile)
 		}
-		// ci.yml's group is per pull request, and run-unique when it is called
-		// for main; ci_preflight_test.go pins that shape.
 		if _, ok := topLevelBlock(src, "concurrency"); ok && wf != ciSuiteFile && wf != ciFile {
 			t.Errorf("%s is a called lane with a workflow-level concurrency group. The "+
 				"suite lock belongs to %s; a lane must not acquire another lock", wf, ciSuiteFile)
@@ -197,10 +172,6 @@ func TestCIIsTheOnlyPullRequestLane(t *testing.T) {
 	}
 }
 
-// Every `workflow_call` lane is called by the orchestration layers once, under the
-// lane's own `name:` — the caller job's name is the prefix of every check the
-// lane reports (`Test units / test-units-x86_64`) and the lane main-red.yml
-// files issues under — and with the repository's secrets passed through.
 func TestCICallsEveryLane(t *testing.T) {
 	called := map[string][]string{}
 	for id, j := range ciLanes(t) {
@@ -243,24 +214,6 @@ func TestCICallsEveryLane(t *testing.T) {
 	}
 }
 
-// The PR group must be a QUEUE. GitHub's default keeps one pending run per
-// group and cancels it when the next arrives, so with two pull requests waiting
-// behind a running suite the older waiter is silently dropped — its CI never
-// runs and nothing says so. `queue: max` holds up to 100 and starts them in
-// order; it forbids `cancel-in-progress: true`, which is why a newer push to a
-// PR is superseded by ci.yml's per-pull-request group rather than here.
-//
-// There are TWO such queues, split on the parity of the pull request number,
-// because the runner ceiling fits two suites and one suite leaves half of it
-// idle (docs/CI-PERFORMANCE.md). Both halves are checked: a group that stops
-// varying per PR collapses them into one lane and restores the wait this split
-// removed, and a digit dropped from the parity test sends nine PRs in ten to
-// the same lane while the other idles — neither failure shows up as anything
-// but a slow queue.
-//
-// actionlint does not know the key yet, so .github/actionlint.yaml ignores
-// that one message for this one file; the ignore is pinned too, because
-// dropping it would fail the lint lane on every pull request.
 func TestCIQueuesPullRequests(t *testing.T) {
 	src := workflowSource(t, ciSuiteFile)
 	conc, ok := topLevelBlock(src, "concurrency")
@@ -295,9 +248,6 @@ func TestCIQueuesPullRequests(t *testing.T) {
 				"one lane and half the runner pool stays idle", ciSuiteFile, lane)
 		}
 	}
-	// The lane is the parity of the PR number, so the digits tested must be
-	// exactly the even ones: a missing digit quietly sends that tenth of pull
-	// requests to the wrong lane, an extra one unbalances the split the other way.
 	parity := regexp.MustCompile(`endsWith\(format\('\{0\}', github\.event\.pull_request\.number\), '(\d)'\)`)
 	var digits []string
 	for _, m := range parity.FindAllStringSubmatch(conc, -1) {
@@ -309,8 +259,6 @@ func TestCIQueuesPullRequests(t *testing.T) {
 			"expressions have no `%%`, so every even digit needs its own endsWith term",
 			ciSuiteFile, got)
 	}
-	// `inputs` in a called workflow's `concurrency` cannot be verified offline, and
-	// an expression that evaluates to empty would put every PR in one lane silently.
 	if strings.Contains(conc, "inputs.") {
 		t.Errorf("%s: the PR group reads `inputs`; if a called workflow's concurrency key "+
 			"cannot see it the group collapses to one lane with nothing reporting it",
@@ -332,8 +280,6 @@ func TestCIQueuesPullRequests(t *testing.T) {
 	}
 }
 
-// Main coalesces only pending runs. The active suite must finish, while the
-// shared implementation must not acquire the outer lock a second time.
 func TestMainCICoalescesPendingRuns(t *testing.T) {
 	main := workflowSource(t, ciMainFile)
 	conc, ok := topLevelBlock(main, "concurrency")
@@ -366,10 +312,6 @@ func TestMainCICoalescesPendingRuns(t *testing.T) {
 	}
 }
 
-// Every lane but lint is gated on the `changes` job, by its own row of the
-// lane table, under its own job id. The three have to agree by name: a lane
-// gated on another lane's row runs for the wrong changes, and a row nothing
-// reads is a filter that filters nothing.
 func TestCILaneFiltersMatchTheirJobs(t *testing.T) {
 	lanes := ciLanes(t)
 	table := laneTable(t)
@@ -412,9 +354,6 @@ func TestCILaneFiltersMatchTheirJobs(t *testing.T) {
 	}
 }
 
-// The bootstrap smoke compiles real programs from the tree, so the bootstrap
-// lane's paths must select every Fern source those programs reach through a
-// relative import; otherwise a change that breaks the smoke skips the lane.
 func TestBootstrapLaneWatchesTheSmokeSources(t *testing.T) {
 	root, err := repoRoot()
 	if err != nil {
@@ -459,8 +398,6 @@ func TestBootstrapLaneWatchesTheSmokeSources(t *testing.T) {
 	}
 }
 
-// permissionRequests returns the strongest level a workflow asks for per
-// scope, across its workflow-level and job-level `permissions:` blocks.
 func permissionRequests(src string) map[string]string {
 	rank := map[string]int{"none": 0, "read": 1, "write": 2}
 	out := map[string]string{}
@@ -487,13 +424,6 @@ func permissionRequests(src string) map[string]string {
 	return out
 }
 
-// A called workflow can only narrow what its caller hands it, and GitHub
-// checks that STATICALLY: a nested job asking for `write` on a scope the
-// caller did not grant fails the whole run at startup, whether or not that
-// job's `if:` would have run it. The repository's default token is read-only,
-// so every `write` a lane asks for anywhere must be granted at its caller job.
-// This PR's own first run failed exactly that way, on bootstrap's
-// dispatch-only `release` job.
 func TestCILanesAreGrantedWhatTheyRequest(t *testing.T) {
 	for id, j := range ciLanes(t) {
 		for scope, level := range permissionRequests(workflowSource(t, j.usesFile())) {
@@ -513,10 +443,6 @@ func TestCILanesAreGrantedWhatTheyRequest(t *testing.T) {
 	}
 }
 
-// The `changes` script has no test of its own inside ci.yml, so
-// scripts/ci-changes-selftest.mjs executes it against stubbed responses, and
-// the lint lane is where that runs. Drop the step and the JS copy of the
-// grammar is unpinned again while the Go copy stays green.
 func TestChangesScriptIsSelfTested(t *testing.T) {
 	if _, err := os.Stat(filepath.Join("..", "..", "..", "scripts", "ci-changes-selftest.mjs")); err != nil {
 		t.Fatalf("scripts/ci-changes-selftest.mjs is missing: %v", err)
@@ -525,9 +451,6 @@ func TestChangesScriptIsSelfTested(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read Makefile: %v", err)
 	}
-	// The lint lane runs the cheap gates as one `make lint-fast`; ci-selftest
-	// has to be one of them (or a step of its own) or nothing executes the
-	// `changes` script before it reaches a pull request.
 	lint := workflowSource(t, "lint.yml")
 	fast := regexp.MustCompile(`(?m)^lint-fast:(.*)$`).FindStringSubmatch(string(mk))
 	runsSelftest := strings.Contains(lint, "make ci-selftest") ||

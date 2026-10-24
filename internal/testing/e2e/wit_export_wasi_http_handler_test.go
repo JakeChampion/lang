@@ -12,18 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExportWasiHttpIncomingHandlerComposes is the P6 final composer gate
-// (docs/WIT-BRING-YOUR-OWN.md): a Fern program `@export`s the REAL
-// `wasi:http/incoming-handler@0.2.0#handle` — `func(own<incoming-request>,
-// own<response-outparam>)` — and the world-driven composer produces a valid
-// `wasi:http` component against the actual `wasi:http` WIT (the repo's
-// `cmd/fern/wit` `http` world, supplied as input — NOT the compiler's embedded
-// HTTP world). This is the main "bring-your-own-WIT" demonstration: the
-// HTTP handler shape composes from a user-supplied `.wit` via `@export` +
-// resource-handle params, with no HTTP-specific knowledge in the composer.
-// Gated by `wasm-tools validate` + the component WIT exporting
-// `wasi:http/incoming-handler`. (A response-producing body + a `wasmtime serve`
-// run harness are the follow-on; this proves the compile+compose path.)
 func TestExportWasiHttpIncomingHandlerComposes(t *testing.T) {
 	wasmtools, err := exec.LookPath("wasm-tools")
 	if err != nil {
@@ -37,8 +25,6 @@ func TestExportWasiHttpIncomingHandlerComposes(t *testing.T) {
 		}
 	}
 
-	// Use the repo's real wasi:http WIT (the `http` world exports
-	// wasi:http/incoming-handler and imports wasi:http/types + the preview-2 set).
 	witDir := filepath.Join(dir, "wit")
 	run("cp", "-r", "../../../cmd/fern/wit", witDir)
 	run(wasmtools, "parse", mustWrite(t, dir, "empty.wat", "(module)"), "-o", filepath.Join(dir, "empty.wasm"))
@@ -52,11 +38,6 @@ func TestExportWasiHttpIncomingHandlerComposes(t *testing.T) {
 		t.Fatalf("DecodeWorldBytes: %v", err)
 	}
 
-	// A Fern reactor implementing the handler. The owned request / response-out
-	// handles are the canonical incoming-handler#handle params (a bare WIT
-	// resource param is `own`). The Fern function is NOT named `handle` (that
-	// triggers the checker's handler-main synthesis); the @export WIT
-	// name is "handle".
 	prog := `@import("wasi:http/types@0.2.0", "incoming-request")
 resource IncomingRequest;
 @import("wasi:http/types@0.2.0", "response-outparam")

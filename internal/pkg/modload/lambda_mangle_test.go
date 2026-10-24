@@ -1,25 +1,5 @@
 package modload_test
 
-// Import-mangling coverage for anonymous-function (lambda) bodies and
-// bare function-value references inside a mangled module (#4802).
-//
-// The rewriter mangles a non-entry module's decls to `<mod>__name` and
-// rewrites references throughout the module. Two reference shapes live
-// inside expressions that historically weren't fully covered:
-//
-//   - a bare module-local function reference in ARG position
-//     (`apply(add_one, x)` — a function value, not a call), handled by
-//     rewriteExpr's Ident case;
-//   - anything inside a LAMBDA body (`(v: i32): i32 => {
-//     return add_one(v); }`) — rewriteExpr had no Lambda case at all,
-//     so module-local calls/refs inside lambda bodies survived
-//     unmangled and failed E001 in every importing program.
-//
-// The shadow rules are the subtle part: a lambda's params and body
-// locals must NOT be prefixed (they shadow module decls inside the
-// body), while the ENCLOSING function's locals stay visible to the
-// lambda (captures) and must also stay unprefixed.
-
 import (
 	"path/filepath"
 	"testing"
@@ -76,11 +56,6 @@ function main(): i32 {
 }
 `
 
-// TestLambdaBodyManglingChecks pins that a module using module-local
-// functions from lambda bodies / arg positions loads AND type-checks
-// when imported — the E001 regression shape from #4802 (checker.Check
-// is the layer that failed: the unmangled `add_one` inside the lambda
-// body resolved to nothing after the module merge).
 func TestLambdaBodyManglingChecks(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
 		"lamlib.fern": lambdaMangleLib,
@@ -97,8 +72,6 @@ func TestLambdaBodyManglingChecks(t *testing.T) {
 	if _, err := checker.Check(prog); err != nil {
 		t.Fatalf("checker rejected mangled lambda-body references: %v", err)
 	}
-	// The lambda-body call must reference the MANGLED name after the
-	// rewrite; the mangled decl must exist in the merged program.
 	if findFunc(prog, "lamlib__add_one") == nil {
 		t.Errorf("expected mangled lamlib__add_one in merged program; got %v", funcNames(prog))
 	}

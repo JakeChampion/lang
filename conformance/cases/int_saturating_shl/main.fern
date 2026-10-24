@@ -1,11 +1,11 @@
 // spec: IS-13
-//
-// `<<|` clamps exactly where `<<?` answers None: when bits would be
-// shifted out, and when the count is negative or at least the width.
-// It clamps to MAX, or to MIN for a negative signed value. Zero loses
-// nothing at any count, so `0 <<| n` stays 0. The count is not masked
-// the way `<<` masks it — `3 << 32` is 3, `3 <<| 32` is MAX — which is
-// the case a lowering that reuses the plain shift's masking gets wrong.
+
+
+
+
+
+
+
 import "std/i32";
 import "std/i64";
 import "std/u32";

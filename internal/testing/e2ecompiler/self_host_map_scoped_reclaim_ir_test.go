@@ -2,18 +2,10 @@ package e2ecompiler
 
 import "testing"
 
-// mapScopedReclaimCases pin that a map declared inside an `if` or a loop body is
-// freed like the same map at function scope, including its string key and value
-// columns, and that a sibling block's alias of a caller's map is not freed under
-// its owner.
-//
-// Exit 0 is correct throughout: the leak cases return the steady-window page
-// delta, so a surviving leak exits with its own size.
 var mapScopedReclaimCases = []struct {
 	name string
 	src  string
 }{
-	// The map moved into an `if` body. Nothing else differs from the control.
 	{"block-scoped-if-flat", `import "core/map";
 function build(n: i32): i32 {
     let r: i32 = 0;
@@ -37,8 +29,6 @@ function main(): i32 {
     return (s2 - s1) / 4096;
 }
 `},
-	// Declared in a loop body, so the slot is rebound three times per call and
-	// each iteration's box must be freed exactly once.
 	{"loop-declared-flat", `import "core/map";
 function build(n: i32): i32 {
     let r: i32 = 0;
@@ -64,8 +54,6 @@ function main(): i32 {
     return (s2 - s1) / 4096;
 }
 `},
-	// Block-scoped with fresh string KEYS and VALUES, which need the deep
-	// release.
 	{"block-scoped-string-columns-flat", `import "core/map";
 function build(n: i32): i32 {
     let r: i32 = 0;
@@ -89,8 +77,6 @@ function main(): i32 {
     return (s2 - s1) / 4096;
 }
 `},
-	// The control the three leak cases are differential against: the same map
-	// at function scope, which was always freed and must stay so.
 	{"function-scope-control-flat", `import "core/map";
 function build(n: i32): i32 {
     let m: Map[i32, i32] = Map { 1: n, 2: n + 1 };
@@ -112,9 +98,6 @@ function main(): i32 {
     return (s2 - s1) / 4096;
 }
 `},
-	// The over-release direction: two `m` in sibling `if` arms, one a fresh
-	// literal and one a bare alias of the caller's map. The alias arm must leave
-	// `base` alone for main to keep using.
 	{"sibling-alias-no-over-release", `import "core/map";
 function round(base: Map[i32, i32], i: i32): i32 {
     let t: i32 = 0;
@@ -138,8 +121,6 @@ function main(): i32 {
 
 const mapScopedReclaimWant = "want 0 (a page count = the scoped map still leaks; 90 = wrong value; 91/92 = the aliased map was freed under its owner; 99 = over-release)"
 
-// TestSelfHostMapScopedReclaimIRX86_64 runs each case through the self-hosted
-// CLI for x86-64.
 func TestSelfHostMapScopedReclaimIRX86_64(t *testing.T) {
 	cli := newStrictCLI(t)
 	for _, tc := range mapScopedReclaimCases {
@@ -151,7 +132,6 @@ func TestSelfHostMapScopedReclaimIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostMapScopedReclaimIRArm64 is the arm64 leg, run under qemu.
 func TestSelfHostMapScopedReclaimIRArm64(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
 	cli := newStrictCLI(t)
@@ -164,7 +144,6 @@ func TestSelfHostMapScopedReclaimIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostMapScopedReclaimIRWasm is the wasm leg.
 func TestSelfHostMapScopedReclaimIRWasm(t *testing.T) {
 	cli := newStrictCLI(t)
 	for _, tc := range mapScopedReclaimCases {

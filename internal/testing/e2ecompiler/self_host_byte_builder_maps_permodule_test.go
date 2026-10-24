@@ -11,8 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// A library module owns the builder calls; the entry must supply and export
-// both runtime layouts even when it has no direct builder operation itself.
 func TestSelfHostByteBuilderMapsPerModule(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)

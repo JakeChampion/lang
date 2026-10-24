@@ -1,31 +1,7 @@
 package e2e
 
-// A Map whose VALUE column is cell-boxed (#7114).
-//
-// A wide scalar (i64 / u64 / f64) does not fit the Map runtime's
-// pointer-wide value slot, so emitWideMapSet alloc-and-stores it into a cell
-// and the column carries cell pointers. Only the INSERT branch of
-// __map_set_keyed_impl takes the incoming value; an overwrite displaced the
-// cell already in the column and nothing reclaimed it — 16 B per overwrite,
-// unbounded in a loop, on x86-64, arm64 AND wasm. Unlike the KEY-cell leak
-// of #6243, cell-boxing a wide V is not two-word-ABI-specific, which is why
-// the x86-64 leg carries signal here. Delete and clear displaced their cells
-// the same way.
-//
-// The column is now OWNED: __map_own_copied_cols gives a COW copy cells of
-// its own, which is what makes reclaiming a displaced one safe rather than a
-// use-after-free. The alias program below is the other half of that claim.
-
 import "testing"
 
-// Memory: overwrite, delete and clear must all stay flat on every target.
-//
-// 16x the iterations rather than 4x: at 16 B an overwrite the pre-fix mark
-// grew 2928 -> 28528 across this spread (x86-64; it is flat at 1856 after),
-// so nothing subtle is being asked of the comparison.
-//
-// __heap_bump_bytes() is the bump allocator's high-water mark — what the
-// freelist could NOT recycle — so it is host-independent, unlike RSS.
 const mapWideValueOverwriteHeapProg = `
 import "core/map";
 import "std/i32";
@@ -120,18 +96,6 @@ func TestMapWideValueOverwriteHeapFlatWasm(t *testing.T) {
 	}
 }
 
-// The displaced cell must be freed EXACTLY once, and only by the map that
-// owns it. Reclaiming it caller-side — the shape #6243's key fix takes —
-// is unsound here: a COW copy's value column shares the ORIGINAL's cells
-// until __map_own_copied_cols reboxes them, and an overwrite in either map
-// would then free a cell the other still reads. Both sharing paths are
-// exercised (a temporary-bound mutator through __map_cow_inplace, and a
-// container construction through __map_clone); each copy must read back the
-// values it was built with after the original is overwritten many times
-// over.
-//
-// Without the rebox this returns 3 on x86-64 and arm64 — the copy's entry
-// reads a cell the original freed and the allocator handed back out.
 const mapWideValueOverwriteAliasProg = `
 import "core/map";
 import "std/i32";
@@ -179,13 +143,6 @@ func TestMapWideValueOverwriteAliasWasm(t *testing.T) {
 	}
 }
 
-// Every read path over a boxed column copies the payload OUT of the cell
-// rather than handing the pointer on — which is what keeps reclaiming a
-// displaced cell invisible to a reader. get() reboxes into its own
-// Option[V], get_or / iter unbox, and values() copies into a wide-stride
-// V[]; so a value read before an overwrite must survive the overwrite that
-// frees the cell it came from. A wide KEY column is exercised too: its cells are
-// the key machinery's, and the value walk must not disturb them.
 const mapWideValueReadAfterOverwriteProg = `
 import "core/map";
 import "std/i32";
@@ -249,12 +206,6 @@ func TestMapWideValueReadAfterOverwriteWasm(t *testing.T) {
 	}
 }
 
-// A wide KEY column boxes its keys into cells on wasm32 (keyKind 2), and a
-// delete frees the removed key's cell. A COW copy has to own its key cells
-// as it owns its value cells, or the delete in the copy frees a cell the
-// original still reads: wasm summed the original's keys 3000000021 short,
-// with the freed cell reading zero (#10968). The natives keep a wide key in
-// its slot, so they carry no cell and pin the answer.
 const mapWideKeyCopyDeleteProg = `
 import "core/map";
 

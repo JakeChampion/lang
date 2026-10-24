@@ -8,28 +8,6 @@ import (
 	"testing"
 )
 
-// The map iteration-order gate (#8839). `Map[K, V]` iterates in INSERTION
-// order — `core/map` states that contract and `std/json` depends on it to preserve
-// an object's key order — and until this gate existed nothing checked that the
-// self-host's backends agreed with native about it. Two of them did not, in
-// different ways, and both were silent: the program runs, prints, and exits 0.
-//
-//   - The register backends (x86-64 / arm64, sharing asmcore's runtime source)
-//     deleted by SHIFTING the tail down, where core/map moves the LAST entry
-//     into the hole. Same set of keys either way, different sequence, and only
-//     after a `.without`.
-//   - The wasm backend kept keys at their probe slot and snapshotted by
-//     sweeping the slot table, so its `keys()` came out in HASH order. That one
-//     diverges on three plain inserts with no delete at all.
-//
-// The oracle is the interpreter, as everywhere else here: native is the
-// reference implementation, and the compilers must agree with it rather than
-// with each other.
-//
-// Twelve inserts are the number that matters: the map starts at capacity 8 and
-// grows at 3/4, so the sequence has to survive a rehash — which is exactly
-// where an order column can be rebuilt in the wrong sequence and where a slot
-// sweep looks correct by accident on a small map.
 const mapIterationOrderSrc = `import "core/map";
 function main(): i32 {
     let m: Map[i32, i32] = Map {};
@@ -58,25 +36,6 @@ function main(): i32 {
 }
 `
 
-// Each code says which property broke, so a failure needs no bisect:
-//
-//	10        keys() lost or gained an entry
-//	20+j      the fresh inserts do not read back in insertion order — j is the
-//	          first position that disagrees, so 21 is "the second key is wrong"
-//	          and points at hash order rather than at the grow
-//	34        values() disagrees with keys() about the sequence
-//	40        an overwrite MOVED its key instead of keeping its position
-//	50 / 51   `.without` did not move the last entry into the hole
-//	52        it moved something else as well
-//	60 / 61   an insert after a delete did not append at the end
-//	42        every property holds
-//
-// 51 is what the register backends answered before this gate; 21 is what wasm
-// answered.
-
-// mapIterationOrderOracle is InterpExit with a stdlib root, which it does not
-// take. The program needs one: native REQUIRES `import "core/map"` for a map
-// operation (E001) where the self-host lowers one without it.
 func mapIterationOrderOracle(t *testing.T, interpBin, stdlibRoot string) int {
 	t.Helper()
 	f := filepath.Join(t.TempDir(), "oracle.fern")
@@ -98,9 +57,6 @@ func mapIterationOrderOracle(t *testing.T, interpBin, stdlibRoot string) int {
 	return got
 }
 
-// mapIterationOrderProject builds the self-host `fern` driver once per leg.
-// fern.fern rather than asm_ir_run.fern because the program imports core/map,
-// which needs the module loader and a stdlib root.
 func mapIterationOrderProject(t *testing.T, gcc string) (fernBin, stdlibRoot, mainPath string) {
 	t.Helper()
 	dir := writeSelfHostAsmProject(t)
@@ -139,8 +95,6 @@ func TestSelfHostMapIterationOrderX86_64(t *testing.T) {
 	}
 }
 
-// The arm64 leg: core/map's delete is shared source, but each backend emits
-// it, so the addressing the swap uses is per-backend.
 func TestSelfHostMapIterationOrderArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -165,10 +119,6 @@ func TestSelfHostMapIterationOrderArm64(t *testing.T) {
 	}
 }
 
-// The wasm leg is the one that carries a distinct implementation: its map is an
-// open-addressed table with tombstones rather than asmcore's two columns, so
-// the order column and the three sites that maintain it (set, delete, grow) are
-// wasm-only code. It is also the leg that was wrong without any delete at all.
 func TestSelfHostMapIterationOrderWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping the wasm map-iteration-order leg")

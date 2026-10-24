@@ -1,8 +1,3 @@
-// Metadata obligations for the scoped retained wrapper. Each row owns its
-// producer store; equal local indices never imply equal layouts.
-// Keep predicates/offsets aligned with ssacreditabi: scalar, ordinary,
-// signed_code/assertion_signature_error, incoming_modes, incoming_schema_index
-// and replacement_scalar_fields; this adapter reads each row's own metadata.
 import "./physicalbody";
 import "./ssaprepare";
 import "./ssasem";
@@ -67,8 +62,6 @@ function index(m: physicalbody.Metadata, t: typeinfo.Type): i32 {
   return found;
 }
 
-// At depth zero only a flat scalar record is supported. The bound prevents
-// recursive schemas from turning metadata comparison into an unbounded walk.
 pub function compatible(a: physicalbody.Metadata, b: physicalbody.Metadata, t: typeinfo.Type, depth: i32): boolean {
   if (!ordinary(a, t) || !ordinary(b, t) || depth < 0 || depth > 1) {
     return false;
@@ -101,8 +94,6 @@ function compatible_fields(a: physicalbody.Metadata, b: physicalbody.Metadata, f
   return true;
 }
 
-// Derive every reference offset from a checked ordinary record schema. An
-// empty result refuses unsupported layouts as well as records without children.
 pub function child_offsets(m: physicalbody.Metadata, t: typeinfo.Type): i32[] {
   if (!compatible(m, m, t, 1)) {
     return [];

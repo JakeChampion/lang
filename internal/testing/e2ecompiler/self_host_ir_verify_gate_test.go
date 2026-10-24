@@ -11,26 +11,6 @@ import (
 	e2eharness "github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// #6639 slice 5: the IR verifiers now run on the COMPILE path.
-//
-// Slices 1-3 wrote the passes; nothing ran them outside a test driver, and a
-// test driver is not the compiler, so the module with the most
-// lowering in it, the self-host compiler's own ~1000 functions, went through
-// every build unchecked. compiler/irverifygate.fern closes that: all
-// three backends call it once per function they are about to emit, so any
-// compile run under FERN_IR_VERIFY=1 names the malformed op where it was
-// produced instead of handing it to a backend that turns it into a SIGSEGV or
-// a module wasmtime refuses to validate.
-//
-// The tests below split along the only line that matters for a verifier:
-// whether it stays SILENT on valid IR (the property that decides if the flag
-// is usable at all) and whether it actually FIRES on invalid IR (the property
-// that decides if it is worth anything).
-
-// gateProgs exercise the op classes a stack-discipline or frame bug would most
-// likely hide in — closures and their environment slots, string and array
-// builtins with their varied arities, maps, enum matches, nested control flow.
-// A backend that never sees these does not tell you much about the gate.
 var gateProgs = []struct {
 	name string
 	src  string
@@ -79,10 +59,6 @@ function area(s: Shape): i32 {
     }
 }
 function main(): i32 { return area(Shape.Box(3, 4)) + area(Shape.Line(2)); }`},
-	// Receiver methods are the arity check's off-by-one case: the call site
-	// pushes the receiver as an argument and the declaration does not list it,
-	// so an index that counted only `params` would report every method call in
-	// every program the compiler builds.
 	{"methods", `struct Acc { n: i32 }
 pub function (a: Acc) bump(by: i32): i32 { return a.n + by; }
 pub function (a: Acc) zero(): i32 { return a.n; }
@@ -99,11 +75,6 @@ function main(): i32 {
     let ps: P[] = [p, q];
     return ps[0].x + ps[1].x + q.y;
 }`},
-	// An `own` base superseded in an arm that returns, then again after it:
-	// the two reuse sites are exclusive through the return, not through an
-	// else, and the first replaces a heap field, which is the shape the
-	// rc verifier's reachability walk read as one box handed to two
-	// recipients (coreutils' ptx `put` and digest `check_one`).
 	{"own-spread-in-returning-arm", `struct Line { mode: i32, cursor: i32, buf: u8[] }
 function put(own l: Line, n: i32): Line {
     if (l.mode == 2) {
@@ -119,10 +90,6 @@ function main(): i32 {
 }`},
 }
 
-// runGate runs irverify_run with args under `flag`, a FERN_IR_VERIFY setting,
-// or with no FERN_* variable at all when flag is "", and returns stdout,
-// stderr and the exit code. It does not fail the test on a non-zero exit:
-// every caller here is asserting something about that code.
 func runGate(t *testing.T, bin string, args []string, flag string) (string, string, int) {
 	t.Helper()
 	cmd := exec.Command(bin, args...)
@@ -140,16 +107,6 @@ func runGate(t *testing.T, bin string, args []string, flag string) (string, stri
 	return stdout.String(), stderr.String(), cmd.ProcessState.ExitCode()
 }
 
-// gateSilentSweep is the shared body of the three backend legs: every program
-// compiles clean under the flag, and emits EXACTLY what it emits without it.
-//
-// The byte-identity half is not decoration. A gate that perturbed codegen would
-// mean the flag changes the program under test, and every diagnosis made with
-// it turned on would be about a different compiler than the one that failed.
-//
-// Both halves set the flag EXPLICITLY: the harness turns the gate on for every
-// compile (SelfHostVerify), so leaving it out would make "off" mean "on" and
-// the comparison compare a run with itself.
 func gateSilentSweep(t *testing.T, target string) {
 	t.Helper()
 	cli := newStrictCLI(t)
@@ -170,34 +127,18 @@ func gateSilentSweep(t *testing.T, target string) {
 	}
 }
 
-// TestSelfHostIRVerifyGateSilentX86_64 is the x86-64 leg.
 func TestSelfHostIRVerifyGateSilentX86_64(t *testing.T) {
 	gateSilentSweep(t, "x86-64-linux")
 }
 
-// TestSelfHostIRVerifyGateSilentArm64 is the arm64 leg. What is under test is
-// the gate's verdict on the arm64 op stream, not whether the result runs — the
-// arm64 e2e suites already cover that — so it needs no arm64 tooling.
 func TestSelfHostIRVerifyGateSilentArm64(t *testing.T) {
 	gateSilentSweep(t, "arm64-linux")
 }
 
-// TestSelfHostIRVerifyGateSilentWasm is the wasm leg — the backend with the
-// most to gain, since malformed IR there fails module validation with a
-// message about the module rather than about the op that caused it.
 func TestSelfHostIRVerifyGateSilentWasm(t *testing.T) {
 	gateSilentSweep(t, "wasm32-wasi")
 }
 
-// TestSelfHostIRVerifyGateRefuses is the other direction, and the one that
-// makes the sweeps above mean something: a gate that returned "clean"
-// unconditionally would pass every one of them.
-//
-// It cannot be driven from a backend — the compiler does not emit malformed IR
-// on demand — so irverify_run's `-refuse` mode calls verify_or_refuse directly
-// with a stream whose local index is outside the frame. That exercises the real
-// function: the FERN_IR_VERIFY read, the decision to act on a non-empty
-// verdict, the message, and the exit code the backends inherit.
 func TestSelfHostIRVerifyGateRefuses(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -207,14 +148,11 @@ func TestSelfHostIRVerifyGateRefuses(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/irverify_run.fern")
 	bin := buildSelfHostBin(t, gcc, dir, "drivers/irverify_run.fern", "irverify_run")
 
-	// Unset: inert. A plain compile skips the gate; only a test or a bisect
-	// turns it on.
 	out, _, code := runGate(t, bin, []string{"-refuse"}, "")
 	if code != 0 || !strings.Contains(out, "irverifygate: inert") {
 		t.Errorf("-refuse with FERN_IR_VERIFY unset exited %d and printed %q, want 0 and the inert marker", code, out)
 	}
 
-	// Opted out: inert as well.
 	out, _, code = runGate(t, bin, []string{"-refuse"}, "FERN_IR_VERIFY=0")
 	if code != 0 {
 		t.Errorf("-refuse under FERN_IR_VERIFY=0 exited %d, want 0 — the opt-out must make the gate inert", code)
@@ -223,7 +161,6 @@ func TestSelfHostIRVerifyGateRefuses(t *testing.T) {
 		t.Errorf("-refuse under FERN_IR_VERIFY=0 printed %q, want the inert marker", out)
 	}
 
-	// Flag set: refuses, names the function, and says what is wrong with it.
 	_, stderr, code := runGate(t, bin, []string{"-refuse"}, "FERN_IR_VERIFY=1")
 	if code != 4 {
 		t.Errorf("-refuse under FERN_IR_VERIFY=1 exited %d, want 4\nstderr: %s", code, stderr)
@@ -239,11 +176,6 @@ func TestSelfHostIRVerifyGateRefuses(t *testing.T) {
 	}
 }
 
-// TestSelfHostIRVerifyGateChecks pins the gate's own unit assertions, which run
-// inside irverify_run's default mode (case ids 170-177).
-//
-// The marker is asserted because the exit code alone would not notice
-// gate_checks being dropped from main: a call that is never made cannot fail.
 func TestSelfHostIRVerifyGateChecks(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -262,15 +194,6 @@ func TestSelfHostIRVerifyGateChecks(t *testing.T) {
 	}
 }
 
-// TestSelfHostIRVerifyGateWholeCompiler is the case the gate exists for: the
-// self-host compiler's own sources, every module, through the per-module
-// bootstrap driver with the flag on.
-//
-// This is ~1000 functions of the hardest code the lowerer sees, and until now
-// no verifier had ever looked at any of it — the corpus sweeps run over
-// conformance/cases, which are single-module fixtures. A refusal here is a real
-// lowering bug in the compiler, which is why the failure message says to read
-// it as one rather than as a verifier false positive.
 func TestSelfHostIRVerifyGateWholeCompiler(t *testing.T) {
 	if testing.Short() {
 		t.Skip("whole-compiler compile is slow; skipped under -short")
@@ -282,10 +205,6 @@ func TestSelfHostIRVerifyGateWholeCompiler(t *testing.T) {
 	dir := writeSelfHostModloadProjectTyped(t)
 	bin := buildSelfHostBin(t, gcc, dir, "drivers/asm_modload_run.fern", "modload_run")
 
-	// asm_ir_run.fern imports the whole x86 pipeline, so its closure is the
-	// compiler: lexer, parser, ir, irtables, asmcore, asm_ir, asm_arm64_ir. The
-	// modload project stages every one of those already; only the entry itself
-	// has to be added.
 	copySelfHostFiles(t, dir, "drivers/asm_ir_run.fern")
 	entry := filepath.Join(dir, "drivers/asm_ir_run.fern")
 

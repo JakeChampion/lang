@@ -6,10 +6,6 @@ import (
 	"testing"
 )
 
-// dynF32BoxSrc boxes an f32 into a dyn set, beside an i32, over a trait of the
-// program's own and over core/cmp's Display. The typed lowering refused the
-// box (`array element type: f32 in dyn Show[]`, #10841). 0.1 prints as itself
-// only when the value is read back at f32 width.
 const dynF32BoxSrc = `import "core/cmp";
 import "std/i32";
 import "std/f64";

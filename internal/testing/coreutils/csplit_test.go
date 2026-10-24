@@ -7,11 +7,6 @@ import (
 	"testing"
 )
 
-// csplitSeed fills a case's working directory with the inputs the corpus
-// names. Every case gets its own directory per SIDE, so the pieces the
-// two implementations write are compared without either seeing the
-// other's; the inputs live in it too, and are named relatively, which is
-// what makes the tree comparison meaningful.
 func csplitSeed(t *testing.T, dir string) {
 	t.Helper()
 	files := map[string]string{
@@ -20,15 +15,9 @@ func csplitSeed(t *testing.T, dir string) {
 		"abab":  "a\nb\na\nb\na\nb\n",
 		"nonl":  "a\nb\nc",
 		"empty": "",
-		// A byte sequence that is not valid UTF-8, so an operand and a
-		// line both carry one.
-		"raw": "a\n\xff\xfe\nb\n",
-		// Past one read block in both directions, so the piece boundary
-		// and the buffer's own compaction cross a chunk.
-		"big": strings.Repeat("line\n", 40000) + "MARK\n" + strings.Repeat("line\n", 40000),
-		// A line whose only match begins past its first byte, with more
-		// than one byte before it that no match can begin at.
-		"mid": "xa1\nzz\nq\n",
+		"raw":   "a\n\xff\xfe\nb\n",
+		"big":   strings.Repeat("line\n", 40000) + "MARK\n" + strings.Repeat("line\n", 40000),
+		"mid":   "xa1\nzz\nq\n",
 	}
 	for name, content := range files {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
@@ -44,27 +33,11 @@ func init() {
 	registerCorpus("csplit", csplitCases)
 }
 
-// csplitCases is csplit(1)'s corpus.
-//
-// Almost all of it is about the two cursors: where a piece ends and
-// where the next pattern starts looking are different lines, and every
-// offset spelling moves them by different amounts. The cases that pin
-// that are the `{*}` ones — a repeat that got either cursor wrong either
-// loops forever or stops one piece early — and the ones that follow a
-// pattern with a second pattern aimed at a line the first passed.
-//
-// The other half is which error path a failure takes, because each of
-// the three leaves a different piece behind: a match not found and a
-// line past the end flush the rest of the input into the open piece, an
-// offset reaching back past the piece's first line does not, and an
-// input with nothing left at all reports `input disappeared` and keeps
-// the files rather than removing them.
 func csplitCases(t *testing.T) []invocation {
 	c := func(name string, args ...string) invocation {
 		return invocation{name: name, args: args, seedTree: csplitSeed}
 	}
 	cases := []invocation{
-		// The line-number pattern.
 		c("line number", "ten", "5"),
 		c("line one", "ten", "1"),
 		c("last line", "ten", "10"),
@@ -101,7 +74,6 @@ func csplitCases(t *testing.T) []invocation {
 		c("nothing left and the line is the next one", "ten", "/10/+1", "11"),
 		c("nothing left after an unterminated file", "nonl", "/c/+1", "4"),
 
-		// An empty input.
 		c("empty input", "empty", "1"),
 		c("empty input, line two", "empty", "2"),
 		c("empty input, line five", "empty", "5"),
@@ -113,7 +85,6 @@ func csplitCases(t *testing.T) []invocation {
 		c("empty input skip", "empty", "%x%"),
 		c("empty input regexp elided", "-z", "empty", "/x/"),
 
-		// The regexp pattern.
 		c("regexp", "ten", "/5/"),
 		c("regexp first line", "ten", "/1/"),
 		c("regexp last line", "ten", "/10/"),
@@ -130,16 +101,10 @@ func csplitCases(t *testing.T) []invocation {
 		c("backreference", "abab", `/\(a\)\1/`),
 		c("case matters", "abab", "/A/"),
 
-		// The scan seeds a match at every position of the line, so a
-		// line whose first bytes can start none of them still has to be
-		// searched to its end.
 		c("a match past the first byte", "mid", "/[0-9]/"),
 		c("a negated class past the first byte", "mid", "/[^xa]/"),
 		c("a class the whole line fails", "mid", "/[A-Z]/"),
 
-		// An alternation is filtered on one literal per branch, and a
-		// branch that has none has to turn that filter off rather than
-		// narrow it to the branches that do.
 		c("alternation of literals", "ten", `/3\|7/`),
 		c("alternation matching neither branch", "ten", `/zz\|qq/`),
 		c("alternation of unequal literals", "ten", `/10\|4/`),
@@ -174,7 +139,6 @@ func csplitCases(t *testing.T) []invocation {
 		c("bad interval", "ten", `/a\{2,1\}/`),
 		c("a bad regexp beats a bad offset", "ten", "/[/x"),
 
-		// Offsets.
 		c("positive offset", "ten", "/5/2"),
 		c("signed positive offset", "ten", "/5/+2"),
 		c("zero offset", "ten", "/5/0"),
@@ -209,7 +173,6 @@ func csplitCases(t *testing.T) []invocation {
 		c("a regexp before the line a count stopped at", "ten", "5", "/3/"),
 		c("a skip before the line a count stopped at", "ten", "5", "%3%"),
 
-		// The %…% spelling throws its piece away.
 		c("skip", "ten", "%5%"),
 		c("skip with an offset", "ten", "%5%+2"),
 		c("skip with a negative offset", "ten", "%5%-2"),
@@ -217,7 +180,6 @@ func csplitCases(t *testing.T) []invocation {
 		c("skip no match", "ten", "%nope%"),
 		c("a skip after a regexp", "ten", "/5/", "%8%"),
 
-		// Repeats.
 		c("repeat a regexp", "ten", "/5/", "{5}"),
 		c("repeat a regexp once", "ten", "/5/", "{1}"),
 		c("repeat a regexp forever", "ten", "/5/", "{*}"),
@@ -257,7 +219,6 @@ func csplitCases(t *testing.T) []invocation {
 		c("a skipped positive offset on a repeat", "abab", "%a%+2", "{*}"),
 		c("a skipped negative offset on a repeat", "abab", "%b%-1", "{*}"),
 
-		// -f, -n, -b: the piece names.
 		c("prefix", "-f", "yy", "ten", "5"),
 		c("long prefix", "--prefix=yy", "ten", "5"),
 		c("empty prefix", "-f", "", "ten", "5"),
@@ -330,7 +291,6 @@ func csplitCases(t *testing.T) []invocation {
 		{name: "suffix precision past INT_MAX", args: []string{"-b", "%.2147483648d", "ten", "5"}, seedTree: csplitSeed,
 			darwinLibcDefect: "Apple's printf wraps a precision past INT_MAX, and GNU csplit then crashes"},
 
-		// -k, -s, -z, --suppress-matched.
 		c("keep files", "-k", "ten", "11"),
 		c("long keep files", "--keep-files", "ten", "11"),
 		c("keep files on no match", "-k", "ten", "/nope/"),
@@ -367,7 +327,6 @@ func csplitCases(t *testing.T) []invocation {
 		c("suppress a negative offset then a regexp", "--suppress-matched", "ten", "/5/-1", "/4/"),
 		c("suppress on a repeat", "--suppress-matched", "abab", "/a/", "{*}"),
 
-		// Operands, stdin and the option scan.
 		c("no operand"),
 		c("only a file", "ten"),
 		c("only options", "-s"),
@@ -381,10 +340,6 @@ func csplitCases(t *testing.T) []invocation {
 		c("missing file beats a bad pattern", "nosuch", "xyz"),
 		c("missing file beats a bad regexp", "nosuch", "/x"),
 		c("missing file beats a bad repeat", "nosuch", "5", "{x}"),
-		// An empty operand is two different faults depending on its
-		// position, and which one fires is observable: an empty FILE is
-		// an open failure and an empty PATTERN is a parse failure, so
-		// the pair of them reports the open.
 		c("an empty file operand", "", "2"),
 		c("an empty pattern operand", "ten", ""),
 		c("an empty pattern after a valid one", "ten", "2", ""),
@@ -407,12 +362,10 @@ func csplitCases(t *testing.T) []invocation {
 		c("help with a value", "--help=x", "ten", "5"),
 		c("version with a value", "--vers=x", "ten", "5"),
 
-		// Bytes that are not text.
 		c("a non-UTF-8 operand", "raw", "/\xff/"),
 		c("a non-UTF-8 prefix", "-f", "y\xffy", "raw", "2"),
 		c("a non-UTF-8 line number", "ten", "5\xff"),
 
-		// Past a read block, in every mode.
 		c("a large file by line number", "big", "40001"),
 		c("a large file by regexp", "big", "/MARK/"),
 		c("a large file with a negative offset", "big", "/MARK/-3"),
@@ -422,13 +375,9 @@ func csplitCases(t *testing.T) []invocation {
 		c("a large file skipped", "big", "%MARK%"),
 	}
 
-	// POSIXLY_CORRECT stops the option scan at the first operand, so the
-	// options after it become patterns.
 	cases = append(cases,
 		invocation{name: "posixly correct", args: []string{"ten", "-s", "5"}, env: []string{"POSIXLY_CORRECT=1"}, seedTree: csplitSeed},
 		invocation{name: "options before the file under POSIXLY_CORRECT", args: []string{"-s", "ten", "5"}, env: []string{"POSIXLY_CORRECT=1"}, seedTree: csplitSeed},
-		// The counts are the only thing on stdout, so a closed one is
-		// reported at exit and a quiet run never writes at all.
 		invocation{name: "closed stdout", args: []string{"ten", "5"}, stdout: stdoutClosed, seedTree: csplitSeed},
 		invocation{name: "closed stdout quiet", args: []string{"-s", "ten", "5"}, stdout: stdoutClosed, seedTree: csplitSeed},
 		invocation{name: "closed stdout on error", args: []string{"ten", "11"}, stdout: stdoutClosed, seedTree: csplitSeed},

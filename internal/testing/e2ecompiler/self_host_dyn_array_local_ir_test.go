@@ -2,15 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// dynArrayLocalIRCases exercise method dispatch on the elements of a `dyn Trait[]`
-// LOCAL through the self-host IR path on x86-64 + wasm.
-//
-// A method call on an element of a dyn-array LOCAL (`xs[i].m()`,
-// `let e = xs[i]; e.m()`, `for x in xs { x.m() }`) dispatches dynamically, the
-// same as one on an element of a `dyn Trait[]` PARAM.
-//
-// Each case is oracle-checked against the interpreter and returns a
-// non-negative value <= 126 (cf. #2908).
 const dynArrayLocalPrelude = `trait Sh { function area(self: Self): i32; }
 struct C { r: i32 }
 struct R { w: i32, h: i32 }
@@ -22,20 +13,13 @@ var dynArrayLocalIRCases = []struct {
 	name string
 	main string
 }{
-	// Inline index then method call: C{5}.area() = 25.
 	{"inline-index", `function main(): i32 { let xs: dyn Sh[] = [C { r: 5 }]; return xs[0].area(); }`},
-	// Bind an element, then dispatch on the binding: 25.
 	{"bind-element", `function main(): i32 { let xs: dyn Sh[] = [C { r: 5 }]; let e = xs[0]; return e.area(); }`},
-	// Heterogeneous local iterated in a loop: 9 + 10 = 19.
 	{"loop", `function main(): i32 { let xs: dyn Sh[] = [C { r: 3 }, R { w: 2, h: 5 }]; let t: i32 = 0; for x in xs { t = t + x.area(); } return t; }`},
-	// Two inline indices added: 9 + 10 = 19.
 	{"two-index", `function main(): i32 { let xs: dyn Sh[] = [C { r: 3 }, R { w: 2, h: 5 }]; return xs[0].area() + xs[1].area(); }`},
-	// Three heterogeneous elements in a loop: 4 + 6 + 9 = 19.
 	{"loop-three", `function main(): i32 { let xs: dyn Sh[] = [C { r: 2 }, R { w: 2, h: 3 }, C { r: 3 }]; let t: i32 = 0; for x in xs { t = t + x.area(); } return t; }`},
 }
 
-// TestSelfHostDynArrayLocalIR compiles each case with the self-host CLI for
-// x86-64 and wasm and checks the exit code against the interpreter.
 func TestSelfHostDynArrayLocalIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	interpBin := buildLangBinForInterp(t)

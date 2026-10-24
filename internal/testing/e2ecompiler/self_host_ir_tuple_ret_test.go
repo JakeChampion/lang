@@ -4,12 +4,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostIRTupleReturnEligible LOCKS IN the IR-coverage widening for
-// tuple-returning functions. It asserts
-// the path probe (semlower.verdict, via eligBits) on
-// tuple-returning programs and encodes the per-case results in the exit code.
-// Before tuple-returning functions were lowered, lower_func bailed every `(...)`
-// return, so all cases would be ineligible (exit 0).
 func TestSelfHostIRTupleReturnEligible(t *testing.T) {
 	progs := []string{
 		"function three(): (i32, i32, i32) { return (4, 5, 6); } function main(): i32 { let (a, b, c) = three(); return a + b + c; }",

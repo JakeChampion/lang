@@ -11,22 +11,9 @@ func init() {
 	registerCorpus("numfmt", numfmtCases)
 }
 
-// TestNumfmtParity holds coreutils/numfmt.fern to GNU numfmt.
-//
-// The corpus follows the utility: the options and their diagnostics, the
-// scaling in and out, the rounding (which is where a long double's last
-// digit shows), the field machinery, --format, and the stdin paths.
-//
-// Three invocations are deliberately absent. `numfmt -d, --from=si` on a
-// field with a trailing blank reads PAST the field's terminator in GNU
-// 9.4 and prints whatever follows it in memory — here, the environment
-// — so there is nothing to be byte-equal to (#8533).
-// numfmtCases is the corpus, shared by the GNU parity gate and the
-// self-host leg so neither can test something narrower than the other.
 func numfmtCases(t *testing.T) []invocation {
 	t.Helper()
 	return []invocation{
-		// No operands and no stdin.
 		{name: "no arguments"},
 		{name: "dashdash alone", args: []string{"--"}},
 		{name: "one operand", args: []string{"1"}},
@@ -37,7 +24,6 @@ func numfmtCases(t *testing.T) []invocation {
 		{name: "non UTF-8 operand", args: []string{"\xff"}},
 		{name: "two operands", args: []string{"1000", "2000"}},
 
-		// Option faults: glibc's getopt, then numfmt's own.
 		{name: "unknown short", args: []string{"-x"}},
 		{name: "unknown long", args: []string{"--x"}},
 		{name: "short requires an argument", args: []string{"-d"}},
@@ -66,7 +52,6 @@ func numfmtCases(t *testing.T) []invocation {
 		{name: "operand before an option", args: []string{"1000", "--to=si"}},
 		{name: "posix stops at the operand", args: []string{"1000", "--to=si"}, env: []string{"POSIXLY_CORRECT=1"}},
 
-		// --from and --to.
 		{name: "from si", args: []string{"--from=si", "1K"}},
 		{name: "from si lower case", args: []string{"--from=si", "1k"}},
 		{name: "from si M", args: []string{"--from=si", "1M"}},
@@ -133,7 +118,6 @@ func numfmtCases(t *testing.T) []invocation {
 		{name: "to iec from si", args: []string{"--to=iec", "--from=si", "1K"}},
 		{name: "to si rejects a suffix", args: []string{"--to=si", "1K"}},
 
-		// The scaling ladder and its rounding.
 		{name: "to si 1500", args: []string{"--to=si", "1500"}},
 		{name: "to si 1501", args: []string{"--to=si", "1501"}},
 		{name: "to si 1499", args: []string{"--to=si", "1499"}},
@@ -191,7 +175,6 @@ func numfmtCases(t *testing.T) []invocation {
 		{name: "to si past exa", args: []string{"--to=si", "123456789012345678901"}},
 		{name: "to iec exa", args: []string{"--to=iec", "1234567890123456789"}},
 
-		// The unscaled path and what it refuses to print.
 		{name: "keeps the written precision", args: []string{"1.5", "1.50", "1.500", "1.0", "00001", "0001.5000", "0.0000"}},
 		{name: "leading point", args: []string{".5"}},
 		{name: "trailing point", args: []string{"5."}},
@@ -208,7 +191,6 @@ func numfmtCases(t *testing.T) []invocation {
 		{name: "eighteen digits and a fraction", args: []string{"999999999999999999.9"}},
 		{name: "nineteen digits and a fraction", args: []string{"9999999999999999999.9"}},
 
-		// --round.
 		{name: "round up", args: []string{"--round=up", "--to=si", "1001", "1000", "1500", "1499", "1450", "1451"}},
 		{name: "round down", args: []string{"--round=down", "--to=si", "1999", "1950", "1000", "999", "9999", "10999"}},
 		{name: "round down big", args: []string{"--round=down", "--to=si", "999999", "999950", "999999999", "1023"}},
@@ -251,7 +233,6 @@ func numfmtCases(t *testing.T) []invocation {
 		{name: "round nearest half at one place", args: []string{"--round=nearest", "--format=%.1f", "0.05"}},
 		{name: "round nearest halves past one", args: []string{"--round=nearest", "--format=%.3f", "1.0005", "2.0005"}},
 
-		// --from-unit and --to-unit.
 		{name: "from-unit", args: []string{"--from-unit=1000", "1"}},
 		{name: "from-unit with to", args: []string{"--from-unit=1000", "--to=si", "1"}},
 		{name: "from-unit iec", args: []string{"--from-unit=1024", "--to=iec", "1"}},
@@ -300,7 +281,6 @@ func numfmtCases(t *testing.T) []invocation {
 		{name: "to-unit blank", args: []string{"--to-unit= 5", "10"}},
 		{name: "to-unit trailing blank", args: []string{"--to-unit=5 ", "10"}},
 
-		// --padding and --suffix.
 		{name: "padding", args: []string{"--padding=5", "1"}},
 		{name: "padding wider than the value", args: []string{"--padding=5", "1000"}},
 		{name: "padding left", args: []string{"--padding=-5", "1"}},
@@ -348,7 +328,6 @@ func numfmtCases(t *testing.T) []invocation {
 		{name: "suffix digit", args: []string{"--suffix=5", "15", "155"}},
 		{name: "suffix blank", args: []string{"--suffix= ", "1 ", "1"}},
 
-		// --delimiter and --field.
 		{name: "delimiter comma", args: []string{"-d,", "1,2"}},
 		{name: "delimiter two characters", args: []string{"--delimiter=,,", "1,2"}},
 		{name: "delimiter empty", args: []string{"--delimiter=", "1,2"}},
@@ -458,7 +437,6 @@ func numfmtCases(t *testing.T) []invocation {
 		{name: "auto padding with a word after", args: []string{"--field=1", "--to=si", "100000 x", "100000  x", " 100000  x", "  1  x"}},
 		{name: "auto padding all fields", args: []string{"--field=-", "--to=si", "   1000   100000   "}},
 
-		// --header, --grouping, --debug and --invalid.
 		{name: "header with operands", args: []string{"--header", "1"}},
 		{name: "header two with operands", args: []string{"--header=2", "1", "2", "3"}},
 		{name: "header zero", args: []string{"--header=0", "1"}},
@@ -553,7 +531,6 @@ func numfmtCases(t *testing.T) []invocation {
 		{name: "zero terminated invalid field", args: []string{"-z", "--invalid=warn", "--field=-", "x 1000"}},
 		{name: "zero terminated comma field", args: []string{"-d", ",", "-z", "--field=2", "1,2"}},
 
-		// --format.
 		{name: "format plain", args: []string{"--format=%f", "1000", "1.5", "1.55", "0.001", "1000000"}},
 		{name: "format precision", args: []string{"--format=%.1f", "1.55", "1.54", "1.56"}},
 		{name: "format zero precision", args: []string{"--format=%.0f", "1.5", "2.5"}},
@@ -681,15 +658,6 @@ func numfmtCases(t *testing.T) []invocation {
 		{name: "format with to-unit", args: []string{"--to-unit=1000", "--format=%.3f", "1234", "1235"}},
 		{name: "format with from-unit", args: []string{"--from-unit=1000", "--format=%.3f", "1"}},
 
-		// GNU formats into a fixed 128-byte buffer: the conversion is
-		// refused when it fills, --suffix takes only the room the
-		// conversion left, and --padding is applied outside it. The
-		// buffer is GNU's own, so unlike the unscaled path's LDBL_DIG
-		// limit these boundaries are the same on every host.
-		//
-		// From 9.5 prepare_padded_number grows the buffer with xpalloc, so
-		// these no longer mark a refusal: each prints the expansion, and
-		// the rows compare that against 9.12 like any other (#8765).
 		{name: "scaled buffer fits", args: []string{"--to=si", "--format=%.123f", "1000"}},
 		{name: "scaled buffer overflows", args: []string{"--to=si", "--format=%.124f", "1000"}},
 		{name: "scaled buffer two integer digits", args: []string{"--to=si", "--format=%.122f", "12000"}},
@@ -745,7 +713,6 @@ func numfmtCases(t *testing.T) []invocation {
 		{name: "refusal with stdout closed", args: []string{"--to=si", "--format=%.124f", "1000"}, stdout: stdoutClosed},
 		{name: "refusal with stdout full", args: []string{"--to=si", "--format=%.124f", "1000"}, stdout: stdoutFull},
 
-		// Numbers that are not numbers, and suffixes that are not.
 		{name: "not a number", args: []string{"x"}},
 		{name: "two points", args: []string{"--from=si", "1..5"}},
 		{name: "point twice over", args: []string{"--from=si", "1.5.5"}},
@@ -792,7 +759,6 @@ func numfmtCases(t *testing.T) []invocation {
 		{name: "non UTF-8 delimiter", args: []string{"-d", "\xff", "--field=2", "--to=si", "1000\xff2000"}},
 		{name: "non UTF-8 suffix", args: []string{"--suffix=\xff", "--to=si", "1000"}},
 
-		// stdin.
 		{name: "stdin two lines", args: []string{"--to=si"}, stdin: "1000\n2000\n"},
 		{name: "stdin without a newline", args: []string{"--to=si"}, stdin: "1000"},
 		{name: "stdin empty", args: []string{"--to=si"}, stdin: ""},
@@ -828,10 +794,6 @@ func numfmtCases(t *testing.T) []invocation {
 		{name: "stdin a NUL in a line", args: []string{"--to=si"}, stdin: "1200\x0034\n"},
 		{name: "stdin a NUL then more lines", args: []string{"--to=si"}, stdin: "12\x0034\n5000\n"},
 		{name: "stdin last line unterminated", args: []string{"--to=si"}, stdin: "1000\n2000"},
-		// More than one read block, so lines straddle a block boundary and
-		// the partial one is carried over; with and without a final
-		// newline, under -z, with a header, in a field, and with a NUL
-		// inside a line that a block boundary splits.
 		{name: "stdin many lines", args: []string{"--to=si"}, stdin: manyLines(20000, "\n", true)},
 		{name: "stdin many lines unterminated", args: []string{"--to=si"}, stdin: manyLines(20000, "\n", false)},
 		{name: "stdin many lines zero terminated", args: []string{"-z", "--to=iec"}, stdin: manyLines(20000, "\x00", true)},
@@ -839,10 +801,6 @@ func numfmtCases(t *testing.T) []invocation {
 		{name: "stdin many lines in a field", args: []string{"--field=2", "--padding=12", "--to=iec"}, stdin: manyFields(20000)},
 		{name: "stdin many lines with NULs", args: []string{"--to=si"}, stdin: manyLines(9000, "\x0099\n", true)},
 
-		// Boundaries of the word path: values on either side of a power
-		// of the base, halves in every mode, --format precisions, the
-		// edges of a 64-bit significand and past it, fractions in and
-		// out, and the digit count --debug warns at.
 		{name: "to si around a thousand", args: []string{"--to=si", "999", "999.4", "999.5", "999.95", "999.96", "1000", "1000.4", "1000.5", "1000.6"}},
 		{name: "to si around a million", args: []string{"--to=si", "999499", "999500", "999501", "999949", "999950", "999951", "999999", "1000000", "1000499", "1000500"}},
 		{name: "to si around a billion", args: []string{"--to=si", "999499999", "999500000", "999999999", "1000000000", "1000499999", "1000500000", "1049999999", "1050000000"}},
@@ -884,7 +842,6 @@ func numfmtCases(t *testing.T) []invocation {
 		{name: "debug precision loss threshold", args: []string{"--debug", "--to=si", "999999999999999999", "1000000000000000000", "9999999999999999999", "12345678901234567890"}},
 		{name: "debug precision loss with a fraction", args: []string{"--debug", "--to=si", "1234567890.12345678", "1234567890.123456789", "0.123456789012345678", "0.1234567890123456789"}},
 		{name: "debug precision loss unscaled", args: []string{"--debug", "123456789012345678", "1234567890123456789"}},
-		// Digits are counted per part, from the first non-zero one.
 		{name: "digit counts are per part", args: []string{"--debug", "--to=si", "12345678901234567.12345678901234567", "1234567890123456789.5", "123456789012345678.123456789012345678", "1234567890123456789.1234567890123456789"}},
 		{name: "leading zeros are not counted", args: []string{"--debug", "--to=si", "0000000000000000001", "0.0000000000000000001", "0000000000000000001.0000000000000000001", "00000000000000000000000000000000000001"}},
 		{name: "too many digits in one part", args: []string{"--invalid=warn", "--to=si", "1234567890123456789012345678901234.5", "1.1234567890123456789012345678901234", "12345678901234567.12345678901234567"}},
@@ -892,7 +849,6 @@ func numfmtCases(t *testing.T) []invocation {
 		{name: "nearest unscaled halves", args: []string{"--round=nearest", "0.05", "0.15", "0.25", "1.5", "2.5", "99.5", "99.95", "--", "-0.5", "-1.5", "-2.5"}},
 		{name: "down unscaled fractions", args: []string{"--round=down", "0.05", "0.15", "1.5", "99.95", "--", "-0.05", "-1.5"}},
 
-		// The write-failure paths.
 		{name: "closed stdout", args: []string{"1"}, stdout: stdoutClosed},
 		{name: "closed stdout with a scale", args: []string{"--to=si", "1000"}, stdout: stdoutClosed},
 		{name: "closed stdout with an invalid number", args: []string{"x"}, stdout: stdoutClosed},
@@ -911,9 +867,6 @@ func numfmtCases(t *testing.T) []invocation {
 	}
 }
 
-// manyLines is n numbers, one per `term`, long enough to span several
-// 64 KiB read blocks; the values step so that every scale letter and
-// a spread of last digits occur.
 func manyLines(n int, term string, terminated bool) string {
 	var b strings.Builder
 	for i := 0; i < n; i++ {
@@ -926,8 +879,6 @@ func manyLines(n int, term string, terminated bool) string {
 	return b.String()
 }
 
-// manyFields is n lines of `name value` with a blank run before the
-// value, for the --field path.
 func manyFields(n int) string {
 	var b strings.Builder
 	for i := 0; i < n; i++ {

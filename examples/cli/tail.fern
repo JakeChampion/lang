@@ -1,16 +1,3 @@
-// tail.fern — print the trailing part of each input, like `tail(1)`.
-//
-//   -n N   print the last N lines (default 10)
-//   -c N   print the last N bytes (overrides -n)
-//
-// Accepts the same `-n N` / `-nN` / `-N` flag shapes as `head`. With
-// multiple files each is preceded by a `==> name <==` banner.
-//
-//   $ ./tail -n 3 file.txt
-//   $ seq 100 | ./tail -5
-//
-// Showcases: slicing from the end of an array / string, shared
-// flag-parsing shape with head.fern.
 import "std/string";
 import "std/i32";
 import "std/io";

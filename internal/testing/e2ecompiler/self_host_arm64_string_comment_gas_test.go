@@ -7,22 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostArm64GasStringComment pins #6082: the in-process GAS parser must
-// treat a `//` INSIDE a quoted string as data, not as the start of a line
-// comment.
-//
-// `//` is a line comment in the aarch64 GAS dialect, and the parser stripped it
-// with a plain indexof over the whole line. The emitter escapes `"`, `\` and
-// control bytes but not `/`, so `.ascii "http://h.com"` was truncated to
-// `.ascii "http:` — a five-byte-short literal that shifted every constant after
-// it in .rodata. The filed symptom (a `Url` struct read at the wrong offset)
-// was a consequence, not the cause; ANY arm64 program with `//` inside a string
-// literal was affected, and url_codec was just the first fixture to contain one.
-//
-// The last case pins the other half of the fix: an unterminated quoted string is
-// now REFUSED. Silent truncation is what made this cost a day — the corruption
-// surfaces as unrelated constants spliced together, arbitrarily far from the
-// literal that caused it.
 func TestSelfHostArm64GasStringComment(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host arm64 gas string-comment e2e")
@@ -50,9 +34,6 @@ func TestSelfHostArm64GasStringComment(t *testing.T) {
 	}
 }
 
-// The assertions read CONTENT, never `data.len()`: the data blob is padded for
-// alignment, so its length is not the literal's length (a first cut asserted
-// exact lengths and failed on correct output).
 const arm64GasStringCommentSelfTestMain = `
 function slash_count(d: i32[]): i32 {
     let n: i32 = 0;

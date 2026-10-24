@@ -5,16 +5,6 @@ import (
 	"testing"
 )
 
-// --- A `string[]` field is reclaimable too (#6127) ---------------------------
-//
-// An `Option[P]` whose struct payload has a `string[]` field must release the
-// box, the payload and the array, as it does for an `i32[]` field or a bare
-// `string`. The field's element type is the only variable, 100 rounds:
-//
-//	xs: i32[]                        300 / 300      0
-//	s:  string                       300 / 300      0
-//	xs: string[]  (unreleased)       500 /   0  17600
-
 func TestSelfHostOptStrArrFieldX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
@@ -28,7 +18,6 @@ func TestSelfHostOptStrArrFieldX86_64(t *testing.T) {
 		want int
 	}{
 		{
-			// The string[] field alone.
 			name: "strarr_field_only",
 			src: `struct P { xs: string[], n: i32 }
 function round(i: i32): i32 {
@@ -46,7 +35,6 @@ function main(): i32 {
 			want: 4,
 		},
 		{
-			// An i32[] beside the string[]: both arrays are reclaimed.
 			name: "strarr_field_beside_an_i32_array",
 			src: `struct P { xs: string[], ys: i32[], n: i32 }
 function round(i: i32): i32 {
@@ -64,7 +52,6 @@ function main(): i32 {
 			want: 38,
 		},
 		{
-			// The two neighbouring field kinds, which must keep reclaiming.
 			name: "i32_array_field_unchanged",
 			src: `struct P { xs: i32[], n: i32 }
 function round(i: i32): i32 {
@@ -133,14 +120,6 @@ function main(): i32 {
 	}
 }
 
-// TestSelfHostOptStrArrFieldHazardsX86_64 — the string[] field extracted out of
-// the arm binding, and a string ELEMENT extracted through it. All four must keep
-// their answers, and none may release the extracted value while it is live.
-//
-// Each asserts a balanced census and the underflow counter: an over-release
-// lands on a box whose count is already zero, which a count alone cannot see.
-//
-// Every `want` is from `fern -interp`.
 func TestSelfHostOptStrArrFieldHazardsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -190,11 +169,6 @@ function round(i: i32): i32 {
 			want: 38,
 		},
 		{
-			// A string ELEMENT read out through the field. `p.xs[0]` is an indexed
-			// read, which the escape walker admits as a borrow — but the element is a
-			// BOX, not a value copy, so the deep drop freeing the array would dangle
-			// it. This one is worth more than the others: it is the shape where the
-			// borrow vocabulary and the runtime representation could disagree.
 			name: "string_element_extracted_through_the_field",
 			body: `struct P { xs: string[], n: i32 }
 function round(i: i32): i32 {
@@ -208,7 +182,6 @@ function round(i: i32): i32 {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			// The answer, with leakcheck on so the leak evidence is available too.
 			valueSrc := tc.body + `
 function main(): i32 {
     let x: i32 = 0;
@@ -238,8 +211,6 @@ function main(): i32 {
 				t.Errorf("allocs=%d frees=%d live_bytes=%d — want an exact balance", allocs, frees, live)
 			}
 
-			// The same program returning the underflow counter. A moved value released
-			// under a live reference lands on a zero count, which no exit code shows.
 			ufSrc := tc.body + `
 function main(): i32 {
     let x: i32 = 0;
@@ -258,9 +229,6 @@ function main(): i32 {
 	}
 }
 
-// TestSelfHostOptStrArrFieldPartialReclaimX86_64 reads a string ELEMENT through
-// an Option's struct payload (`p.xs[0].len()`): the option box, the payload and
-// the string[] are all released, with no over-release.
 func TestSelfHostOptStrArrFieldPartialReclaimX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)

@@ -1,36 +1,7 @@
-// shape_area.fern — pattern-matching tour over user-defined
-// enums with mixed-type payloads.
-//
-// Showcases: tagged-union enums with numeric + struct
-// payloads, exhaustive `match` over variants, payload
-// destructuring (`Circle(r)`), match guards
-// (`Square(side) when side <= 0 => …`), generic enums
-// (`Result[T, E]`) and the auto-injected Option built-in,
-// the IR's wide-payload (i64 / f64) handling — `Volume`
-// uses `f64` for the result so heap allocations carry the
-// 8-byte slot from PR #184.
-//
-//   $ wasmtime shape_area.wasm
-//   circle r=2.5 → area 19.6349372
-//   square s=3 → area 9
-//   triangle b=4 h=2.5 → area 5
-//   degenerate input → area: zero or negative side
-//   cuboid 2x3x5 → volume 30
-// f-string interpolation in show_area dispatches
-// (f32).to_string / (f64).to_string from std/f64 (which
-// transitively pulls in std/i64 for the (intPart : i64)
-// formatter inside __float_to_string).
 import "std/f64";
 
 enum Shape { Circle(f32), Square(f32), Triangle(f32, f32), Cuboid(f64, f64, f64) }
 
-// radius
-// side
-// base, height
-// wide-payload demo
-// `area` returns Result[f32, string] — Ok on success, Err
-// with a description otherwise. Match guards drop into the
-// next arm when the predicate fails.
 function area(s: Shape): Result[f32, string] {
   match (s) {
     Circle(r) when r <= 0 as f32 => {
@@ -58,10 +29,6 @@ function area(s: Shape): Result[f32, string] {
   return Err("unreachable");
 }
 
-// 8-byte payload demo: f64 multiplication in match-bound
-// locals. The IR's wide-payload work (PR #184) lays out
-// `Cuboid(f64, f64, f64)` with 8-byte slots at the right
-// offsets; the destructuring loads each via f64.load.
 function volume(s: Shape): f64 {
   match (s) {
     Cuboid(x, y, z) => {

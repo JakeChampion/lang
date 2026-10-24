@@ -1,15 +1,5 @@
 package e2eharness
 
-// TaskFrameProgram pins what a parked frame keeps (docs/NET-P3-SUSPENSION-PLAN.md
-// §3.5): a function that parks holds `str` views of a parameter's string and
-// of a local string, a byte view, and a closure sharing a mutated scalar
-// with its frame, and reads every one of them after the park. The save area
-// keeps the frame's references, so the owners of the views survive the park,
-// and a mutated capture is a heap cell both sides point at, so the closure
-// and the frame still share it afterwards. `rounds` parks in a loop and
-// reads locals after it across the back edge, in one arm of an if and after
-// a break, while an array it built first is dead by then, so a park saves
-// only the live ones. The task's figure must equal the plain run's.
 const TaskFrameProgram = `import "std/async";
 import "std/i32";
 import "std/string";
@@ -98,7 +88,4 @@ function main(): i32 {
 }
 `
 
-// TaskFrameWant is the output under the self-host compiler: the task parks
-// once in each of the first two functions and three times in `rounds`, and
-// answers the plain run's figure.
 const TaskFrameWant = "parks 5\ntask 921130575\nplain 921130575\n"

@@ -1,9 +1,9 @@
 import "std/i32";
 import "std/json";
 
-// A generic struct's associated function whose result wraps Self takes its
-// instantiation from where the result lands: a `let` annotation or the
-// enclosing function's return type, through an impl or a derive.
+
+
+
 @derive(json.FromJson)
 struct Box[T] { v: T }
 

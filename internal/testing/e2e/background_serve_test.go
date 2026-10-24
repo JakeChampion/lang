@@ -13,11 +13,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// A response's background work (`with_background`) through std/serve's
-// loop: the response reaches the client before the work, which sleeps a
-// second, has logged; and work past `Config.background_deadline` is cut
-// off on x86-64, where the loop cancels it, while the interpreter, which
-// runs a task to completion, lets it finish.
 func TestBackgroundServeInterp(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := writeBackgroundServeSource(t)
@@ -75,8 +70,6 @@ function main(): i32 {
 }
 `
 
-// checkBackgroundServe asks `/`, whose two pieces of work log in order once
-// the response is out, then `/forever`, whose work logs `forever`.
 func checkBackgroundServe(t *testing.T, addr, stderrPath, forever string) {
 	t.Helper()
 	get := func(path string) string {
@@ -104,12 +97,6 @@ func checkBackgroundServe(t *testing.T, addr, stderrPath, forever string) {
 	e2eharness.WaitStderrContains(t, stderrPath, forever, 10*time.Second)
 }
 
-// A shutdown's drain waits for background work, up to its deadline: work
-// that ends inside it finishes before the process exits, and work that
-// outlives it is cancelled there, its sleep answering at once and
-// `plat.cancelled()` saying so. x86-64 only: the interpreter runs the work
-// to completion before the loop reads the signal, so nothing is left to wait
-// for.
 func TestBackgroundShutdownX86_64(t *testing.T) {
 	bin := buildFernCLI(t)
 	qemu := x86QemuOrEmpty(t)

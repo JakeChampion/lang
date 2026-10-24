@@ -12,7 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The paths are relative because wasm resolves every path against its preopen.
 const enotsupProg = `import "std/errno";
 import "std/i32";
 
@@ -39,12 +38,6 @@ function main(): i32 {
 const enotsupWant = "remove_file Other victim.txt Operation not supported 95 95\n" +
 	"create_dir Other fresh Operation not supported 95 95\n"
 
-// A host's ENOTSUP is IoError.Other carrying it on every target, where
-// Unsupported is the target refusing an operation it does not offer (#11712).
-// unlinkat and mkdirat answer ENOTSUP under the seccomp launcher; the wasm
-// host hands it on as preview 1's ENOTSUP or preview 2's `unsupported`.
-// wasmtime runs with its cache off, which it would otherwise mkdirat into
-// being under the same filter.
 func TestEnotsupIsOtherEveryTarget(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "victim.txt"), []byte("x"), 0o644); err != nil {

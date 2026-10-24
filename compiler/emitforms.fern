@@ -1,10 +1,3 @@
-// compiler/emitforms.fern — the output forms the CLI (fern.fern) and
-// the playground driver (playground_run.fern) produce the same way.
-//
-// The wasi:cli/run component framing chooses a wrapper from the program's WASI
-// usage; a playground must build the same component the CLI writes, so the
-// choice is made once.
-
 import "./ircore";
 import "./parser";
 import "./util";
@@ -15,14 +8,8 @@ import "./wit_decode";
 import "./wit_fern_world";
 import "./wit_proxy_world";
 
-// HTTP_ENTRY_STUB is the source a `wasm32-wasi-http` compile appends to the
-// entry file: the wasi:http/incoming-handler export, std/wasi_http's `serve`
-// bound to the program's `handle`. Appended rather than prepended so the
-// program's lines keep their numbers in diagnostics.
 pub const HTTP_ENTRY_STUB: string = "\nimport \"std/wasi_http\";\n@export(\"wasi:http/incoming-handler@0.2.0\", \"handle\")\nfunction __wasi_http_handle(request: i32, response_out: i32): void { wasi_http.serve(request, response_out, handle); }\n";
 
-// entry_source is the entry file's text as a compile for `target` reads it:
-// the file, plus the handler export for wasm32-wasi-http.
 pub function entry_source(src: string, target: string): string {
   if (target != "wasm32-wasi-http") {
     return src;
@@ -30,11 +17,6 @@ pub function entry_source(src: string, target: string): string {
   return src + HTTP_ENTRY_STUB;
 }
 
-// http_entry_refused is the diagnostic for a wasm32-wasi-http entry the stub
-// cannot bind, or "" when it can (or the target is another): no `handle`, or
-// a `handle` that does not take `(req, plat)` (E075 at `path`'s `handle`, in
-// the Go checker's words). Checked on the parsed entry so the message names the
-// program, not a line past its end.
 pub function http_entry_refused(entry: parser.Module, target: string, path: string): string {
   if (target != "wasm32-wasi-http") {
     return "";
@@ -57,26 +39,16 @@ pub function http_entry_refused(entry: parser.Module, target: string, path: stri
   return "fern: -target wasm32-wasi-http: the program declares no `function handle(req: HttpRequest, plat: platform.Platform): HttpResponse` for the host to call";
 }
 
-// http_refused is what a caller prints when wasm_http_component's composer
-// refused the core: an import the proxy world does not grant.
 pub function http_refused(why: string): string {
   return "fern: -target wasm32-wasi-http: the proxy world cannot take this handler: " + why;
 }
 
-// wasm_http_core is the handler's reactor core in text form.
-// Runtime bounds and allocation guards need stderr, alongside explicit host calls.
 pub function wasm_http_core(full: parser.Module, sub: ircore.Sub): string {
   let needs: string[] = wasm_ir.needs_of(util.append_all(sub.bodies, sub.extra));
   let host: boolean = wasm_ir.component_needs_host(full, sub.switches) || wasm_ir.needs_abort(needs) || wasm_ir.module_extern_needs_heap(full);
   return wasm_ir.emit_module_mode_or_error_sub(full, true, host, sub);
 }
 
-// wasm_http_component is the wasi:http/incoming-handler component for `full`
-// (a program carrying HTTP_ENTRY_STUB): the component-mode core, its WASI
-// through preview-2 imports, composed against the proxy world by the
-// world-driven composer. Empty bytes with an empty `refused` is the
-// emitter's own refusal, already reported; a non-empty `refused` names the
-// import the world does not declare.
 pub function wasm_http_component(full: parser.Module, sub: ircore.Sub): wit_compose.Composed {
   let asyncs: parser.FuncDecl[] = util.append_all(wasm_ir.async_exports(full), wasm_ir.async_imports(full));
   if (asyncs.len() > 0) {
@@ -91,7 +63,6 @@ pub function wasm_http_component(full: parser.Module, sub: ircore.Sub): wit_comp
   return wit_compose.compose_http(tbody, core);
 }
 
-// declares_extern reports whether `full` declares an `@import` extern.
 function declares_extern(full: parser.Module): boolean {
   let i: i32 = 0;
   while (i < full.funcs.len()) {
@@ -103,15 +74,6 @@ function declares_extern(full: parser.Module): boolean {
   return false;
 }
 
-// wasm_component is the wasi:cli/run component for `full`. A program a fixed
-// framing takes is framed by framed_component. One declaring `@import`
-// externs or an async export, or reaching WASI no fixed framing wires (sockets, the filesystem
-// past read_file / write_file, or more than two categories), composes against
-// the fern world, which wires each import its core makes. That includes a
-// core whose needs only the lowering shows — a stdio Writer's close is a
-// method call, not a name component_shape sees. No bytes with an empty
-// `refused` is the emitter's own refusal, already reported; a non-empty
-// `refused` is the message to print.
 pub function wasm_component(full: parser.Module, sub: ircore.Sub): wit_compose.Composed {
   let ap: AsyncPlan = async_plan(full);
   if (ap.refused.len() > 0) {
@@ -137,22 +99,14 @@ pub function wasm_component(full: parser.Module, sub: ircore.Sub): wit_compose.C
   return c;
 }
 
-// AsyncPlan is a module's async exports and imports as the composer wires
-// them, or why one cannot be.
 struct AsyncPlan { asy: watbin.AsyncSurface, refused: string }
 
-// AsyncSig is an async function's component signature: parameter names and
-// types, the result's ([] for none), its flattened core param count, or why
-// it has none. A type is as watbin.AsyncLift carries it.
 struct AsyncSig { names: string[], types: i32[][], result: i32[], flat: i32, refused: string }
 
 function sig_refused(why: string): AsyncSig {
   return AsyncSig { names: [], types: [], result: [], flat: 0, refused: why };
 }
 
-// async_type is Fern type `t` as a component type: a scalar's valtype byte,
-// and when `mem` also a string (0x73), a list (0x70 elem) or a tuple of i32 /
-// u32 (0x6f n elems). [] when it is none of those.
 function async_type(t: string, mem: boolean): i32[] {
   let vt: i32 = wasm_ir.async_lift_valtype(t);
   if (vt >= 0) {
@@ -180,7 +134,6 @@ function async_type(t: string, mem: boolean): i32[] {
   return [];
 }
 
-// flat_count is how many core params type `ct` flattens to.
 function flat_count(ct: i32[]): i32 {
   if (ct[0] == 111) {
     return ct[1];
@@ -191,9 +144,6 @@ function flat_count(ct: i32[]): i32 {
   return 1;
 }
 
-// async_sig maps `f`'s signature to component types, names in kebab case.
-// `mem` admits the types that cross in memory (an async import's); `role`
-// names `f` in a refusal.
 function async_sig(f: parser.FuncDecl, role: string, mem: boolean): AsyncSig {
   if (f.receiver_type.len() > 0 || f.type_params.len() > 0) {
     return sig_refused("an " + role + " must be a free, non-generic function");
@@ -216,8 +166,6 @@ function async_sig(f: parser.FuncDecl, role: string, mem: boolean): AsyncSig {
   let rt: i32[] = [];
   if (wasm_ir.returns_value(f.ret_type)) {
     rt = async_type(f.ret_type, mem);
-    // async_lower_wrapper lifts and frees a memory result as a (ptr, len)
-    // list or string; a tuple or any other shape must stop here.
     if (rt.len() == 0 || rt[0] == 111) {
       return sig_refused("the result type " + f.ret_type + " is one an " + role + " cannot take yet");
     }
@@ -225,10 +173,6 @@ function async_sig(f: parser.FuncDecl, role: string, mem: boolean): AsyncSig {
   return AsyncSig { names: names, types: types, result: rt, flat: flat, refused: "" };
 }
 
-// async_plan maps each async export and async import of `full` to the
-// signature the composer gives it. An async lower passes at most four flat
-// parameters in registers; more would go through memory, which it does not
-// do yet.
 function async_plan(full: parser.Module): AsyncPlan {
   let lifts: watbin.AsyncLift[] = [];
   for f in wasm_ir.async_exports(full) {
@@ -256,8 +200,6 @@ function async_plan(full: parser.Module): AsyncPlan {
   return AsyncPlan { asy: watbin.AsyncSurface { lifts: lifts, lowers: lowers }, refused: "" };
 }
 
-// with_streams retypes the slots of `f` that were `Stream[T]`, which
-// async_sig saw as `T[]`: each is a `stream<T>` (0x66), one handle wide.
 function with_streams(f: parser.FuncDecl, sg: AsyncSig): AsyncSig {
   if (sg.refused.len() > 0) {
     return sg;
@@ -284,9 +226,6 @@ function plan_refused(why: string): AsyncPlan {
   return AsyncPlan { asy: watbin.AsyncSurface { lifts: [], lowers: [] }, refused: why };
 }
 
-// kebab is a Fern identifier as a component-model name: each
-// underscore-separated word must be lower case and start with a letter, and
-// the underscores become hyphens. "" when it cannot be one.
 function kebab(id: string): string {
   let out: u8[] = [];
   let word_start: boolean = true;
@@ -311,17 +250,10 @@ function kebab(id: string): string {
   return string_from_bytes_unchecked(out);
 }
 
-// kebab_char is true for a lower-case letter, or a digit past a word's first
-// character.
 function kebab_char(c: u8, word_start: boolean): boolean {
   return c >= 97 && c <= 122 || c >= 48 && c <= 57 && !word_start;
 }
 
-// framed_component is the wasi:cli/run component for the I/O core `core` in
-// the fixed framing `shape` (wasm_ir.component_shape) names: stdout/exit
-// (component_full_io), filesystem read / write / read+write over stdout
-// (component_full_io_fs / _fs_write / _fs_rw), and the single-category and
-// fs-paired combinations. The no-I/O framing (shape 0) is wasm_component's.
 function framed_component(core: i32[], shape: i32): i32[] {
   if (shape == 1) {
     return watbin.component_full_io(core);

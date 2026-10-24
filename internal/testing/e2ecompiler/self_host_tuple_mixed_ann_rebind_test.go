@@ -9,25 +9,6 @@ import (
 	"testing"
 )
 
-// --- Compound scalar elements and the assign-form rebind (#7226) -------------
-//
-// Two residues of the bare-ident tuple element retain/release pair:
-//
-//  1. A tuple literal with ANY compound scalar element — `(i + 1, ys)` — must
-//     still be released (it lost its release entirely: allocs=2 frees=0 on one
-//     round). The binding's annotation names every element's type, so a scalar
-//     position may hold any expression while an rc position stays a bare
-//     ident.
-//  2. The assign-form rebind `t = (k, ys)` must free the superseded box's
-//     retained element buffer too, as the `let` re-declaration does (40 B/round
-//     stranded otherwise).
-//
-// The STRING position at that same rebind, and the writer agreement it needs,
-// are in self_host_tuple_str_rebind_test.go.
-//
-// Every want below was confirmed against bin/fern -interp, never read off the
-// self-host run under test.
-
 type tupMixedAnnCase struct {
 	name string
 	src  string
@@ -37,9 +18,6 @@ type tupMixedAnnCase struct {
 func tupMixedAnnCases() []tupMixedAnnCase {
 	return []tupMixedAnnCase{
 		{
-			// The main refusal: a compound scalar element beside a bare-ident
-			// array element. Before the per-position admission this tuple was in
-			// no class at all — neither the box nor the retained buffer was freed.
 			name: "compound_scalar_elem",
 			src: `function round(i: i32): i32 {
     let ys: i32[] = [i, i + 1, i + 2, i + 3];
@@ -50,8 +28,6 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 200) { x = x +
 			want: 75,
 		},
 		{
-			// The assign-form rebind. The superseded box's retained element is
-			// given back by the element walk; scope exit covers the final value.
 			name: "assign_rebind",
 			src: `function round(i: i32): i32 {
     let xs: i32[] = [i, i + 1];
@@ -64,10 +40,6 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 200) { x = x +
 			want: 8,
 		},
 		{
-			// Two tuples over one source ident, the second with a compound
-			// scalar. The buffer is retained twice and both walks give one back;
-			// this was #7226's "same ident in two tuples" row, and the compound
-			// scalar was the actual denial, not the sharing.
 			name: "two_tuples_one_ident",
 			src: `function round(i: i32): i32 {
     let xs: i32[] = [i, i + 1];
@@ -79,8 +51,6 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 200) { x = x +
 			want: 39,
 		},
 		{
-			// The rebind on one branch only: on the untaken branch the walk's cow
-			// guard and null handling must leave the original value alone.
 			name: "branch_rebind",
 			src: `function round(i: i32): i32 {
     let xs: i32[] = [i, i + 1];
@@ -93,9 +63,6 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 200) { x = x +
 			want: 75,
 		},
 		{
-			// The superseded element's SOURCE local is read after the rebind. The
-			// walk gives back only the tuple's reference, so the local's own must
-			// still see live bytes — the case a source-releasing walk corrupts.
 			name: "old_elem_read_after_rebind",
 			src: `function round(i: i32): i32 {
     let xs: i32[] = [i, i + 1];
@@ -108,8 +75,6 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 200) { x = x +
 			want: 83,
 		},
 		{
-			// The widened tuple's element read through a separate binding after
-			// the tuple — the exit release runs after every use.
 			name: "elem_read_after",
 			src: `function round(i: i32): i32 {
     let ys: i32[] = [i, i + 1, i + 2, i + 3];
@@ -123,11 +88,6 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 200) { x = x +
 	}
 }
 
-// TestSelfHostTupleMixedAnnRebindX86_64 — the widened class and the assign-path
-// element walk balance exactly. allocs == frees is essential in both
-// directions: short is the leak these close, above is a double free. The
-// __rc_underflow_count() folded into every exit code separates a real balance
-// from a freelist recycle.
 func TestSelfHostTupleMixedAnnRebindX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -170,11 +130,6 @@ func TestSelfHostTupleMixedAnnRebindX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostTupleMixedAnnHazardsX86_64 — the shapes the widening must NOT
-// admit, each pinned by answer + __rc_underflow_count() (the counter is the
-// essential half: a doubly-released block recycles and the arithmetic still
-// comes out right). These assert answers, not leak counts — the refusals fall
-// back to leak-mode, the safe direction.
 func TestSelfHostTupleMixedAnnHazardsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -183,8 +138,6 @@ func TestSelfHostTupleMixedAnnHazardsX86_64(t *testing.T) {
 
 	for _, tc := range []tupMixedAnnCase{
 		{
-			// The element leaves the frame: the extraction gate refuses the
-			// element release for a widened tuple exactly as for an all-ident one.
 			name: "elem_extracted_escaping",
 			src: `function keep(i: i32): i32[] {
     let ys: i32[] = [i, i + 1];
@@ -195,9 +148,6 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 200) { let k: 
 			want: 53,
 		},
 		{
-			// A compound scalar beside an array LITERAL element stays the deep
-			// TUPRC: class's — both classes crediting one slot is the double box
-			// dec the recorded #7226 negative result measured.
 			name: "rc_literal_child_stays_tuprc",
 			src: `function round(i: i32): i32 {
     let u: (i32, i32[]) = (i + 1, [i, i + 2]);
@@ -219,9 +169,6 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 200) { x = x +
 	}
 }
 
-// TestSelfHostTupleMixedAnnRebindWasmIR — the wasm sibling. Exit codes only:
-// FERN_LEAKCHECK is x86-64-only, and the answer (with the underflow count
-// folded in) is what proves the releases claimed no live buffer.
 func TestSelfHostTupleMixedAnnRebindWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping tuple mixed-ann rebind wasm IR e2e")
@@ -260,7 +207,6 @@ func TestSelfHostTupleMixedAnnRebindWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostTupleMixedAnnRebindIRArm64 — the arm64 sibling under qemu.
 func TestSelfHostTupleMixedAnnRebindIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

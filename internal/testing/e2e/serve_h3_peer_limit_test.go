@@ -12,8 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// An HTTP/3 connection counts against its source IP, not its source port.
-// Positive controls distinguish admission rejection from a broken client.
 func TestServeH3PeerLimitX86_64(t *testing.T) {
 	w := newServeH3World(t)
 	clientSrc := filepath.Join(w.dir, "admission.fern")

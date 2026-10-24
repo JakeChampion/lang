@@ -8,27 +8,13 @@ import (
 	"testing"
 )
 
-// TestSelfHostArrayMethodTreeshakeIR pins that a stdlib-importing program using
-// an array-method call (`ss.join(sep)`, std/array's pinned receiver
-// `(arr: string[]) join`) survives the treeshake and lowers.
-//
-// The treeshaker prunes the merged module to functions reachable from main,
-// by NAME; the method-call syntax `arr.<m>(...)` names only `<m>`, which keeps
-// the receiver method of that name. A pruned method leaves the call unresolved
-// and the module refused.
-//
-// Asserts both halves: `-decide` reports `ir` (routing), and the compiled
-// program runs to exit 0 (correctness — `["1","2","3"].join("-") == "1-2-3"`).
-//
-// Native only: the file-loading driver reads stdlib modules by host path from
-// argv, so a qemu runner can't resolve them (mirrors TestSelfHostStdTestE2E).
 func TestSelfHostArrayMethodTreeshakeIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
 		t.Skip("file-loading driver test runs only natively (argv paths)")
 	}
 
-	dir := writeSelfHostAsmProject(t) // util, parser, irtables, asm_ir, treeshake, …
+	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "drivers/asm_load_run.fern")
 	mmc := buildSelfHostBin(t, gcc, dir, "drivers/asm_load_run.fern", "mmc")
 
@@ -51,8 +37,6 @@ function main(): i32 {
 		t.Fatalf("write program: %v", err)
 	}
 
-	// Routing: the merged module must decide `ir`, not `ast`. Before the
-	// treeshake fix this printed `ast` (method pruned -> i32.join bail).
 	decideOut, err := exec.Command(mmc, prog, stdlibRoot, "-decide").Output()
 	if err != nil {
 		t.Fatalf("-decide failed: %v", err)
@@ -61,7 +45,6 @@ function main(): i32 {
 		t.Fatalf("array-method program routed %q, want \"ir\" (treeshake pruned join)", got)
 	}
 
-	// Correctness: compile -> assemble -> link -> run, expect exit 0.
 	asm, err := exec.Command(mmc, prog, stdlibRoot).Output()
 	if err != nil || len(asm) == 0 {
 		t.Fatalf("self-host compile failed: %v (len=%d)", err, len(asm))

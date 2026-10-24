@@ -5,11 +5,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostSliceBoundsIR pins the slice-CONSTRUCTION bounds contract
-// (#5419, docs/ARRAY-BOUNDS.md "Slice construction") on x86-64: `a[lo:hi]`
-// with hi > len, lo > hi, or lo < 0 ABORTS with exit 134 through
-// __fern_oob_abort instead of copying (arrays) or viewing (strings) past the
-// source. `lo == hi == len` stays legal (empty slice at the boundary).
 func TestSelfHostSliceBoundsIR(t *testing.T) {
 	cli := newStrictCLI(t)
 	for _, tc := range selfHostSliceBoundsCases() {
@@ -28,7 +23,6 @@ func TestSelfHostSliceBoundsIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostSliceBoundsIRArm64 is the arm64 counterpart, under qemu.
 func TestSelfHostSliceBoundsIRArm64(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
 	cli := newStrictCLI(t)
@@ -67,8 +61,6 @@ func selfHostSliceBoundsCases() []struct {
 			`function main(): i32 { let s: string = "abc"; let t: str = slice_unchecked(s, 0, 9); return t.len(); }`, 134},
 		{"str-reversed",
 			`function main(): i32 { let s: string = "abc"; let t: str = slice_unchecked(s, 2, 1); return t.len(); }`, 134},
-		// In-range: boundary forms stay legal. a[1:3] sums 2+3 = 5,
-		// a[3:3] is empty, s[1:3] = "bc" has len 2 → exit 5+0+2 = 7.
 		{"in-range-ok",
 			`function main(): i32 { let a: i32[] = [1, 2, 3]; let w: [i32] = a[1:3]; let t: i32 = 0; let i: i32 = 0; while (i < w.len()) { t = t + w[i]; i = i + 1; } let e: [i32] = a[3:3]; let s: string = "abc"; return t + e.len() + (slice_unchecked(s, 1, 3)).len(); }`, 7},
 	}

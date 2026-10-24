@@ -1,7 +1,7 @@
-// A lambda body reads the INNER declaration of a shadowed name — the one in
-// scope where the lambda is written, not the outer one it shadows. Reading
-// the outer slot compiles and runs, it just answers with the wrong value, so
-// this case asserts the values rather than merely exiting 0.
+
+
+
+
 function main(): i32 {
     let v: i32 = 1;
     {

@@ -2,12 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/time.Instant.relative_to across
-// backends: the "just now" window either side of the reference, past
-// vs future direction ("ago" / "in"), singular vs plural units, and the
-// unit ladder from seconds up through years. Returns 42 iff every
-// exact-string check holds. Each leg skips itself when its toolchain is
-// absent.
 const timeRelativeProg = `
 import "std/time" as time;
 function at(sec: i64): Instant { return time.instant_from_unix(sec); }

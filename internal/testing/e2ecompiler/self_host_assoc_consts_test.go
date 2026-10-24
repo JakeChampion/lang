@@ -7,12 +7,6 @@ import (
 	"testing"
 )
 
-// Associated constants (docs/ASSOCIATED-TYPES.md ▸ Associated constants) hold
-// both checkers to the same diagnostics: conformance (a missing constant, a
-// const bound by a function or a function by a const, a wrong type) and the
-// read rules (a read names a constant, a call names a function, an unknown
-// name is neither; an enum's field stays a variant). Every case asserts the
-// SAME messages from both sides, so a divergence fails whichever drifts.
 var assocConstCases = []struct {
 	name string
 	src  string
@@ -40,8 +34,6 @@ function main(): i32 {
 }`,
 	},
 	{
-		// Resolution is load-bearing: the constant is an i32, so a string
-		// destination is a type error in both checkers.
 		name: "a read is typed at the constant's type",
 		src: `trait Lanes { const LANES: i32; }
 struct V2 { a: f64 }
@@ -104,14 +96,11 @@ function f[T: Lanes](): i32 { return T.WIDTH; }
 function main(): i32 { return V2.WIDTH + f[V2](); }`,
 	},
 	{
-		// An associated member of a type parameter comes from its bounds, so
-		// an unbounded parameter has none to read.
 		name: "an unbounded parameter declares no constant",
 		src: `function f[T](x: T): i32 { return T.NOPE; }
 function main(): i32 { return f(1); }`,
 	},
 	{
-		// ... and none to call, whatever the instantiation provides (#12954).
 		name: "an unbounded parameter declares no associated function",
 		src: `import "core/cmp";
 struct Foo { a: i32 }
@@ -126,8 +115,6 @@ function f[T: cmp.Eq](x: T): T { return T.nope(); }
 function main(): i32 { return 0; }`,
 	},
 	{
-		// An enum's field is a variant unless an impl gives the enum an
-		// associated function of that name.
 		name: "an enum's unknown field is a missing variant",
 		src: `enum Kind { A, B }
 function main(): i32 {
@@ -181,8 +168,6 @@ func TestSelfHostAssocConstsDifferential(t *testing.T) {
 	}
 }
 
-// assocConstOnly keeps the diagnostics the associated-constant rules
-// produce: each names a const, a constant, or a variant.
 func assocConstOnly(ms []string) []string {
 	var out []string
 	for _, m := range ms {

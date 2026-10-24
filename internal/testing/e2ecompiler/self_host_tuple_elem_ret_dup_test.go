@@ -5,23 +5,9 @@ import (
 	"testing"
 )
 
-// Dup-at-extract for tuple element returns: `return src.<i>` of an rc-array
-// element is RETAINED on return, so the tuple it came from can still be
-// released in full by its owner. The retain and the owner's release must go
-// together: either alone is wrong, in opposite directions
-// (docs/rc-log/2026-08-28-elemret-scoping-pin.md — the coupled
-// tuple_mixed__elemret__* matrix rows are the standing instrument).
-//
-// Exits confirmed against `bin/fern -interp`; every early arm dynamically
-// live; census + FERN_SANITIZE legs per case.
-
 func tupleElemRetDupCases() []tupleAliasParamCase {
 	return []tupleAliasParamCase{
 		{
-			// The matrix cell shape in a loop: direct `return src.1` off a
-			// borrowed tuple param, TUPRCS-granted caller. Element rc:
-			// construction 1 -> return retain 2 -> caller's deep free 1 ->
-			// final owner's sweep 0. Was one free short per round.
 			name: "direct_elem_return_balances",
 			src: `function get(src: (i32, i32[])): i32[] { return src.1; }
 function make(i: i32): i32 {
@@ -39,9 +25,6 @@ function main(): i32 {
 			want: 4,
 		},
 		{
-			// Self-extract: the frame that owns the TUPRCS tuple also calls
-			// the extractor — the retain and the frame's own deep free settle
-			// in one round trip.
 			name: "self_extract_balances",
 			src: `function grab(i: i32): i32 {
     let t: (i32, i32[]) = (i, [i, i + 1, i + 2]);
@@ -59,9 +42,6 @@ function main(): i32 {
 			want: 21,
 		},
 		{
-			// A CONDITIONAL element return (one nested in an `if`) with a live
-			// arm: the fresh-literal arm moves out, the element arm retains —
-			// both paths admitted, both counted.
 			name: "nested_elem_return_balances",
 			src: `function get(src: (i32, i32[]), i: i32): i32[] {
     if (i % 7 == 0) { return src.1; }
@@ -82,9 +62,6 @@ function main(): i32 {
 			want: 2,
 		},
 		{
-			// Adversarial: the element passed ONWARD (`sink(src.1)`) inside a
-			// composite return value, not the dup shape; sink borrows it. What
-			// this row pins is the EXIT and free-safety.
 			name: "elem_onward_stays_sound",
 			src: `function sink(xs: i32[]): i32 { return xs.len(); }
 function get(src: (i32, i32[])): i32 { return sink(src.1); }
@@ -102,8 +79,6 @@ function main(): i32 {
 			want: 4,
 		},
 		{
-			// Adversarial: the BIND spelling (`let e = src.1; return e`).
-			// The exit and free-safety are what this row pins.
 			name: "bind_spelling_stays_refused",
 			src: `function get(src: (i32, i32[])): i32[] {
     let e: i32[] = src.1;

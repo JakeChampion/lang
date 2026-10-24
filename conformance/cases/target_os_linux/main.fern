@@ -1,7 +1,7 @@
-// target_os() is the -target's environment, never the compiler's host: it is
-// a string literal before the check, so the darwin arm below is pruned from
-// the binary and only the linux arm runs. Both native legs of the runner
-// compile for Linux; the wasm leg's answer is target_os_wasi.
+
+
+
+
 import "core/int";
 
 function main(): i32 {

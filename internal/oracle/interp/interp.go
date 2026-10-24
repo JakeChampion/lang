@@ -1,12 +1,3 @@
-// Package interp is a small tree-walking interpreter for the lang AST.
-//
-// It's used by the REPL (cmd/fern -repl) and by tests; production
-// builds still go through the ARM64 / WASM code generators.
-//
-// Control flow inside a function uses a flow-tagged result value
-// rather than panics: each statement returns a stmtResult whose Flow
-// field tells the surrounding loop / block whether to keep going,
-// break, continue, or unwind to the enclosing call site.
 package interp
 
 import (
@@ -38,23 +29,13 @@ import (
 	"github.com/jakechampion/lang/internal/tools/tty"
 )
 
-// tcpListenerHandle / tcpConnHandle abstract the host TCP
-// types so the interpreter doesn't directly drag `net.*`
-// into every value-handling site. Aliases keep the call
-// shapes identical to net.Listener / net.Conn.
 type tcpListenerHandle = net.Listener
 type tcpConnHandle = net.Conn
 
-// tcpNetListen is a thin indirection so tests can substitute
-// a deterministic listener if needed (currently just calls
-// net.Listen).
 func tcpNetListen(network, address string) (tcpListenerHandle, error) {
 	return net.Listen(network, address)
 }
 
-// Value is the runtime tagged-union of every type the language
-// evaluates to. Concrete kinds: Number, Bool, String, Void, Array,
-// Func (a user-defined function reference), and Builtin.
 type Value interface {
 	String() string
 }
@@ -66,9 +47,6 @@ type Void struct{}
 
 type Func struct{ Decl *ast.FuncDecl }
 
-// ExitStatus is the process status `main`'s result v maps to, and whether it
-// is one: an integer is its low byte (two's complement, as exit() keeps it),
-// a boolean 1 or 0, and void 0.
 func ExitStatus(v Value) (int, bool) {
 	switch x := v.(type) {
 	case Number:
@@ -84,71 +62,33 @@ func ExitStatus(v Value) (int, bool) {
 	return 0, false
 }
 
-// Array is the interpreter's `T[]` value: a view (E) over a backing
-// buffer, plus that buffer's shared header. Every view of one allocation
-// — a `[lo:hi]` slice, the shorter array an in-place append grew from —
-// shares the header, because an element write through any of them is
-// visible through all of them. A nil header reads as permanently shared.
-// See docs/INTERP-ARRAY-INPLACE-WRITE.md.
 type Array struct {
 	E []Value
 	h *arrHeader
 }
 
 type arrHeader struct {
-	// owners is the number of live references to the buffer the
-	// interpreter can see: bindings, containers, parameters, argument
-	// temporaries. `arr.with(i, v)` writes in place only at zero, where
-	// nothing else covers the buffer.
 	owners int32
-	// paths is the number of times adjustRC has counted this array into
-	// the Map rc — that is, how many owning routes reach the elements
-	// through it. An in-place element write hands exactly that many
-	// paths from the element it replaces to the one it stores.
-	paths int32
+	paths  int32
 }
 
 func newArray(n int) Array { return Array{E: make([]Value, n), h: &arrHeader{}} }
 
 func arrayOf(vs ...Value) Array { return Array{E: vs, h: &arrHeader{}} }
 
-// view is a sub-range over the same allocation, sharing its header.
 func (a Array) view(lo, hi int) Array { return Array{E: a.E[lo:hi], h: a.h} }
 
-// exclusive reports whether nothing the interpreter counts covers this
-// buffer, so an element write through this view is unobservable.
 func (a Array) exclusive() bool { return a.h != nil && a.h.owners == 0 }
 
-// Cell is the runtime value of Cell[T] (docs/CELL-TYPE-PLAN.md): a
-// single-slot mutable box held by pointer, so `set` mutates the shared
-// box in place (the deliberate, RC-safe-because-cycle-free escape from
-// value semantics). No CoW — a cell mutates in place by design.
 type Cell struct{ V Value }
 
 func (*Cell) String() string { return "<cell>" }
 
-// Float carries f32 / f64 IEEE-754 values for the interp. The
-// width tag is preserved because the language distinguishes f32
-// from f64 in type errors and `to_string` rendering (std/f64
-// uses different digit budgets per width); the underlying
-// storage is float64 either way — for f32 we round-trip through
-// `float32` during arithmetic and at f32_bits boundary points
-// to keep the visible precision correct.
-//
-// The interp had no float values for most of its lifetime
-// (raw-memory ops in the Lang stdlib bodies couldn't be modeled
-// either way) — the native + wasm backends owned floats end-to-
-// end. Adding Float here unblocks unit tests that exercise
-// float arithmetic / formatting / property checks without
-// needing to compile to a backend.
 type Float struct {
 	V     float64
-	Width int // 32 or 64
+	Width int
 }
 
-// DynInt is an integer coerced to a `dyn` trait object. A Number carries no
-// width, so the box keeps the name of the integer type the value had, which
-// dyn dispatch reads to find the impl written for that type (#10194).
 type DynInt struct {
 	N        Number
 	TypeName string
@@ -156,29 +96,17 @@ type DynInt struct {
 
 func (d DynInt) String() string { return d.N.String() }
 
-// Struct is a heap-allocated record. The map preserves nothing about
-// declaration order — formatting walks the StructDecl when available
-// (the interpreter doesn't currently have access, so String() is a
-// best-effort summary).
 type Struct struct {
 	TypeName string
 	Fields   map[string]Value
 }
 
-// Enum is an interpreted tagged-union value: a variant index plus
-// its payload values. EnumName is the owning enum's declaration
-// name (for diagnostics / equality); VariantName + Index identify
-// the constructor; Payloads holds the evaluated arguments in
-// declaration order.
 type Enum struct {
 	EnumName    string
 	VariantName string
 	Index       int
 	Payloads    []Value
-	// counts caches whether any payload reaches a value adjustRC counts:
-	// 0 not yet known, countsSome, countsNone. Payloads never change after
-	// construction, so the answer never does either.
-	counts uint8
+	counts      uint8
 }
 
 const (
@@ -186,9 +114,6 @@ const (
 	countsNone uint8 = 2
 )
 
-// reachesCounted reports whether v holds a Map or an Array, the values
-// adjustRC keeps counts for. A struct is assumed to, since its fields can
-// be reassigned after it is stored.
 func reachesCounted(v Value) bool {
 	switch x := v.(type) {
 	case *Map, Array, *Struct:
@@ -208,35 +133,12 @@ func reachesCounted(v Value) bool {
 	return false
 }
 
-// Map is the interpreter's `Map[K, V]` value. Two parallel slices
-// hold entries in the SAME order the IR / codegen runtime uses, so the
-// differential oracle sees identical `keys()` / `values()` / iteration
-// output across the interpreter and native backends: `set` appends new
-// keys (insertion order) and `delete` swaps the last entry into the
-// removed slot (swap-with-last), exactly mirroring core/map.fern's
-// __map_delete_impl. See docs/ADVERSARIAL-REVIEW-2026-06.md (M3). A
-// `map[Value]Value` would be faster but Go's map can't key on
-// non-comparable interface values (Array, Struct, *Enum, *Map), and we
-// want any K shape that type-checks to work end-to-end.
 type Map struct {
 	keys []Value
 	vals []Value
-	// rc is the copy-on-write reference count: the number of owning
-	// slots (variables, struct fields, array/tuple elements, closure
-	// captures) that hold this *Map. A freshly produced map (map_new /
-	// clone) starts at 0 — an unowned temporary — and is bumped to 1 by
-	// the store that binds it. Mutating methods (set/delete/clear)
-	// mutate in place when rc <= 1 and copy when rc > 1, mirroring the
-	// compiled runtime's rc-based COW (core/map.fern __map_cow_inplace)
-	// so `fern -interp` agrees with every backend. See
-	// docs/INTERP-MAP-COW-PLAN.md (M1).
-	rc int
+	rc   int
 }
 
-// clone returns an independent copy of the map (rc 0 — an unowned
-// temporary the binding store will retain to 1). Used by set/delete/
-// clear when the receiver is shared (rc > 1) so the mutation can't reach
-// into an aliased holder.
 func (m *Map) clone() *Map {
 	return &Map{
 		keys: append([]Value(nil), m.keys...),
@@ -244,28 +146,11 @@ func (m *Map) clone() *Map {
 	}
 }
 
-// retain bumps the COW reference count of every Map reachable from v
-// (v itself, or maps nested inside a struct / array / tuple / enum /
-// map). Called at every store site — a binding, assignment, function
-// argument, container element, or capture — because each creates a new
-// owning slot. release is the exact inverse, called when an owning slot
-// dies (scope exit, reassignment of the old value, function return). The
-// net count is what set/delete/clear consult to decide mutate-in-place
-// vs copy. See docs/INTERP-MAP-COW-PLAN.md (M1).
-// rcWalked counts the array elements and enum payloads adjustRC has
-// visited, so a test can pin how much a shape of program walks.
 var rcWalked atomic.Int64
 
 func retain(v Value)  { adjustRC(v, +1) }
 func release(v Value) { adjustRC(v, -1) }
 
-// retainReplacing applies the count effect of a slot dropping old and
-// taking v. Both walks are O(size of the value), so a slot reassigned
-// in a loop pays for the whole value on every iteration — quadratic for
-// `a = a.append(x)` however cheap the append itself is. When v is old
-// with elements appended (the same backing buffer and prefix, which is
-// what the in-place growth path returns) the two walks cancel over
-// everything but the appended tail, so only the tail is counted.
 func retainReplacing(v, old Value) {
 	if tail, ok := appendedTail(old, v); ok {
 		for _, e := range tail {
@@ -277,12 +162,6 @@ func retainReplacing(v, old Value) {
 	release(old)
 }
 
-// appendedTail reports whether next covers old's allocation plus zero or
-// more further elements, and returns those extra elements. The shared
-// allocation is what makes the prefix identical: an append grows into
-// spare capacity, and an in-place `with` does its own count bookkeeping
-// for the one element it replaces, so nothing else in the prefix can
-// differ.
 func appendedTail(old, next Value) ([]Value, bool) {
 	na, ok := next.(Array)
 	if !ok {
@@ -298,15 +177,6 @@ func appendedTail(old, next Value) ([]Value, bool) {
 	return na.E[len(oa.E):], true
 }
 
-// arrOwn / arrDisown maintain the array owner count, which — unlike the
-// Map rc that adjustRC walks — is NOT recursive: a container's own count
-// says nothing about its elements, so every container that takes an
-// array element owns it directly (see storeArray). That keeps a store
-// O(1) instead of O(size of the value).
-//
-// Only an UNDER-count is dangerous. A `with` that copies when it could
-// have written in place is still correct, just slower, so every site
-// that is unsure counts.
 func arrOwn(v Value) {
 	if a, ok := v.(Array); ok && a.h != nil {
 		a.h.owners++
@@ -319,19 +189,12 @@ func arrDisown(v Value) {
 	}
 }
 
-// storeArray records an array being placed inside a container (an array
-// or tuple element, a struct field, an enum payload, a map entry, a
-// cell). Containers are never torn down — the interpreter leaves that to
-// Go's GC — so the count is never given back: an array that has ever
-// been stored in one is copied by `with` from then on.
 func storeArray(v Value) { arrOwn(v) }
 
 func adjustRC(v Value, delta int) {
 	switch x := v.(type) {
 	case *Map:
 		x.rc += delta
-		// Map values/keys can themselves be maps (Map[K, Map[...]]);
-		// the owning map shares them, so the count flows through.
 		for _, kv := range x.keys {
 			adjustRC(kv, delta)
 		}
@@ -361,9 +224,6 @@ func adjustRC(v Value, delta int) {
 	}
 }
 
-// findKey is the index of m's entry whose key equals k, or -1. A struct or
-// enum key compares through its type's cmp.Eq `eq`, derived or written by
-// hand, as the compiled map's keyed probe does; any other key by value.
 func (i *Interp) findKey(m *Map, k Value) (int, error) {
 	eq := i.keyEq(k)
 	for idx, kk := range m.keys {
@@ -384,7 +244,6 @@ func (i *Interp) findKey(m *Map, k Value) (int, error) {
 	return -1, nil
 }
 
-// keyEq is the `eq` of k's cmp.Eq impl when k is a struct or enum, else nil.
 func (i *Interp) keyEq(k Value) *ast.FuncDecl {
 	var tn string
 	switch x := k.(type) {
@@ -398,8 +257,6 @@ func (i *Interp) keyEq(k Value) *ast.FuncDecl {
 	return i.Funcs[i.keyEqs[tn]]
 }
 
-// The fatal aborts' cause lines, compiler/aborts.fern's: the line a compiled
-// program prints for the stop.
 const (
 	CauseArrOOB     = "fern: array index out of range"
 	CauseStrOOB     = "fern: string index out of range"
@@ -407,12 +264,8 @@ const (
 	CauseAllocSize  = "fern: allocation size out of range"
 )
 
-// AbortStatus is the exit status of an Abort, a compiled program's.
 const AbortStatus = 134
 
-// Abort is a fatal stop. Cause is the line a compiled program prints for it,
-// and Detail is the interpreter's own line under it, where a compiled program
-// prints its backtrace.
 type Abort struct{ Cause, Detail string }
 
 func (a *Abort) Error() string { return a.Cause + "\n  " + a.Detail }
@@ -425,16 +278,6 @@ func sliceAbort(cause, what string, lo, hi, n int64) error {
 	return &Abort{cause, fmt.Sprintf("%s [%d:%d], length %d", what, lo, hi, n)}
 }
 
-// MapIter is the interp's `MapIter[K, V]` cursor — pairs the
-// owning Map with the index of the entry the next `key()` /
-// `value()` will report. `has_next` / `key` / `value` /
-// `advance` walk the parallel slices in insertion order,
-// matching what `keys()` / `values()` return.
-//
-// Live binding: the iterator holds the *Map by pointer, so
-// set / delete on the underlying map during iteration is
-// observed. Codegen has the same shape, so interp and native
-// stay aligned even if user code mutates mid-loop.
 type MapIter struct {
 	m   *Map
 	pos int
@@ -442,25 +285,10 @@ type MapIter struct {
 
 func (it *MapIter) String() string { return "<MapIter>" }
 
-// Builtin is a host-provided function callable from interpreted code.
-// It receives evaluated arguments and may emit output via the
-// interpreter's stdout.
 type Builtin struct {
 	Fn func(*Interp, []Value) (Value, error)
 }
 
-// Closure pairs a function declaration with the lexical
-// environment captured at its definition site. Used for two
-// surface forms: local function declarations (`function f(...) {
-// ... }` as a stmt) and Lambda expressions (`function (x): T
-// { ... }` in expression position — the parser builds an
-// `*ast.Lambda` which the interpreter wraps in a synthetic
-// FuncDecl + the current env).
-//
-// Distinct from Func (a bare *ast.FuncDecl) — Func references a
-// top-level decl whose body resolves identifiers against the
-// global registry, while Closure carries its own captured env
-// so reads of outer-scope names hit the right values.
 type Closure struct {
 	Decl *ast.FuncDecl
 	Env  *env
@@ -473,11 +301,6 @@ func (c *Closure) String() string {
 	return "<closure>"
 }
 
-// valueTypeName recovers the `methodTypeName` dispatch key from a
-// runtime value — used by `dyn Trait` dynamic dispatch to resolve the
-// concrete `__method_<Type>_<name>` from the receiver's runtime type.
-// A Number carries no width: a wider integer reaches dispatch boxed in a
-// DynInt, so a bare one is an i32. See docs/DYN-TRAITS.md §4.1.
 func valueTypeName(v Value) (string, bool) {
 	switch x := v.(type) {
 	case *Struct:
@@ -501,7 +324,6 @@ func valueTypeName(v Value) (string, bool) {
 	return "", false
 }
 
-// dynPayload is the value a `dyn` holds, unboxed from a DynInt.
 func dynPayload(v Value) Value {
 	if d, ok := v.(DynInt); ok {
 		return d.N
@@ -509,9 +331,6 @@ func dynPayload(v Value) Value {
 	return v
 }
 
-// downcastTargetName returns the runtime type-name key for a downcast
-// target type (`e as? T`). Slice 1 targets are struct/enum types, whose
-// names line up with the TypeName/EnumName carried on the boxed value.
 func downcastTargetName(t ast.Type) string {
 	switch x := t.(type) {
 	case ast.StructType:
@@ -601,128 +420,41 @@ func (e *Enum) String() string {
 	return b.String()
 }
 
-// Interp owns global state: top-level user functions, host built-ins,
-// the persistent REPL environment, and the writer used for `print` /
-// `putchar` output.
 type Interp struct {
-	Funcs    map[string]*ast.FuncDecl
-	Enums    map[string]*ast.EnumDecl
-	Builtins map[string]*Builtin
-	Stdout   io.Writer
-	// Stderr is where `eprint` writes. Defaults to os.Stderr;
-	// tests / the REPL can override it to capture diagnostic
-	// output independently of Stdout.
-	Stderr io.Writer
-	// Stdin is where `stdin()` reads. Defaults to os.Stdin;
-	// tests / the REPL can override it to feed scripted input.
-	Stdin io.Reader
-	// Env is the source of `env(name)` lookups. nil means
-	// fall through to os.LookupEnv; a populated map shadows the
-	// process environment so tests can run hermetically.
-	Env map[string]string
-	// Exiter is invoked by the `exit(code)` builtin. Defaults to
-	// os.Exit; tests override it to capture the requested code
-	// without actually killing the process. A non-returning
-	// function is expected — the interpreter has no path for
-	// resuming after an exit call.
-	Exiter func(code int)
-	// openFiles maps the `fd` field of a Reader / Writer Struct
-	// value back to the *os.File the interpreter is using on
-	// the host side. The codegen backends use real OS file
-	// descriptors directly; the interpreter shadows that with
-	// a ticket-counter scheme so the same Struct-with-fd shape
-	// works in both worlds.
-	openFiles map[int64]*os.File
-	nextFd    int64
-	// closedStd records which of fd 0/1/2 the program has closed.
-	// The interpreter never closes the host's own stdio, but from then
-	// on it answers for the stream the way the kernel answers for a
-	// closed fd: handle methods and a second close fail with EBADF,
-	// print / write / eprint / putchar write nothing.
-	closedStd map[int64]bool
-	// deferStack is a per-call list of expressions to evaluate at
-	// function exit, in LIFO order. callFunc / callClosure push
-	// a fresh empty frame on entry, the `*ast.Defer` stmt
-	// appends to the current frame, and the call's exit paths
-	// (`return val`, falloff to Void) iterate the frame in
-	// reverse before popping it. Nested calls get their own
-	// frame — defers inside a callee don't run in the caller.
-	// `onError` marks an `errdefer`: it runs only on an error
-	// exit (`?` propagation or a `return` of None/Err).
-	deferStack [][]deferEntry
-	// tcpListeners / tcpConns are the interpreter's analogue
-	// of OS socket fds. The AOT backends return raw kernel
-	// fds; the interpreter returns opaque integer IDs into
-	// these maps. The numeric value space is disjoint from
-	// the AOT side, but every program treats the returned
-	// number as an opaque token.
-	tcpListeners  map[int64]tcpListenerHandle
-	tcpConns      map[int64]tcpConnHandle
-	tcpNextHandle int64
-	// udpSocks maps a datagram socket's handle to its raw descriptor
-	// (udp.go); handles are numbered from tcpNextHandle like the rest.
-	udpSocks map[int64]int
-	// timerFds maps a timer_fd handle to its timerfd (timer.go), numbered
-	// from tcpNextHandle so poll and tcp_close take it like a socket.
-	timerFds map[int64]int
-	// tcpNonblocking holds the connections tcp_socket_ctl put into
-	// non-blocking mode, which tcp_recv_into honours with a zero deadline.
-	tcpNonblocking map[int64]bool
-	// reactors holds the readiness sets reactor_new made (reactor.go).
-	reactors    map[int64]*reactor
-	reactorNext int64
-	// Args is what the `args()` builtin returns, in source-program
-	// order (argv[0] first). REPL / test callers can override this
-	// to feed scripted argv without going through os.Args.
-	Args []string
-	// Global is the env used by REPL-typed top-level statements;
-	// `let x = 7` at the prompt declares x here so the next prompt
-	// can read it.
-	Global *env
-	// bufs backs the capacity-carrying builder (#8773): a handle table,
-	// since any number of builders may be live at once. The compiled backends give the handle
-	// the address of a control block; here it is a table key, which is the
-	// same opacity the Fern-level `usize` promises.
-	bufs    map[int64][]byte
-	nextBuf int64
-	// traitMethods is the interpreter's own copy of the checker's
-	// TraitMethods index — `<Trait>.<Type>.<method>` to the flat symbol
-	// — rebuilt from the FuncDecls handed to Register, since the interp
-	// never sees a checker.Info. Dyn dispatch consults it so a method
-	// name offered by two traits for one type resolves to the trait the
-	// call site named.
-	traitMethods map[string]string
-	// keyEqs maps a struct or enum type to the flat symbol of its cmp.Eq
-	// `eq`, the comparison a map makes between keys of that type.
-	keyEqs map[string]string
-	// dynSites is the checker's concrete→`dyn` coercion sites (SetDynCoercions).
-	dynSites map[ast.Expr]checker.DynCoercion
-	// arrayGrowCopies counts the elements copied by the array append
-	// growth path. Appending n elements must stay O(n) copies in
-	// total; TestArrayAppendIsAmortised asserts on this counter rather
-	// than on wall-clock time, so the quadratic-append regression
-	// (#6395) is caught deterministically instead of flakily.
+	Funcs           map[string]*ast.FuncDecl
+	Enums           map[string]*ast.EnumDecl
+	Builtins        map[string]*Builtin
+	Stdout          io.Writer
+	Stderr          io.Writer
+	Stdin           io.Reader
+	Env             map[string]string
+	Exiter          func(code int)
+	openFiles       map[int64]*os.File
+	nextFd          int64
+	closedStd       map[int64]bool
+	deferStack      [][]deferEntry
+	tcpListeners    map[int64]tcpListenerHandle
+	tcpConns        map[int64]tcpConnHandle
+	tcpNextHandle   int64
+	udpSocks        map[int64]int
+	timerFds        map[int64]int
+	tcpNonblocking  map[int64]bool
+	reactors        map[int64]*reactor
+	reactorNext     int64
+	Args            []string
+	Global          *env
+	bufs            map[int64][]byte
+	nextBuf         int64
+	traitMethods    map[string]string
+	keyEqs          map[string]string
+	dynSites        map[ast.Expr]checker.DynCoercion
 	arrayGrowCopies int
-	// arraySetCopies is the same instrument for `with`: the elements
-	// copied because the receiver's buffer was not exclusively held.
-	// TestArrayWithIsLinear asserts on it (#7287).
-	arraySetCopies int
-	// arrayCOW selects the in-place-write mode FERN_INTERP_ARRAY_COW
-	// asked for, and envs holds the scopes verify mode scans.
-	arrayCOW arrayCOWMode
-	envs     []*env
-	// moving holds the values whose slot has released its array count
-	// for the assignment currently evaluating its right-hand side. Each
-	// such slot still physically holds the value until the assignment
-	// completes, which is what verify mode has to allow for.
-	moving []Value
+	arraySetCopies  int
+	arrayCOW        arrayCOWMode
+	envs            []*env
+	moving          []Value
 }
 
-// arrayCOWMode is what FERN_INTERP_ARRAY_COW selects: the default
-// counted in-place write, `copy` (never write in place — the baseline a
-// cross-check compares against), or `verify` (write in place, but first
-// scan every live scope for another value over the same buffer and abort
-// if one is found). See docs/INTERP-ARRAY-INPLACE-WRITE.md.
 type arrayCOWMode int
 
 const (
@@ -772,9 +504,6 @@ func New() *Interp {
 	i.Builtins["set_extproc"] = &Builtin{Fn: builtinSetExtproc}
 	i.Builtins["target_os"] = &Builtin{Fn: builtinTargetOS}
 	i.Builtins["target_arch"] = &Builtin{Fn: builtinTargetArch}
-	// buf_new(cap) / buf_push(b, s) / buf_push_range(b, s, lo, hi) /
-	// buf_push_byte(b, x) / buf_push_u64(b, v) / buf_len(b) / buf_take(b) /
-	// buf_free(b) — the capacity-carrying builder (see checker FuncSigs).
 	i.Builtins["buf_new"] = &Builtin{Fn: builtinBufNew}
 	i.Builtins["buf_push"] = &Builtin{Fn: builtinBufPush}
 	i.Builtins["buf_push_range"] = &Builtin{Fn: builtinBufPushRange}
@@ -792,11 +521,6 @@ func New() *Interp {
 	i.Builtins["buf_take_bytes"] = &Builtin{Fn: builtinBufTakeBytes}
 	i.Builtins["buf_free"] = &Builtin{Fn: builtinBufFree}
 	i.Builtins["buf_clear"] = &Builtin{Fn: builtinBufClear}
-	// `x.len()` dispatches through three mangled names (one per
-	// receiver type the checker registers a method on); all three
-	// route to a single shared implementation that switches on the
-	// value's runtime tag. Slices in the interpreter are
-	// represented as Arrays, so the slice form joins the array path.
 	i.Builtins["__method_string_len"] = &Builtin{Fn: builtinLen}
 	i.Builtins["__method_Array_len"] = &Builtin{Fn: builtinLen}
 	i.Builtins["__method_slice_len"] = &Builtin{Fn: builtinLen}
@@ -863,14 +587,7 @@ func New() *Interp {
 	i.Builtins["__method_Writer_dup_onto"] = &Builtin{Fn: builtinDupOnto}
 	i.Builtins["__method_Array_push"] = &Builtin{Fn: builtinArrayPush}
 	i.Builtins["__method_Array_set"] = &Builtin{Fn: builtinArraySet}
-	// Map builtins. `map_new(cap)` returns an empty Map; the
-	// per-method shims walk the parallel-slice representation
-	// directly. Mirror the codegen surface from the checker's
-	// `registerMapMethod` calls so user programs that go
-	// through the interp see the same API as the native /
-	// wasm backends.
 	i.Builtins["map_new"] = &Builtin{Fn: builtinMapNew}
-	// Cell[T] (docs/CELL-TYPE-PLAN.md).
 	i.Builtins["cell_new"] = &Builtin{Fn: builtinCellNew}
 	i.Builtins["__method_Cell_get"] = &Builtin{Fn: builtinCellGet}
 	i.Builtins["__method_Cell_set"] = &Builtin{Fn: builtinCellSet}
@@ -888,17 +605,6 @@ func New() *Interp {
 	i.Builtins["__method_MapIter_key"] = &Builtin{Fn: builtinMapIterKey}
 	i.Builtins["__method_MapIter_value"] = &Builtin{Fn: builtinMapIterValue}
 	i.Builtins["__method_MapIter_advance"] = &Builtin{Fn: builtinMapIterAdvance}
-	// Low-level stdlib primitives the codegen lowers to inline
-	// alloc / memcpy / store-byte sequences. The interpreter
-	// implements them directly so stdlib functions that lean
-	// on them (`__string_case_fold` for `to_upper`/`to_lower`,
-	// `s.bytes()`, `string_from_bytes_unchecked`, etc.) round-trip
-	// through the script-mode + playground path. Map runtime
-	// primitives (`__alloc`, `__load_ptr`, `__store_ptr`,
-	// `__memcpy`, `__memset`, `__store_i32`, `__load_i32`,
-	// `__ptr_width`) are NOT included here — they pretend to
-	// be a flat byte address space the interpreter doesn't
-	// model, so Map operations stay codegen-only for now.
 	i.Builtins["__alloc_u8"] = &Builtin{Fn: builtinAllocFilled("__alloc_u8", Number(0))}
 	i.Builtins["__alloc_i32"] = &Builtin{Fn: builtinAllocFilled("__alloc_i32", Number(0))}
 	i.Builtins["__alloc_i64"] = &Builtin{Fn: builtinAllocFilled("__alloc_i64", Number(0))}
@@ -906,16 +612,6 @@ func New() *Interp {
 	i.Builtins["string_from_bytes_unchecked"] = &Builtin{Fn: builtinStringFromBytes}
 	i.Builtins["string_from_bytes_range_unchecked"] = &Builtin{Fn: builtinStringFromBytesRange}
 	i.Builtins["slice_unchecked"] = &Builtin{Fn: builtinSliceUnchecked}
-	// Compiled `s.bytes()` makes an owned copy, while `s.as_bytes()`
-	// aliases the string payload via a slice header. Their raw-memory
-	// implementations are unrepresentable in the interp's value-tree
-	// heap, so override the mangled entry points with direct
-	// String→Array conversions that copy each byte. The two
-	// methods diverge on aliasing semantics under codegen
-	// (bytes() copies, as_bytes() shares); the interp returns
-	// independent arrays for both, which is observably
-	// equivalent under the value-tree model where Array is
-	// already copy-on-write at the language level.
 	i.Builtins["__method_string_bytes"] = &Builtin{Fn: builtinStringBytes}
 	i.Builtins["__method_string_as_bytes"] = &Builtin{Fn: builtinStringBytes}
 	i.Builtins["__method_boolean_to_string"] = &Builtin{Fn: builtinBoolToString}
@@ -925,26 +621,11 @@ func New() *Interp {
 	i.Builtins["exit"] = &Builtin{Fn: builtinExit}
 	i.Builtins["random_bytes"] = &Builtin{Fn: builtinRandomBytes}
 	i.Builtins["random_i32"] = &Builtin{Fn: builtinRandomI32}
-	// `f32_bits(x)` / `f32_from_bits(n)` — reinterpret-cast pair.
-	// The checker exposes them for raw-IEEE manipulation in user
-	// code (Float-to-byte buffer encoders, NaN bit-pattern tests).
-	// Now that the interp models floats, route them through Go's
-	// math.Float32bits / math.Float32frombits at full precision.
-	// __heap_bump_bytes(): the bump high-water mark on the compiled
-	// backends. The interpreter uses Go's allocator (no bump cursor), so
-	// there's nothing to report — return 0 so programs that probe it run
-	// under -interp without erroring (the metric is only meaningful in
-	// codegen).
 	i.Builtins["__heap_bump_bytes"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
-	// __heap_alloc_count(): the allocator's call count, 0 here for the same
-	// reason — Go's allocator serves this evaluator and there is no bump
-	// allocator to count calls into.
 	i.Builtins["__heap_alloc_count"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
-	// The constant-time marks speak only to valgrind.
 	ctMark := &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Void{}, nil }}
 	i.Builtins["__ct_secret"] = ctMark
 	i.Builtins["__ct_public"] = ctMark
-	// __bytes_owned(b): a fresh array of the view's bytes.
 	i.Builtins["__bytes_owned"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 		v, err := byteViews("__bytes_owned", args, 1)
 		if err != nil {
@@ -952,7 +633,6 @@ func New() *Interp {
 		}
 		return byteArray(v[0]), nil
 	}}
-	// __bytes_range(b, from, to): b[from:to] in a fresh array.
 	i.Builtins["__bytes_range"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 		if len(args) != 3 {
 			return nil, fmt.Errorf("__bytes_range: expected 3 arguments, got %d", len(args))
@@ -968,8 +648,6 @@ func New() *Interp {
 		}
 		return byteArray(v[0][int(from):int(to)]), nil
 	}}
-	// __bytes_into(dst, at, src, from, n): dst with src[from:from+n] written
-	// over it from `at`.
 	i.Builtins["__bytes_into"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 		if len(args) != 5 {
 			return nil, fmt.Errorf("__bytes_into: expected 5 arguments, got %d", len(args))
@@ -989,20 +667,7 @@ func New() *Interp {
 		return byteArray(out), nil
 	}}
 	registerAESGCM(i)
-	// __rc_underflow_count(): the runtime's over-release counter, for the same
-	// reason — the interpreter has no refcounts to underflow, so it reports the
-	// clean reading rather than erroring. Every self-host driver ends in
-	// util.rc_underflow_guard, so without this `fern -interp <driver>.fern`
-	// cannot reach its own exit.
 	i.Builtins["__rc_underflow_count"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
-	// Bit-counting intrinsics. The interpreter is the ORACLE these are
-	// differentialled against, so it uses math/bits rather than replicating
-	// the SWAR sequence — an independent implementation is the point, since a
-	// shared one would agree with a shared bug.
-	//
-	// Values arrive as float64-backed Numbers, so each masks to its declared
-	// width before counting; without that a 32-bit clz would see the sign
-	// extension of a negative value in the upper half and report 0.
 	registerBitCount := func(name string, width int, count func(uint64, int) int) {
 		i.Builtins[name] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 			if len(args) != 1 {
@@ -1038,7 +703,6 @@ func New() *Interp {
 	registerBitCount("__ctz64", 64, ctzOf)
 	registerBitCount("__popcount32", 32, popOf)
 	registerBitCount("__popcount64", 64, popOf)
-	// __mulhi_u64(a, b) — the high 64 bits of the 128-bit product.
 	i.Builtins["__mulhi_u64"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 		if len(args) != 2 {
 			return nil, fmt.Errorf("__mulhi_u64: expected 2 args, got %d", len(args))
@@ -1051,15 +715,6 @@ func New() *Interp {
 		hi, _ := bits.Mul64(uint64(int64(a)), uint64(int64(b)))
 		return Number(int64(hi)), nil
 	}}
-	// __memchr(s, byte, from) — first index of `byte` at or after `from`,
-	// or -1. This is the interpreter's reference semantics for the SIMD
-	// kernel the compiled backends vectorise (docs/ATLAS-PLATFORM-PLAN.md
-	// §3); the differential tests compare each backend against it, so it is
-	// deliberately the dumbest correct implementation.
-	//
-	// `from` is clamped rather than rejected: a negative start behaves as 0
-	// and a start past the end finds nothing, which is what the callers in
-	// std/string's search family already assume of their own scan loops.
 	i.Builtins["__memchr"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 		if len(args) != 3 {
 			return nil, fmt.Errorf("__memchr: expected 3 args, got %d", len(args))
@@ -1081,8 +736,6 @@ func New() *Interp {
 		if from < 0 {
 			from = 0
 		}
-		// A byte outside 0..255 cannot occur in the haystack. Checked up
-		// front so the scan itself needs no per-iteration guard.
 		if want < 0 || want > 255 {
 			return Number(-1), nil
 		}
@@ -1221,16 +874,6 @@ func New() *Interp {
 		}
 		return Number(-1), nil
 	}}
-	// __mismatch(a, ao, b, bo, n) — the offset of the first differing byte
-	// in a[ao..ao+n) / b[bo..bo+n), or n when they are equal. The reference
-	// semantics for the comparison kernel the compiled backends vectorise
-	// (#8791), and deliberately the dumbest correct implementation for the
-	// same reason __memchr's is.
-	//
-	// The clamps ARE the contract, not defensive tidying: `n` is reduced to
-	// what both ranges actually hold, so the value returned on equality is
-	// the clamped length and a caller's `== n` test correctly fails when it
-	// asked to compare more than was there.
 	i.Builtins["__mismatch_bytes"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 		if len(args) != 5 {
 			return nil, fmt.Errorf("__mismatch_bytes: expected 5 args, got %d", len(args))
@@ -1337,26 +980,6 @@ func New() *Interp {
 		}
 		return Number(n), nil
 	}}
-	// __ascii_run(s, from) — the index of the first byte at or after `from`
-	// whose high bit is set, or len(s) if the rest is all ASCII.
-	//
-	// The second fused SIMD kernel (docs/ATLAS-PLATFORM-PLAN.md §3), and a
-	// cheaper one than __memchr: x86's pmovmskb and wasm's i8x16.bitmask
-	// gather exactly the high bit of each byte, which IS the ASCII test, so
-	// the vector body needs no compare instruction at all.
-	//
-	// It is deliberately NOT a whole `__utf8_validate`. Validation's
-	// multi-byte arms are branchy, per-length, and full of overlong and
-	// surrogate rules — the readable place for them is Fern. What actually
-	// dominates an ASCII-heavy ingest body (JSON, HTTP, source) is the run
-	// of ASCII between them, and that is the part a vector skips 16 bytes at
-	// a time. Splitting it this way also makes the intrinsic reusable by any
-	// scanner that wants "first high byte", rather than a single-caller blob
-	// duplicated across seven backends.
-	//
-	// `from` clamps like __memchr's: negative behaves as 0. Returning len(s)
-	// rather than -1 on "no high byte" is what lets a caller write
-	// `i = __ascii_run(s, i)` as a straight skip with no branch.
 	i.Builtins["__ascii_run"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 		if len(args) != 2 {
 			return nil, fmt.Errorf("__ascii_run: expected 2 args, got %d", len(args))
@@ -1381,16 +1004,6 @@ func New() *Interp {
 		}
 		return Number(len(b)), nil
 	}}
-	// __rmemchr(s, byte, from) — the index of the LAST occurrence of `byte`
-	// at or before `from`, or -1. __memchr's mirror, and the reference every
-	// backend's lowering is differentially tested against.
-	//
-	// The clamp is the mirrored one: __memchr clamps `from` UP from a
-	// negative to 0 because it walks forward, so this clamps it DOWN to
-	// len(s)-1 because it walks back. A negative `from` therefore finds
-	// nothing here, where in __memchr it means "search the whole string" —
-	// the same rule (start where you were told, inside the string) reading
-	// in the other direction.
 	i.Builtins["__rmemchr"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 		if len(args) != 3 {
 			return nil, fmt.Errorf("__rmemchr: expected 3 args, got %d", len(args))
@@ -1423,13 +1036,6 @@ func New() *Interp {
 		}
 		return Number(-1), nil
 	}}
-	// __count_byte(s, byte): how many bytes of `s` equal `byte`. The
-	// oracle for the fourth fused kernel (docs/ATLAS-PLATFORM-PLAN.md §3.3).
-	//
-	// It keeps __memchr's byte-range guard and drops its cursor: there is no
-	// `from`, so the only two answers a degenerate call can give are 0 for an
-	// out-of-range byte and 0 for an empty string, and both are the accurate
-	// count rather than a sentinel.
 	i.Builtins["__count_byte"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 		if len(args) != 2 {
 			return nil, fmt.Errorf("__count_byte: expected 2 args, got %d", len(args))
@@ -1454,11 +1060,6 @@ func New() *Interp {
 		}
 		return Number(n), nil
 	}}
-	// __scan_set(s, from, set): the index of the first byte at or after `from`
-	// whose entry in `set` is nonzero, or len(s). `from` clamps like
-	// __memchr's, and a byte past the end of `set` is not in the set. The
-	// oracle for the byte-set scan kernel.
-	// __bsd_sum(s, sum): the BSD checksum continued over s from `sum`.
 	i.Builtins["__bsd_sum"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 		if len(args) != 2 {
 			return nil, fmt.Errorf("__bsd_sum: expected 2 args, got %d", len(args))
@@ -1478,8 +1079,6 @@ func New() *Interp {
 		}
 		return Number(sum), nil
 	}}
-	// __str_hash(s, seed): the seeded word-at-a-time hash of s
-	// (compiler/ir.fern's str_hash has the definition).
 	i.Builtins["__str_hash"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 		if len(args) != 2 {
 			return nil, fmt.Errorf("__str_hash: expected 2 args, got %d", len(args))
@@ -1494,8 +1093,6 @@ func New() *Interp {
 		}
 		return Number(int32(StrHash([]byte(string(s)), int32(int64(seed))))), nil
 	}}
-	// __count_runs(s, inside, set): how many runs of set members begin in s;
-	// `inside` nonzero means the byte before s was a member.
 	i.Builtins["__count_runs"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 		if len(args) != 3 {
 			return nil, fmt.Errorf("__count_runs: expected 3 args, got %d", len(args))
@@ -1597,12 +1194,6 @@ func New() *Interp {
 		}
 		return scanSet("__scan_set_bytes", b, args[1], args[2])
 	}}
-	// __sum_bytes(s): the wrapped 32-bit sum of every byte of `s`. The oracle
-	// for the sixth fused kernel (docs/ATLAS-PLATFORM-PLAN.md §3.3).
-	//
-	// The accumulator is uint32 so the wrap is the language's, not Go's int:
-	// every backend's vector sequence wraps at 32 bits, and the interpreter
-	// has to agree with them on a string long enough to reach it.
 	i.Builtins["__sum_bytes"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 		if len(args) != 1 {
 			return nil, fmt.Errorf("__sum_bytes: expected 1 arg, got %d", len(args))
@@ -1617,11 +1208,6 @@ func New() *Interp {
 		}
 		return Number(int32(sum)), nil
 	}}
-	// __scale_f64(xs, k): every element of the f64[] multiplied by k, as a
-	// fresh array. The oracle for the eighth fused kernel
-	// (docs/ATLAS-PLATFORM-PLAN.md §3.3), the first over an array: each
-	// product is one IEEE multiply, so a vector body owes exactly these
-	// bits and nothing about the order it produces them in matters.
 	i.Builtins["__scale_f64"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 		if len(args) != 2 {
 			return nil, fmt.Errorf("__scale_f64: expected 2 args, got %d", len(args))
@@ -1646,16 +1232,6 @@ func New() *Interp {
 	}}
 	i.Builtins["__outer_mul_f64"] = &Builtin{Fn: builtinOuterMulF64}
 	i.Builtins["__inner_mul_add_f64"] = &Builtin{Fn: builtinInnerMulAddF64}
-	// __crc32_cksum(crc, s): `s` folded into the running CRC-32 cksum(1)
-	// prints. The oracle for the seventh fused kernel
-	// (docs/ATLAS-PLATFORM-PLAN.md §3.3), and the first CARRIED one — the
-	// state goes in and comes back, so chunking must not change the answer.
-	//
-	// Bit-at-a-time on purpose. The compiled backends fold sixteen bytes at a
-	// step with a carry-less multiply and the interpreter is the thing that
-	// says what those folds owe, so it spells the definition (poly 0x04C11DB7,
-	// MSB first, no reflection) rather than a table that would have to be
-	// trusted in its own right.
 	for _, name := range []string{"__crc32_cksum", "__crc32_cksum_array"} {
 		i.Builtins[name] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 			if len(args) != 2 {
@@ -1700,28 +1276,8 @@ func New() *Interp {
 			return Number(int32(crc)), nil
 		}}
 	}
-	// __arr_push_shared_count(): the rc==1 cliff counter on the compiled
-	// backends — appends that copied a buffer which still had room, so the
-	// copy was bought by an extra reference. The interpreter has no refcounts
-	// and copies nothing, so there is no cliff to cross: return 0, which is
-	// also the healthy value on every backend. A program asserting the count
-	// is 0 therefore passes under -interp for the right reason, and one
-	// asserting it is NON-zero is a codegen-only test by construction.
 	i.Builtins["__arr_push_shared_count"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
-	// __arr_push_shared_bytes(): the same cliff weighted by bytes copied. No
-	// cliff to cross under the interpreter, so no bytes copied either — 0,
-	// for exactly the reason the counter beside it reports 0.
 	i.Builtins["__arr_push_shared_bytes"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
-	// __map_hash_seed(): core/map's per-process string-hash seed (#6194).
-	//
-	// The interpreter never runs core/map.fern — `Map` is a native
-	// *interp.Map over a Go map — so it has no bucket table to seed and the
-	// only way this is reached is a program calling the builtin directly.
-	// It still draws a real per-process seed rather than returning 0, so a
-	// test that asserts "the seed is stable within a run and nonzero" holds
-	// under -interp for the same reason it holds on the compiled backends.
-	// Drawing lazily (rather than at registration) keeps a program that
-	// never touches it from consuming entropy at all.
 	mapHashSeed := int32(0)
 	i.Builtins["__map_hash_seed"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) {
 		if mapHashSeed == 0 {
@@ -1730,22 +1286,12 @@ func New() *Interp {
 				return nil, fmt.Errorf("__map_hash_seed: %v", err)
 			}
 			v := uint32(b[0]) | uint32(b[1])<<8 | uint32(b[2])<<16 | uint32(b[3])<<24
-			mapHashSeed = int32(v) | 1 // never 0 — 0 is core/map's "unseeded" sentinel
+			mapHashSeed = int32(v) | 1
 		}
 		return Number(int64(mapHashSeed)), nil
 	}}
-	// __heap_mark() / __heap_release_to(mark): the arena checkpoint pair. The
-	// interpreter is GC'd, so there is no cursor to capture or rewind — mark
-	// hands back the same "no checkpoint" 0 the codegen backends use when
-	// nothing has been allocated yet, and release_to is a no-op. A program
-	// driving the pair therefore runs correctly under -interp; it just does
-	// not observe reclamation, exactly as with __heap_bump_bytes.
 	i.Builtins["__heap_mark"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
 	i.Builtins["__heap_release_to"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return nil, nil }}
-	// The task primitives (docs/NET-P3-SUSPENSION-PLAN.md §3.4) in the
-	// blocking fallback: no task is ever current, so std/async's suspend
-	// polls and task_start runs its entry to completion. A park is reached
-	// only with a current task, so it reports the no-task answer.
 	i.Builtins["__task_new"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(1), nil }}
 	i.Builtins["__task_free"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return nil, nil }}
 	i.Builtins["__task_cur"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
@@ -1761,11 +1307,6 @@ func New() *Interp {
 	i.Builtins["f32_from_bits"] = &Builtin{Fn: builtinF32FromBits}
 	i.Builtins["f64_bits"] = &Builtin{Fn: builtinF64Bits}
 	i.Builtins["f64_from_bits"] = &Builtin{Fn: builtinF64FromBits}
-	// f64 math primitives, each exact or correctly rounded in `math`.
-	// User code reaches these through receiver methods in `std/f64`
-	// (`(x).sqrt()`, `.floor()`, …); the underscore-prefixed bare names
-	// are the IR-level entry points. The transcendentals are std/f64's
-	// own Fern, which this interprets like any other code.
 	i.Builtins["__sqrt_f64"] = mkUnaryF64Builtin("__sqrt_f64", math.Sqrt)
 	i.Builtins["__floor_f64"] = mkUnaryF64Builtin("__floor_f64", math.Floor)
 	i.Builtins["__ceil_f64"] = mkUnaryF64Builtin("__ceil_f64", math.Ceil)
@@ -1857,32 +1398,8 @@ func New() *Interp {
 	i.Builtins["create_dir_all"] = &Builtin{Fn: builtinCreateDirAll}
 	i.Builtins["remove_dir_all"] = &Builtin{Fn: builtinRemoveDirAll}
 	i.Builtins["subprocess"] = &Builtin{Fn: builtinSubprocess}
-	// `int_to_string` is the one Lang-defined stdlib function with
-	// an interp Go override (the body uses raw-memory primitives
-	// like `scratch as i32` that the interp can't model). Two
-	// keys cover both load paths:
-	//
-	//   - bare `int_to_string` — the flat-load (LoadStdlibFlat) path, the
-	//     usual single-file case.
-	//   - mangled `int__int_to_string` — modload's name-mangling
-	//     prefix when the user (or a transitively-imported stdlib
-	//     module) explicitly `import`s a path that pulls in
-	//     core/int. modload's combine step prepends `<modname>__`
-	//     to non-receiver-method functions; `importLocalName` of
-	//     `stdlib://core/int.fern` is `int`, so the form is
-	//     `int__int_to_string`. Without the alias, the interp
-	//     would fall through to the Lang body and crash on the
-	//     `scratch as i32` cast.
-	//
-	// Add new aliases here whenever a stdlib function gains an
-	// interp Go override or moves to a new module path.
 	i.Builtins["int_to_string"] = &Builtin{Fn: builtinIntToString}
 	i.Builtins["int__int_to_string"] = &Builtin{Fn: builtinIntToString}
-	// `__int_to_string_u64` is the i64 / u32 / u64 formatter the
-	// `(n).to_string()` method on each width dispatches to. Same
-	// "Lang body uses raw-memory ops the interp can't model"
-	// shape as int_to_string above, so it gets the same dual-key
-	// registration (bare + modload-mangled).
 	i.Builtins["__int_to_string_u64"] = &Builtin{Fn: builtinIntToStringU64}
 	i.Builtins["int____int_to_string_u64"] = &Builtin{Fn: builtinIntToStringU64}
 	i.Builtins["tcp_listen"] = &Builtin{Fn: builtinTcpListen}
@@ -1922,15 +1439,6 @@ func New() *Interp {
 	i.inheritListener()
 	return i
 }
-
-// TCP socket builtins for the interpreter — implemented via
-// Go's net package so REPL / test runs match the AOT
-// backends' behaviour. Listener / connection handles are
-// represented as integer IDs into per-Interp tables; the
-// AOT backends use raw OS fds, the interpreter uses opaque
-// indices into Go-managed maps. The numeric value space is
-// disjoint between the two, but every program treats the
-// returned number as an opaque token.
 
 func builtinTcpListen(i *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
@@ -1978,11 +1486,6 @@ func builtinTcpAccept(i *Interp, args []Value) (Value, error) {
 	return Number(cid), nil
 }
 
-// builtinTcpSendfile answers tcp_sendfile(fd, file, max) as a read of the
-// open file followed by one socket write: the bytes the socket took, 0 at
-// the file's end, or -errno. The file is moved back over the bytes the
-// socket did not take, so the position advances by what was sent, as
-// sendfile(2) leaves it.
 func builtinTcpSendfile(i *Interp, args []Value) (Value, error) {
 	if len(args) != 3 {
 		return nil, fmt.Errorf("tcp_sendfile: expected 3 args, got %d", len(args))
@@ -2076,8 +1579,6 @@ func tcpSendData(i *Interp, id Number, data []byte) (Value, error) {
 	if !ok {
 		return Number(-1), nil
 	}
-	// A non-blocking socket takes what the kernel has room for and
-	// answers -EAGAIN when it has none, as a native send does.
 	n, err := writeSocket(conn, data, i.tcpNonblocking[int64(id)])
 	if err != nil {
 		if n > 0 {
@@ -2115,8 +1616,6 @@ func builtinTcpClose(i *Interp, args []Value) (Value, error) {
 	return Number(-1), nil
 }
 
-// soReusePort is SO_REUSEPORT, which Go's syscall package spells only on
-// the BSDs: 15 on Linux, 0x200 on Darwin.
 var soReusePort = func() int {
 	if runtime.GOOS == "darwin" {
 		return 0x200
@@ -2124,8 +1623,6 @@ var soReusePort = func() int {
 	return 15
 }()
 
-// negErrno is the -errno a socket builtin answers for err: the errno it
-// wraps, or -1 when it wraps none.
 func negErrno(err error) Value {
 	var errno syscall.Errno
 	if errors.As(err, &errno) {
@@ -2134,10 +1631,6 @@ func negErrno(err error) Value {
 	return Number(-1)
 }
 
-// inheritListener takes descriptor 3 as listener handle 3 when LISTEN_FDS
-// announces one, the convention std/serve's __listener_of reads: the
-// compiled runtimes serve descriptor 3 itself, and here handle 3 names it.
-// Handles allocated afterwards are numbered past it.
 func (i *Interp) inheritListener() {
 	n, err := strconv.Atoi(os.Getenv("LISTEN_FDS"))
 	if err != nil || n < 1 {
@@ -2153,10 +1646,6 @@ func (i *Interp) inheritListener() {
 	i.tcpNextHandle = 3
 }
 
-// builtinTcpListenWith is the interpreter's `tcp_listen_with(addr, port,
-// backlog, reuse_port)`: SO_REUSEPORT goes on the socket before the bind,
-// as the native helper sets it; the backlog is Go's own (somaxconn), since
-// the net package does not take one.
 func builtinTcpListenWith(i *Interp, args []Value) (Value, error) {
 	if len(args) != 4 {
 		return nil, fmt.Errorf("tcp_listen_with: expected 4 args, got %d", len(args))
@@ -2177,9 +1666,6 @@ func builtinTcpListenWith(i *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("tcp_listen_with: expected boolean reuse_port arg, got %T", args[3])
 	}
 	lc := net.ListenConfig{}
-	// A plain TCP socket, as the native runtimes open: Go listens with
-	// MPTCP by default, which the kernel refuses socket controls on
-	// (the reuseport filter of op 8 among them).
 	lc.SetMultipathTCP(false)
 	if reuse {
 		lc.Control = func(_, _ string, c syscall.RawConn) error {
@@ -2192,10 +1678,6 @@ func builtinTcpListenWith(i *Interp, args []Value) (Value, error) {
 			return serr
 		}
 	}
-	// The family the address names, as the native runtimes open: under a
-	// plain "tcp" Go gives an IPv4 wildcard a dual-stack IPv6 socket, whose
-	// accepted sockets then report a v4-mapped local address. "tcp6" would
-	// make an IPv6 listener v6-only, so a 16-byte address keeps "tcp".
 	network := "tcp"
 	if len(ip) == 4 {
 		network = "tcp4"
@@ -2213,12 +1695,6 @@ func builtinTcpListenWith(i *Interp, args []Value) (Value, error) {
 	return Number(id), nil
 }
 
-// builtinTcpConnectWith is `tcp_connect_with(addr, port, nonblocking)`.
-// The interpreter has no non-blocking dial: it connects before answering,
-// so control op 5 reports the result at once and a refused dial is
-// reported here rather than there. The socket a non-blocking dial answers
-// is non-blocking from then on, as the native one is, so its reads answer
-// -EAGAIN rather than waiting.
 func builtinTcpConnectWith(i *Interp, args []Value) (Value, error) {
 	if len(args) != 3 {
 		return nil, fmt.Errorf("tcp_connect_with: expected 3 args, got %d", len(args))
@@ -2251,8 +1727,6 @@ func builtinTcpConnectWith(i *Interp, args []Value) (Value, error) {
 	return got, nil
 }
 
-// ipArg reads a socket builtin's address argument: the u8[] of four or
-// sixteen network-order bytes as a net.IP, or nil for another length.
 func ipArg(name string, v Value) (net.IP, error) {
 	arr, ok := v.(Array)
 	if !ok {
@@ -2272,8 +1746,6 @@ func ipArg(name string, v Value) (net.IP, error) {
 	return ip, nil
 }
 
-// dialTcp connects to ip:port through the net package: a connection
-// handle, or -errno.
 func (i *Interp) dialTcp(ip net.IP, port int) (Value, error) {
 	conn, err := net.Dial("tcp", net.JoinHostPort(ip.String(), fmt.Sprint(port)))
 	if err != nil {
@@ -2288,12 +1760,6 @@ func (i *Interp) dialTcp(ip net.IP, port int) (Value, error) {
 	return Number(id), nil
 }
 
-// builtinTcpSocketCtl is the interpreter's `tcp_socket_ctl(fd, op, arg)`,
-// over the net package's own controls: op 1 SetNoDelay, 2 SetKeepAlive, 3
-// the non-blocking flag tcp_recv_into honours, 4 CloseRead / CloseWrite / both,
-// 6 the host's send queue, 7 the peer's address key (peerKey), 8 the
-// listener's SO_REUSEPORT group steered by CPU (hostSteerByCPU). 0, -1
-// for a handle that is not a connection, -22 for an unknown op.
 func builtinTcpSocketCtl(i *Interp, args []Value) (Value, error) {
 	if len(args) != 3 {
 		return nil, fmt.Errorf("tcp_socket_ctl: expected 3 args, got %d", len(args))
@@ -2357,8 +1823,6 @@ func builtinTcpSocketCtl(i *Interp, args []Value) (Value, error) {
 	var err error
 	switch op {
 	case 5:
-		// A connection here is always complete: tcp_connect_with dials
-		// through the net package, which blocks until it is.
 	case 6:
 		fd, ok := i.rawFd(int64(id))
 		if !ok {
@@ -2396,12 +1860,6 @@ func builtinTcpSocketCtl(i *Interp, args []Value) (Value, error) {
 	return Number(0), nil
 }
 
-// nameGroup is control op 9's (the socket's own address) or op 10's (its
-// peer's) answer for the descriptor fd, read through getsockname or
-// getpeername so the family is the socket's rather than the net
-// package's 16-byte spelling of every address: group `which` (0..7) of
-// the address in network order, an IPv4 address filling groups 0 and 1,
-// 4 or 6 for `which` 8, the port for 9; -EINVAL outside that range.
 func nameGroup(fd int, op, which int64) Value {
 	if which < 0 || which > 9 {
 		return Number(-int64(syscall.EINVAL))
@@ -2439,10 +1897,6 @@ func nameGroup(fd int, op, which int64) Value {
 	return Number(-int64(syscall.EAFNOSUPPORT))
 }
 
-// builtinWasmPollableDrop is the interpreter's `wasm_pollable_drop(p)` — a
-// no-op (returns 0), like the native backends: a pollable is just an fd, with
-// no separate resource to drop. Present so std/async's fetch_future (which
-// drops the wasm pollable before close) runs portably under interp.
 func builtinWasmPollableDrop(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("wasm_pollable_drop: expected 1 arg, got %d", len(args))
@@ -2453,10 +1907,6 @@ func builtinWasmPollableDrop(_ *Interp, args []Value) (Value, error) {
 	return Number(0), nil
 }
 
-// builtinWasmBlock is the interpreter's `wasm_block(p)` — a no-op (returns 0),
-// like the native backends: there's no pollable to wait on (a deadline is
-// poll(2)'s timeout arg). Present so std/async's with_deadline (which blocks on
-// a timer pollable on wasm) runs portably under interp.
 func builtinWasmBlock(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("wasm_block: expected 1 arg, got %d", len(args))
@@ -2467,12 +1917,6 @@ func builtinWasmBlock(_ *Interp, args []Value) (Value, error) {
 	return Number(0), nil
 }
 
-// builtinWasmPoll is the interpreter's `wasm_poll(pollables)` — returns -1 (no
-// ready index), matching the native stub: the interp has no real pollables (a
-// wasm_timer_pollable is -1), so nothing is ever ready. On wasm this is the real
-// wasi:io/poll.poll(list<pollable>) readiness multiplexer. std/async's reactor
-// uses `poll` (real) natively and `wasm_poll` on wasm; this keeps the wasm path
-// portable under interp.
 func builtinWasmPoll(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("wasm_poll: expected 1 arg, got %d", len(args))
@@ -2483,10 +1927,6 @@ func builtinWasmPoll(_ *Interp, args []Value) (Value, error) {
 	return Number(-1), nil
 }
 
-// builtinWasmTimerPollable is the interpreter's `wasm_timer_pollable(ns)` —
-// returns -1 (no real pollable / no real poll under interp), matching the
-// native stub. std/async's with_deadline appends it to the poll set; the interp
-// `poll` stub returns -1 regardless, so timed waits never resolve here anyway.
 func builtinWasmTimerPollable(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("wasm_timer_pollable: expected 1 arg, got %d", len(args))
@@ -2494,12 +1934,6 @@ func builtinWasmTimerPollable(_ *Interp, args []Value) (Value, error) {
 	return Number(-1), nil
 }
 
-// peerKey is the 32-bit key socket control op 7 answers for a peer's
-// address: an IPv4 address packed with the first octet in the low byte
-// (a v4-mapped IPv6 address counting as IPv4), any
-// other IPv6 address the two words of its first eight bytes XORed and
-// never 0, so the peers of one /64 share a key. The native runtimes
-// compute the same value from the sockaddr.
 func peerKey(ip net.IP) int32 {
 	word := func(b []byte) int32 {
 		return int32(uint32(b[0]) | uint32(b[1])<<8 | uint32(b[2])<<16 | uint32(b[3])<<24)
@@ -2517,10 +1951,6 @@ func peerKey(ip net.IP) int32 {
 	return 1
 }
 
-// builtinTcpLocalPort is the interpreter's `tcp_local_port(handle)` — the
-// port a listener or connection is bound to, or -1 when the handle names
-// neither. Both tables are consulted because the AOT backends take one
-// getsockname path for either kind of socket.
 func builtinTcpLocalPort(i *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("tcp_local_port: expected 1 arg, got %d", len(args))
@@ -2547,11 +1977,6 @@ func builtinTcpLocalPort(i *Interp, args []Value) (Value, error) {
 	return Number(ta.Port), nil
 }
 
-// builtinTcpPollable is the interpreter's `tcp_pollable(fd)` — identity, like
-// the native backends (a socket's readiness token IS its fd). It lets
-// std/async's `fetch_future` be portable; the interp has no real poll, so a
-// Pending future built from it never resolves (the in-interp `poll` stub
-// returns -1), exactly like the native/wasm portability rule.
 func builtinTcpPollable(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("tcp_pollable: expected 1 arg, got %d", len(args))
@@ -2563,9 +1988,6 @@ func builtinTcpPollable(_ *Interp, args []Value) (Value, error) {
 	return fd, nil
 }
 
-// builtinRandomBytes returns a `u8[]` of n cryptographic-
-// quality random bytes from `crypto/rand`. Mirrors the AOT
-// backends' `getrandom(2)` / WASI `random_get` behaviour.
 func builtinRandomBytes(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("random_bytes: expected 1 arg, got %d", len(args))
@@ -2588,12 +2010,6 @@ func builtinRandomBytes(_ *Interp, args []Value) (Value, error) {
 	return out, nil
 }
 
-// builtinRandomI32 returns a single cryptographic-quality random
-// i32 from `crypto/rand`. Mirrors the AOT backends'
-// `getrandom(2)` / WASI `random_get` behaviour (read 4 bytes,
-// reinterpret as a little-endian signed i32). Use when a single
-// small random value is needed without the heap-allocation
-// overhead of random_bytes.
 func builtinRandomI32(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 0 {
 		return nil, fmt.Errorf("random_i32: expected 0 args, got %d", len(args))
@@ -2606,11 +2022,6 @@ func builtinRandomI32(_ *Interp, args []Value) (Value, error) {
 	return Number(int64(int32(v))), nil
 }
 
-// builtinF32Bits reinterprets a 32-bit float's bit pattern as
-// a signed 32-bit integer. Round-trips through Go's
-// `math.Float32bits` which canonicalises the value to its
-// in-memory representation (matches what `f32.reinterpret_i32`
-// produces on wasm and the ARM64 `fmov` equivalent).
 func builtinF32Bits(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("f32_bits: expected 1 arg, got %d", len(args))
@@ -2623,10 +2034,6 @@ func builtinF32Bits(_ *Interp, args []Value) (Value, error) {
 	return Number(int64(int32(bits))), nil
 }
 
-// builtinF32FromBits is the inverse: takes a signed 32-bit
-// integer interpreted as the IEEE-754 bit pattern and yields
-// the matching f32 value. Round-trips NaN payloads (Go's
-// `math.Float32frombits` does the no-op bit transfer).
 func builtinF32FromBits(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("f32_from_bits: expected 1 arg, got %d", len(args))
@@ -2640,11 +2047,6 @@ func builtinF32FromBits(_ *Interp, args []Value) (Value, error) {
 	return Float{V: v, Width: 32}, nil
 }
 
-// builtinF64Bits / builtinF64FromBits — same shape as the
-// f32 pair but for double-precision. The bit pattern is a
-// signed 64-bit integer (lang's `i64`); negative-bit-13
-// quiet NaN payloads round-trip cleanly via Go's `math`
-// package which does the no-op bit transfer.
 func builtinF64Bits(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("f64_bits: expected 1 arg, got %d", len(args))
@@ -2667,11 +2069,6 @@ func builtinF64FromBits(_ *Interp, args []Value) (Value, error) {
 	return Float{V: math.Float64frombits(uint64(int64(n))), Width: 64}, nil
 }
 
-// mkUnaryF64Builtin packages a unary `f64 -> f64` Go function
-// as an interpreter `Builtin`. Used to register the f64 math
-// primitives — `__sqrt_f64`, `__floor_f64`, etc. — which all
-// share this shape. Width is preserved at 64; NaN / ±Inf
-// propagate naturally via the underlying Go math.* call.
 func mkUnaryF64Builtin(name string, fn func(float64) float64) *Builtin {
 	return &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 		if len(args) != 1 {
@@ -2685,10 +2082,6 @@ func mkUnaryF64Builtin(name string, fn func(float64) float64) *Builtin {
 	}}
 }
 
-// builtinPowF64 is the one binary f64 math primitive — the
-// rest fit `unaryF64`'s shape. Mirrors `math.Pow` semantics,
-// including the IEEE-754 special cases (pow(NaN, 0) == 1,
-// pow(±0, negative) == ±Inf, etc.).
 func builtinIntToString(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("int_to_string: expected 1 arg, got %d", len(args))
@@ -2700,18 +2093,6 @@ func builtinIntToString(_ *Interp, args []Value) (Value, error) {
 	return String(strconv.Itoa(int(n))), nil
 }
 
-// builtinIntToStringU64 formats the (mag i64, neg i32) shape
-// the std/i64 / std/u32 / std/u64 receiver-method `to_string`
-// dispatches into. `mag` is the absolute value; `neg` is the
-// sign flag (1 for negative, 0 for positive — accommodates
-// the INT64_MIN special case where two's-complement negation
-// wraps to itself, so the caller passes the unsigned u64
-// magnitude separately). Output is `"-" + decimal(mag)` when
-// `neg != 0`, plain decimal otherwise.
-//
-// Mirrors the Lang body in `core/int.fern` byte-for-byte;
-// only difference is the Lang version pokes raw memory which
-// the interp can't model, hence the Go override.
 func builtinIntToStringU64(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("__int_to_string_u64: expected 2 args, got %d", len(args))
@@ -2724,8 +2105,6 @@ func builtinIntToStringU64(_ *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("__int_to_string_u64: expected number neg, got %T", args[1])
 	}
-	// `Number` is int64 underneath; treat as unsigned for
-	// the u64 / u32 callers by re-reading the bits via uint64.
 	out := strconv.FormatUint(uint64(int64(mag)), 10)
 	if int64(neg) != 0 {
 		out = "-" + out
@@ -2733,31 +2112,12 @@ func builtinIntToStringU64(_ *Interp, args []Value) (Value, error) {
 	return String(out), nil
 }
 
-// unclaimed marks a slot of an array's backing buffer that no array
-// value covers. It is the interpreter's uniqueness signal for growth:
-// only a marked slot may be written in place, and writing it claims it.
-//
-// The invariant every array producer here maintains is "no array value
-// covers a marked slot" — `make` hands out buffers with no spare,
-// growArray marks exactly the spare it allocates, a subslice stays
-// inside its parent's range, and a claim extends by the one slot it
-// overwrites. So a marked slot is unreachable from every live value,
-// and appending into it cannot be observed through any of them.
-//
-// The check fails safe in both directions: no Fern value has this Go
-// type, and a buffer that never went through growArray (a fresh `make`,
-// a nil-zeroed tail) simply fails it and takes the copy path.
 type unclaimed struct{}
 
 func (unclaimed) String() string { return "<unclaimed>" }
 
 var unclaimedSlot Value = unclaimed{}
 
-// growArray copies arr into a fresh buffer one element longer, with
-// spare room beyond it, and returns the view the extra element still
-// has to be written into. Doubling is what makes a chain of appends
-// O(n) rather than O(n²); the spare slots carry the unclaimed mark, so
-// exactly one later append can take each of them.
 func growArray(arr Array) Array {
 	want := len(arr.E) + 1
 	capacity := 2 * want
@@ -2772,14 +2132,6 @@ func growArray(arr Array) Array {
 	return buf.view(0, want)
 }
 
-// `(arr: T[]) push(v: T): T[]` — functional append. The codegen path
-// implements push as "return a T[] of len+1 holding the old elements
-// plus the new one", growing the receiver's buffer in place when it
-// holds the only live reference (rc == 1) and copying otherwise; the
-// interpreter mirrors that, using the unclaimed mark instead of a
-// refcount to decide when growing in place is unobservable. The source
-// array is never mutated either way. Matches the receiver-as-first-arg
-// convention the checker uses for every `__method_*` mangled name.
 func builtinArrayPush(ip *Interp, args []Value) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("__method_Array_push: expected 2 args (arr, v), got %d", len(args))
@@ -2802,14 +2154,6 @@ func builtinArrayPush(ip *Interp, args []Value) (Value, error) {
 	return out, nil
 }
 
-// builtinArraySet is the value-returning element set behind
-// `arr.set(i, v)` / `arr.with(i, v)` — codegen lowers it to the CoW
-// `__fern_arr_cow_inplace` shape (a possibly-fresh array with element
-// i replaced), writing into the receiver's buffer when it holds the
-// only live reference and copying otherwise. The interpreter mirrors
-// that off the array's owner count: at zero nothing else covers the
-// buffer, so the write cannot be observed. Receiver-as-first-arg,
-// matching the codegen surface registered in checker.go.
 func builtinArraySet(ip *Interp, args []Value) (Value, error) {
 	if len(args) != 3 {
 		return nil, fmt.Errorf("__method_Array_set: expected 3 args (arr, i, v), got %d", len(args))
@@ -2831,10 +2175,6 @@ func builtinArraySet(ip *Interp, args []Value) (Value, error) {
 		return nil, err
 	}
 	if inPlace {
-		// The element stored takes over the Map-rc paths the receiver
-		// gave the one it replaces. The assignment that follows cannot
-		// do this: it sees the same array going out as came in, so its
-		// retain and release cancel.
 		adjustRC(args[2], int(arr.h.paths))
 		adjustRC(arr.E[int(idx)], -int(arr.h.paths))
 		arr.E[int(idx)] = args[2]
@@ -2847,9 +2187,6 @@ func builtinArraySet(ip *Interp, args []Value) (Value, error) {
 	return out, nil
 }
 
-// arrayWriteInPlace decides whether `with` may write into the
-// receiver's own buffer, and enforces the two diagnostic modes
-// FERN_INTERP_ARRAY_COW selects. See docs/INTERP-ARRAY-INPLACE-WRITE.md.
 func (i *Interp) arrayWriteInPlace(arr Array) (bool, error) {
 	if i.arrayCOW == arrayCOWCopy || !arr.exclusive() {
 		return false, nil
@@ -2862,18 +2199,6 @@ func (i *Interp) arrayWriteInPlace(arr Array) (bool, error) {
 	return true, nil
 }
 
-// verifyExclusive is the safety net behind FERN_INTERP_ARRAY_COW=verify:
-// it walks every binding of every live scope looking for a value over the
-// buffer about to be written, and refuses the write if it finds one that
-// is not accounted for. The slots of the assignments in flight still hold
-// the value at this point — they have released their count but not yet
-// been overwritten — so those are expected; anything beyond them is an
-// under-count, the failure mode that would otherwise corrupt the oracle
-// silently.
-//
-// It sees what is reachable from scopes, which is where a missed retain
-// shows up; a value held only in a Go temporary of an enclosing
-// evaluation is out of its reach.
 func (i *Interp) verifyExclusive(arr Array) error {
 	allowed := 0
 	for _, m := range i.moving {
@@ -2902,9 +2227,6 @@ func (i *Interp) verifyExclusive(arr Array) error {
 		len(arr.E), holders, allowed)
 }
 
-// coversBuffer counts the values inside v that view the allocation h
-// heads. depth bounds the walk so a value graph the interpreter has made
-// cyclic (a Cell holding its own container) cannot hang the check.
 func coversBuffer(v Value, h *arrHeader, depth int) int {
 	if depth > 12 {
 		return 0
@@ -2936,15 +2258,6 @@ func coversBuffer(v Value, h *arrHeader, depth int) int {
 	return n
 }
 
-// Map builtins. `map_new(cap)` ignores the capacity hint (the
-// parallel-slice rep grows on demand) and returns a fresh
-// empty *Map. The `__method_Map_*` shims mirror the codegen
-// surface registered in internal/check/checker/checker.go's
-// registerMapMethod calls — same signatures, same return
-// shapes (Option[V] for get, boolean for has/delete, etc.).
-// Entry order matches the runtime exactly — append on set,
-// swap-with-last on delete — so keys() / values() / iteration
-// round-trip identically across the diff oracle.
 func builtinMapNew(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("map_new: expected 1 arg (cap), got %d", len(args))
@@ -2952,8 +2265,6 @@ func builtinMapNew(_ *Interp, args []Value) (Value, error) {
 	return &Map{}, nil
 }
 
-// Cell[T] builtins — a single-slot mutable box. `set` mutates the shared
-// *Cell in place and returns Void (it's the sanctioned in-place mutation).
 func builtinCellNew(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("cell_new: expected 1 arg, got %d", len(args))
@@ -3058,10 +2369,6 @@ func builtinMapSet(ip *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("__method_Map_set: expected 3 args (m, k, v), got %d", len(args))
 	}
 	t := ip.cowTarget(m)
-	// A map in-place set stores through the receiver, so the entry gains
-	// the paths the receiver has; the entry it displaces loses them. The
-	// assignment that follows cannot do this accounting — it sees the
-	// same *Map going out as came in, so its retain and release cancel.
 	storeArray(args[1])
 	storeArray(args[2])
 	idx, err := ip.findKey(t, args[1])
@@ -3078,13 +2385,9 @@ func builtinMapSet(ip *Interp, args []Value) (Value, error) {
 		t.keys = append(t.keys, args[1])
 		t.vals = append(t.vals, args[2])
 	}
-	return t, nil // value-returning; t is m (in-place) or a fresh copy (shared)
+	return t, nil
 }
 
-// cowTarget returns the map a mutating method should write to: the receiver
-// itself when no slot but the one being reassigned holds it (`m = m.insert(..)`,
-// or a temporary), else a fresh copy — a collection operation returns a new
-// value, so a receiver still bound elsewhere must come out unchanged.
 func (i *Interp) cowTarget(m *Map) *Map {
 	if m.rc <= i.movingHolds(m) {
 		return m
@@ -3092,8 +2395,6 @@ func (i *Interp) cowTarget(m *Map) *Map {
 	return m.clone()
 }
 
-// movingHolds counts the slots being reassigned that still hold m: their
-// count is released once the right-hand side is done, so it is not a reader.
 func (i *Interp) movingHolds(m *Map) int {
 	n := 0
 	for _, v := range i.moving {
@@ -3117,15 +2418,9 @@ func builtinMapDelete(ip *Interp, args []Value) (Value, error) {
 		return nil, err
 	}
 	if idx < 0 {
-		return m, nil // unchanged; in-place receiver is fine
+		return m, nil
 	}
-	// A copy keeps the entry order, so idx names the same entry in it.
 	t := ip.cowTarget(m)
-	// Swap-with-last, mirroring core/map.fern's __map_delete_impl: move
-	// the final entry into the removed slot and truncate. This keeps the
-	// interpreter's iteration order identical to the compiled runtime's
-	// after a delete (the runtime can't cheaply shift-down its open-
-	// addressed entries array). See docs/ADVERSARIAL-REVIEW-2026-06.md (M3).
 	last := len(t.keys) - 1
 	t.keys[idx] = t.keys[last]
 	t.vals[idx] = t.vals[last]
@@ -3147,7 +2442,7 @@ func builtinMapClear(ip *Interp, args []Value) (Value, error) {
 	}
 	m.keys = m.keys[:0]
 	m.vals = m.vals[:0]
-	return m, nil // Map.clear is value-returning; return the map handle.
+	return m, nil
 }
 
 func builtinMapGetOr(ip *Interp, args []Value) (Value, error) {
@@ -3267,13 +2562,6 @@ func builtinMapIterAdvance(_ *Interp, args []Value) (Value, error) {
 	return Void{}, nil
 }
 
-// `__alloc_u8(n: i32): u8[]` and its typed siblings `__alloc_i32`,
-// `__alloc_i64` and `__alloc_bool` — codegen lowers each to
-// `__fern_alloc_u8(n)`, n zeroed 8-byte slots; the interp returns a fresh
-// Array of n copies of the element type's zero. The stdlib uses the byte
-// form as the staging buffer for `__string_case_fold`,
-// `string_from_bytes_unchecked`'s round-trip counterpart, and any user code
-// that wants a zero-initialised slab.
 func builtinAllocFilled(name string, zero Value) func(*Interp, []Value) (Value, error) {
 	return func(_ *Interp, args []Value) (Value, error) {
 		if len(args) != 1 {
@@ -3294,13 +2582,6 @@ func builtinAllocFilled(name string, zero Value) func(*Interp, []Value) (Value, 
 	}
 }
 
-// `string_from_bytes_unchecked(bs: u8[]): string` — joins the byte
-// values into a fresh String. Codegen path mmap-allocates a
-// length-prefixed string buffer and memcpys; the interp
-// builds the string directly from the Number values in the
-// Array, narrowing each to a single byte (low 8 bits) so a
-// caller-side width mismatch doesn't leak garbage into the
-// result.
 func builtinStringFromBytes(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("string_from_bytes_unchecked: expected 1 arg (bs), got %d", len(args))
@@ -3320,8 +2601,6 @@ func builtinStringFromBytes(_ *Interp, args []Value) (Value, error) {
 	return String(buf), nil
 }
 
-// `string_from_bytes_range_unchecked(bs, from, end)` — string_from_bytes_unchecked
-// over bs[from, end), with a slice's bounds contract.
 func builtinStringFromBytesRange(in *Interp, args []Value) (Value, error) {
 	if len(args) != 3 {
 		return nil, fmt.Errorf("string_from_bytes_range_unchecked: expected 3 args (bs, from, end), got %d", len(args))
@@ -3341,10 +2620,6 @@ func builtinStringFromBytesRange(in *Interp, args []Value) (Value, error) {
 	return builtinStringFromBytes(in, []Value{Array{E: arr.E[int(from):int(end)]}})
 }
 
-// `slice_unchecked(s, a, b)` — the byte slice `s[a:b]` as a builtin:
-// same bounds contract as the SliceExpr eval above (error on
-// `a < 0 || b > len || a > b`, the interp's stand-in for the
-// codegen trap), no char-boundary check (#5634, D9).
 func builtinSliceUnchecked(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 3 {
 		return nil, fmt.Errorf("slice_unchecked: expected 3 args (s, a, b), got %d", len(args))
@@ -3368,12 +2643,6 @@ func builtinSliceUnchecked(_ *Interp, args []Value) (Value, error) {
 	return String(string(s)[low:high]), nil
 }
 
-// `__method_string_bytes` / `__method_string_as_bytes` —
-// String → Array<Number> conversion, one Number per UTF-8
-// byte. Sidesteps the stdlib's body, which copies with
-// `__memcpy(out as usize, data, n)` from the address
-// `__str_bytes(s, 0 as usize)` answers: the value-tree heap
-// has no flat byte address space to give it.
 func builtinStringBytes(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("__method_string_bytes: expected 1 arg (s), got %d", len(args))
@@ -3390,11 +2659,6 @@ func builtinStringBytes(_ *Interp, args []Value) (Value, error) {
 	return out, nil
 }
 
-// builtinEnv looks up an environment variable. An explicit i.Env
-// map shadows the process environment so tests can run with a
-// scripted environment; nil falls through to os.LookupEnv.
-// Missing keys return `None`; present keys (including those set
-// to empty) return `Some(value)`.
 func builtinEnv(i *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("env: expected 1 arg, got %d", len(args))
@@ -3417,10 +2681,6 @@ func builtinEnv(i *Interp, args []Value) (Value, error) {
 	return optionSome(String(v)), nil
 }
 
-// optionSome / optionNone wrap a value into the canonical
-// Option enum's variant — index 0 for Some, 1 for None. The
-// interpreter mirrors the codegen's tag convention so a match
-// arm `Some(v)` extracts the right payload.
 func optionSome(v Value) *Enum {
 	return &Enum{EnumName: "Option", VariantName: "Some", Index: 0, Payloads: []Value{v}}
 }
@@ -3429,11 +2689,6 @@ func optionNone() *Enum {
 	return &Enum{EnumName: "Option", VariantName: "None", Index: 1}
 }
 
-// interpCharBoundary reports whether byte offset i starts a UTF-8 code
-// point in s, mirroring std/utf8.is_char_boundary: the ends are
-// boundaries by definition, and every other offset is one unless it
-// points at a continuation byte (0b10xxxxxx). It gates the checked
-// `s[a:b]` slice; callers have already bounds-checked i.
 func interpCharBoundary(s String, i int64) bool {
 	if i == 0 || i == int64(len(s)) {
 		return true
@@ -3442,11 +2697,6 @@ func interpCharBoundary(s String, i int64) bool {
 	return b < 0x80 || b >= 0xC0
 }
 
-// builtinReadFile is the interpreter analogue of the
-// $read_file / __fern_read_file runtime helpers. Reads the
-// file in one shot, builds a Result[string, IoError] enum
-// value, and returns it. Errors come from os.ReadFile and get
-// classified via classifyIoError.
 func builtinReadFile(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("read_file: expected 1 arg, got %d", len(args))
@@ -3459,11 +2709,6 @@ func builtinReadFile(_ *Interp, args []Value) (Value, error) {
 	if err != nil {
 		return resultErr(classifyIoError(string(path), err)), nil
 	}
-	// D9 (#5714): a `string` is well-formed UTF-8, so the text read
-	// validates at the boundary. Go's utf8.Valid is exactly the
-	// strict scan std/utf8.is_valid_utf8 performs (overlongs,
-	// surrogates, >U+10FFFF and truncation all rejected). Raw reads
-	// go through read_file_bytes.
 	if !utf8.Valid(data) {
 		return resultErr(&Enum{EnumName: "IoError", VariantName: "InvalidUtf8", Index: 3,
 			Payloads: []Value{path}}), nil
@@ -3471,8 +2716,6 @@ func builtinReadFile(_ *Interp, args []Value) (Value, error) {
 	return resultOk(String(string(data))), nil
 }
 
-// builtinReadFileBytes is read_file's raw sibling: the whole file
-// as a Result[u8[], IoError], no text interpretation.
 func builtinReadFileBytes(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("read_file_bytes: expected 1 arg, got %d", len(args))
@@ -3492,24 +2735,14 @@ func builtinReadFileBytes(_ *Interp, args []Value) (Value, error) {
 	return resultOk(out), nil
 }
 
-// builtinWriteFile mirrors $write_file / __fern_write_file:
-// truncate-write the content, return Result[void, IoError].
-// builtinWriteFileExec is builtinWriteFile with the executable bit —
-// see the checker's note on why a separate builtin rather than a mode
-// argument (#6133).
 func builtinWriteFileExec(i *Interp, args []Value) (Value, error) {
 	v, err := writeFileMode("write_file_exec", args, 0o755)
 	if err != nil {
 		return v, err
 	}
 	if e, ok := v.(*Enum); !ok || e.VariantName != "Ok" {
-		return v, nil // the write itself failed; that Err is the answer
+		return v, nil
 	}
-	// os.WriteFile applies perm only when it CREATES the file, so
-	// recompiling over a stale 0644 output would leave it unrunnable —
-	// the very failure this builtin removes. Chmod unconditionally, the
-	// way cmd/fern's own -o path does. Plain write_file deliberately does
-	// NOT, so it keeps preserving an existing file's mode.
 	path := args[0].(String)
 	if err := os.Chmod(string(path), 0o755); err != nil {
 		return resultErr(classifyIoError(string(path), err)), nil
@@ -3543,8 +2776,6 @@ func builtinWriteFileBytes(_ *Interp, args []Value) (Value, error) {
 	return resultOk(unitValue()), nil
 }
 
-// writeFileMode is the shared body of write_file / write_file_exec; `name`
-// only shapes the argument-error messages.
 func writeFileMode(name string, args []Value, mode os.FileMode) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("%s: expected 2 args, got %d", name, len(args))
@@ -3563,9 +2794,6 @@ func writeFileMode(name string, args []Value, mode os.FileMode) (Value, error) {
 	return resultOk(unitValue()), nil
 }
 
-// builtinNowUnixMS returns wall-clock milliseconds since
-// 1970-01-01 UTC. NTP-adjustable; use `monotonic_ns` for
-// timing. Wraps `time.Now().UnixMilli()`.
 func builtinNowUnixMS(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 0 {
 		return nil, fmt.Errorf("now_unix_ms: expected 0 args, got %d", len(args))
@@ -3573,10 +2801,6 @@ func builtinNowUnixMS(_ *Interp, args []Value) (Value, error) {
 	return Number(time.Now().UnixMilli()), nil
 }
 
-// builtinNowNS returns wall-clock nanoseconds since 1970-01-01
-// UTC — the nanosecond-resolution twin of now_unix_ms (same
-// realtime clock). NTP-adjustable; use `monotonic_ns` for
-// timing. Wraps `time.Now().UnixNano()`.
 func builtinNowNS(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 0 {
 		return nil, fmt.Errorf("now_ns: expected 0 args, got %d", len(args))
@@ -3584,11 +2808,6 @@ func builtinNowNS(_ *Interp, args []Value) (Value, error) {
 	return Number(time.Now().UnixNano()), nil
 }
 
-// builtinMonotonicNS returns nanoseconds from a monotonic
-// clock. `time.Now()` in Go carries a monotonic reading on
-// every supported platform; `UnixNano` exposes the
-// monotonic-aware nanosecond timestamp. The exact reference
-// point isn't observable — only deltas between calls matter.
 func builtinMonotonicNS(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 0 {
 		return nil, fmt.Errorf("monotonic_ns: expected 0 args, got %d", len(args))
@@ -3596,8 +2815,6 @@ func builtinMonotonicNS(_ *Interp, args []Value) (Value, error) {
 	return Number(time.Now().UnixNano()), nil
 }
 
-// builtinClockResolution is the granularity of the clock now_ns reads, in
-// nanoseconds — what the compiled backends ask the kernel for.
 func builtinClockResolution(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 0 {
 		return nil, fmt.Errorf("clock_resolution: expected 0 args, got %d", len(args))
@@ -3605,10 +2822,6 @@ func builtinClockResolution(_ *Interp, args []Value) (Value, error) {
 	return Number(hostClockResolution()), nil
 }
 
-// builtinClockSet sets the system's wall clock. Unlike setuid, which the
-// interpreter refuses, this changes nothing about the compiler's own
-// process: it is the same system-wide change a compiled program makes, at
-// the privilege `fern` runs with.
 func builtinClockSet(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("clock_set: expected 2 args, got %d", len(args))
@@ -3624,9 +2837,6 @@ func builtinClockSet(_ *Interp, args []Value) (Value, error) {
 	return ioResult("", hostClockSet(int64(sec), int64(nsec))), nil
 }
 
-// builtinSleepMS pauses for the given duration (milliseconds).
-// Negative / zero inputs yield immediate return (no spurious
-// wakeup); Go's runtime may delay actual wakeup under load.
 func builtinSleepMS(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("sleep_ms: expected 1 arg, got %d", len(args))
@@ -3641,10 +2851,6 @@ func builtinSleepMS(_ *Interp, args []Value) (Value, error) {
 	return Void{}, nil
 }
 
-// builtinSleepNS pauses for the given duration (nanoseconds).
-// Negative / zero inputs return immediately. Go's timer resolution is
-// coarser than a nanosecond, so a short sleep overshoots — which the
-// primitive's "not shorter than asked" contract allows.
 func builtinSleepNS(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("sleep_ns: expected 1 arg, got %d", len(args))
@@ -3659,46 +2865,27 @@ func builtinSleepNS(_ *Interp, args []Value) (Value, error) {
 	return Void{}, nil
 }
 
-// builtinProcFork mirrors the native `proc_fork()` builtin
-// (docs/CRASH-ONLY-SERVE.md D2') — except the interpreter can
-// never actually fork: the Go runtime is threaded, and a raw
-// fork(2) in a multithreaded process leaves the child with every
-// lock/state snapshot but only one thread — undefined behaviour.
-// So the interp's answer is a permanent -38 (ENOSYS). Callers
-// (std/serve's supervise) detect it and degrade to
-// plain single-process serving, keeping the function runnable
-// under `fern -interp` and on any future fork-less target.
 func builtinProcFork(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 0 {
 		return nil, fmt.Errorf("proc_fork: expected 0 args, got %d", len(args))
 	}
-	return Number(-38), nil // -ENOSYS
+	return Number(-38), nil
 }
 
-// builtinProcExec mirrors the native `proc_exec(path, args)`. Exec'ing here
-// would replace the interpreter process itself, so it is refused the same way
-// proc_fork is: -38 (ENOSYS), letting a caller detect "no process control" and
-// degrade rather than mysteriously vanishing.
 func builtinProcExec(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("proc_exec: expected 2 args, got %d", len(args))
 	}
-	return Number(-38), nil // -ENOSYS
+	return Number(-38), nil
 }
 
-// builtinProcExecAs mirrors the native `proc_exec_as(path, argv, envp)`.
-// Refused for the same reason proc_exec is: the exec would replace the
-// interpreter process itself. -38 (ENOSYS).
 func builtinProcExecAs(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 3 {
 		return nil, fmt.Errorf("proc_exec_as: expected 3 args, got %d", len(args))
 	}
-	return Number(-38), nil // -ENOSYS
+	return Number(-38), nil
 }
 
-// builtinProcWaitpid mirrors the native `proc_waitpid(pid)`. The
-// interp's proc_fork never creates children, so there is never a
-// child to reap: -10 (ECHILD) unconditionally.
 func builtinProcWaitpid(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("proc_waitpid: expected 1 arg, got %d", len(args))
@@ -3706,13 +2893,9 @@ func builtinProcWaitpid(_ *Interp, args []Value) (Value, error) {
 	if _, ok := args[0].(Number); !ok {
 		return nil, fmt.Errorf("proc_waitpid: expected number arg, got %T", args[0])
 	}
-	return Number(-10), nil // -ECHILD
+	return Number(-10), nil
 }
 
-// builtinProcWaitpidNohang is the non-blocking reap. The interpreter cannot
-// bare-fork, so there is never a child to report and the answer is the same
-// -ECHILD proc_waitpid gives — not -1, which would claim a child is still
-// running.
 func builtinProcWaitpidNohang(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("proc_waitpid_nohang: expected 1 arg, got %d", len(args))
@@ -3720,11 +2903,9 @@ func builtinProcWaitpidNohang(_ *Interp, args []Value) (Value, error) {
 	if _, ok := args[0].(Number); !ok {
 		return nil, fmt.Errorf("proc_waitpid_nohang: expected number arg, got %T", args[0])
 	}
-	return Number(-10), nil // -ECHILD
+	return Number(-10), nil
 }
 
-// builtinProcWaitpidStatus is the reap that keeps wait4's raw status. With no
-// child to reap it answers -ECHILD, as proc_waitpid does.
 func builtinProcWaitpidStatus(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("proc_waitpid_status: expected 1 arg, got %d", len(args))
@@ -3732,17 +2913,9 @@ func builtinProcWaitpidStatus(_ *Interp, args []Value) (Value, error) {
 	if _, ok := args[0].(Number); !ok {
 		return nil, fmt.Errorf("proc_waitpid_status: expected number arg, got %T", args[0])
 	}
-	return Number(-10), nil // -ECHILD
+	return Number(-10), nil
 }
 
-// builtinTempDir creates a fresh temporary directory and
-// returns its path inside `Result[string, IoError]`.
-// `prefix` is appended to a unique random suffix the OS picks
-// — `MkdirTemp` lays it out under `os.TempDir()` (`/tmp` on
-// Linux, the macOS equivalent on Darwin). No automatic
-// cleanup: callers either rely on OS-tier scrubbing (CI
-// runners, system tmpfs reboot purge) or call `remove_dir_all`
-// when finished.
 func builtinTempDir(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("temp_dir: expected 1 arg, got %d", len(args))
@@ -3751,10 +2924,6 @@ func builtinTempDir(_ *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("temp_dir: expected string prefix, got %T", args[0])
 	}
-	// A separator would let the prefix steer the directory out of the
-	// temp root. Rejected with the shape every backend's EINVAL takes,
-	// rather than routing Go's own pattern error through
-	// classifyIoError, so the answer is identical on all of them.
 	if strings.ContainsRune(string(prefix), '/') {
 		return resultErr(ioErrorOther(string(prefix), syscall.EINVAL)), nil
 	}
@@ -3765,38 +2934,22 @@ func builtinTempDir(_ *Interp, args []Value) (Value, error) {
 	return resultOk(String(dir)), nil
 }
 
-// builtinReadDir lists the immediate children of `path` — base names
-// only, no recursion, unsorted, without `.` and `..`. It is
-// read_dir_all with those two dropped rather than a separate walk, so
-// the interpreter reports the order a kernel does, the same as every
-// compiled backend. (`os.ReadDir` would be the obvious wrap and was
-// the first one, but it sorts, which is an order no backend produces.)
 func builtinReadDir(_ *Interp, args []Value) (Value, error) {
 	return readDirLike("read_dir", true, args)
 }
 
-// builtinReadDirAll is read_dir without the `.` / `..` filter: every
-// name the directory holds, in the order the kernel reports them. A
-// listing tool needs that order — `ls -f` prints entries in it, and
-// synthesizing the two dot entries at the front puts them somewhere
-// the real directory did not.
 func builtinReadDirAll(_ *Interp, args []Value) (Value, error) {
 	return readDirLike("read_dir_all", false, args)
 }
 
-// builtinReadDirIno is read_dir with each name's inode number and file type
-// from the same directory record, as a DirEntry. Either is 0 where the
-// platform's reader supplies none.
 func builtinReadDirIno(_ *Interp, args []Value) (Value, error) {
 	return readDirInoLike("read_dir_ino", true, args)
 }
 
-// builtinReadDirInoAll is read_dir_ino with `.` and `..` kept.
 func builtinReadDirInoAll(_ *Interp, args []Value) (Value, error) {
 	return readDirInoLike("read_dir_ino_all", false, args)
 }
 
-// readDirInoLike is the body read_dir_ino and read_dir_ino_all share.
 func readDirInoLike(name string, skipDots bool, args []Value) (Value, error) {
 	entries, res, err := readDirEntries(name, skipDots, args)
 	if entries == nil {
@@ -3812,7 +2965,6 @@ func readDirInoLike(name string, skipDots bool, args []Value) (Value, error) {
 	return resultOk(out), nil
 }
 
-// readDirLike is the body read_dir and read_dir_all share.
 func readDirLike(name string, skipDots bool, args []Value) (Value, error) {
 	entries, res, err := readDirEntries(name, skipDots, args)
 	if entries == nil {
@@ -3825,16 +2977,12 @@ func readDirLike(name string, skipDots bool, args []Value) (Value, error) {
 	return resultOk(out), nil
 }
 
-// dirent is one directory record: the name, and the inode number the
-// reader returned with it, 0 where it returns none.
 type dirent struct {
 	name string
 	ino  uint64
-	kind uint32 // the file type as stat's mode bits, 0 when unknown
+	kind uint32
 }
 
-// readDirEntries drains the directory at the path in args. A nil slice
-// means there is no listing, and the Value / error pair is the answer.
 func readDirEntries(name string, skipDots bool, args []Value) ([]dirent, Value, error) {
 	if len(args) != 1 {
 		return nil, nil, fmt.Errorf("%s: expected 1 arg, got %d", name, len(args))
@@ -3856,25 +3004,14 @@ func readDirEntries(name string, skipDots bool, args []Value) ([]dirent, Value, 
 	return kept, nil, nil
 }
 
-// builtinStat returns file metadata wrapped in `Result[FileStat,
-// IoError]`. `is_file` / `is_dir` distinguish regular files
-// from directories; `size` is the byte size for regular files
-// and (on POSIX) the directory-entry size for directories.
-// Symlinks resolve through `os.Stat` (follow), matching the
-// implicit contract of every other file-touching builtin.
 func builtinStat(_ *Interp, args []Value) (Value, error) {
 	return statLike("stat", os.Stat, true, args)
 }
 
-// builtinLstat is stat without following a final symlink. A link therefore
-// reports neither is_file nor is_dir, which is the answer a directory walk
-// needs to decide between recursing, reading, and skipping.
 func builtinLstat(_ *Interp, args []Value) (Value, error) {
 	return statLike("lstat", os.Lstat, false, args)
 }
 
-// statLike is the body both share: the only difference between them is which
-// of os.Stat / os.Lstat resolves the path.
 func statLike(name string, resolve func(string) (os.FileInfo, error), follow bool, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("%s: expected 1 arg, got %d", name, len(args))
@@ -3893,9 +3030,6 @@ func statLike(name string, resolve func(string) (os.FileInfo, error), follow boo
 	return resultOk(fileStatValue(info, statOrigin{path: string(path), follow: follow})), nil
 }
 
-// slashResolve holds a trailing slash to POSIX: it resolves a symlink and
-// names a directory, else ENOTDIR. Linux's kernel does this itself; XNU's
-// answers as though the slash were absent.
 func slashResolve(path string, info os.FileInfo) (os.FileInfo, error) {
 	if info.Mode()&os.ModeSymlink != 0 {
 		followed, err := os.Stat(path)
@@ -3910,7 +3044,6 @@ func slashResolve(path string, info os.FileInfo) (os.FileInfo, error) {
 	return info, nil
 }
 
-// fileStatValue projects an os.FileInfo onto the FileStat struct.
 func fileStatValue(info os.FileInfo, at statOrigin) *Struct {
 	raw := statFields(info, at)
 	return &Struct{
@@ -3940,17 +3073,8 @@ func fileStatValue(info os.FileInfo, at statOrigin) *Struct {
 	}
 }
 
-// errClosedHandle marks a Reader / Writer whose fd is no longer in the
-// open-file table. Every compiled backend hands such a handle straight to the
-// kernel and gets EBADF back, so the methods below answer EBADF rather than
-// failing the interpreter: a program that closes twice, or stats what it
-// closed, did nothing illegal (#8569 is the same finding for `close`).
 var errClosedHandle = errors.New("handle closed")
 
-// streamFile is the *os.File behind a Reader / Writer: the stdio streams
-// while they are still the process's own, else the open-file table. A
-// stdio stream a test replaced with a buffer is no file, and the methods
-// below answer for it the way a host with no descriptor does.
 func streamFile(i *Interp, v Value) (*os.File, error) {
 	fd, err := streamFd(v)
 	if err != nil {
@@ -3978,9 +3102,6 @@ func streamFile(i *Interp, v Value) (*os.File, error) {
 	return f, nil
 }
 
-// builtinFdStat answers `r.stat()` / `w.stat()`: fstat(2) of the handle,
-// the same record `stat(path)` fills. A stdio stream that is not a real
-// file answers Unsupported, as a wasi preview-2 stream does.
 func builtinFdStat(i *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("stat: expected 1 arg")
@@ -4002,14 +3123,6 @@ func builtinFdStat(i *Interp, args []Value) (Value, error) {
 	return resultOk(fileStatValue(info, statOrigin{file: f})), nil
 }
 
-// builtinFdFlags answers `r.flags()` / `w.flags()`: `fcntl(fd, F_GETFL)`
-// reduced to the three bits every target can answer — 1 readable,
-// 2 writable, 4 appending. The access mode is a VALUE rather than a pair
-// of bits in the kernel's word (0 read-only, 1 write-only, 2 read-write),
-// so the two bits come out of two comparisons against it.
-//
-// A stdio stream a test replaced with a buffer has no descriptor to ask
-// and answers Unsupported, the same refusal `stat` gives for it.
 func builtinFdFlags(i *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("flags: expected 1 arg")
@@ -4032,11 +3145,6 @@ func builtinFdFlags(i *Interp, args []Value) (Value, error) {
 	return resultOk(Number(fernHandleFlags(int(raw)))), nil
 }
 
-// builtinHandleIsatty answers `r.isatty()` / `w.isatty()` against the
-// descriptor the handle holds. Everything without one — a closed handle,
-// a stdio stream a test replaced with a buffer — is not a terminal,
-// which is the same "no" the free form gives for a descriptor that
-// cannot be a terminal.
 func builtinHandleIsatty(i *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("isatty: expected 1 arg")
@@ -4054,7 +3162,6 @@ func builtinHandleIsatty(i *Interp, args []Value) (Value, error) {
 	return Bool(tty.IsTerminal(int(f.Fd()))), nil
 }
 
-// fernHandleFlags reduces an open(2) flag word to Fern's own three bits.
 func fernHandleFlags(raw int) int {
 	access := raw & 3
 	bits := 0
@@ -4070,12 +3177,6 @@ func fernHandleFlags(raw int) int {
 	return bits
 }
 
-// syncMethod is the shared body of `fsync` / `fdatasync` / `syncfs` on
-// both handle types: resolve the descriptor, make the call, and answer
-// `Result[void, IoError]` — Ok for success, the errno otherwise.
-//
-// A stdio stream a test replaced with a buffer has no descriptor to
-// flush and answers Unsupported, the same refusal `stat` gives for it.
 func syncMethod(i *Interp, name string, args []Value, call func(int) error) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("%s: expected 1 arg", name)
@@ -4096,38 +3197,20 @@ func syncMethod(i *Interp, name string, args []Value, call func(int) error) (Val
 	return resultOk(unitValue()), nil
 }
 
-// builtinFsync answers `r.fsync()` / `w.fsync()`: fsync(2), the handle's
-// data AND its metadata out to the device. A handle whose kind cannot be
-// flushed — a pipe, a FIFO, a character device — answers EINVAL, which
-// is what `sync(1)` reports as `error syncing`.
 func builtinFsync(i *Interp, args []Value) (Value, error) {
 	return syncMethod(i, "fsync", args, hostFsync)
 }
 
-// builtinFdatasync answers `r.fdatasync()` / `w.fdatasync()`:
-// fdatasync(2), which omits the metadata not needed to read the data
-// back. A directory answers EBADF, which is why `sync -d` on one is not
-// an error GNU reports.
 func builtinFdatasync(i *Interp, args []Value) (Value, error) {
 	return syncMethod(i, "fdatasync", args, hostFdatasync)
 }
 
-// builtinSyncfs answers `r.syncfs()` / `w.syncfs()`: syncfs(2), the
-// whole filesystem the handle lives on rather than the handle's own
-// file. A FIFO is flushable this way where fsync is not — the fd names
-// a filesystem even when it names nothing fsync can write.
 func builtinSyncfs(i *Interp, args []Value) (Value, error) {
 	return syncMethod(i, "syncfs", args, hostSyncfs)
 }
 
-// errNoFadvise is a host's answer to a drop_cache it has no call for, on
-// a descriptor that could otherwise take one.
 var errNoFadvise = errors.New("no fadvise on this host")
 
-// builtinDropCache answers `r.drop_cache(offset, len)` /
-// `w.drop_cache(offset, len)`: posix_fadvise(2) with POSIX_FADV_DONTNEED
-// over that range of the handle's file, len 0 meaning to the end. A host
-// with no fadvise answers Unsupported.
 func builtinDropCache(i *Interp, args []Value) (Value, error) {
 	if len(args) != 3 {
 		return nil, fmt.Errorf("drop_cache: expected 3 args")
@@ -4152,9 +3235,6 @@ func builtinDropCache(i *Interp, args []Value) (Value, error) {
 	return v, err
 }
 
-// builtinSync answers `sync()`: sync(2), scheduling write-back of every
-// dirty buffer on the machine. It returns nothing because the call
-// cannot fail on either host this runs on.
 func builtinSync(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 0 {
 		return nil, fmt.Errorf("sync: expected 0 args, got %d", len(args))
@@ -4163,10 +3243,6 @@ func builtinSync(_ *Interp, args []Value) (Value, error) {
 	return Void{}, nil
 }
 
-// builtinHandleSeek answers `r.seek(offset, whence)` and `w.seek(offset,
-// whence)`: lseek(2), with the new offset back. A pipe answers ESPIPE,
-// which reaches the caller as `Other("Illegal seek")`, exactly as the
-// compiled backends report it.
 func builtinHandleSeek(i *Interp, args []Value) (Value, error) {
 	if len(args) != 3 {
 		return nil, fmt.Errorf("seek: expected 3 args")
@@ -4186,7 +3262,6 @@ func builtinHandleSeek(i *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("seek: whence must be a number")
 	}
-	// Linux checks the whence before the descriptor's kind; XNU does not.
 	if whence < 0 || whence > 4 {
 		return resultErr(ioErrorOther("", syscall.EINVAL)), nil
 	}
@@ -4200,8 +3275,6 @@ func builtinHandleSeek(i *Interp, args []Value) (Value, error) {
 	return resultOk(Number(pos)), nil
 }
 
-// hostWhence maps a Fern whence onto the host's: 3 and 4 are SEEK_DATA and
-// SEEK_HOLE on every target, and Darwin numbers the pair the other way round.
 func hostWhence(w int) int {
 	if runtime.GOOS == "darwin" && (w == 3 || w == 4) {
 		return 7 - w
@@ -4209,11 +3282,6 @@ func hostWhence(w int) int {
 	return w
 }
 
-// builtinReaderSpliceTo answers `r.splice_to(w, max)` and
-// `r.copy_range_to(w, max)` with Unsupported,
-// the refusal that promises nothing moved, so the caller's read_chunk and
-// write fallback carries the bytes: the interpreter's stdio need not be a
-// descriptor at all.
 func builtinReaderSpliceTo(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 3 {
 		return nil, fmt.Errorf("splice_to: expected 3 args")
@@ -4221,10 +3289,6 @@ func builtinReaderSpliceTo(_ *Interp, args []Value) (Value, error) {
 	return resultErr(&Enum{EnumName: "IoError", VariantName: "Unsupported", Index: 5}), nil
 }
 
-// builtinAccess answers `access(path, mode)` against the EFFECTIVE ids,
-// which is `euidaccess(3)` and what a shell's `test -r` / `-w` / `-x`
-// asks. `Ok(())` means permitted; the errno reaches the caller as the
-// IoError so EACCES stays distinguishable from ENOENT.
 func builtinAccess(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("access: expected 2 args, got %d", len(args))
@@ -4243,8 +3307,6 @@ func builtinAccess(_ *Interp, args []Value) (Value, error) {
 	return resultOk(unitValue()), nil
 }
 
-// builtinGeteuid / builtinGetegid report the process's effective ids.
-// Neither can fail, so both are plain numbers.
 func builtinGeteuid(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 0 {
 		return nil, fmt.Errorf("geteuid: expected 0 args, got %d", len(args))
@@ -4259,9 +3321,6 @@ func builtinGetegid(_ *Interp, args []Value) (Value, error) {
 	return Number(os.Getegid()), nil
 }
 
-// builtinGetuid / builtinGetgid report the REAL ids — the identity the
-// process was started under, which a set-uid binary keeps while its
-// effective ids change.
 func builtinGetuid(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 0 {
 		return nil, fmt.Errorf("getuid: expected 0 args, got %d", len(args))
@@ -4269,9 +3328,6 @@ func builtinGetuid(_ *Interp, args []Value) (Value, error) {
 	return Number(os.Getuid()), nil
 }
 
-// builtinAccountEntry answers 0, "no entry from the account database", as
-// every compiled target but arm64-darwin does: the interpreter has no C
-// struct to hand back, so the caller reads the files.
 func builtinAccountEntry(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("__account_entry: expected 2 args, got %d", len(args))
@@ -4286,9 +3342,6 @@ func builtinGetgid(_ *Interp, args []Value) (Value, error) {
 	return Number(os.Getgid()), nil
 }
 
-// builtinGetgroups reports the supplementary group set in the kernel's
-// order. A kernel that refuses answers the empty list, which is what
-// the compiled backends do with a failed getgroups(2).
 func builtinGetgroups(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 0 {
 		return nil, fmt.Errorf("getgroups: expected 0 args, got %d", len(args))
@@ -4304,11 +3357,6 @@ func builtinGetgroups(_ *Interp, args []Value) (Value, error) {
 	return out, nil
 }
 
-// builtinEnviron reports the whole environment as raw `NAME=VALUE`
-// entries, in the order the process received them.
-//
-// The `i.Env` override is a map and therefore carries no order, so the
-// override path answers in name order rather than inventing one.
 func builtinEnviron(i *Interp, args []Value) (Value, error) {
 	if len(args) != 0 {
 		return nil, fmt.Errorf("environ: expected 0 args, got %d", len(args))
@@ -4333,8 +3381,6 @@ func builtinEnviron(i *Interp, args []Value) (Value, error) {
 	return out, nil
 }
 
-// clampOffset brings a caller's byte offset into [0, n], which is what every
-// range-taking kernel does with one rather than trapping.
 func clampOffset(off, n int) int {
 	if off < 0 {
 		return 0
@@ -4345,8 +3391,6 @@ func clampOffset(off, n int) int {
 	return off
 }
 
-// builtinHostname reports the kernel's node name; a kernel that cannot
-// say answers the empty string, as the compiled backends do.
 func builtinHostname(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 0 {
 		return nil, fmt.Errorf("hostname: expected 0 args, got %d", len(args))
@@ -4358,9 +3402,6 @@ func builtinHostname(_ *Interp, args []Value) (Value, error) {
 	return String(h), nil
 }
 
-// builtinUnameField reports one field of the kernel's utsname record by
-// its position in the struct; an index naming no field, and a kernel
-// that cannot say, both answer the empty string.
 func builtinUnameField(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("uname_field: expected 1 arg, got %d", len(args))
@@ -4377,9 +3418,6 @@ func builtinUnameField(_ *Interp, args []Value) (Value, error) {
 	return String(fields[i]), nil
 }
 
-// builtinGetcwd reports the process's working directory through the
-// syscall, as the compiled backends do. os.Getwd would answer $PWD
-// whenever it names `.`, which keeps the symbolic links getcwd(2) resolves.
 func builtinGetcwd(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 0 {
 		return nil, fmt.Errorf("getcwd: expected 0 args, got %d", len(args))
@@ -4391,9 +3429,6 @@ func builtinGetcwd(_ *Interp, args []Value) (Value, error) {
 	return resultOk(String(wd)), nil
 }
 
-// builtinChdir moves the process's working directory — the move getcwd only
-// ever reports. The same syscall the compiled backends make, with the errno
-// classified through the same IoError variants.
 func builtinChdir(_ *Interp, args []Value) (Value, error) {
 	p, err := pathArgs("chdir", args, 1)
 	if err != nil {
@@ -4402,22 +3437,6 @@ func builtinChdir(_ *Interp, args []Value) (Value, error) {
 	return ioResult(p[0], syscall.Chdir(p[0])), nil
 }
 
-// builtinChroot, builtinSetuid, builtinSetgid and builtinSetgroups all
-// REFUSE with ENOSYS rather than making the syscall, the way proc_exec
-// and proc_fork do and for a stronger version of their reason.
-//
-// The interpreter is the compiler's own process. A chroot here would
-// confine the compiler to the directory a compiled program asked for, and
-// a setuid would drop the compiler's privileges irreversibly — there is no
-// setuid back. Both would then apply to every later module the same
-// process compiles, which is a failure with no diagnostic anywhere near
-// its cause.
-//
-// ENOSYS rather than EPERM because it is the truthful one: the
-// interpreter has no process control, as distinct from having it and
-// being refused. `chroot(1)` under `fern -run` therefore reports
-// "Function not implemented" where a compiled build reports "Operation
-// not permitted", and that difference is the interpreter's honesty.
 func builtinChroot(_ *Interp, args []Value) (Value, error) {
 	p, err := pathArgs("chroot", args, 1)
 	if err != nil {
@@ -4444,9 +3463,6 @@ func builtinSetgroups(_ *Interp, args []Value) (Value, error) {
 	return ioResult("", syscall.ENOSYS), nil
 }
 
-// credRefusal is the shared body of setuid and setgid: the argument is
-// type-checked so a caller passing the wrong shape is still told, and the
-// call is then refused.
 func credRefusal(name string, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("%s: expected 1 arg, got %d", name, len(args))
@@ -4457,10 +3473,6 @@ func credRefusal(name string, args []Value) (Value, error) {
 	return ioResult("", syscall.ENOSYS), nil
 }
 
-// builtinCPUCount reports how many processing units the process may run
-// on. runtime.NumCPU is that same number on Linux — the Go runtime sets
-// it from sched_getaffinity(2) at startup, which is what the compiled
-// backends read.
 func builtinCPUCount(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 0 {
 		return nil, fmt.Errorf("cpu_count: expected 0 args, got %d", len(args))
@@ -4468,10 +3480,6 @@ func builtinCPUCount(_ *Interp, args []Value) (Value, error) {
 	return Number(runtime.NumCPU()), nil
 }
 
-// signalArg reads the one signal-number argument the two disposition
-// builtins take. The number is the caller's — the compiled backends pass
-// it straight to rt_sigaction, so a value the kernel rejects is the
-// caller's error there and is rejected here for the same reason.
 func signalArg(name string, args []Value) (syscall.Signal, bool, error) {
 	if len(args) != 1 {
 		return 0, false, fmt.Errorf("%s: expected 1 arg, got %d", name, len(args))
@@ -4482,29 +3490,13 @@ func signalArg(name string, args []Value) (syscall.Signal, bool, error) {
 	}
 	v := int64(n)
 	if v == sigKill || v == sigStop {
-		// No kernel lets these two be caught, blocked or ignored: both
-		// answer EINVAL, and `env --ignore-signal=KILL` reports exactly
-		// that.
 		return 0, false, nil
 	}
 	return syscall.Signal(int32(v)), v >= 1 && v <= maxSignal, nil
 }
 
-// maxSignal is the highest number these builtins will hand to os/signal.
-//
-// It is a guard against a HANG, not a validity check. Go's runtime indexes a
-// 65-entry sigtable, and `signal.Stop` on anything outside it never returns —
-// measured here: 0..64 return, -1 / 65 / 99 deadlock. The compiled backends
-// pass the number straight to rt_sigaction, which answers EINVAL, which they
-// ignore; so out of range they do nothing, and without this the interpreter
-// would hang where they no-op. 64 rather than 31 because Linux's realtime
-// signals run to 64 and are perfectly real dispositions to set.
 const maxSignal = 64
 
-// builtinStatfs mirrors the native `statfs(path)` — the geometry and the
-// length limits of the filesystem the path resolves on. Where those numbers
-// come from is per-OS (fsstat_linux.go / fsstat_darwin.go); the projection
-// onto FsStat is not.
 func builtinStatfs(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("statfs: expected 1 arg, got %d", len(args))
@@ -4536,11 +3528,6 @@ func builtinStatfs(_ *Interp, args []Value) (Value, error) {
 	}), nil
 }
 
-// builtinMounts mirrors the native `mounts()` — the mounted filesystems in
-// the order the kernel lists them. Where the rows come from is per-OS
-// (mounts_linux.go / mounts_darwin.go).
-// builtinSysctl mirrors __fern_sysctl: the kernel's bytes for a MIB on
-// Darwin (sysctlMIB), ENOSYS everywhere else.
 func builtinSysctl(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("sysctl: expected 1 arg, got %d", len(args))
@@ -4591,12 +3578,6 @@ func builtinMounts(_ *Interp, args []Value) (Value, error) {
 	return resultOk(out), nil
 }
 
-// builtinRlimitNofile mirrors the native `rlimit_nofile()` — the soft
-// RLIMIT_NOFILE the kernel is enforcing on this process.
-//
-// An unlimited resource reports i64 max. Linux spells RLIM_INFINITY as all
-// ones and Darwin as i64 max, so clamping anything above i64's range covers
-// both without either spelling reaching a caller as a count.
 func builtinRlimitNofile(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 0 {
 		return nil, fmt.Errorf("rlimit_nofile: expected 0 args, got %d", len(args))
@@ -4606,8 +3587,6 @@ func builtinRlimitNofile(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("rlimit_nofile: no getrlimit(2) on %s", runtime.GOOS)
 	}
 	if err != nil {
-		// Only EFAULT and EINVAL are defined, and neither can happen
-		// against a named resource and a buffer nofileSoft owns.
 		return Number(math.MaxInt64), nil
 	}
 	if cur > math.MaxInt64 {
@@ -4616,7 +3595,6 @@ func builtinRlimitNofile(_ *Interp, args []Value) (Value, error) {
 	return Number(int64(cur)), nil
 }
 
-// builtinDisableCoreDumps mirrors the native `disable_core_dumps()`.
 func builtinDisableCoreDumps(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 0 {
 		return nil, fmt.Errorf("disable_core_dumps: expected 0 args, got %d", len(args))
@@ -4624,10 +3602,6 @@ func builtinDisableCoreDumps(_ *Interp, args []Value) (Value, error) {
 	return Bool(disableCoreDumps()), nil
 }
 
-// builtinProcessAlive mirrors the native `process_alive(pid)` — kill(pid, 0),
-// whose errno only refines "yes": nil and EPERM both mean the process exists,
-// ESRCH means it does not. A pid of 0 or below names a process group rather
-// than a process and is false without asking the kernel.
 func builtinProcessAlive(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("process_alive: expected 1 arg, got %d", len(args))
@@ -4643,13 +3617,6 @@ func builtinProcessAlive(_ *Interp, args []Value) (Value, error) {
 	return Bool(err == nil || err == syscall.EPERM), nil
 }
 
-// builtinSignalSend mirrors the native `signal_send(pid, sig)` —
-// kill(2), of which `process_alive` is the signal-0 corner.
-//
-// `pid` goes to the kernel exactly as written, negatives and zero
-// included: those name process GROUPS, which is what a sender means by
-// them. The errno is the whole answer, so it is classified rather than
-// collapsed — ESRCH, EPERM and EINVAL all say different things.
 func builtinSignalSend(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("signal_send: expected 2 args, got %d", len(args))
@@ -4662,18 +3629,9 @@ func builtinSignalSend(_ *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("signal_send: expected number signal, got %T", args[1])
 	}
-	// The path an IoError from here carries is empty: the primitive never
-	// saw the text its caller parsed the pid out of, and a decimal
-	// spelling of `pid` would put a string in the error that the caller's
-	// own diagnostic must not use.
 	return ioResult("", syscall.Kill(int(pid), syscall.Signal(sig))), nil
 }
 
-// builtinSetProcessGroup is setpgid(2).
-//
-// Both zeroes are the syscall's own conventions, kept rather than
-// reinvented: pid 0 is the caller and pgid 0 is "the pid's own value", so
-// set_process_group(0, 0) is a process putting itself in a fresh group.
 func builtinSetProcessGroup(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("set_process_group: expected 2 args, got %d", len(args))
@@ -4689,44 +3647,26 @@ func builtinSetProcessGroup(_ *Interp, args []Value) (Value, error) {
 	return ioResult("", hostSetProcessGroup(int(pid), int(pgid))), nil
 }
 
-// builtinSignalIgnore sets one signal's disposition to SIG_IGN.
-//
-// The interpreter shares its process with the Go runtime, so this moves
-// the disposition of `fern` itself for as long as the program runs —
-// which is the same scope a compiled program has, one process. The
-// difference to know about is SIGPIPE: the Go runtime already forces
-// EPIPE rather than death for writes to a descriptor above 2, so an
-// interpreted program survives a broken pipe whether or not it asked
-// to. Ignoring it here still narrows the gap rather than widening it.
 func builtinSignalIgnore(_ *Interp, args []Value) (Value, error) {
 	sig, ok, err := signalArg("signal_ignore", args)
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
-		return Number(-22), nil // -EINVAL, as the kernel answers
+		return Number(-22), nil
 	}
 	signal.Ignore(sig)
 	uncatch(sig)
 	return Number(0), nil
 }
 
-// builtinSignalDefault restores one signal's default disposition, so a
-// utility that ignored a signal for one stretch of work can put it back.
-//
-// `signal.Reset` alone does not undo `signal.Ignore`: Ignore sets a per-signal
-// "ignored" bit that the runtime consults BEFORE the OS disposition matters —
-// runtime.sigpipe() returns early on it — and only Notify clears that bit,
-// which Reset's documentation says by naming Notify as the only thing it
-// undoes. Resetting alone therefore left an ignored SIGPIPE ignored, where
-// every compiled backend put the kill back.
 func builtinSignalDefault(_ *Interp, args []Value) (Value, error) {
 	sig, ok, err := signalArg("signal_default", args)
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
-		return Number(-22), nil // -EINVAL, as the kernel answers
+		return Number(-22), nil
 	}
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, sig)
@@ -4736,11 +3676,6 @@ func builtinSignalDefault(_ *Interp, args []Value) (Value, error) {
 	return Number(0), nil
 }
 
-// builtinSignalMask mirrors the native `signal_mask(how, mask)` — the set of
-// signals that was blocked BEFORE the call, in `mask`'s bit convention, so
-// one call both reads and writes. `how` is Fern's numbering; the platform
-// helper maps it onto each kernel's (Linux's is the same, XNU's is +1). A
-// `how` the kernel rejects answers its errno negated, like a failing read.
 func builtinSignalMask(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("signal_mask: expected 2 args, got %d", len(args))
@@ -4760,19 +3695,13 @@ func builtinSignalMask(_ *Interp, args []Value) (Value, error) {
 	return Number(prev), nil
 }
 
-// builtinSignalDisposition reads one signal's disposition: 0 default /
-// 1 ignored / 2 a handler is installed. `signal.Ignored` and the catch table
-// are the record of what the three setters did — the only ways a Fern program
-// can move a disposition — so a handler the Go runtime keeps for itself reads
-// as 0 here where a native sigaction would say 2. A signal number the kernel
-// rejects answers the same EINVAL the setters do.
 func builtinSignalDisposition(_ *Interp, args []Value) (Value, error) {
 	sig, ok, err := signalArg("signal_disposition", args)
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
-		return Number(-22), nil // -EINVAL, as the kernel answers
+		return Number(-22), nil
 	}
 	if signal.Ignored(sig) {
 		return Number(1), nil
@@ -4783,11 +3712,6 @@ func builtinSignalDisposition(_ *Interp, args []Value) (Value, error) {
 	return Number(0), nil
 }
 
-// builtinRemoveFile unlinks `path`, answering Result[void, IoError]
-// as `write_file` does. Removing a non-
-// existent file surfaces as `Err(NotFound(...))` — Go's
-// `os.Remove` errors on missing target, and we preserve that
-// so a typo doesn't silently succeed.
 func builtinRemoveFile(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("remove_file: expected 1 arg, got %d", len(args))
@@ -4802,9 +3726,6 @@ func builtinRemoveFile(_ *Interp, args []Value) (Value, error) {
 	return resultOk(unitValue()), nil
 }
 
-// pathArgs pulls `n` string arguments out of a builtin call, naming
-// the builtin in the error the way every other filesystem builtin here
-// does.
 func pathArgs(name string, args []Value, n int) ([]string, error) {
 	if len(args) != n {
 		return nil, fmt.Errorf("%s: expected %d arg(s), got %d", name, n, len(args))
@@ -4820,8 +3741,6 @@ func pathArgs(name string, args []Value, n int) ([]string, error) {
 	return out, nil
 }
 
-// ioResult wraps a syscall outcome in Result[void, IoError] — the shape
-// every mutating filesystem builtin returns.
 func ioResult(path string, err error) Value {
 	if err != nil {
 		return resultErr(classifyIoError(path, err))
@@ -4829,9 +3748,6 @@ func ioResult(path string, err error) Value {
 	return resultOk(unitValue())
 }
 
-// builtinCreateDir creates ONE directory. Unlike create_dir_all,
-// EEXIST is an error and no parent is created: this is mkdir(2), and
-// `mkdir(1)` is entirely about the errno it returns.
 func builtinCreateDir(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("create_dir: expected 2 args, got %d", len(args))
@@ -4847,9 +3763,6 @@ func builtinCreateDir(_ *Interp, args []Value) (Value, error) {
 	return ioResult(string(path), syscall.Mkdir(string(path), uint32(int(mode))&0o7777)), nil
 }
 
-// builtinRemoveDir removes one EMPTY directory. `os.Remove` would fall
-// back to unlink for a non-directory and report the wrong errno for
-// `rmdir(1)`, so this is rmdir(2) itself.
 func builtinRemoveDir(_ *Interp, args []Value) (Value, error) {
 	p, err := pathArgs("remove_dir", args, 1)
 	if err != nil {
@@ -4858,19 +3771,14 @@ func builtinRemoveDir(_ *Interp, args []Value) (Value, error) {
 	return ioResult(p[0], syscall.Rmdir(p[0])), nil
 }
 
-// builtinCreateLink hard-links `path` to the existing `target`.
 func builtinCreateLink(_ *Interp, args []Value) (Value, error) {
 	p, err := pathArgs("create_link", args, 2)
 	if err != nil {
 		return nil, err
 	}
-	// The IoError names the link being created, which is the operand
-	// every diagnostic over this builtin reports.
 	return ioResult(p[1], syscall.Link(p[0], p[1])), nil
 }
 
-// builtinCloneFile mirrors __fern_clone_file: `dest` as a copy-on-write
-// clone of `src`, by the host's own call (clonefile_*.go).
 func builtinCloneFile(_ *Interp, args []Value) (Value, error) {
 	p, err := pathArgs("clone_file", args, 2)
 	if err != nil {
@@ -4879,8 +3787,6 @@ func builtinCloneFile(_ *Interp, args []Value) (Value, error) {
 	return ioResult(p[1], cloneFile(p[0], p[1])), nil
 }
 
-// builtinCreateSymlink writes a symbolic link at `path` holding the
-// bytes `target`, which is never resolved.
 func builtinCreateSymlink(_ *Interp, args []Value) (Value, error) {
 	p, err := pathArgs("create_symlink", args, 2)
 	if err != nil {
@@ -4889,9 +3795,6 @@ func builtinCreateSymlink(_ *Interp, args []Value) (Value, error) {
 	return ioResult(p[1], syscall.Symlink(p[0], p[1])), nil
 }
 
-// builtinReadLink reads the target a symbolic link holds. The kernel
-// truncates silently into a fixed buffer, so the buffer grows until the
-// answer fits inside it — a target can be as long as PATH_MAX.
 func builtinReadLink(_ *Interp, args []Value) (Value, error) {
 	p, err := pathArgs("read_link", args, 1)
 	if err != nil {
@@ -4910,8 +3813,6 @@ func builtinReadLink(_ *Interp, args []Value) (Value, error) {
 	return resultErr(ioErrorOther(p[0], syscall.ENAMETOOLONG)), nil
 }
 
-// builtinGetxattr reads an extended attribute's value, following a final
-// symlink; builtinLgetxattr asks about the link itself.
 func builtinGetxattr(_ *Interp, args []Value) (Value, error) {
 	return xattrResult("getxattr", args, true, false)
 }
@@ -4951,8 +3852,6 @@ func xattrResult(name string, args []Value, follow, raw bool) (Value, error) {
 	return resultOk(String(v)), nil
 }
 
-// builtinSetxattr creates or replaces an extended attribute, following a
-// final symlink; builtinLsetxattr sets it on the link itself.
 func builtinSetxattr(_ *Interp, args []Value) (Value, error) {
 	return setxattrResult("setxattr", args, true)
 }
@@ -4996,21 +3895,14 @@ func setxattrBytesResult(name string, args []Value, follow bool) (Value, error) 
 	return ioResult(p[0], setxattrBytes(p[0], p[1], data, follow)), nil
 }
 
-// builtinRename moves a directory entry. Nothing is copied and an
-// existing destination is replaced atomically; a rename across
-// filesystems stays EXDEV rather than becoming a copy here.
 func builtinRename(_ *Interp, args []Value) (Value, error) {
 	p, err := pathArgs("rename", args, 2)
 	if err != nil {
 		return nil, err
 	}
-	// The IoError names the destination: EXDEV, ENOTEMPTY and EISDIR
-	// are all properties of where the entry was going.
 	return ioResult(p[1], syscall.Rename(p[0], p[1])), nil
 }
 
-// builtinRenameNoreplace is rename that refuses an existing destination
-// with EEXIST, in the same kernel call.
 func builtinRenameNoreplace(_ *Interp, args []Value) (Value, error) {
 	p, err := pathArgs("rename_noreplace", args, 2)
 	if err != nil {
@@ -5019,7 +3911,6 @@ func builtinRenameNoreplace(_ *Interp, args []Value) (Value, error) {
 	return ioResult(p[1], renameNoReplace(p[0], p[1])), nil
 }
 
-// builtinRenameExchange swaps two existing names atomically.
 func builtinRenameExchange(_ *Interp, args []Value) (Value, error) {
 	p, err := pathArgs("rename_exchange", args, 2)
 	if err != nil {
@@ -5028,8 +3919,6 @@ func builtinRenameExchange(_ *Interp, args []Value) (Value, error) {
 	return ioResult(p[1], renameExchangeNames(p[0], p[1])), nil
 }
 
-// builtinChmod sets the permission bits of an existing entry. The umask
-// does not apply: it filters a creation, and this is not one.
 func builtinChmod(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("chmod: expected 2 args, got %d", len(args))
@@ -5045,10 +3934,6 @@ func builtinChmod(_ *Interp, args []Value) (Value, error) {
 	return ioResult(string(path), syscall.Chmod(string(path), uint32(int(mode))&0o7777)), nil
 }
 
-// builtinChmodAt is `chmod` with a follow flag. `follow` false asks for
-// the symlink's own bits, which only Darwin has; Linux answers
-// EOPNOTSUPP (ENOSYS below fchmodat2) and that is the Err. The per-kernel
-// call lives in chmodat_linux.go / chmodat_darwin.go.
 func builtinChmodAt(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 3 {
 		return nil, fmt.Errorf("chmod_at: expected 3 args, got %d", len(args))
@@ -5068,10 +3953,6 @@ func builtinChmodAt(_ *Interp, args []Value) (Value, error) {
 	return ioResult(string(path), chmodAt(string(path), uint32(int(mode))&0o7777, bool(follow))), nil
 }
 
-// builtinTruncate sets the length of an existing file — truncate(2).
-// Path-based rather than fd-based: no Fern open mode yields a writable
-// descriptor to an existing file without truncating it first, so an
-// ftruncate form could not express an EXTEND.
 func builtinTruncate(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("truncate: expected 2 args, got %d", len(args))
@@ -5084,27 +3965,11 @@ func builtinTruncate(_ *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("truncate: expected number length, got %T", args[1])
 	}
-	// syscall.Truncate rather than os.Truncate: os.Truncate wraps the
-	// errno in a *PathError whose Op is "truncate", and classifyIoError
-	// reads the bare errno.
 	return ioResult(string(path), syscall.Truncate(string(path), int64(length))), nil
 }
 
-// badSIFMT is an S_IFMT no file type uses, and `mknodat` answers EINVAL
-// for it — measured. Every implementation of this builtin substitutes it
-// for the caller's mode when the major / minor pair does not fit the
-// target's dev_t, so an out-of-range pair is the kernel's own refusal
-// rather than a node silently created with different numbers. The
-// packing is lossy, so there is nothing to hand the kernel that it would
-// reject on its own: it ignores every bit of `dev` above 31.
 const badSIFMT = 0o170000
 
-// builtinMknod creates a FIFO or a device node — mknodat(2). One builtin
-// for both: mkfifo(3) is this call with a fixed type.
-//
-// The dev_t encoding is per-kernel and lives in mknod_linux.go /
-// mknod_darwin.go, which is why the major and minor reach `mknodAt` as
-// the separate pair the caller named rather than as a packed word.
 func builtinMknod(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 4 {
 		return nil, fmt.Errorf("mknod: expected 4 args, got %d", len(args))
@@ -5124,14 +3989,6 @@ func builtinMknod(_ *Interp, args []Value) (Value, error) {
 	return ioResult(string(path), mknodAt(string(path), n[0], n[1], n[2])), nil
 }
 
-// builtinChownAt sets the owner and the group of an entry — fchownat(2).
-// One builtin for `chown(1)` and `chgrp(1)` alike: -1 for either id
-// leaves that half alone, so a group-only change is this call with the
-// uid left at -1.
-//
-// The follow flag picks between chown(2) and lchown(2), which is what
-// `chown -h` and every -R walk that meets a symlink need. That choice
-// lives in chownat_unix.go.
 func builtinChownAt(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 4 {
 		return nil, fmt.Errorf("chown_at: expected 4 args, got %d", len(args))
@@ -5146,9 +4003,6 @@ func builtinChownAt(_ *Interp, args []Value) (Value, error) {
 		if !ok {
 			return nil, fmt.Errorf("chown_at: expected number arg %d, got %T", i, args[i])
 		}
-		// int32 first: the ids are i32 and -1 is the leave-alone
-		// sentinel, which a widening through an unsigned type would
-		// turn into 4294967295 for the kernel to reject.
 		ids[i-1] = int(int32(int64(v)))
 	}
 	follow, ok := args[3].(Bool)
@@ -5158,11 +4012,6 @@ func builtinChownAt(_ *Interp, args []Value) (Value, error) {
 	return ioResult(string(path), chownAt(string(path), ids[0], ids[1], bool(follow))), nil
 }
 
-// The bits of set_file_times' `flags` word. They are Fern's own, not the
-// kernel's: AT_SYMLINK_NOFOLLOW is 0x100 on Linux and 0x20 on Darwin,
-// and the omit and now bits are not a flags word at all — each is
-// UTIME_OMIT or UTIME_NOW written into the nanosecond half of the
-// timespec it names.
 const (
 	timesNoFollow  = 1
 	timesOmitAtime = 2
@@ -5171,9 +4020,6 @@ const (
 	timesNowMtime  = 16
 )
 
-// builtinSetFileTimes writes the access and modification timestamps of
-// an entry — utimensat(2). `os.Chtimes` can express neither omit bit nor
-// the nofollow flag, so this goes to the syscall.
 func builtinSetFileTimes(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 6 {
 		return nil, fmt.Errorf("set_file_times: expected 6 args, got %d", len(args))
@@ -5211,8 +4057,6 @@ func builtinSetFileTimes(_ *Interp, args []Value) (Value, error) {
 	return ioResult(string(path), err), nil
 }
 
-// builtinUmask sets the process file-mode creation mask and answers the
-// previous one — umask(2), which has no read-only form.
 func builtinUmask(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("umask: expected 1 arg, got %d", len(args))
@@ -5224,8 +4068,6 @@ func builtinUmask(_ *Interp, args []Value) (Value, error) {
 	return Number(setUmask(int(mask) & 0o7777)), nil
 }
 
-// builtinPriority is getpriority(PRIO_PROCESS, 0): this process's nice
-// value, where -20 is the most favourable and 19 the least.
 func builtinPriority(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 0 {
 		return nil, fmt.Errorf("priority: expected 0 args, got %d", len(args))
@@ -5233,12 +4075,6 @@ func builtinPriority(_ *Interp, args []Value) (Value, error) {
 	return Number(getProcPriority()), nil
 }
 
-// builtinSetPriority is setpriority(PRIO_PROCESS, 0, nice).
-//
-// The interpreter shares its process with the Go runtime, so this
-// renices `fern` itself for as long as the program runs — the same
-// one-process scope a compiled program has, and the same scope
-// `signal_ignore` moves in.
 func builtinSetPriority(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("set_priority: expected 1 arg, got %d", len(args))
@@ -5247,17 +4083,9 @@ func builtinSetPriority(_ *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("set_priority: expected number nice value, got %T", args[0])
 	}
-	// The path is empty for the same reason signal_send's is: the
-	// primitive never saw the text its caller parsed the value out of.
 	return ioResult("", setProcPriority(int(nice))), nil
 }
 
-// builtinCreateDirAll creates `path` and every missing parent.
-// `os.MkdirAll` reports an error when a component already exists as
-// a non-directory; the compiled backends fold every EEXIST into
-// success, so an existing `path` is Ok here too and only a genuine
-// failure (a missing parent that could not be created, permission,
-// ENOTDIR partway down) surfaces as `Err`.
 func builtinCreateDirAll(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("create_dir_all: expected 1 arg, got %d", len(args))
@@ -5275,11 +4103,6 @@ func builtinCreateDirAll(_ *Interp, args []Value) (Value, error) {
 	return resultOk(unitValue()), nil
 }
 
-// builtinRemoveDirAll recursively removes `path`. Mirrors
-// Go's `os.RemoveAll` semantics: missing target is silently
-// OK, permission / read-only-filesystem errors surface via
-// `Some(IoError)`. Used by tests to scrub `temp_dir` output
-// at the end of a run.
 func builtinRemoveDirAll(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("remove_dir_all: expected 1 arg, got %d", len(args))
@@ -5294,17 +4117,6 @@ func builtinRemoveDirAll(_ *Interp, args []Value) (Value, error) {
 	return resultOk(unitValue()), nil
 }
 
-// builtinSubprocess spawns `cmd` with `args` as its argv (NOT
-// including the executable name itself; the caller supplies
-// it separately as the first arg). `stdin_text` is fed to the
-// child's standard input — pass `""` when the child reads
-// nothing. Returns a ProcessResult struct populated with
-// captured stdout / stderr / exit_code; spawn failures
-// surface as exit_code=127 with the OS error in stderr.
-//
-// Output is captured in memory — there's no streaming API.
-// Tests that produce huge output should pipe to a file via
-// shell redirection and read it back through `read_file`.
 func builtinSubprocess(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 3 {
 		return nil, fmt.Errorf("subprocess: expected 3 args (cmd, args, stdin), got %d", len(args))
@@ -5342,9 +4154,6 @@ func builtinSubprocess(_ *Interp, args []Value) (Value, error) {
 		if exitErr, ok := runErr.(*exec.ExitError); ok {
 			exitCode = exitErr.ExitCode()
 		} else {
-			// Spawn failure: exit 127 and `cmd: strerror(errno)` on stderr,
-			// as a shell reports a command it cannot run and as the compiled
-			// runtime's child does. A name the PATH search missed is ENOENT.
 			exitCode = 127
 			errno := syscall.ENOENT
 			errors.As(runErr, &errno)
@@ -5361,11 +4170,6 @@ func builtinSubprocess(_ *Interp, args []Value) (Value, error) {
 	}, nil
 }
 
-// classifyIoError turns a Go error into the matching IoError
-// variant. The mapping mirrors the codegen-side errno tables
-// (NotFound, PermissionDenied, AlreadyExists, …) so that the
-// interpreter and the backends agree on how to surface the
-// same kind of failure.
 func classifyIoError(path string, err error) *Enum {
 	var errno syscall.Errno
 	if errors.As(err, &errno) {
@@ -5384,27 +4188,12 @@ func classifyIoError(path string, err error) *Enum {
 	}
 	switch {
 	case errors.Is(err, os.ErrClosed):
-		// Go refuses a write on a closed *os.File before the kernel
-		// sees it; the kernel's answer would be EBADF.
 		return ioErrorOther(path, syscall.EBADF)
 	}
-	// Not a syscall failure at all, so there is no errno to name: Go's
-	// own text is the only description there is.
 	return &Enum{EnumName: "IoError", VariantName: "Other", Index: 6,
 		Payloads: []Value{String(path), String(err.Error()), Number(0)}}
 }
 
-// ioErrorOfErrno classifies a real syscall failure the way every
-// backend's `__fern_io_error` ladder does: by the errno itself.
-//
-// Go's os.Is* predicates cannot stand in for this. os.IsPermission
-// answers true for EPERM as well as EACCES, so an EPERM reached the
-// interpreter as PermissionDenied while the natives gave it
-// Other(path, "Operation not permitted", 1) — and EINTR and EILSEQ, which
-// the natives name Interrupted and InvalidUtf8, had no predicate at all
-// and fell through to Other. The predicates still serve the errors Go
-// synthesises without a syscall behind them, which is all classifyIoError
-// asks them now.
 func ioErrorOfErrno(path string, errno syscall.Errno) *Enum {
 	switch errno {
 	case syscall.ENOENT:
@@ -5425,20 +4214,12 @@ func ioErrorOfErrno(path string, errno syscall.Errno) *Enum {
 	return ioErrorOther(path, errno)
 }
 
-// ioErrorOther builds `IoError::Other(path, strerror(errno), errno)` —
-// where every errno without a variant of its own lands, with the same
-// glibc text the natives report (#8265) and the errno in Linux numbering.
 func ioErrorOther(path string, errno syscall.Errno) *Enum {
 	return &Enum{EnumName: "IoError", VariantName: "Other", Index: 6,
 		Payloads: []Value{String(path), String(strerror.Text(runtime.GOOS, int(errno))),
 			Number(strerror.Carried(runtime.GOOS, int(errno)))}}
 }
 
-// resultOk / resultErr wrap a value into the canonical
-// Result enum's variant.
-// unitValue is `()` — the payload of a Result that succeeded with
-// nothing to report. Same representation a UnitLit evaluates to, so
-// `Ok(u)` binds the same value however the Ok was built.
 func unitValue() Value { return Number(0) }
 
 func resultOk(v Value) *Enum {
@@ -5449,15 +4230,6 @@ func resultErr(v Value) *Enum {
 	return &Enum{EnumName: "Result", VariantName: "Err", Index: 1, Payloads: []Value{v}}
 }
 
-// builtinExit calls i.Exiter, which defaults to os.Exit. Tests
-// override Exiter to capture the requested code; the substitute
-// is expected to be non-returning (panic, longjmp-style abort,
-// or test-only "remember the code and noop").
-// builtinOpenReader / builtinOpenWriter / builtinOpenAppender
-// open the file with the corresponding os.OpenFile flags,
-// register the *os.File in i.openFiles under a fresh ticket id,
-// and wrap the id in a Reader / Writer Struct that goes back
-// into Result[Reader|Writer, IoError].
 func builtinOpenReader(i *Interp, args []Value) (Value, error) {
 	return openHelper(i, args, "Reader", os.O_RDONLY, 0)
 }
@@ -5470,27 +4242,10 @@ func builtinOpenAppender(i *Interp, args []Value) (Value, error) {
 	return openHelper(i, args, "Writer", os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o666)
 }
 
-// builtinOpenExclusive is the O_EXCL create: EEXIST comes back as
-// `IoError::AlreadyExists(path)` so a caller retrying with a fresh
-// random name can tell it from a real failure.
-//
-// 0600, not the 0644 its two neighbours use. A caller reaches for this
-// primitive because the CONTENT is not to be disclosed — a spool of piped
-// input, a temporary at a path it chose — so a mode letting group and other
-// read it defeats what the exclusivity was for. The compiled backends all
-// pass 0600 and this is the oracle they are diffed against, so a divergence
-// here is one the fixpoint cannot see.
 func builtinOpenExclusive(i *Interp, args []Value) (Value, error) {
 	return openHelper(i, args, "Writer", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 }
 
-// builtinOpenReaderWith / builtinOpenWriterWith open under Fern's own
-// flags word (the checker's open_reader_with comment has the table):
-// bit 1 creates (0666 through the umask), the rest are the kernel's
-// O_NONBLOCK, O_EXCL, O_DIRECT, O_DIRECTORY, O_DSYNC, O_SYNC, O_NOATIME,
-// O_NOCTTY and O_NOFOLLOW in the host's spelling. A bit the host has no
-// word for is refused as Unsupported. The writer is O_WRONLY with
-// neither O_TRUNC nor O_APPEND.
 func builtinOpenReaderWith(i *Interp, args []Value) (Value, error) {
 	return openWithHelper(i, args, "Reader", os.O_RDONLY)
 }
@@ -5521,8 +4276,6 @@ func openWithHelper(i *Interp, args []Value, structName string, access int) (Val
 		if int(flags)&b.bit == 0 {
 			continue
 		}
-		// Non-blocking is the one bit a host without it may keep: the
-		// FIFO it exists for cannot be made there either.
 		if b.word == 0 && b.bit != 2 {
 			return resultErr(&Enum{EnumName: "IoError", VariantName: "Unsupported", Index: 5}), nil
 		}
@@ -5553,8 +4306,6 @@ func openHelper(i *Interp, args []Value, structName string, flag int, perm os.Fi
 	return resultOk(s), nil
 }
 
-// builtinPipe answers `pipe()` with a real pipe(2), both ends
-// close-on-exec and held in the open-file table like any opened file.
 func builtinPipe(i *Interp, args []Value) (Value, error) {
 	if len(args) != 0 {
 		return nil, fmt.Errorf("pipe: expected 0 args, got %d", len(args))
@@ -5575,11 +4326,6 @@ func builtinPipe(i *Interp, args []Value) (Value, error) {
 	}), nil
 }
 
-// readerStream / writerStream return the io.Reader / io.Writer
-// the methods should operate on. fd 0 routes to i.Stdin, 1 to
-// i.Stdout, 2 to i.Stderr (so tests can override them); other
-// fds resolve through the openFiles ticket map populated by
-// open_reader / open_writer / open_appender.
 func readerStream(i *Interp, v Value) (io.Reader, error) {
 	fd, err := streamFd(v)
 	if err != nil {
@@ -5661,8 +4407,6 @@ func builtinReaderReadChunk(i *Interp, args []Value) (Value, error) {
 	return resultOk(String(string(buf[:n]))), nil
 }
 
-// Read raw bytes without creating a language string. A short read owns its
-// payload even when the host reader reports EOF with the final bytes.
 func builtinReaderReadChunkBytes(i *Interp, args []Value) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("Reader.read_chunk_bytes: expected 2 args")
@@ -5709,13 +4453,6 @@ func closeFile(i *Interp, args []Value) (Value, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Closing stdin / stdout / stderr does not touch the host's own
-	// stdio — those streams outlive the program being interpreted —
-	// but a SECOND close still answers EBADF, because that is what
-	// the kernel tells every compiled backend and what gnulib's
-	// close_stream contract is written against. Answering Ok twice
-	// made the interpreter unusable as the oracle for close
-	// reporting (#8569).
 	if fd == 0 || fd == 1 || fd == 2 {
 		if i.closedStd[fd] {
 			return resultErr(ioErrorOther("", syscall.EBADF)), nil
@@ -5728,9 +4465,6 @@ func closeFile(i *Interp, args []Value) (Value, error) {
 	}
 	f, ok := i.openFiles[fd]
 	if !ok {
-		// Closed already, so there is no host file left to close:
-		// EBADF, as a compiled binary gets from the kernel. Not an
-		// interpreter error — the program did nothing illegal.
 		return resultErr(ioErrorOther("", syscall.EBADF)), nil
 	}
 	if err := f.Close(); err != nil {
@@ -5761,13 +4495,6 @@ func builtinWriterWrite(i *Interp, args []Value) (Value, error) {
 	return resultOk(unitValue()), nil
 }
 
-// builtinWriterWriteSome answers `w.write_some(s)`: one write and the
-// count it returned, rather than the loop `write` above hides.
-//
-// An io.Writer the interpreter is driving — a stdio stream a test
-// replaced with a buffer — reports what it took, which for a buffer is
-// always everything. The descriptor path is a real single write(2), so a
-// short write is a short write here too.
 func builtinWriterWriteSome(i *Interp, args []Value) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("Writer.write_some: expected 2 args")
@@ -5801,11 +4528,6 @@ func builtinWriterWriteSome(i *Interp, args []Value) (Value, error) {
 	return resultOk(Number(n)), nil
 }
 
-// builtinWriterTruncate answers `w.truncate(len)`: ftruncate(2) on the
-// handle. A stream with no descriptor behind it — a stdio handle the
-// interpreter is driving through an io.Writer — cannot be resized and
-// answers EINVAL, which is what the kernel gives for a descriptor that is
-// not a regular file.
 func builtinWriterTruncate(i *Interp, args []Value) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("Writer.truncate: expected 2 args")
@@ -5830,9 +4552,6 @@ func builtinWriterTruncate(i *Interp, args []Value) (Value, error) {
 	return resultOk(unitValue()), nil
 }
 
-// builtinWriterSpliceForever answers `w.splice_forever(block)` with
-// Unsupported: the interpreter moves nothing, so the caller writes the block
-// itself.
 func builtinWriterSpliceForever(i *Interp, args []Value) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("splice_forever: expected 2 args")
@@ -5840,18 +4559,6 @@ func builtinWriterSpliceForever(i *Interp, args []Value) (Value, error) {
 	return resultErr(&Enum{EnumName: "IoError", VariantName: "Unsupported", Index: 5}), nil
 }
 
-// builtinDupOnto answers `r.dup_onto(fd)` / `w.dup_onto(fd)`: dup3(2)
-// of the handle's descriptor onto `fd`, closing whatever was there.
-//
-// The interpreter's own descriptors are the program's, so duplicating
-// onto 1 really does redirect what `print` writes — and onto a number
-// the Go runtime is using would take that away from it. The program
-// asked for a specific descriptor, so there is nothing to second-guess;
-// it is the same authority `stdout().close()` already has.
-//
-// A stream the interpreter is driving through an io.Writer has no
-// descriptor to duplicate and answers Unsupported, as `stat` does for
-// one.
 func builtinDupOnto(i *Interp, args []Value) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("dup_onto: expected 2 args")
@@ -5876,11 +4583,6 @@ func builtinDupOnto(i *Interp, args []Value) (Value, error) {
 	return resultOk(unitValue()), nil
 }
 
-// handleFd resolves the four terminal methods' receiver to the real
-// descriptor the interpreter process holds, or reports the failure the method
-// answers instead: EBADF for a closed handle, and Unsupported for a stdio
-// stream with no file behind it, which is what a test overriding
-// Interp.Stdin with a buffer leaves.
 func handleFd(i *Interp, recv Value) (int, Value, error) {
 	f, err := streamFile(i, recv)
 	if errors.Is(err, errClosedHandle) {
@@ -5895,9 +4597,6 @@ func handleFd(i *Interp, recv Value) (int, Value, error) {
 	return int(f.Fd()), nil, nil
 }
 
-// The four terminal questions asked of a handle: each resolves the receiver's
-// descriptor and then answers exactly as the free form does, so `fern -interp`
-// reads and writes the same terminal a compiled binary would (#9363).
 func builtinHandleWindowSize(i *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("window_size: expected 1 arg, got %d", len(args))
@@ -5953,8 +4652,6 @@ func builtinHandleSetExtproc(i *Interp, args []Value) (Value, error) {
 	return builtinSetExtproc(i, []Value{Number(fd), args[1]})
 }
 
-// builtinSetExtproc answers `set_extproc(fd, on)`: TIOCEXT on Darwin,
-// ENOTTY elsewhere, from internal/tools/tty.
 func builtinSetExtproc(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("set_extproc: expected 2 args, got %d", len(args))
@@ -5973,9 +4670,6 @@ func builtinSetExtproc(_ *Interp, args []Value) (Value, error) {
 	return resultOk(unitValue()), nil
 }
 
-// stdin / stdout / stderr return Reader / Writer struct values
-// with the conventional fds. The methods route fd 0/1/2 to the
-// Interp.Stdin/Stdout/Stderr fields so tests can override them.
 func builtinStdin(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 0 {
 		return nil, fmt.Errorf("stdin: expected 0 args, got %d", len(args))
@@ -6027,8 +4721,6 @@ func builtinInnerMulAddF64(i *Interp, args []Value) (Value, error) {
 				if !okx || !oky {
 					return nil, fmt.Errorf("__inner_mul_add_f64: elements must be f64")
 				}
-				// Explicit conversion rounds the product before addition, so
-				// the Go oracle cannot contract this expression into an FMA.
 				product := float64(x.V * y.V)
 				acc = acc + product
 			}
@@ -6116,7 +4808,6 @@ func builtinArgs(i *Interp, args []Value) (Value, error) {
 	return out, nil
 }
 
-// builtinSetArgs replaces the argv every later args() call reports.
 func builtinSetArgs(i *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("set_args: expected 1 arg, got %d", len(args))
@@ -6184,19 +4875,10 @@ func builtinPutchar(i *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("putchar: expected number arg, got %T", args[0])
 	}
-	// One BYTE, the low 8 bits, which is what __fern_putchar does on every
-	// compiled backend (`write(1, &byte, 1)`) and what docs/FEATURE-AUDIT.md
-	// specifies. Writing `%c` of the argument instead encoded it as a rune, so
-	// anything above 127 came out as its multi-byte UTF-8 form — putchar(233)
-	// wrote c3 a9 where the backends write e9 — and a value outside a rune's
-	// range wrote U+FFFD rather than wrapping.
 	i.stdOut(1).Write([]byte{byte(int64(n))})
 	return Void{}, nil
 }
 
-// stdOut is where print / write / eprint / putchar send fd 1 or 2: the
-// stream, or nowhere once the program has closed it, as a write to a
-// closed fd lands nowhere.
 func (i *Interp) stdOut(fd int64) io.Writer {
 	if i.closedStd[fd] {
 		return io.Discard
@@ -6207,18 +4889,6 @@ func (i *Interp) stdOut(fd int64) io.Writer {
 	return i.Stdout
 }
 
-// builtinPoll is the interpreter's stub for the `poll(fds, timeout_ms)` readiness
-// builtin. The AST interpreter has no real file descriptors (the `tcp_*` socket
-// primitives are native-only), so it always reports "no fd ready" (-1). The
-// builtin exists here only so modules that reference `poll` (std/reactor, and the
-// future real-fd `std/task` reactor) stay compilable + runnable under -interp;
-// real readiness lives on the native backends.
-// builtinPoll is `poll(fds, timeout_ms)` over the descriptors behind the
-// handles: a set made for the call, each handle watched for readability,
-// one wait, and the set closed. The index of the first ready handle; -1 at
-// the timeout, for an empty set, for a set holding no handle, and on a
-// host without a reactor floor. A negative token is skipped, as poll(2)
-// skips a negative descriptor.
 func builtinPoll(i *Interp, args []Value) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("poll: expected 2 args, got %d", len(args))
@@ -6238,8 +4908,6 @@ func builtinPoll(i *Interp, args []Value) (Value, error) {
 	defer syscall.Close(set)
 	r := &reactor{fd: set, handles: map[int]int64{}}
 	index := map[int]int{}
-	// An fd the set cannot watch (a closed handle, or a regular file, which
-	// epoll refuses) is ready at once, as poll(2) reports it.
 	hit := -1
 	for k, v := range fds.E {
 		handle, ok := v.(Number)
@@ -6286,9 +4954,6 @@ func builtinPoll(i *Interp, args []Value) (Value, error) {
 	return Number(hit), nil
 }
 
-// builtinIsatty answers `isatty(fd)` against the real fd the
-// interpreter process holds, so `fern -interp` sees the same terminal
-// the compiled binary would.
 func builtinIsatty(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("isatty: expected 1 arg, got %d", len(args))
@@ -6300,9 +4965,6 @@ func builtinIsatty(_ *Interp, args []Value) (Value, error) {
 	return Bool(tty.IsTerminal(int(fd))), nil
 }
 
-// builtinWindowSize answers `window_size(fd)` against the real fd the
-// interpreter process holds, so `fern -interp` measures the same terminal
-// the compiled binary would.
 func builtinWindowSize(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("window_size: expected 1 arg, got %d", len(args))
@@ -6313,8 +4975,6 @@ func builtinWindowSize(_ *Interp, args []Value) (Value, error) {
 	}
 	rows, cols, err := tty.WindowSize(int(fd))
 	if err != nil {
-		// Path-less, the way a failed read or fstat is: the descriptor
-		// is the subject and it has no name.
 		return resultErr(classifyIoError("", err)), nil
 	}
 	return resultOk(&Struct{
@@ -6326,10 +4986,6 @@ func builtinWindowSize(_ *Interp, args []Value) (Value, error) {
 	}), nil
 }
 
-// builtinSetWindowSize answers `set_window_size(fd, rows, cols)` against the
-// real fd the interpreter process holds, so `fern -interp` resizes the same
-// terminal the compiled binary would. internal/tools/tty does the read-modify-write
-// that keeps the pixel pair.
 func builtinSetWindowSize(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 3 {
 		return nil, fmt.Errorf("set_window_size: expected 3 args, got %d", len(args))
@@ -6348,11 +5004,6 @@ func builtinSetWindowSize(_ *Interp, args []Value) (Value, error) {
 	return resultOk(unitValue()), nil
 }
 
-// builtinTermiosGet answers `termios_get(fd)` against the real fd the
-// interpreter process holds, so `fern -interp` reads the same terminal the
-// compiled binary would. The words are the kernel's own, in the order
-// internal/tools/tty documents — a caller prints them and reads them back, so
-// nothing here normalises them.
 func builtinTermiosGet(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("termios_get: expected 1 arg, got %d", len(args))
@@ -6363,8 +5014,6 @@ func builtinTermiosGet(_ *Interp, args []Value) (Value, error) {
 	}
 	words, err := tty.Termios(int(fd))
 	if err != nil {
-		// Path-less, as every descriptor-shaped failure is: the fd is
-		// the subject and it has no name.
 		return resultErr(classifyIoError("", err)), nil
 	}
 	out := newArray(len(words))
@@ -6374,8 +5023,6 @@ func builtinTermiosGet(_ *Interp, args []Value) (Value, error) {
 	return resultOk(out), nil
 }
 
-// builtinTermiosSet answers `termios_set(fd, when, words)`. A wrong-length
-// array is EINVAL from internal/tools/tty rather than a partial write.
 func builtinTermiosSet(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 3 {
 		return nil, fmt.Errorf("termios_set: expected 3 args, got %d", len(args))
@@ -6406,11 +5053,6 @@ func builtinTermiosSet(_ *Interp, args []Value) (Value, error) {
 	return resultOk(unitValue()), nil
 }
 
-// builtinTargetOS answers `target_os()` with the interpreter's host: under
-// `fern -interp` the program runs where the compiler runs, so the host IS
-// the target. A compile never reaches here — constfold folds the call to
-// the `-target` environment first — so this is the one implementation
-// whose answer is the host's, spelled as Go names it.
 func builtinTargetOS(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 0 {
 		return nil, fmt.Errorf("target_os: expected 0 args, got %d", len(args))
@@ -6418,11 +5060,6 @@ func builtinTargetOS(_ *Interp, args []Value) (Value, error) {
 	return String(runtime.GOOS), nil
 }
 
-// builtinTargetArch is builtinTargetOS's twin for the ISA half, and
-// answers with the interpreter's host for the same reason. Go's names
-// differ from Fern's target names, so the two that can reach here are
-// translated; anything else is passed through as Go spells it, which is
-// what a new host would want reported.
 func builtinTargetArch(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 0 {
 		return nil, fmt.Errorf("target_arch: expected 0 args, got %d", len(args))
@@ -6436,10 +5073,6 @@ func builtinTargetArch(_ *Interp, args []Value) (Value, error) {
 	return String(runtime.GOARCH), nil
 }
 
-// bufHandle reads a builder handle argument and returns the builder's
-// bytes. An unknown handle is an error rather than a silent empty
-// builder: on the compiled backends it would be a wild pointer, and the
-// interp is where that has to be catchable.
 func bufHandle(i *Interp, name string, v Value) (int64, []byte, error) {
 	h, ok := v.(Number)
 	if !ok {
@@ -6452,8 +5085,6 @@ func bufHandle(i *Interp, name string, v Value) (int64, []byte, error) {
 	return int64(h), b, nil
 }
 
-// builtinBufNew reserves a builder of the requested capacity and returns
-// its handle.
 func builtinBufNew(i *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("buf_new: expected 1 arg (cap), got %d", len(args))
@@ -6472,7 +5103,6 @@ func builtinBufNew(i *Interp, args []Value) (Value, error) {
 	return Number(h), nil
 }
 
-// builtinBufPush appends a whole string's bytes to the builder.
 func builtinBufPush(i *Interp, args []Value) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("buf_push: expected 2 args (b, s), got %d", len(args))
@@ -6489,7 +5119,6 @@ func builtinBufPush(i *Interp, args []Value) (Value, error) {
 	return Void{}, nil
 }
 
-// builtinBufPushBytesRange borrows an array and appends its clamped range.
 func builtinBufPushBytesRange(i *Interp, args []Value) (Value, error) {
 	if len(args) != 4 {
 		return nil, fmt.Errorf("buf_push_bytes_range: expected 4 args, got %d", len(args))
@@ -6519,9 +5148,6 @@ func builtinBufPushBytesRange(i *Interp, args []Value) (Value, error) {
 	return Void{}, nil
 }
 
-// builtinBufPushRange appends `s[lo:hi]`. Same bounds contract as
-// slice_unchecked's: out of range is an error here, the interp's
-// stand-in for the trap the codegen does not emit.
 func builtinBufPushRange(i *Interp, args []Value) (Value, error) {
 	if len(args) != 4 {
 		return nil, fmt.Errorf("buf_push_range: expected 4 args (b, s, lo, hi), got %d", len(args))
@@ -6550,7 +5176,6 @@ func builtinBufPushRange(i *Interp, args []Value) (Value, error) {
 	return Void{}, nil
 }
 
-// The raw table pushes read array elements directly; no string is created.
 func builtinBufPushBytesTable(i *Interp, args []Value, mode string) (Value, error) {
 	name := "buf_push_bytes_" + mode
 	if len(args) != 3 {
@@ -6619,8 +5244,6 @@ func builtinBufPushBytesTable(i *Interp, args []Value, mode string) (Value, erro
 	return Void{}, nil
 }
 
-// builtinBufPushMapped appends table[c] for each byte c of s; a byte at or
-// past the table's length is appended unchanged.
 func builtinBufPushMapped(i *Interp, args []Value) (Value, error) {
 	if len(args) != 3 {
 		return nil, fmt.Errorf("buf_push_mapped: expected 3 args (b, s, table), got %d", len(args))
@@ -6651,8 +5274,6 @@ func builtinBufPushMapped(i *Interp, args []Value) (Value, error) {
 	return Void{}, nil
 }
 
-// builtinBufPushFiltered appends each byte c of s whose entry drop[c] is
-// zero; a byte at or past the table's length is kept.
 func builtinBufPushFiltered(i *Interp, args []Value) (Value, error) {
 	if len(args) != 3 {
 		return nil, fmt.Errorf("buf_push_filtered: expected 3 args (b, s, drop), got %d", len(args))
@@ -6685,9 +5306,6 @@ func builtinBufPushFiltered(i *Interp, args []Value) (Value, error) {
 	return Void{}, nil
 }
 
-// builtinBufPushExpanded appends each byte c of s as the record at
-// table[c*8]: a length byte (above 7 counts as 7), then that many bytes. A
-// byte whose record is not wholly inside the table is appended unchanged.
 func builtinBufPushExpanded(i *Interp, args []Value) (Value, error) {
 	if len(args) != 3 {
 		return nil, fmt.Errorf("buf_push_expanded: expected 3 args (b, s, table), got %d", len(args))
@@ -6736,7 +5354,6 @@ func builtinBufPushExpanded(i *Interp, args []Value) (Value, error) {
 	return Void{}, nil
 }
 
-// builtinBufPushByte appends the low byte of x.
 func builtinBufPushByte(i *Interp, args []Value) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("buf_push_byte: expected 2 args (b, x), got %d", len(args))
@@ -6753,7 +5370,6 @@ func builtinBufPushByte(i *Interp, args []Value) (Value, error) {
 	return Void{}, nil
 }
 
-// builtinBufPushU64 appends the eight bytes of v, least significant first.
 func builtinBufPushU64(i *Interp, args []Value) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("buf_push_u64: expected 2 args (b, v), got %d", len(args))
@@ -6773,7 +5389,6 @@ func builtinBufPushU64(i *Interp, args []Value) (Value, error) {
 	return Void{}, nil
 }
 
-// builtinBufLen reports the bytes accumulated so far.
 func builtinBufLen(i *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("buf_len: expected 1 arg (b), got %d", len(args))
@@ -6785,8 +5400,6 @@ func builtinBufLen(i *Interp, args []Value) (Value, error) {
 	return Number(len(b)), nil
 }
 
-// builtinBufTake extracts valid text and leaves the builder empty and usable.
-// Callers retaining arbitrary bytes use builtinBufTakeBytes instead.
 func builtinBufTake(i *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("buf_take: expected 1 arg (b), got %d", len(args))
@@ -6816,8 +5429,6 @@ func builtinBufTakeBytes(i *Interp, args []Value) (Value, error) {
 	return out, nil
 }
 
-// builtinBufFree releases the builder. The handle is dead afterwards,
-// which every later use reports rather than silently accepting.
 func builtinBufClear(i *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("buf_clear: expected 1 arg (b), got %d", len(args))
@@ -6842,14 +5453,8 @@ func builtinBufFree(i *Interp, args []Value) (Value, error) {
 	return Void{}, nil
 }
 
-// Register adds a user-defined function to the interpreter. Subsequent
-// declarations of the same name overwrite the previous one (handy for
-// REPL redefinitions). A hoisted trait method is additionally indexed by
-// the trait that provided it, so dyn dispatch can name the impl it means
-// rather than whichever registration claimed the flat mangling.
 func (i *Interp) Register(fn *ast.FuncDecl) {
 	i.Funcs[fn.Name] = fn
-	// A declared boolean `to_string` takes over from the builtin of its name.
 	if fn.Name == "__method_boolean_to_string" {
 		delete(i.Builtins, fn.Name)
 	}
@@ -6861,16 +5466,8 @@ func (i *Interp) Register(fn *ast.FuncDecl) {
 	}
 }
 
-// RegisterEnum makes an enum decl visible to subsequent eval calls.
-// Variant constructors and `match` patterns find their variants by
-// walking the registered enums; tests / the REPL must call this
-// once per top-level enum after parsing.
 func (i *Interp) RegisterEnum(ed *ast.EnumDecl) { i.Enums[ed.Name] = ed }
 
-// findVariantOn restricts the lookup to a specific enum when
-// `enumName` is non-empty. Used by the qualified-variant paths
-// (`Color.Red` Ident / Call sites) so the lookup is deterministic
-// even when two enums share a variant name.
 func (i *Interp) findVariantOn(name, enumName string) (*ast.EnumDecl, int, bool) {
 	if enumName != "" {
 		if ed, ok := i.Enums[enumName]; ok {
@@ -6892,8 +5489,6 @@ func (i *Interp) findVariantOn(name, enumName string) (*ast.EnumDecl, int, bool)
 	return nil, 0, false
 }
 
-// CallByName looks up a user function and invokes it with the given
-// arguments.
 func (i *Interp) CallByName(name string, args []Value) (Value, error) {
 	if fn, ok := i.Funcs[name]; ok {
 		return i.callFunc(fn, args)
@@ -6904,13 +5499,9 @@ func (i *Interp) CallByName(name string, args []Value) (Value, error) {
 	return nil, fmt.Errorf("undefined function %q", name)
 }
 
-// ---------- evaluation core ----------
-
 type env struct {
-	parent *env
-	vars   map[string]Value
-	// unwalked names the bindings declareTyped took without retaining,
-	// which releaseScope therefore does not release.
+	parent   *env
+	vars     map[string]Value
 	unwalked map[string]bool
 }
 
@@ -6922,8 +5513,6 @@ func (b *binding) String() string { return b.value.String() }
 
 func newEnv(parent *env) *env { return &env{parent: parent} }
 
-// capture freezes lexical membership, not the values of mutable bindings.
-// A nil list preserves the parser-only interpreter's unresolved environment.
 func (e *env) capture(names []ast.Param) *env {
 	out := newEnv(nil)
 	if names != nil {
@@ -6949,7 +5538,6 @@ func (e *env) captureBinding(name string, slot *binding) {
 	e.bindValue(name, slot)
 }
 
-// Promote only captured bindings. Ordinary locals need no heap cell.
 func (e *env) captureCell(name string) (*binding, bool) {
 	for cur := e; cur != nil; cur = cur.parent {
 		if v, ok := cur.vars[name]; ok {
@@ -6976,8 +5564,6 @@ func (e *env) get(name string) (Value, bool) {
 	return nil, false
 }
 
-// set assigns to the nearest existing binding, or creates one in the
-// innermost scope if none exists.
 func (e *env) set(name string, v Value) {
 	for cur := e; cur != nil; cur = cur.parent {
 		if old, ok := cur.vars[name]; ok {
@@ -6999,7 +5585,6 @@ func (e *env) bindValue(name string, v Value) {
 	e.vars[name] = v
 }
 
-// declare always creates a new binding in the innermost scope.
 func (e *env) declare(name string, v Value) {
 	delete(e.unwalked, name)
 	e.bindValue(name, v)
@@ -7007,12 +5592,6 @@ func (e *env) declare(name string, v Value) {
 	arrOwn(v)
 }
 
-// declareTyped is declare for a binding of type t. When no value of t
-// can reach a Map, the walk retain and release make over it changes only
-// array path counts, which nothing reads below an array of such values,
-// so the binding skips it on the way in and out: passing a large `i32[]`
-// to a function costs O(1) rather than O(len). Only an array (or tuple)
-// has a walk worth skipping; anything else binds as declare does.
 func (e *env) declareTyped(name string, v Value, t ast.Type) {
 	if _, isArray := v.(Array); !isArray || !holdsNoMap(t) {
 		e.declare(name, v)
@@ -7026,7 +5605,6 @@ func (e *env) declareTyped(name string, v Value, t ast.Type) {
 	e.unwalked[name] = true
 }
 
-// holdsNoMap reports whether no value of type t can contain a Map.
 func holdsNoMap(t ast.Type) bool {
 	switch x := t.(type) {
 	case ast.NumberType, ast.BoolType, ast.StringType, ast.StrType, ast.CharType, ast.FloatType:
@@ -7046,8 +5624,6 @@ func holdsNoMap(t ast.Type) bool {
 	return false
 }
 
-// Captured cells keep their owning reference beyond scope exit, like values
-// stored in containers. Go GC owns their lifetime; COW counts are conservative.
 func (e *env) releaseScope() {
 	for name, v := range e.vars {
 		if _, captured := v.(*binding); captured {
@@ -7060,24 +5636,10 @@ func (e *env) releaseScope() {
 	}
 }
 
-// tryOpEarlyReturn is the sentinel error the `?` postfix
-// operator raises when its receiver is `None` (Option) or
-// `Err(e)` (Result). The expression evaluator can't unwind the
-// enclosing function on its own — `?` shows up in expression
-// position but its failure case is a statement-level early
-// return — so the call wrapper (callFunc) catches this and
-// turns it back into a normal Value return for the caller.
 type tryOpEarlyReturn struct{ val Value }
 
 func (t *tryOpEarlyReturn) Error() string { return "interp: TryOp early return" }
 
-// controlFlowSignal carries a non-normal flow (return / break / continue) out
-// of a value-position block-expression through expression evaluation (#4522).
-// A `return`/`break`/`continue` statement inside a `{ … }` used as a value
-// shows up in expression position but is a statement-level exit, so the
-// BlockExpr arm of evalExpr raises this and execStmt catches it, turning it
-// back into a normal result{flow} that the existing loop / callFunc
-// propagation already understands.
 type controlFlowSignal struct{ r result }
 
 func (c *controlFlowSignal) Error() string { return "interp: block-expression control flow" }
@@ -7092,12 +5654,8 @@ const (
 )
 
 type result struct {
-	flow flowKind
-	val  Value
-	// label carries the target loop label of a `break`/`continue` (empty
-	// for the unlabeled form). A loop consumes the signal only when the
-	// label is empty or matches its own; otherwise it propagates so an
-	// outer labeled loop handles it.
+	flow  flowKind
+	val   Value
 	label string
 }
 
@@ -7117,12 +5675,6 @@ func (i *Interp) callFunc(fn *ast.FuncDecl, args []Value) (Value, error) {
 	defers := i.deferStack[len(i.deferStack)-1]
 	i.deferStack = i.deferStack[:len(i.deferStack)-1]
 	if err != nil {
-		// `?` postfix in expression position turns failure
-		// (None / Err) into a function-level early return. The
-		// expression evaluator can't unwind statements on its
-		// own, so it raises this sentinel error type and the
-		// call wrapper here catches it. That's an error exit, so
-		// errdefers fire.
 		if early, ok := err.(*tryOpEarlyReturn); ok {
 			i.runDefers(defers, true)
 			return early.val, nil
@@ -7137,40 +5689,12 @@ func (i *Interp) callFunc(fn *ast.FuncDecl, args []Value) (Value, error) {
 	return Void{}, nil
 }
 
-// deferEntry is one scheduled cleanup: the expression to
-// evaluate and whether it came from an `errdefer` (runs only on
-// an error exit) rather than a plain `defer` (runs on every
-// exit).
 type deferEntry struct {
 	expr    ast.Expr
 	onError bool
-	// env is the scope the `defer` statement was executed in — where the
-	// expression's free names resolve. It has to be captured here because a
-	// function's locals do NOT live in the env callFunc holds: execBlock opens a
-	// child scope for the body, and every nested block another, so evaluating
-	// against the call's own env resolves parameters and nothing else.
-	env *env
+	env     *env
 }
 
-// runDefers evaluates the LIFO list of expressions a callee
-// accumulated via `defer` / `errdefer` statements and still has
-// pending at function exit — a loop body's entries are run and
-// dropped by runIterDefers when their iteration ends, so what
-// reaches here is the function body's own plus whatever the
-// iteration that exited was holding. Each one runs
-// against the scope it was REGISTERED in (deferEntry.env), which
-// still holds the bindings the expression names even though the
-// block has exited — releaseScope drops COW references but
-// nothing is freed, and the codegen backends likewise read the
-// local's frame slot at exit. Errors from a deferred expression
-// are dropped (defer is "fire and forget" at function exit) —
-// matching codegen which doesn't propagate them either.
-//
-// Plain defers run on every exit. errdefers run only when
-// errorExit is set (the `?` operator propagating, or a `return`
-// of a None/Err value), and after the plain defers — matching
-// the codegen emit order (emitDeferCleanup then
-// emitErrDeferCleanup).
 func (i *Interp) runDefers(defers []deferEntry, errorExit bool) {
 	for k := len(defers) - 1; k >= 0; k-- {
 		if defers[k].onError {
@@ -7189,8 +5713,6 @@ func (i *Interp) runDefers(defers []deferEntry, errorExit bool) {
 	}
 }
 
-// deferMark returns the current length of the innermost defer frame —
-// the watermark a loop body's registrations start above.
 func (i *Interp) deferMark() int {
 	if len(i.deferStack) == 0 {
 		return 0
@@ -7198,18 +5720,6 @@ func (i *Interp) deferMark() int {
 	return len(i.deferStack[len(i.deferStack)-1])
 }
 
-// runIterDefers runs the defers one loop-body iteration registered and
-// drops them from the frame. A `defer` inside a loop body is scoped to
-// the iteration that executed it: each iteration schedules its own run,
-// which fires when that iteration ends and reads that iteration's
-// values. `mark` is deferMark() from before the body ran.
-//
-// An errdefer is dropped without running — leaving the body normally is
-// not an error exit, and a rollback armed in an earlier iteration must
-// not fire for a later iteration's failure. Nothing runs when the body
-// exited by `return` or by propagating an error: the frame keeps those
-// entries and the function-exit replay (which is the same exit) fires
-// them there, errdefers included.
 func (i *Interp) runIterDefers(mark int) {
 	if len(i.deferStack) == 0 {
 		return
@@ -7228,14 +5738,6 @@ func (i *Interp) runIterDefers(mark int) {
 	i.deferStack[top] = pending[:mark]
 }
 
-// isErrReturnValue reports whether a returned value is the failure variant
-// (index 1) of a `?`-able enum — i.e. whether a plain `return v` of it
-// counts as an error exit for `errdefer`.
-//
-// Reads the `@try` marker off the enum decl rather than comparing against
-// Option and Result by name, so a marked enum's failure return replays
-// errdefers exactly as theirs do. The two builtins carry no marker — they
-// predate it — so they are named here, the one place that is still true.
 func (i *Interp) isErrReturnValue(v Value) bool {
 	ev, ok := v.(*Enum)
 	if !ok || ev.Index != 1 {
@@ -7265,12 +5767,6 @@ func (i *Interp) execBlock(b *ast.Block, parent *env) (result, error) {
 	return result{flow: flowNormal}, nil
 }
 
-// execStmt runs one statement. It wraps execStmtInner to catch a
-// controlFlowSignal raised by a value-position block-expression somewhere in
-// the statement's expressions (#4522): a `return`/`break`/`continue` inside a
-// `{ … }` value unwinds through expression evaluation as that sentinel, and is
-// turned back into the normal result{flow} here so the enclosing loop /
-// callFunc handles it exactly like a top-level control-flow statement.
 func (i *Interp) execStmt(s ast.Stmt, e *env) (result, error) {
 	r, err := i.execStmtInner(s, e)
 	if err != nil {
@@ -7317,14 +5813,13 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 			i.runIterDefers(mark)
 			if r.flow == flowBreak {
 				if r.label != "" && r.label != x.Label {
-					return r, nil // targets an outer labeled loop
+					return r, nil
 				}
 				break
 			}
 			if r.flow == flowContinue && r.label != "" && r.label != x.Label {
-				return r, nil // targets an outer labeled loop
+				return r, nil
 			}
-			// flowContinue or flowNormal: re-test the condition.
 		}
 		return result{flow: flowNormal}, nil
 	case *ast.Loop:
@@ -7340,14 +5835,13 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 			i.runIterDefers(mark)
 			if r.flow == flowBreak {
 				if r.label != "" && r.label != x.Label {
-					return r, nil // targets an outer labeled loop
+					return r, nil
 				}
 				break
 			}
 			if r.flow == flowContinue && r.label != "" && r.label != x.Label {
-				return r, nil // targets an outer labeled loop
+				return r, nil
 			}
-			// flowContinue or flowNormal: loop forever.
 		}
 		return result{flow: flowNormal}, nil
 	case *ast.For:
@@ -7373,19 +5867,16 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 			if r.flow == flowReturn {
 				return r, nil
 			}
-			// Before the step, so the action reads this iteration's values —
-			// the same edge the compiled backends replay on.
 			i.runIterDefers(mark)
 			if r.flow == flowBreak {
 				if r.label != "" && r.label != x.Label {
-					return r, nil // targets an outer labeled loop
+					return r, nil
 				}
 				break
 			}
 			if r.flow == flowContinue && r.label != "" && r.label != x.Label {
-				return r, nil // targets an outer labeled loop
+				return r, nil
 			}
-			// flowContinue or flowNormal: run step and re-test.
 			if x.Step != nil {
 				if _, err := i.execStmt(x.Step, inner); err != nil {
 					return result{}, err
@@ -7418,7 +5909,6 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 		if err != nil {
 			return result{}, err
 		}
-		// An `@` binding names the whole value beside the pattern.
 		if x.AtName != "" {
 			e.declare(x.AtName, v)
 		}
@@ -7446,8 +5936,6 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 		for i2, name := range x.Names {
 			e.declare(name, arr.E[i2])
 		}
-		// A nested element's binder is declared, so its own Destructure —
-		// reading that binder — runs as an ordinary one in the same env.
 		for i2 := range x.Nested {
 			if x.Nested[i2] == nil {
 				continue
@@ -7463,12 +5951,6 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 		}
 		return result{flow: flowNormal}, nil
 	case *ast.FuncDecl:
-		// Local function declaration: capture the enclosing
-		// env at this point in execution and bind the
-		// resulting Closure under the function's name in the
-		// local scope. Subsequent calls to the name go through
-		// the Closure → callClosure path so reads of outer
-		// vars hit the captured env.
 		closure := &Closure{Decl: x}
 		e.declare(x.Name, closure)
 		closure.Env = e.capture(x.Captures)
@@ -7499,8 +5981,6 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 					if !arm.IsWildcard {
 						bindArmPayloads(armEnv, arm.Bindings, arm.Payloads, ev)
 					}
-					// Guard runs with bindings in scope; on false,
-					// fall through to the next arm.
 					if arm.Guard != nil {
 						gv, err := i.evalExpr(arm.Guard, armEnv)
 						if err != nil {
@@ -7526,10 +6006,6 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 			}
 			return result{}, fmt.Errorf("interp: match did not cover variant %s (this should have been a checker error)", ev.VariantName)
 		}
-		// Struct scrutinee: struct-pattern arms `S { x, y }` bind the named
-		// fields irrefutably; the first arm whose guard passes runs. The
-		// checker (checkStructMatch) stamps StructMatch and guarantees an
-		// irrefutable arm exists.
 		if st, ok := tag.(*Struct); ok && x.StructMatch != "" {
 			for _, arm := range x.Arms {
 				armEnv := newEnv(e)
@@ -7572,11 +6048,6 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 			}
 			return result{flow: flowNormal}, nil
 		}
-		// Tuple scrutinee: tuple-pattern arms `(p0, p1, …)`. A tuple
-		// value is an Array; a literal element dispatches by equality,
-		// a binder element always matches and binds, `_` is ignored.
-		// The checker (E035/E030) guarantees the arm shapes and that
-		// an irrefutable arm exists.
 		if arr, isArr := tag.(Array); isArr && matchArmsAllowTuple(x.Arms) {
 			for _, arm := range x.Arms {
 				armEnv := newEnv(e)
@@ -7619,18 +6090,6 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 			}
 			return result{flow: flowNormal}, nil
 		}
-		// Non-enum scrutinee (i32 / f64 / string / bool): literal-pattern
-		// match, mirroring the compiled backend's emitLiteralMatch.
-		// Each arm is a literal (dispatched by `==`) or the `_`
-		// fall-through; the checker (E035/E030) guarantees an
-		// unguarded `_` arm exists, so a match is always found. Any
-		// other value type reaching here is a type error the checker
-		// should have caught — keep the diagnostic.
-		//
-		// Float belongs here: armMatchesScalar and valuesEqual have both
-		// handled it all along, and the compiled backends match a float
-		// scrutinee. Only this gate said otherwise, so a program
-		// the natives and wasm ran refused to interpret at all.
 		switch tag.(type) {
 		case Number, Float, Bool, String:
 		default:
@@ -7677,13 +6136,6 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 		}
 		return result{flow: flowNormal}, nil
 	case *ast.Defer:
-		// Push onto the enclosing call's defer frame. The frame
-		// is unwound LIFO at function exit by callFunc /
-		// callClosure, or at the end of the iteration that
-		// pushed this entry when the `defer` sits in a loop body
-		// (runIterDefers). No frame = `defer` outside any
-		// function call (REPL top level) — treat as a no-op
-		// since there's no exit point to run the deferred expr at.
 		if n := len(i.deferStack); n > 0 {
 			i.deferStack[n-1] = append(i.deferStack[n-1], deferEntry{expr: x.Expr, onError: x.OnError, env: e})
 		}
@@ -7692,9 +6144,6 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 	return result{}, fmt.Errorf("interp: unsupported statement %T", s)
 }
 
-// matchArmsAllowTuple checks the arm forms admitted for a tuple runtime value
-// (represented as Array). An exhaustive match may contain only wildcards;
-// requiring a tuple-shaped arm incorrectly rejects that valid source form.
 func matchArmsAllowTuple(arms []*ast.MatchArm) bool {
 	for _, arm := range arms {
 		if !arm.IsWildcard && arm.TupleElems == nil {
@@ -7704,7 +6153,6 @@ func matchArmsAllowTuple(arms []*ast.MatchArm) bool {
 	return len(arms) != 0
 }
 
-// matchExprArmsAllowTuple is the MatchExpr-side counterpart.
 func matchExprArmsAllowTuple(arms []*ast.MatchExprArm) bool {
 	for _, arm := range arms {
 		if !arm.IsWildcard && arm.TupleElems == nil {
@@ -7714,19 +6162,11 @@ func matchExprArmsAllowTuple(arms []*ast.MatchExprArm) bool {
 	return len(arms) != 0
 }
 
-// tupleElemVariantMatches reports whether a tuple element's runtime value is
-// the variant its sub-pattern names (`(A(x), y)`), mirroring the compiled
-// backend's tag test in tupleMatchArmTest.
 func tupleElemVariantMatches(v Value, variantName string) bool {
 	ev, isEnum := v.(*Enum)
 	return isEnum && ev.VariantName == variantName
 }
 
-// tupleElemsMatch reports whether the tuple value arr satisfies a tuple
-// pattern's refutable elements — literals by equality, variant sub-patterns by
-// tag, and a nested tuple element by recursing into its own elements. Binders
-// and `_` always match. Mirrors the compiled backend's tupleMatchArmTest, and
-// is shared by the statement and expression match forms.
 func (i *Interp) tupleElemsMatch(elems []ast.TuplePatElem, arr Array, e *env) (bool, error) {
 	if len(elems) != len(arr.E) {
 		return false, nil
@@ -7740,8 +6180,6 @@ func (i *Interp) tupleElemsMatch(elems []ast.TuplePatElem, arr Array, e *env) (b
 	return true, nil
 }
 
-// tupleElemMatches reports whether ONE pattern position matches v, recursing
-// into a nested tuple's elements and into a variant's payload sub-patterns.
 func (i *Interp) tupleElemMatches(el ast.TuplePatElem, v Value, e *env) (bool, error) {
 	switch {
 	case el.Nested != nil:
@@ -7751,8 +6189,6 @@ func (i *Interp) tupleElemMatches(el ast.TuplePatElem, v Value, e *env) (bool, e
 		}
 		return i.tupleElemsMatch(el.Nested, sub, e)
 	case el.IsStruct:
-		// A struct position never fails on its own shape — only its fields'
-		// own sub-patterns can, which is what structArmMatches walks.
 		st, isStruct := v.(*Struct)
 		if !isStruct {
 			return false, nil
@@ -7776,8 +6212,6 @@ func (i *Interp) tupleElemMatches(el ast.TuplePatElem, v Value, e *env) (bool, e
 			}
 		}
 	case el.Literal != nil:
-		// A range position (`V(1..5)`) tests the bound pair the same way a
-		// scalar arm does; a plain literal tests equality.
 		if el.RangeHi != nil {
 			return i.armMatchesScalar(el.Literal, el.RangeHi, el.RangeInclusive, v, e)
 		}
@@ -7792,10 +6226,6 @@ func (i *Interp) tupleElemMatches(el ast.TuplePatElem, v Value, e *env) (bool, e
 	return true, nil
 }
 
-// structArmMatches reports whether a struct arm's field SUB-PATTERNS match.
-// A field with no sub-pattern is a binder and always matches, which is why a
-// plain `S { x, y }` arm is irrefutable; a failing sub-pattern falls through
-// to the next arm.
 func (i *Interp) structArmMatches(bindings, fieldNames []string, payloads []*ast.TuplePatElem, st *Struct, e *env) (bool, error) {
 	for k, sub := range payloads {
 		if sub == nil {
@@ -7814,8 +6244,6 @@ func (i *Interp) structArmMatches(bindings, fieldNames []string, payloads []*ast
 	return true, nil
 }
 
-// bindStructArm declares what a struct arm binds: the field itself for a
-// binder, or whatever its sub-pattern binds.
 func bindStructArm(armEnv *env, bindings, fieldNames []string, payloads []*ast.TuplePatElem, st *Struct) error {
 	for k, b := range bindings {
 		field := structArmField(bindings, fieldNames, k)
@@ -7832,8 +6260,6 @@ func bindStructArm(armEnv *env, bindings, fieldNames []string, payloads []*ast.T
 	return nil
 }
 
-// structArmField is the field a struct arm projects at position k: the rename
-// target when one was written, else the binder's own name.
 func structArmField(bindings, fieldNames []string, k int) string {
 	if k < len(fieldNames) && fieldNames[k] != "" {
 		return fieldNames[k]
@@ -7844,10 +6270,6 @@ func structArmField(bindings, fieldNames []string, k int) string {
 	return ""
 }
 
-// armPayloadsMatch reports whether an enum arm's payload SUB-PATTERNS all
-// match the scrutinee's payloads. A slot with no sub-pattern is a binder and
-// always matches. A failing sub-pattern falls through to the NEXT ARM, which
-// is what makes `P(Ok2(a))` and `P(Er2(a))` distinct arms of one match.
 func (i *Interp) armPayloadsMatch(payloads []*ast.TuplePatElem, ev *Enum, e *env) (bool, error) {
 	for idx, sub := range payloads {
 		if sub == nil || idx >= len(ev.Payloads) {
@@ -7861,9 +6283,6 @@ func (i *Interp) armPayloadsMatch(payloads []*ast.TuplePatElem, ev *Enum, e *env
 	return true, nil
 }
 
-// bindArmPayloads declares whatever an enum arm's payload sub-patterns bind.
-// Runs only after armPayloadsMatch said yes, so every position it reads is
-// one the pattern already proved present.
 func bindArmPayloads(armEnv *env, bindings []string, payloads []*ast.TuplePatElem, ev *Enum) {
 	for j, name := range bindings {
 		if j >= len(ev.Payloads) {
@@ -7880,10 +6299,6 @@ func bindArmPayloads(armEnv *env, bindings []string, payloads []*ast.TuplePatEle
 	}
 }
 
-// bindTupleElem declares whatever a tuple-pattern element binds: the element
-// itself for a binder, the named variant's payloads for a sub-pattern, or
-// whatever a nested tuple pattern binds, recursively. Literal and `_` elements
-// bind nothing.
 func bindTupleElem(armEnv *env, el ast.TuplePatElem, v Value) {
 	if el.AtBinding != "" {
 		armEnv.declare(el.AtBinding, v)
@@ -7915,8 +6330,6 @@ func bindTupleElem(armEnv *env, el ast.TuplePatElem, v Value) {
 			if i >= len(ev.Payloads) {
 				continue
 			}
-			// A slot carrying a sub-pattern has the empty name; the
-			// sub-pattern supplies whatever bindings the slot introduces.
 			if i < len(el.VariantPayloads) && el.VariantPayloads[i] != nil {
 				bindTupleElem(armEnv, *el.VariantPayloads[i], ev.Payloads[i])
 				continue
@@ -7933,15 +6346,6 @@ func bindTupleElem(armEnv *env, el ast.TuplePatElem, v Value) {
 	}
 }
 
-// valuesEqual is a value-equality check used for match-tag / map-key
-// comparisons. Numbers, Bools and Strings compare by content; other
-// types compare via Go's `==` which is a sensible fallback (Func
-// references, Void, etc.).
-// armMatchesScalar reports whether a scalar-match arm matches the
-// already-evaluated scrutinee value `tag`. A plain literal arm matches on
-// equality; a range arm (`lo..hi` / `lo..=hi`, RangeHi non-nil) matches
-// when `lo <= tag <op> hi`. Range scrutinees are signed-integer or float
-// (the checker restricts them), so the comparisons are signed.
 func (i *Interp) armMatchesScalar(lit, rangeHi ast.Expr, inclusive bool, tag Value, e *env) (bool, error) {
 	lv, err := i.evalExpr(lit, e)
 	if err != nil {
@@ -7998,10 +6402,6 @@ func valuesEqual(a, b Value) bool {
 		bx, ok := b.(Float)
 		return ok && ax.V == bx.V && ax.Width == bx.Width
 	case Array:
-		// Tuples are represented as Array, so this also covers tuple keys.
-		// Element-wise by value — the recursion bottoms out on scalars
-		// (Fern forbids reference cycles via E048/E049/E057, so no infinite
-		// descent).
 		bx, ok := b.(Array)
 		if !ok || len(ax.E) != len(bx.E) {
 			return false
@@ -8039,8 +6439,6 @@ func valuesEqual(a, b Value) bool {
 	return a == b
 }
 
-// SetDynCoercions hands the interpreter the checker's concrete→`dyn` sites
-// (checker.Info.DynCoercions).
 func (i *Interp) SetDynCoercions(sites map[ast.Expr]checker.DynCoercion) {
 	i.dynSites = sites
 }
@@ -8063,24 +6461,13 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 	switch x := e.(type) {
 	case *ast.NumberLit:
-		// IsFloat is the checker's record (settleFloat) that a polymorphic
-		// integer literal settled into FLOAT context — `let x: f64 = 3`, or an
-		// integer literal at an f64 parameter. Ignoring it handed the body a
-		// Number where it expected a Float, so the first arithmetic op failed
-		// with `"+" on interp.Number and interp.Float not supported` even
-		// though the checker had accepted the program. The compiled backends
-		// read the same stamp (the IR's NumberLit lowering takes its f-const
-		// path on it). #5477.
 		if x.IsFloat {
-			// FloatWidth is the width settleFloat resolved; 0 means it never
-			// ran, in which case f64 is the language's default float.
 			w := x.FloatWidth
 			if w == 0 {
 				w = 64
 			}
 			v := float64(x.Value)
 			if x.ExceedsI64 {
-				// Value is the wrapped bit pattern; the magnitude is unsigned.
 				v = float64(uint64(x.Value))
 			}
 			if w == 32 {
@@ -8090,11 +6477,6 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 		}
 		return Number(x.Value), nil
 	case *ast.FloatLit:
-		// Width comes from the checker. An unsettled literal
-		// (Width 0 — no expected-type pressure) defaults to f64,
-		// the double-precision default and the language's primary
-		// float; only an explicit f32 context stamps Width 32.
-		// (Matches the IR lowering's Width-0 → OpConstF64 path.)
 		w := x.Width
 		if w == 0 {
 			w = 64
@@ -8105,12 +6487,6 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 		}
 		return Float{V: v, Width: w}, nil
 	case *ast.DowncastExpr:
-		// `e as? T` — fallible downcast of a `dyn Trait` value (which is
-		// just the concrete boxed value, already carrying its TypeName)
-		// to the concrete type T. Evaluate the inner, recover its runtime
-		// type name, and produce Some(value) iff it matches T exactly,
-		// else None. The bound value is the concrete value itself, so a
-		// `Some(x)` arm sees x as the concrete type (docs/DYN-TRAITS.md §9).
 		v, err := i.evalExpr(x.Inner, env)
 		if err != nil {
 			return nil, err
@@ -8121,33 +6497,15 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 		}
 		return optionNone(), nil
 	case *ast.CastExpr:
-		// Numeric casts: integer → integer, float → float (width
-		// change), and the cross-family int↔float conversions.
-		// All integers live in `Number` (int64) at interp time;
-		// floats live in `Float` (float64 storage tagged with the
-		// source width).
 		v, err := i.evalExpr(x.Inner, env)
 		if err != nil {
 			return nil, err
 		}
 		if tgt, ok := x.Target.(ast.NumberType); ok {
-			// int → int: narrow (wrap) to the destination width.
-			// Sub-i32 targets must wrap too — `5000000000 as u8`
-			// is 0 on every codegen backend; the interpreter used
-			// to leave it unnarrowed.
 			tw := resolvePtrWidth(tgt.NormalWidth())
 			if src, ok := v.(Number); ok {
 				return Number(narrowInt(int64(src), tw, !tgt.IsSigned())), nil
 			}
-			// float → int (truncate-toward-zero, saturating: NaN
-			// → 0, out-of-range clamps to the destination's
-			// min/max). Matches wasm `trunc_sat` and the native
-			// backends; a plain Go `int64(f)` is implementation-
-			// defined for out-of-range inputs and diverged from
-			// them (it yielded INT_MIN where they saturate). The
-			// hardware trunc saturates at 32 bits, so a sub-i32
-			// destination saturates to i32 and then wraps to its
-			// width — matching the codegen backends.
 			if src, ok := v.(Float); ok {
 				sw := tw
 				if sw < 32 {
@@ -8158,17 +6516,11 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 			}
 		}
 		if tgt, ok := x.Target.(ast.FloatType); ok {
-			// int → float
 			if src, ok := v.(Number); ok {
 				w := tgt.Width
 				if w == 0 {
 					w = 32
 				}
-				// An unsigned source converts from its unsigned
-				// magnitude: a u64 max is stored as the bit pattern -1,
-				// which a signed conversion would turn into -1.0
-				// instead of ~1.8e19 (the codegen backends' ucvtf /
-				// convert_i64_u result). Source type from InnerType.
 				fv := float64(int64(src))
 				if srcInt, ok := x.InnerType.(ast.NumberType); ok && !srcInt.IsSigned() {
 					fv = float64(uint64(int64(src)))
@@ -8178,8 +6530,6 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 				}
 				return Float{V: fv, Width: w}, nil
 			}
-			// float → float (width change). Demote / promote
-			// rounds through the target width's representation.
 			if src, ok := v.(Float); ok {
 				w := tgt.Width
 				if w == 0 {
@@ -8192,11 +6542,6 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 				return Float{V: fv, Width: w}, nil
 			}
 		}
-		// Type ascription (`expr as T` where the inner is already
-		// assignable to T — None as Option[i32], [] as i32[],
-		// Ok(1) as Result[i32, string], etc.). Zero-cost at runtime
-		// because the value already carries the right shape; the
-		// cast is a checker-side annotation only.
 		if _, ok := x.Target.(ast.NumberType); !ok {
 			if _, ok := x.Target.(ast.FloatType); !ok {
 				return v, nil
@@ -8206,24 +6551,12 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 	case *ast.BoolLit:
 		return Bool(x.Value), nil
 	case *ast.UnitLit:
-		// `()` carries no information; it is the same zero every
-		// backend stores in the payload slot.
 		return Number(0), nil
 	case *ast.StringLit:
 		return String(x.Value), nil
 	case *ast.CharLit:
-		// A `char` occupies an i32 and a `u8` a byte; the interpreter's
-		// Number covers both, exactly as it does for `n as char`.
 		return Number(x.Value), nil
 	case *ast.FString:
-		// The checker desugars `f"foo {x} bar"` into the equivalent
-		// `"foo " + (x).to_string() + " bar"` `+`-chain and stamps
-		// it on x.Desugared. We just evaluate that. When the
-		// program reaches the interpreter without going through
-		// the checker (e.g. REPL), fall back to assembling the
-		// pieces directly so the literal segments at least work
-		// — interpolant values without a checker-resolved
-		// `.to_string()` are stringified through Value.String().
 		if x.Desugared != nil {
 			return i.evalExpr(x.Desugared, env)
 		}
@@ -8247,12 +6580,6 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 		if fn, ok := i.Funcs[x.Name]; ok {
 			return Func{Decl: fn}, nil
 		}
-		// Payload-less variant (`Red`, `EOF`) used as a value.
-		// Variants with payloads must be called explicitly. The
-		// checker stamps `x.EnumName` when the bare reference was
-		// disambiguated by a qualifier or by context, so the
-		// lookup stays deterministic across multi-enum same-name
-		// variants.
 		if ed, idx, ok := i.findVariantOn(x.Name, x.EnumName); ok {
 			if len(ed.Variants[idx].Payloads) != 0 {
 				return nil, fmt.Errorf("interp: variant %s expects %d payload(s); call it instead",
@@ -8261,7 +6588,6 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 			return &Enum{EnumName: ed.Name, VariantName: x.Name, Index: idx}, nil
 		}
 		if _, ok := i.Builtins[x.Name]; ok {
-			// Builtins aren't first-class for now; only callable.
 			return nil, fmt.Errorf("interp: builtin %q can only be called, not used as a value", x.Name)
 		}
 		return nil, fmt.Errorf("undefined identifier %q", x.Name)
@@ -8277,11 +6603,6 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 		}
 		return out, nil
 	case *ast.MapLit:
-		// `Map { k1: v1, k2: v2, ... }` — sequence of inserts in
-		// declaration order. Matches the codegen lowering shape
-		// (`map_new(N) + .set(k, v) ...`) so the interp's
-		// insertion-order rep produces the same `.keys()` /
-		// `.values()` output as native backends.
 		m := &Map{}
 		for _, ent := range x.Entries {
 			kv, err := i.evalExpr(ent.Key, env)
@@ -8325,8 +6646,6 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 		if x.IdxUnsigned {
 			idxText = strconv.FormatUint(uint64(idx), 10)
 		}
-		// String indexing returns the byte at offset i as a Number,
-		// matching the codegen lowering of `s[i]`.
 		if s, ok := arrV.(String); ok {
 			if idx < 0 || idx >= Number(len(string(s))) {
 				return nil, indexAbort(CauseStrOOB, idxText, len(string(s)))
@@ -8342,15 +6661,6 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 		}
 		return arr.E[idx], nil
 	case *ast.SliceExpr:
-		// Slices on arrays are stored as `Array` at interp time
-		// — same type because the interpreter doesn't model
-		// alias / ownership. String slicing returns
-		// `Option[string]`: `Some` of a fresh String holding the
-		// byte range, or `None` for an out-of-range or
-		// code-point-splitting range — matching the codegen's
-		// guarded `__str_slice` lowering. Both share the same
-		// SliceExpr AST shape; we dispatch on the source value's
-		// runtime type.
 		srcV, err := i.evalExpr(x.Source, env)
 		if err != nil {
 			return nil, err
@@ -8397,9 +6707,6 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 			}
 			return v.view(int(low), int(high)), nil
 		case String:
-			// `s[a:b]` on a string is CHECKED (#5634): an out-of-range
-			// range or an end inside a multi-byte code point is `None`,
-			// never an error. `slice_unchecked` keeps the trapping form.
 			if low < 0 || high > slen || low > high {
 				return optionNone(), nil
 			}
@@ -8410,11 +6717,6 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 		}
 		return nil, fmt.Errorf("unreachable: srcV type %T not Array/String after pre-check", srcV)
 	case *ast.Lambda:
-		// Synthesise a FuncDecl shell from the Lambda's params /
-		// return / body so callClosure can dispatch through the
-		// same callFunc path top-level decls use. Capture the
-		// current env so reads of outer vars hit the right
-		// values.
 		decl := &ast.FuncDecl{
 			P:          x.P,
 			Name:       "",
@@ -8463,11 +6765,6 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 	case *ast.Assign:
 		return i.evalAssign(x, env)
 	case *ast.BlockExpr:
-		// Block-expression `{ stmts; tail }` (slice 1): run the
-		// statements in a fresh child env, then the trailing expression
-		// is the block's value. Locals bound by the statements are
-		// visible to Tail but the child env is dropped afterwards, so
-		// they don't leak out of the block.
 		blockEnv := newEnv(env)
 		defer blockEnv.releaseScope()
 		for _, s := range x.Stmts {
@@ -8476,18 +6773,10 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 				return nil, err
 			}
 			if r.flow != flowNormal {
-				// A `return` / `break` / `continue` inside a value-position
-				// block-expr is a statement-level exit surfacing in expression
-				// position (#4522). Unwind it through expression evaluation as
-				// a controlFlowSignal; execStmt catches it and turns it back
-				// into a result{flow} the enclosing loop / callFunc handles.
-				// The block's tail value is intentionally skipped on this path.
 				return nil, &controlFlowSignal{r: r}
 			}
 		}
 		if x.Tail == nil {
-			// Value-less block in value position — the checker reports
-			// E061; if it slipped through, fail loudly.
 			return nil, fmt.Errorf("interp: block-expression has no trailing value")
 		}
 		return i.evalExpr(x.Tail, blockEnv)
@@ -8547,8 +6836,6 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 			}
 			return nil, fmt.Errorf("interp: match-expression non-exhaustive at runtime (variant %q unhandled)", ev.VariantName)
 		}
-		// Struct scrutinee: struct-pattern arms bind fields irrefutably;
-		// the first arm whose guard passes yields the result.
 		if st, ok := tag.(*Struct); ok && x.StructMatch != "" {
 			for _, arm := range x.Arms {
 				armEnv := newEnv(env)
@@ -8584,9 +6871,6 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 			}
 			return nil, fmt.Errorf("interp: match-expression non-exhaustive at runtime (no struct arm matched)")
 		}
-		// Tuple scrutinee: tuple-pattern arms — same element rules as
-		// the statement form (literal by equality, binder binds, `_`
-		// ignored), but each arm body is an Expr.
 		if arr, isArr := tag.(Array); isArr && matchExprArmsAllowTuple(x.Arms) {
 			for _, arm := range x.Arms {
 				armEnv := newEnv(env)
@@ -8622,12 +6906,6 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 			}
 			return nil, fmt.Errorf("interp: match-expression non-exhaustive at runtime (no tuple arm matched)")
 		}
-		// Non-enum scrutinee (i32 / f64 / string / bool): literal-pattern
-		// match expression, mirroring emitLiteralMatchExpr. Each arm
-		// dispatches via `==` against its literal, or the `_`
-		// fall-through. Any other value type is a type error the
-		// checker should have caught — keep the diagnostic. Float is
-		// included for the same reason as the statement form above.
 		switch tag.(type) {
 		case Number, Float, Bool, String:
 		default:
@@ -8667,15 +6945,6 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 		}
 		return nil, fmt.Errorf("interp: match-expression non-exhaustive at runtime (no literal arm matched)")
 	case *ast.TryOp:
-		// `expr?` desugars to:
-		//   match (expr) {
-		//     Some(v) => v,   // Option-shape
-		//     None    => return None,
-		//     Ok(v)   => v,   // Result-shape
-		//     Err(_)  => return expr,
-		//   }
-		// The early-return arms exit the enclosing function via
-		// the tryOpEarlyReturn sentinel; callFunc catches it.
 		inner, err := i.evalExpr(x.Inner, env)
 		if err != nil {
 			return nil, err
@@ -8684,13 +6953,6 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 		if !ok {
 			return nil, fmt.Errorf("interp: `?` applied to non-enum %T", inner)
 		}
-		// Dispatch on the TAG, not the variant name. Success is variant 0
-		// and failure is variant 1 for every `?`-able enum — the shape rule
-		// the checker enforces at the declaration — so this serves an
-		// `@try` enum and the two builtins with one test, and stops a user
-		// enum that happens to name a variant `Ok` from being mistaken for
-		// one. Matches every compiled backend, which has always branched on
-		// the tag. See docs/TRY.md.
 		switch ev.Index {
 		case 0:
 			if len(ev.Payloads) != 1 {
@@ -8703,10 +6965,6 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 		return nil, fmt.Errorf("interp: `?` on variant %q of %s (index %d): not a two-variant `?` shape", ev.VariantName, ev.EnumName, ev.Index)
 	case *ast.StructLit:
 		s := &Struct{TypeName: x.TypeName, Fields: map[string]Value{}}
-		// Struct-update `Foo { ...base, field: v }`: seed from the
-		// base's fields, then apply the overrides on top. The result
-		// is a fresh Struct (immutable-update semantics) — mutating it
-		// never touches the base.
 		if x.Base != nil {
 			bv, err := i.evalExpr(x.Base, env)
 			if err != nil {
@@ -8731,9 +6989,6 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 		}
 		return s, nil
 	case *ast.TupleLit:
-		// Reuse Array — tuples are positional by construction, so a
-		// flat slice of values is the right shape and avoids a new
-		// Value subtype just for tuples.
 		out := newArray(len(x.Elems))
 		for i2, e := range x.Elems {
 			v, err := i.evalExpr(e, env)
@@ -8745,11 +7000,6 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 		}
 		return out, nil
 	case *ast.FieldAccess:
-		// Qualified payload-less variant: `Color.Red`. Target is
-		// an Ident naming an enum type, not a value — evaluating
-		// it as a value would fail. Mirror the checker rewrite
-		// and produce the typed Enum directly. A local named like the enum
-		// shadows it.
 		if tid, ok := x.Target.(*ast.Ident); ok {
 			if _, local := env.get(tid.Name); !local {
 				if ed, idx, ok := i.findVariantOn(x.Field, tid.Name); ok {
@@ -8765,8 +7015,6 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 		if err != nil {
 			return nil, err
 		}
-		// Tuple field access: numeric field name, target is an
-		// Array (tuples piggy-back on Array at interp time).
 		if arr, ok := tv.(Array); ok {
 			idx, err := strconv.Atoi(x.Field)
 			if err != nil {
@@ -8791,13 +7039,6 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 }
 
 func (i *Interp) evalCall(c *ast.Call, env *env) (Value, error) {
-	// An argument already evaluated stays live while the remaining ones
-	// are evaluated, and one of those can run statements — a block
-	// expression, a call — that reassign the binding it came from.
-	// Counting it for that window stops the reassignment from seeing the
-	// buffer as unshared. The count is given back before the call, so a
-	// receiver whose only reference is the one being moved into the call
-	// still reaches zero.
 	args := make([]Value, len(c.Args))
 	held := 0
 	for k, a := range c.Args {
@@ -8813,12 +7054,6 @@ func (i *Interp) evalCall(c *ast.Call, env *env) (Value, error) {
 		}
 	}
 	disownAll(args[:held])
-	// Dynamic trait-object dispatch: the checker marked this call with
-	// the trait name and left the callee a FieldAccess (`d.area()`
-	// where `d: dyn Shape`). Resolve the concrete method from the
-	// receiver value's runtime type and call it with the receiver
-	// prepended. The orphan rule guarantees one impl per (trait, type),
-	// so the lookup is unambiguous. See docs/DYN-TRAITS.md §4.1.
 	if c.DynTrait != "" {
 		fa, ok := c.Callee.(*ast.FieldAccess)
 		if !ok {
@@ -8832,9 +7067,6 @@ func (i *Interp) evalCall(c *ast.Call, env *env) (Value, error) {
 		if !ok {
 			return nil, fmt.Errorf("interp: cannot dispatch dyn %s.%s on a %T value", c.DynTrait, fa.Field, recv)
 		}
-		// c.DynTrait names the trait that OWNS the resolved method, so
-		// prefer that trait's impl and fall back to the conventional
-		// receiver-hoist name (builtins and inherent methods).
 		mangled, ok := i.traitMethods[c.DynTrait+"."+tn+"."+fa.Field]
 		if !ok {
 			mangled = "__method_" + tn + "_" + fa.Field
@@ -8849,16 +7081,9 @@ func (i *Interp) evalCall(c *ast.Call, env *env) (Value, error) {
 		return nil, fmt.Errorf("interp: no impl of %s.%s for runtime type %s", c.DynTrait, fa.Field, tn)
 	}
 	if id, ok := c.Callee.(*ast.Ident); ok {
-		// Variant constructor: resolve the name (optionally
-		// scoped to a stamped enum, set by the checker for
-		// qualified `Color.Red(payload)` references and
-		// disambiguated bare-name calls) and build an Enum value
-		// with the evaluated payloads.
 		if ed, idx, ok := i.findVariantOn(id.Name, id.EnumName); ok {
 			_, shadowed := env.get(id.Name)
 			_, isFn := i.Funcs[id.Name]
-			// Checked constructor identity survives qualification and
-			// lexical shadowing. Keep name lookup for unchecked REPL calls.
 			if c.IsVariantCall || (!shadowed && !isFn) {
 				if got, want := len(args), len(ed.Variants[idx].Payloads); got != want {
 					return nil, fmt.Errorf("interp: variant %s expects %d argument(s), got %d",
@@ -8903,13 +7128,6 @@ func (i *Interp) evalCall(c *ast.Call, env *env) (Value, error) {
 	return nil, fmt.Errorf("interp: not a function: %T", cv)
 }
 
-// arrSetLen is `__arr_set_len(a, n)`: a's length set to n, within the room
-// its allocation has. An interpreter array is a slice value, so the new
-// length reaches the binding the call names rather than the buffer; a copy
-// taken before the call keeps the length it had. The slice's capacity is
-// not the runtime's room (an append here copies, where the runtime grows
-// in place), so a length past it grows the slice, and a slot nothing has
-// written reads as zero, as a fresh allocation's do.
 func (i *Interp) arrSetLen(target ast.Expr, args []Value, env *env) (Value, error) {
 	a, ok := args[0].(Array)
 	if !ok {
@@ -8953,10 +7171,6 @@ func disownAll(vs []Value) {
 	}
 }
 
-// callClosure dispatches a call through a Closure value. The
-// param environment chains off the captured env (not a fresh
-// nil parent), so reads of free variables hit the values
-// snapshot at definition time.
 func (i *Interp) callClosure(c *Closure, args []Value) (Value, error) {
 	if len(args) != len(c.Decl.Params) {
 		name := c.Decl.Name
@@ -8977,17 +7191,6 @@ func (i *Interp) callClosure(c *Closure, args []Value) (Value, error) {
 	defers := i.deferStack[len(i.deferStack)-1]
 	i.deferStack = i.deferStack[:len(i.deferStack)-1]
 	if err != nil {
-		// A closure is a function boundary, so a `?` unwind stops HERE and
-		// becomes this closure's return value — exactly as callFunc does it.
-		// A `?` that short-circuits inside a lambda returns from the LAMBDA,
-		// so the sentinel has to be absorbed here rather than re-raised after
-		// the errdefers fire. Re-raising unwinds a `None` / `Err` out of the
-		// whole program: `(o: Option[i32]): Option[i32] => { let v: i32
-		// = o?; return Some(v + 1); }` applied to None then terminates the
-		// interpreter with exit 0 instead of answering None. This engine is
-		// the differential ORACLE the cross-validation suite grades the
-		// self-host engines against (docs/NATIVE-CONVERGENCE.md §3), so a
-		// divergence here scores every other engine wrong.
 		if early, ok := err.(*tryOpEarlyReturn); ok {
 			i.runDefers(defers, true)
 			return early.val, nil
@@ -9002,39 +7205,15 @@ func (i *Interp) callClosure(c *Closure, args []Value) (Value, error) {
 	return Void{}, nil
 }
 
-// shiftCount masks a runtime shift amount to the operand width, the
-// same way the hardware backends (x86 `shl eax`/`shl rax`, arm64
-// `lsl w`/`lsl x`) and wasm (shift count modulo bit-width) do: a
-// 32-bit shift uses count & 31, a 64-bit shift uses count & 63. An
-// unmasked count let `-8 >> 33` saturate to -1 in the interpreter
-// while every codegen backend (count 33 & 31 == 1) returned -4.
-// Width 0 (REPL paths before the checker assigns a width) keeps the
-// historical 64-bit masking.
 func shiftCount(rn Number, width int) Number {
-	// Sub-i32 and i32 values all shift in 32-bit lanes (the codegen
-	// backends widen u8 to i32 for arithmetic), so their count masks
-	// to 0..31; i64 masks to 0..63, and usize arrives resolved to the host's
-	// pointer width. Width 0 (REPL, pre-checker) keeps the historical 64-bit
-	// masking.
 	if width == 64 || width == 0 {
 		return rn & 63
 	}
 	return rn & 31
 }
 
-// saturateFloatToInt converts a truncated float to a width-bit
-// signed/unsigned integer with saturating (non-trapping) semantics:
-// NaN → 0, and a magnitude past the destination's range clamps to
-// its min (or 0 for unsigned) / max. This mirrors wasm's
-// `trunc_sat_*` ops and the native backends' fcvtz / cvtt + fixup,
-// so a `f as i32` cast agrees on every backend. The width-32 result
-// is stored int32-truncated to match the interpreter's i32/u32
-// storage convention (unsigned values are stored sign-extended; callers
-// reinterpret via uint32 at use). 2^63 / 2^64 are the first floats
-// at/above the signed-i64 / unsigned-u64 max, so the `>=` guards
-// keep the final Go conversion in range.
 func saturateFloatToInt(f float64, width int, signed bool) int64 {
-	if f != f { // NaN
+	if f != f {
 		return 0
 	}
 	t := math.Trunc(f)
@@ -9056,30 +7235,23 @@ func saturateFloatToInt(f float64, width int, signed bool) int64 {
 		}
 		return int64(int32(t))
 	}
-	// unsigned. The max (2^32-1 / 2^64-1) is stored as all-ones, which
-	// is -1 in the int64/int32-truncated storage the interpreter
-	// uses for u32/u64.
 	if t <= 0.0 {
 		return 0
 	}
 	if width == 64 {
-		if t >= 18446744073709551616.0 { // 2^64
+		if t >= 18446744073709551616.0 {
 			return -1
 		}
 		return int64(uint64(t))
 	}
-	if t >= 4294967296.0 { // 2^32
-		return 4294967295 // u32 max, stored as its positive value
+	if t >= 4294967296.0 {
+		return 4294967295
 	}
 	return int64(uint32(t))
 }
 
-// hostPtrBits is usize's width here. target_arch() answers with the host, so
-// the pointer width is the host's too: 64 bits on every host Go runs this on,
-// 32 on wasm32. A variable so a test can model a 32-bit target.
 var hostPtrBits = strconv.IntSize
 
-// resolvePtrWidth turns usize's ast.WidthPtr into hostPtrBits.
 func resolvePtrWidth(width int) int {
 	if width == ast.WidthPtr {
 		return hostPtrBits
@@ -9087,12 +7259,6 @@ func resolvePtrWidth(width int) int {
 	return width
 }
 
-// narrowInt wraps an int64 to a `width`-bit integer, matching the
-// codegen backends' int→int narrowing. An unsigned narrow
-// zero-extends (storing the true magnitude so a later widening
-// cast zero-extends); a signed narrow sign-extends. Width 64 is
-// identity (u64 is stored as its bit pattern). Width 8 is always
-// unsigned (u8 — i8 was retired in #4408).
 func narrowInt(v int64, width int, unsigned bool) int64 {
 	switch width {
 	case 8:
@@ -9106,11 +7272,6 @@ func narrowInt(v int64, width int, unsigned bool) int64 {
 	return v
 }
 
-// satArith evaluates a saturating arithmetic operator (`+|` / `-|` /
-// `*|`, #5542) on two width-masked operands, clamping to the operand
-// type's [MIN, MAX] instead of wrapping. `signExtend` is the caller's
-// width-and-signedness narrowing closure, used to recover the signed
-// value of a masked operand.
 func satArith(op string, ln, rn Number, width int, unsigned bool, signExtend func(Number) Number) Number {
 	if unsigned {
 		var maxU uint64
@@ -9138,7 +7299,6 @@ func satArith(op string, ln, rn Number, width int, unsigned bool, signExtend fun
 				res = ul - ur
 			}
 		case "<<|":
-			// A count at or past the width saturates every non-zero value.
 			switch {
 			case ur >= uint64(width):
 				if ul != 0 {
@@ -9186,11 +7346,6 @@ func satArith(op string, ln, rn Number, width int, unsigned bool, signExtend fun
 		}
 		return Number(il - ir)
 	case "<<|":
-		// `a <<| c` overflows iff |a| exceeds the largest magnitude
-		// that survives the shift. The two sides differ because |MIN|
-		// is one larger than MAX; both bounds are exact divisions of a
-		// power of two. A negative count, or one at or past the width,
-		// saturates every non-zero a.
 		if ir < 0 || ir >= int64(width) {
 			switch {
 			case il < 0:
@@ -9210,8 +7365,6 @@ func satArith(op string, ln, rn Number, width int, unsigned bool, signExtend fun
 		}
 		return Number(il << c)
 	}
-	// `*|`: compare the magnitudes against the clamp limit — |MIN| is
-	// one larger than MAX, so a negative product gets the extra headroom.
 	absU := func(v int64) uint64 {
 		if v < 0 {
 			return uint64(-(v + 1)) + 1
@@ -9234,7 +7387,6 @@ func satArith(op string, ln, rn Number, width int, unsigned bool, signExtend fun
 }
 
 func (i *Interp) evalBinary(b *ast.Binary, env *env) (Value, error) {
-	// Short-circuit logical operators.
 	switch b.Op {
 	case "&&":
 		l, err := i.evalExpr(b.Left, env)
@@ -9268,11 +7420,6 @@ func (i *Interp) evalBinary(b *ast.Binary, env *env) (Value, error) {
 		rs, _ := r.(String)
 		return ls + rs, nil
 	}
-	// String comparison works at runtime regardless of whether the
-	// checker has been run (so REPL evaluations of `"a" == "b"` give
-	// a sensible answer too). Ordering is Go's string compare — byte-
-	// wise with a length tiebreak, the same order the backends'
-	// str.cmp helper produces.
 	if ls, lok := l.(String); lok {
 		if rs, rok := r.(String); rok {
 			switch b.Op {
@@ -9294,11 +7441,6 @@ func (i *Interp) evalBinary(b *ast.Binary, env *env) (Value, error) {
 	ln, lOk := l.(Number)
 	rn, rOk := r.(Number)
 	if lOk && rOk {
-		// Mask the bit-pattern to the binary op's width so that
-		// add/sub/mul wrap the same way wasm does, and so that
-		// unsigned compares & shifts see only the canonical bits.
-		// Width 0 (REPL paths where the checker hasn't fired)
-		// keeps the historical 64-bit semantics.
 		width := resolvePtrWidth(b.IntWidth)
 		mask := func(v Number) Number {
 			switch width {
@@ -9311,26 +7453,11 @@ func (i *Interp) evalBinary(b *ast.Binary, env *env) (Value, error) {
 			}
 			return v
 		}
-		// signExtend narrows an arithmetic result back to the op's
-		// width so sub-i32 / i32 arithmetic wraps the way every
-		// codegen backend does (`255u8 + 1` → 0, not 256). Every
-		// case honours signedness: an unsigned narrow zero-extends
-		// (an unsigned value stores its true magnitude so a later
-		// widening `as i64` zero-extends rather than sign-extends),
-		// a signed narrow sign-extends. u64 has no positive int64
-		// form, so it is stored as its bit pattern (handled by the op's
-		// own uint64 view); width 64 here is identity.
 		signExtend := func(v Number) Number {
 			switch width {
 			case 8:
-				// Always unsigned (u8 — i8 was retired in #4408).
 				return Number(uint8(int64(v)))
 			case 32:
-				// Unsigned stores its true 0..2^32-1 value (positive
-				// int64) so a widening `u32 as i64` zero-extends; a
-				// sign-extended store would have widened to a negative
-				// i64. Signed stays int32. Both reinterpret correctly
-				// at narrowing casts and via uint32 in to_string.
 				if b.IsUnsigned {
 					return Number(uint32(int64(v)))
 				}
@@ -9347,10 +7474,6 @@ func (i *Interp) evalBinary(b *ast.Binary, env *env) (Value, error) {
 		case "*":
 			return signExtend(ln * rn), nil
 		case "/":
-			// Division never traps: x / 0 = 0 (the well-defined,
-			// no-exceptions contract, matching arm64's sdiv/udiv).
-			// INT_MIN / -1 wraps to INT_MIN, which Go's `/` already
-			// defines (it only panics on a zero divisor).
 			if rn == 0 {
 				return signExtend(0), nil
 			}
@@ -9359,9 +7482,6 @@ func (i *Interp) evalBinary(b *ast.Binary, env *env) (Value, error) {
 			}
 			return signExtend(signExtend(ln) / signExtend(rn)), nil
 		case "%":
-			// Remainder never traps: x % 0 = x (matching arm64's
-			// msub: rem = x - (x/0)*0 = x). INT_MIN % -1 = 0 is
-			// already what Go's `%` yields.
 			if rn == 0 {
 				return signExtend(ln), nil
 			}
@@ -9370,10 +7490,6 @@ func (i *Interp) evalBinary(b *ast.Binary, env *env) (Value, error) {
 			}
 			return signExtend(signExtend(ln) % signExtend(rn)), nil
 		case "+|", "-|", "*|", "<<|":
-			// Saturating arithmetic (#5542): clamp to the operand
-			// type's [MIN, MAX] rather than wrap. The result is in
-			// range by construction, so signExtend only normalises
-			// the stored representation.
 			return signExtend(satArith(b.Op, ln, rn, width, b.IsUnsigned, signExtend)), nil
 		case "&":
 			return signExtend(ln & rn), nil
@@ -9422,9 +7538,6 @@ func (i *Interp) evalBinary(b *ast.Binary, env *env) (Value, error) {
 	}
 	if lf, ok := l.(Float); ok {
 		if rf, ok := r.(Float); ok {
-			// Both sides must be the same width — the checker
-			// rejects mismatched-width float ops, so the
-			// interp just trusts and uses the LHS width.
 			w := lf.Width
 			lv := lf.V
 			rv := rf.V
@@ -9446,9 +7559,6 @@ func (i *Interp) evalBinary(b *ast.Binary, env *env) (Value, error) {
 			case "*":
 				return mkFloat(lv * rv), nil
 			case "/":
-				// IEEE-754: division by zero is well-defined
-				// (yields ±Inf or NaN). Match that here rather
-				// than erroring like the integer path does.
 				return mkFloat(lv / rv), nil
 			case "==":
 				return Bool(lv == rv), nil
@@ -9528,15 +7638,6 @@ func (i *Interp) evalAssign(a *ast.Assign, env *env) (Value, error) {
 	return nil, fmt.Errorf("interp: invalid assignment target %T", a.Target)
 }
 
-// assignIdent runs `x = <rhs>`. The slot's array reference is dropped
-// BEFORE the right-hand side runs, because the slot is about to stop
-// holding it: that is the move Perceus performs at a last use, and it is
-// what lets `x = x.with(i, v)` — and `x = f(x)`, through the callee's
-// parameter — find the buffer unshared and write into it. An alias made
-// during the right-hand side binds (and so counts), and an argument already
-// evaluated is held by evalCall; the slot itself still reads the old value
-// until the store, so the move is taken only when every read of it runs
-// before anything writes (movesFirst).
 func (i *Interp) assignIdent(a *ast.Assign, name string, env *env) (Value, error) {
 	old, _ := env.get(name)
 	move := movesFirst(a.Value, name)
@@ -9554,18 +7655,12 @@ func (i *Interp) assignIdent(a *ast.Assign, name string, env *env) (Value, error
 		}
 		return nil, err
 	}
-	// Retain before release so a self-assign (m = m.set(..) returning
-	// the same in-place map) nets zero without dipping to rc 0.
 	retainReplacing(v, old)
 	arrOwn(v)
 	env.set(name, v)
 	return v, nil
 }
 
-// movesFirst reports whether every read of name in rhs runs before anything
-// can write the buffer it holds: a single read, or an update chain rooted at
-// name (`x.with(i, v).with(j, w)`, `m.insert(k, v).insert(…)`) whose other
-// reads are all in the root link's own arguments, evaluated before its write.
 func movesFirst(rhs ast.Expr, name string) bool {
 	reads := 0
 	ast.Walk(rhs, func(n ast.Node) bool {
@@ -9605,8 +7700,6 @@ func movesFirst(rhs ast.Expr, name string) bool {
 	}
 }
 
-// isUpdateCall reports whether c is a collection update that may write its
-// receiver's buffer in place: an array `with` or a Map mutator.
 func isUpdateCall(c *ast.Call) bool {
 	id, ok := c.Callee.(*ast.Ident)
 	if !ok || len(c.Args) == 0 {
@@ -9629,8 +7722,6 @@ func asBool(v Value) bool {
 	return false
 }
 
-// scanSet is __scan_set's reference semantics over bytes: the index of the
-// first byte at or after `from` whose entry in `set` is nonzero, or len(b).
 func scanSet(name string, b []byte, fromArg, setArg Value) (Value, error) {
 	fn, ok := fromArg.(Number)
 	if !ok {
@@ -9657,12 +7748,6 @@ func scanSet(name string, b []byte, fromArg, setArg Value) (Value, error) {
 	return Number(len(b)), nil
 }
 
-// StrHash is `__str_hash(s, seed)`: FNV-1a's 64-bit basis xor the
-// sign-extended seed xor the length, then per 8-byte little-endian word of s
-// a xor and a multiply by FNV's 64-bit prime; the final partial word is the
-// last 8 bytes, overlapping the word before, or under 8 bytes the bytes
-// zero-padded to a word; the high half folds into the low and the low 32
-// bits are the answer.
 func StrHash(s []byte, seed int32) uint32 {
 	const prime = 1099511628211
 	h := uint64(0xcbf29ce484222325) ^ uint64(int64(seed)) ^ uint64(len(s))

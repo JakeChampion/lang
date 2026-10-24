@@ -6,21 +6,6 @@ import (
 	"testing"
 )
 
-// A function called from two places whose every return is a construction,
-// one of them a box the pair return keeps, is spliced into each caller that
-// takes the result apart once the functions called once have folded
-// (seminline's shared functions), so the box is never built there. span is
-// called from apart_rounds and apart_again, which read its record's fields,
-// and neither round allocates; keep is called from apart_keep, which reads
-// it apart and allocates nothing, and from make, which returns it whole, so
-// keep retains its body and whole_keep pays the record each round. tag is a
-// constructor leaf called with literals from lit_tags, a static record
-// there, and with a level computed in the loop from dyn_tags, where it is
-// spliced as a shared function and allocates nothing either. wide has the
-// shape of span but a body past the shared budget, so it stays a call from
-// apart_wide and apart_wide_again and each of their rounds builds the record.
-// Each probe prints its result times 1000 plus the allocations the rounds
-// made.
 const sharedConstructionProgram = `struct Range { lo: i32, hi: i32, name: string }
 struct Tag { name: string, level: i32 }
 function span(lo: i32, n: i32, name: string): Range {
@@ -150,28 +135,12 @@ func TestSelfHostSharedConstructions(t *testing.T) {
 		semInlineWants("800000\n600000\n700000\n300100\n700000\n5350000\n25100\n719100\n"), "keep", "make", "wide")
 }
 
-// With the pass off, every call stays and every round builds its record.
 func TestSelfHostSharedConstructionsOff(t *testing.T) {
 	t.Setenv("FERN_SEM_INLINE", "")
 	runSemanticProgram(t, "sharedctor-off", sharedConstructionProgram, sharedConstructionProduced,
 		semInlineWants("800100\n600100\n700100\n300100\n700100\n5350100\n25100\n719100\n"))
 }
 
-// A caller past the once budget (seminline.max_caller_insts) still splices
-// a shared callee it reads apart, when the callee is within the reuse
-// budget, and a callee called once that returns a box, when it is within
-// the once budget: either splice saves the box on every call and leaves the
-// caller holding parts it held already. apart_long reads span's record and
-// span_once's apart in a loop whose body runs to some 2,400 instructions,
-// and its rounds allocate nothing, as apart_rounds's do. long_chain is the
-// value the loop's filler computes, so nothing folds it away. recur has
-// span's shape but calls
-// itself (not in tail position, which would be a loop by the time the
-// inliner runs), so it is never shared: a copy spliced would bring a call
-// to it for the next round to splice again, and before the caller budget
-// bounded that unrolling at 1,500 instructions. It stays a call from
-// apart_recur and apart_recur_again, and each of their rounds builds the
-// record once, the levels above the first reusing it.
 func sharedBudgetProgram() (program string, chain int32) {
 	const lines = 600
 	var b strings.Builder
@@ -262,7 +231,6 @@ func TestSelfHostSharedSplicePastCallerBudget(t *testing.T) {
 		semInlineWants(fmt.Sprintf("800000\n1600000\n%d\n1100100\n950100\n", chain)), "recur")
 }
 
-// With the pass off, every round builds its record.
 func TestSelfHostSharedSplicePastCallerBudgetOff(t *testing.T) {
 	t.Setenv("FERN_SEM_INLINE", "")
 	program, chain := sharedBudgetProgram()

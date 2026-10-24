@@ -5,26 +5,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostTomlCRLF pins the manifest reader's line handling on CRLF input
-// (compiler/fern_toml.fern via util.trim — SH-020,
-// docs/SELF-HOST-AUDIT.md T1).
-//
-// fern_toml splits on '\n' alone, so on a CRLF file every line arrives with a
-// trailing '\r' and trim is what has to remove it. It did not: fern_toml kept a
-// private trim stripping only space and tab, where the tree's other two copies
-// also stripped '\r'. parse_lock compares a line for exact equality against
-// "[[package]]", so on CRLF that header never matched, `have` never went true,
-// and every entry was dropped — a CRLF fern.lock parsed to ZERO packages and the
-// loader saw an empty lock instead of an error.
-//
-// Only the lock half was affected, which is why this went unnoticed: the
-// manifest half reads its values through quoted_value, which scans for the
-// closing quote and so steps over a trailing '\r'. Both halves are asserted here
-// anyway — the manifest rows are what catch a future trim change that strips too
-// MUCH (a '\r' inside a quoted value is data, not framing).
-//
-// The driver parses the same two documents twice, LF and CRLF, and prints what
-// each yields; the two halves must agree row for row.
 func TestSelfHostTomlCRLF(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {

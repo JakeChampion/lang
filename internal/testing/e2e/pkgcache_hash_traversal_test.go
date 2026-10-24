@@ -9,11 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/pkg/modload"
 )
 
-// A `hash` in fern.lock is joined onto the package-store root to find the
-// unpacked dependency, so a hash that is not 64 hex digits is a path:
-// `sha256:../../…` resolves outside the store, at a directory the store
-// never populated and `fern -fetch` never verified. The build must fail at
-// the lockfile rather than load whatever sits there.
 func TestLockHashOutsideStoreFailsBuild(t *testing.T) {
 	base := t.TempDir()
 	cache := filepath.Join(base, "cache")

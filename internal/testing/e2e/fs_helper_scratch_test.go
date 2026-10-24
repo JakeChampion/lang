@@ -5,18 +5,6 @@ import (
 	"testing"
 )
 
-// Every path-taking fs helper NUL-terminates its path into a heap copy, and
-// read_dir / remove_dir_all / temp_dir add working buffers of their own
-// (a 1 MiB dirent buffer; a 1 KiB one plus a child path and a Result box
-// per entry; a path scratch). Each helper frees what it allocated once the
-// syscall has read it, so a loop over the bundle leaves the census exactly
-// balanced (#9001).
-//
-// The paths are literals so that only the helpers' own memory is measured:
-// a heap string handed to an fs helper is kept alive on x86-64 by the
-// single-word retention rule (an IoError can name the path), and an
-// IoError or FileStat box is immortal by design (rcresults.go), so the
-// bundle takes only success paths and calls neither stat nor lstat.
 func fsHelperBundleSrc(rounds int) string {
 	return fmt.Sprintf(`function step(): i32 {
   match (create_dir_all("/tmp/fern_fs_scratch_gate/d/sub")) { Ok(_) => {}, Err(_) => { return 10; } }

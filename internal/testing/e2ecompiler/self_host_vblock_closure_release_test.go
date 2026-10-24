@@ -4,11 +4,6 @@ import (
 	"testing"
 )
 
-// A value block whose tail names an array local the block declared moves that
-// local into the block's value (#10393): the variable the block initializes
-// takes the local's count and element typing, and the local is left null, so
-// an unannotated binding keeps the element type and `e[0].len()` over a
-// string[] reads the right word.
 const vblockTailMoveSrc = `import "std/i32";
 struct P { x: i32, y: i32 }
 function mk(j: i32): i32[] { return { let q = [j, j * 2]; q = q.append(3); q }; }
@@ -33,10 +28,8 @@ function main(): i32 {
 }
 `
 
-// Interpreter-confirmed.
 const vblockTailMoveWant = 41
 
-// The move through a nested value block (#10436).
 const vblockNestedTailMoveSrc = `function main(): i32 {
     let t: i32 = 0;
     let j: i32 = 0;
@@ -50,14 +43,8 @@ const vblockNestedTailMoveSrc = `function main(): i32 {
 }
 `
 
-// Interpreter-confirmed.
 const vblockNestedTailMoveWant = 59
 
-// A closure box a local receives from a call or a value-position match is
-// released when a loop rebinds the local, as the exit sweep releases the last
-// one (#10392). The tuple-pattern match reads its scrutinee through a
-// destructured tuple literal, whose box is now released once its scalar
-// elements are read out.
 const closureRebindReleaseSrc = `struct H { f: (i32) => i32, n: i32 }
 function mk(b: i32): (i32) => i32 { return (x: i32) => x - b; }
 function mks(s: string): (i32) => i32 { return (x: i32) => x + s.len(); }
@@ -91,13 +78,8 @@ function main(): i32 {
 }
 `
 
-// Interpreter-confirmed.
 const closureRebindReleaseWant = 76
 
-// A defer inside a value block names an unannotated local of that block, which
-// the desugar cannot lift, and replays at the function's exit, so the block
-// keeps the local rather than moving it out (#10496). ids builds the string
-// array on the heap rather than placing it as a constant.
 const vblockDeferUnliftedSrc = `@noinline function ids(s: string): string { return s; }
 function main(): i32 {
     let r = 0;
@@ -108,13 +90,8 @@ function main(): i32 {
 }
 `
 
-// Interpreter-confirmed: the replays run after the return value is read.
 const vblockDeferUnliftedWant = 101
 
-// An unannotated binding of an array of arrays that a value block yields, or
-// that a call returns, takes the array-of-arrays class and its rows' credit
-// (#10497): a block that captures nothing is lifted to a `__lam_N` call, and
-// `c` is inlined because it captures `j`.
 const vblockArrArrSrc = `function mk(j: i32): i32[][] { return [[j, 1], [2]]; }
 function main(): i32 {
     let t = 0;
@@ -132,7 +109,6 @@ function main(): i32 {
 }
 `
 
-// Interpreter-confirmed.
 const vblockArrArrWant = 4
 
 var vblockClosureReleaseCases = []struct {

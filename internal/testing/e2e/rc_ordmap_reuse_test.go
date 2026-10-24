@@ -6,14 +6,6 @@ import (
 	"testing"
 )
 
-// std/ordmap's insert takes a node apart and rebuilds it through
-// node_balance, a function its two insert paths share. The node dies before
-// the call and a reuse token cannot cross one, so every re-insert allocated
-// its whole path. The inliner splices a shared callee where the caller takes
-// apart a box of the type it returns, and the path is rebuilt in place.
-//
-// `shared` keeps the map from before each round, so every re-insert must
-// copy its path and leave the kept map's values intact.
 func ordmapReuseSrc(rounds int, shared bool) string {
 	keep := ""
 	check := "false"
@@ -48,7 +40,6 @@ function main(): i32 {
 func checkOrdmapReuse(t *testing.T, target string, run censusRun) {
 	t.Helper()
 	census := func(rounds int, shared bool) int64 {
-		// A wasm core module hands main's result back on stdout.
 		stdout, stderr, exit := run(t, ordmapReuseSrc(rounds, shared))
 		if exit != 0 || strings.TrimSpace(stdout) != "" && strings.TrimSpace(stdout) != "0" {
 			t.Fatalf("%s rounds=%d shared=%v: exit %d, stdout %q, want 0; stderr: %s", target, rounds, shared, exit, stdout, stderr)

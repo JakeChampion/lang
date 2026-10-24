@@ -27,13 +27,6 @@ function __csv_rows(s: string): string[][] {
   return [];
 }
 
-// tests/stdlib/csv_test.fern — pure-Fern coverage of std/csv's
-// RFC 4180 single-line surface: csv.escape (quote-wrap fields with
-// comma / quote / newline, interior quotes doubled), csv.join (escape
-// then comma-join) and csv.parse_line (split, with quoted fields that
-// may contain commas and "" → " decoding). The Go-side suite unit-tests
-// the prelude origin; this is the migration-shaped (pure-Fern) companion.
-
 function test_escape_plain(): test.TestOutcome {
   return test.assert_eq(csv.escape("hello"), "hello");
 }
@@ -43,7 +36,6 @@ function test_escape_comma(): test.TestOutcome {
 }
 
 function test_escape_quote(): test.TestOutcome {
-  // Interior quotes are doubled and the field is wrapped.
   return test.assert_eq(csv.escape("say \"hi\""), "\"say \"\"hi\"\"\"");
 }
 
@@ -63,10 +55,6 @@ function test_join_empty(): test.TestOutcome {
   return test.assert_eq(csv.join([]), "");
 }
 
-// Many fields mixing pass-through, comma-quoted, quote-doubled, empty,
-// and newline-quoted content — exercises the two-pass exact-size buffer
-// (#4379) growing path where csv.join used to recopy the whole record
-// per field.
 function test_join_many(): test.TestOutcome {
   let row: string[] = ["plain", "has,comma", "has\"quote", "", "line\nbreak"];
   return test.assert_eq(
@@ -80,17 +68,14 @@ function test_parse_plain(): test.TestOutcome {
 }
 
 function test_parse_quoted_comma(): test.TestOutcome {
-  // A quoted field may contain commas.
   return test.assert_eq_array(__csv_fields("\"a,b\",c"), ["a,b", "c"]);
 }
 
 function test_parse_doubled_quote(): test.TestOutcome {
-  // "" inside a quoted field decodes to a single ".
   return test.assert_eq_array(__csv_fields("\"say \"\"hi\"\"\""), ["say \"hi\""]);
 }
 
 function test_parse_empty(): test.TestOutcome {
-  // The empty input is a single empty field.
   return test.assert_eq_array(__csv_fields(""), [""]);
 }
 
@@ -98,10 +83,6 @@ function test_roundtrip(): test.TestOutcome {
   return test.assert_eq_array(__csv_fields(csv.join(["a,b", "c\"d"])), ["a,b", "c\"d"]);
 }
 
-// Exercises the field builder rewritten to a growable u8[] (#4379): a
-// multi-byte UTF-8 field (byte-at-a-time append must reassemble it intact), a
-// leading empty field, and a long unquoted field that grows the buffer across
-// reallocations. Byte-identical to the old char-concat behaviour.
 function test_parse_multibyte_and_growth(): test.TestOutcome {
   return test.assert_eq_array(
     __csv_fields(",Glóin,aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,Þórin"),
@@ -109,7 +90,6 @@ function test_parse_multibyte_and_growth(): test.TestOutcome {
   );
 }
 
-// csv.parse — the full multi-record document parser.
 function test_doc_multi_record(): test.TestOutcome {
   let rows: string[][] = __csv_rows("a,b,c\n1,2,3");
   if (rows.len() != 2) {
@@ -122,7 +102,6 @@ function test_doc_multi_record(): test.TestOutcome {
 }
 
 function test_doc_embedded_newline(): test.TestOutcome {
-  // A newline inside a quoted field does NOT end the record.
   let rows: string[][] = __csv_rows("\"a,b\",\"line1\nline2\",z");
   if (rows.len() != 1) {
     return test.fail("row count " + rows.len().to_string());
@@ -131,7 +110,6 @@ function test_doc_embedded_newline(): test.TestOutcome {
 }
 
 function test_doc_crlf_and_trailing(): test.TestOutcome {
-  // CRLF separators + a trailing terminator → no spurious empty record.
   let rows: string[][] = __csv_rows("a,b\r\nc,d\r\n");
   if (rows.len() != 2) {
     return test.fail("row count " + rows.len().to_string());
@@ -143,7 +121,6 @@ function test_doc_empty_and_trailing_field(): test.TestOutcome {
   if (__csv_rows("").len() != 0) {
     return test.fail("empty input");
   }
-  // Trailing comma → a present empty final field.
   return test.assert_eq_array(__csv_rows("a,")[0], ["a", ""]);
 }
 

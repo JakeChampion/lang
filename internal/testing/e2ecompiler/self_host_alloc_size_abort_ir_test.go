@@ -5,11 +5,6 @@ import (
 	"testing"
 )
 
-// An allocation size that wraps in i32 aborts with the named cause and exit
-// 134 rather than under-allocating (#10771). `__alloc_u8` of a negative length
-// went straight to the allocator, and the self-host's `repeat` intrinsic
-// formed its total as an i32 product, which wrapped to 0 before its copy ran
-// past the buffer.
 const allocNegativeLengthSrc = `function main(): i32 {
     let width: i32 = 16;
     let count: i32 = 268435455;
@@ -18,8 +13,6 @@ const allocNegativeLengthSrc = `function main(): i32 {
 }
 `
 
-// 4 x 2^30 wraps to exactly 0, the product a wrapped-size allocation would
-// not refuse.
 const repeatWrapsToZeroSrc = `import "std/string";
 function main(): i32 {
     let s: string = "abcd";
@@ -30,8 +23,6 @@ function main(): i32 {
 
 const allocSizeCause = "fern: allocation size out of range"
 
-// Only 128 KiB of input is constructed. The expanded result would be 4 GiB,
-// wrapping to zero in i32; it must be rejected before allocation or copying.
 const replaceWrapsToZeroSrc = `import "std/string";
 function main(): i32 {
     let s: string = "x".repeat(65536);

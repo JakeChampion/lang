@@ -5,19 +5,11 @@ import (
 	"testing"
 )
 
-// optStrBlockReclaimCases pin the #4353 item-2 PER-BLOCK consumed-match
-// Option/Result reclaim: a LOOP-LOCAL `let o = Some(<fresh rc payload>)`
-// consumed by exactly one match in the same nested block must release the
-// payload AND the option box every iteration (probe p2 in the 2026-07-20 recon
-// on #4353). Escaping arm bindings, post-match uses, and double matches must
-// keep the payload alive.
 var optStrBlockReclaimCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// The core p2 shape: loop-local Option[string] with a fresh concat
-	// payload, consumed by a borrowing match. Flat after the fix.
 	{"optstr-loop-local-churn", `import "std/i32";
 function main(): i32 {
     let acc: i32 = 0;
@@ -32,8 +24,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// Result sibling: loop-local Err(<fresh string>) consumed by a borrowing
-	// match (the classifier admits Ok/Err the same way).
 	{"resulterr-loop-local-churn", `import "std/i32";
 function main(): i32 {
     let acc: i32 = 0;
@@ -48,8 +38,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// Array-payload sibling: loop-local Some([..]) consumed by a borrowing
-	// match — the non-string rc payload.
 	{"optarr-loop-local-churn", `function main(): i32 {
     let acc: i32 = 0;
     let w: i32 = 0;
@@ -63,8 +51,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// IF-BODY sibling: the seam is lower_block, so a non-loop nested block
-	// takes the same reclaim (churned via an outer loop).
 	{"optstr-if-body-churn", `import "std/i32";
 function main(): i32 {
     let acc: i32 = 0;
@@ -79,8 +65,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// ESCAPE negative: the Some-arm binding is stored outside the match, so
-	// the extracted string stays valid (no UAF, detector zero).
 	{"optstr-binding-escape-safe", `import "std/i32";
 function main(): i32 {
     let keep: string = "";
@@ -94,9 +78,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// ALIAS negative: `let al = o` aliases the option box, and al is matched
-	// AFTER o's consuming match — the escape gate must reject o's credit or
-	// al's match reads a freed box. Values exact, detector zero.
 	{"optstr-alias-after-safe", `import "std/i32";
 function main(): i32 {
     let acc: i32 = 0;
@@ -111,8 +92,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// DOUBLE-MATCH negative: two matches consume o, so it is not released
-	// after the first — both matches read valid data, detector zero.
 	{"optstr-double-match-safe", `import "std/i32";
 function main(): i32 {
     let acc: i32 = 0;
@@ -126,9 +105,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// RETURNING ARMS (#4353 p1): every arm returns, so the post-match drop
-	// site is dead code — the return-path sweep now fires the pending drop
-	// before op_return. Churned via a caller loop; flat after the fix.
 	{"optstr-return-arms-churn", `import "std/i32";
 function probe(k: i32): i32 {
     let o: Option[string] = Some("v" + k.to_string());
@@ -150,7 +126,6 @@ function main(): i32 {
     if (b2 - b1 >= 512) { return 98; }
     return 0;
 }`, 0},
-	// Result sibling (#4353 p3): Err payload with returning arms.
 	{"resulterr-return-arms-churn", `import "std/i32";
 function probe(k: i32): i32 {
     let r: Result[i32, string] = Err("e" + k.to_string());
@@ -172,10 +147,6 @@ function main(): i32 {
     if (b2 - b1 >= 512) { return 98; }
     return 0;
 }`, 0},
-	// MIXED arms — the dual-site soundness case: one arm returns (drop via
-	// the return-path sweep), the other falls through (drop via the
-	// post-match site). Each dynamic path frees exactly once — a double-free
-	// trips the underflow detector, a miss trips the bump guard.
 	{"optstr-mixed-arms-churn", `import "std/i32";
 function probe(k: i32): i32 {
     let o: Option[string] = Some("v" + k.to_string());
@@ -198,7 +169,6 @@ function main(): i32 {
     if (b2 - b1 >= 512) { return 98; }
     return 0;
 }`, 0},
-	// Array payload with returning arms — the "#a" pending kind.
 	{"optarr-return-arms-churn", `function probe(k: i32): i32 {
     let o: Option[i32[]] = Some([k, k + 1]);
     match (o) {
@@ -219,8 +189,6 @@ function main(): i32 {
     if (b2 - b1 >= 512) { return 98; }
     return 0;
 }`, 0},
-	// PAYLOAD-RETURN negative: `Some(s) => { return s; }` moves the payload
-	// out, so the returned string is valid in the caller, detector zero.
 	{"optstr-return-payload-safe", `import "std/i32";
 function pick(k: i32): string {
     let o: Option[string] = Some("k" + k.to_string());
@@ -236,8 +204,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// Nested-block candidate with a returning arm: the block-level pending
-	// uses the same return-path sweep (a return exits the FUNCTION).
 	{"optstr-nested-return-arm-churn", `import "std/i32";
 function probe(k: i32): i32 {
     if (k >= 0) {
@@ -263,8 +229,6 @@ function main(): i32 {
 }`, 0},
 }
 
-// TestSelfHostOptStrBlockReclaimIRX86_64 drives the cases through the
-// self-hosted x86-64 compiler (asm_load_run), heap-bump + underflow guarded.
 func TestSelfHostOptStrBlockReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	l := newStdlibLoader(t)

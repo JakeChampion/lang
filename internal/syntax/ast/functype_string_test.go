@@ -2,13 +2,6 @@ package ast
 
 import "testing"
 
-// TestFuncTypeStringNilParamDoesNotPanic guards the regression where
-// formatting a FuncType with a nil parameter (or result) type panicked
-// with a nil-pointer dereference inside p.String(). This happens for a
-// `use x <- f()` whose callback parameter type the checker couldn't pin
-// (inferUseParam bails, leaving the synthesised callback's first param
-// nil); the type is then formatted while building an E038 diagnostic, so
-// a panic there masked the real error with `%!s(PANIC=...)`.
 func TestFuncTypeStringNilParamDoesNotPanic(t *testing.T) {
 	cases := []struct {
 		name string
@@ -41,12 +34,6 @@ func TestFuncTypeStringNilParamDoesNotPanic(t *testing.T) {
 	}
 }
 
-// TestFuncElemStringKeepsParens guards the rendering of an array / slice of
-// function values. Without the grouping parens, `((i32) => i32)[]` prints as
-// `(i32) => i32[]` — the spelling of a function returning an array of i32 —
-// so the two distinct types render identically and neither re-parses to
-// itself. The func element is the one spelling whose own grammar swallows the
-// `[]` suffix; every other element round-trips unparenthesised.
 func TestFuncElemStringKeepsParens(t *testing.T) {
 	fn := &FuncType{Params: []Type{NumberType{Width: 32, Signed: true}}, Result: NumberType{Width: 32, Signed: true}}
 	cases := []struct {

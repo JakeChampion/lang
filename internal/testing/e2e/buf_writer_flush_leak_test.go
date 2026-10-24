@@ -2,12 +2,6 @@ package e2e
 
 import "testing"
 
-// BufWriter.flush hands its buffer to __buf_writer_put, whose match over
-// `b.w.write(s)` has a `Some(e)` arm that moves the error into a rebuilt
-// BufWriter. That move refused the scrutinee reclaim for the whole match, so
-// the None box every successful write returns leaked once per flush (#9180).
-// What survives is the stdout handle, sentinel-headered by design, and the
-// writer's own buffer, still live at exit.
 const bufWriterFlushSrc = `import "std/io_buffered";
 function main(): i32 {
     let b: io_buffered.BufWriter = io_buffered.buf_writer_new(stdout(), 64);

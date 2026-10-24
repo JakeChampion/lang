@@ -5,9 +5,6 @@ import (
 	"testing"
 )
 
-// parseMountinfo against the shapes mountinfo actually writes: optional tags
-// of varying count before the `-`, octal escapes in the mount point, a minor
-// number past 255, and a line too short to be a row.
 func TestParseMountinfo(t *testing.T) {
 	const text = "22 1 8:1 / / rw,relatime shared:1 - ext4 /dev/sda1 rw\n" +
 		"35 22 0:31 / /mnt/with\\040space rw - tmpfs tmp\\134fs rw,size=64k\n" +

@@ -5,23 +5,11 @@ import (
 	"testing"
 )
 
-// optTupReclaimCases pin the #4365 Option[<tuple-with-array>] reclaim: a
-// `let o: Option[(i32, i32[])] = Some((i, [i, i+1]))` consumed by a borrow-only
-// match must free its payload array buffer, tuple box and option box every
-// iteration on the self-host IR path: the Some tag checked, each array position
-// of the tuple released (nested tuples recursively), then the tuple box and the
-// option box. The heap high-water stays bounded across N.
-//
-// SOUNDNESS: the Some-arm's payload use decides it — a scalar field read (p.0),
-// an indexed array-field read (p.1[i]) and p.1.len() are borrows; a BARE
-// array-field extraction (store/return/pass/alias/slice p.1) escapes and must
-// never be over-released (the store-p.1 case is the one that can double-free).
 var optTupReclaimCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// Core churn: rebuilt per iteration, scalar read only.
 	{"opttup-churn", `function main(): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -35,8 +23,6 @@ var optTupReclaimCases = []struct {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// Full borrow set: scalar field (p.0), indexed array-field (p.1[i]) and
-	// p.1.len() are all admitted — still reclaims (bounded).
 	{"opttup-borrow-full", `function main(): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -50,9 +36,6 @@ var optTupReclaimCases = []struct {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// PAYLOAD-ESCAPE-STORE negative: `Some(p) => keep = p.1` extracts the array
-	// out of the arm, so the payload escapes and MUST NOT be over-released
-	// (this is the shape that can double-free). Detector zero, value exact.
 	{"opttup-escape-store-safe", `function main(): i32 {
     let keep: i32[] = [0, 0];
     let i: i32 = 0;
@@ -66,8 +49,6 @@ var optTupReclaimCases = []struct {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// PAYLOAD-ESCAPE-CALL negative: `take(p.1)` passes the array field to a call
-	// (a retain) — un-credited, leak-safe, detector zero.
 	{"opttup-escape-call-safe", `function take(xs: i32[]): i32 { return xs[0]; }
 function main(): i32 {
     let acc: i32 = 0;
@@ -81,8 +62,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// ESCAPE-VIA-FN negative: the option is passed to a function whose match
-	// returns the payload array — ownership moves out, nothing freed, value exact.
 	{"opttup-escape-fn-safe", `function pick(o: Option[(i32, i32[])]): i32[] {
     match (o) { Some(p) => { return p.1; }, None => {} }
     return [0];
@@ -93,11 +72,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return a[0] + a[1];
 }`, 13},
-	// STRING-element payload (#4353 item 2, probe p4): `Option[(i32, string)]`
-	// with a fresh producer element — construction str_box's the element into
-	// a fresh copy, the type-driven drop routes it through the rc-aware
-	// __fern_str_free. A string tag that rejects admission leaks all three
-	// levels per iteration.
 	{"opttup-string-elem-churn", `import "std/i32";
 function main(): i32 {
     let acc: i32 = 0;
@@ -112,7 +86,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// Mixed string + array elements — both freed by the type-driven walk.
 	{"opttup-string-arr-mixed-churn", `function main(): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -126,8 +99,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// IDENT-string-element negative: `Some((i, s))` aliases a live local at a
-	// string position — s must stay valid, detector zero.
 	{"opttup-string-ident-elem-safe", `function main(): i32 {
     let s: string = "seven";
     let acc: i32 = 0;
@@ -137,10 +108,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// STRING-EXTRACTION negative: `Some(p) => keep = p.1` pulls the owned
-	// string element out of the arm — the escape walker treats a bare
-	// non-scalar p.N as an escape, the local is NOT credited (leak-safe),
-	// keep stays valid.
 	{"opttup-string-extract-safe", `import "std/i32";
 function main(): i32 {
     let keep: string = "";
@@ -156,8 +123,6 @@ function main(): i32 {
 }`, 0},
 }
 
-// TestSelfHostOptTupReclaimIRX86_64 drives the cases through the self-hosted
-// x86-64 compiler (asm_load_run), heap-bump + underflow guarded.
 func TestSelfHostOptTupReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	l := newStdlibLoader(t)

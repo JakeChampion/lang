@@ -5,39 +5,20 @@ import (
 	"testing"
 )
 
-// tupleMethodElemCases pin a tuple literal whose element is a value-position
-// if/match with a METHOD-call arm (#6584): `(p.sum(), 165i64)` must lower as
-// `(f(6), 165i64)` does — the two differ only in how the callee is spelled. A
-// method registered as returning a string / array / tuple / struct / Option is
-// not a scalar element, and one with an i64 / f64 result is a wide one; these
-// are the same lookups the value-position match arms use.
-//
-// free-fn-elem-unchanged and literal-arms-unchanged are the guards: the two
-// forms that already lowered must still take exactly the path they did.
 var tupleMethodElemCases = []struct {
 	name string
 	src  string
 	exit int
 }{
-	// Reduced from fernsmith seed 430, then rewritten to CONSUME the tuple —
-	// the reduced seed never calls gen_f1, so it shows the bail and nothing else.
 	{"method-arm-in-tuple-elem", `struct Pair { fst: i32, snd: i32 } function (p: Pair) sum(): i32 { return p.snd; } function gen(p1: Pair, c: boolean): (i32, i64) { return ((if (c) { p1.sum() } else { 6i32 }), 165i64); } function main(): i32 { let t: (i32, i64) = gen(Pair { fst: 1i32, snd: 7i32 }, true); return (t.0 + (t.1 as i32)) & 63i32; }`, 44},
-	// Both arms methods, and the else branch taken.
 	{"method-arms-both", `struct Pair { fst: i32, snd: i32 } function (p: Pair) sum(): i32 { return p.snd; } function gen(p1: Pair, c: boolean): (i32, i64) { return ((if (c) { p1.sum() } else { p1.fst }), 165i64); } function main(): i32 { let t: (i32, i64) = gen(Pair { fst: 1i32, snd: 7i32 }, false); return (t.0 + (t.1 as i32)) & 63i32; }`, 38},
-	// No 64-bit element: the gap is the element's ADMISSION, not its width.
 	{"method-arm-all-i32-tuple", `struct Pair { fst: i32, snd: i32 } function (p: Pair) sum(): i32 { return p.snd; } function gen(p1: Pair, c: boolean): (i32, i32) { return ((if (c) { p1.sum() } else { 6i32 }), 165i32); } function main(): i32 { let t: (i32, i32) = gen(Pair { fst: 1i32, snd: 7i32 }, true); return (t.0 + t.1) & 63i32; }`, 44},
-	// A STRING or ARRAY receiver: the registry lookup is keyed on a struct /
-	// enum type name and cannot answer for a builtin receiver, so `.len()` in
-	// the same position bailed even after the method case above landed. A
-	// length is an i32 whatever it is measuring. Seed 253, the other half of
-	// the class.
 	{"len-arm-string-receiver", `function gen(p0: string, c: boolean): (i32, i64) { return ((if (c) { p0.len() } else { 6i32 }), 165i64); } function main(): i32 { let t: (i32, i64) = gen("abcd", true); return (t.0 + (t.1 as i32)) & 63i32; }`, 41},
 	{"len-arm-array-receiver", `function gen(xs: i32[], c: boolean): (i32, i64) { return ((if (c) { xs.len() } else { 6i32 }), 165i64); } function main(): i32 { let t: (i32, i64) = gen([1i32, 2i32, 3i32], true); return (t.0 + (t.1 as i32)) & 63i32; }`, 40},
 	{"free-fn-elem-unchanged", `function f(n: i32): i32 { return n + 1i32; } function gen(c: boolean): (i32, i64) { return ((if (c) { f(6i32) } else { 6i32 }), 165i64); } function main(): i32 { let t: (i32, i64) = gen(true); return (t.0 + (t.1 as i32)) & 63i32; }`, 44},
 	{"literal-arms-unchanged", `function gen(c: boolean): (i32, i64) { return ((if (c) { 7i32 } else { 6i32 }), 165i64); } function main(): i32 { let t: (i32, i64) = gen(true); return (t.0 + (t.1 as i32)) & 63i32; }`, 44},
 }
 
-// TestSelfHostTupleMethodElemIRX86_64 — the x86-64 IR path (asm_ir_run).
 func TestSelfHostTupleMethodElemIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -65,8 +46,6 @@ func TestSelfHostTupleMethodElemIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostTupleMethodElemIRArm64 — the arm64 IR path, where the self-host
-// compiler produces the finished binary itself.
 func TestSelfHostTupleMethodElemIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

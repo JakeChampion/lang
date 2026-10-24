@@ -4,10 +4,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostFieldReclaimStrIRArm64 is the arm64 port of the #4355
-// replaced-STRING-field reclaim (x86 sibling:
-// TestSelfHostFieldReclaimStrIRX86_64): a replaced string field is freed
-// exactly once. Lighter churn under qemu.
 func TestSelfHostFieldReclaimStrIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -29,7 +25,6 @@ func TestSelfHostFieldReclaimStrIRArm64(t *testing.T) {
 		}
 	}
 
-	// Consume-rebind churn — the replaced string field recycles, flat.
 	run(t, `struct S { xs: i32[], name: string, n: i32 }
 function step(s: S): S { return S { xs: [s.n, s.n + 1], name: s.name + "x", n: s.n + 1 }; }
 function main(): i32 {
@@ -46,7 +41,6 @@ function main(): i32 {
     return 0;
 }`, "field-reclaim-str-flat-arm64", 0)
 
-	// Carried field (functional update) stays readable, no double-free.
 	run(t, `struct S { xs: i32[], name: string, n: i32 }
 function bump(s: S): S { return S { ...s, n: s.n + 1 }; }
 function main(): i32 {
@@ -59,7 +53,6 @@ function main(): i32 {
     return 0;
 }`, "field-reclaim-str-carried-safe-arm64", 0)
 
-	// STRING-ONLY struct (#4355 slice 3) — routed via STRFLDOK, churn flat.
 	run(t, `struct B { name: string, n: i32 }
 function step(b: B): B { return B { name: b.name + "x", n: b.n + 1 }; }
 function main(): i32 {
@@ -76,7 +69,6 @@ function main(): i32 {
     return 0;
 }`, "field-reclaim-str-only-flat-arm64", 0)
 
-	// Aliased read (`let t = s.name`) survives the rebind's field free.
 	run(t, `struct S { xs: i32[], name: string, n: i32 }
 function step(s: S): S { return S { xs: [s.n], name: s.name + "x", n: s.n + 1 }; }
 function main(): i32 {

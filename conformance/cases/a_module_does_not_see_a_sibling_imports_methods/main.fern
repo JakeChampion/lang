@@ -1,7 +1,7 @@
-// The program imports std/string and lib, but lib does not: a receiver method
-// resolves only in a module whose own import closure loads the module that
-// declares it, so lib's `contains` is unknown however much else the program
-// loads (#12901).
+
+
+
+
 import "std/string";
 import "lib";
 

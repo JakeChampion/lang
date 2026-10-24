@@ -5,9 +5,6 @@ import (
 	"testing"
 )
 
-// A borrowed array parameter owns no reference until its first replacement.
-// Forwarding it to an own callee must buy that first reference and transfer
-// subsequent replacements. Check values, reclamation and underflows separately.
 const ownArrayBorrowedForwardSrc = `@noinline
 function update(own xs: i32[], n: i32): i32[] { xs = xs.with(0, n); return xs; }
 @noinline

@@ -7,18 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/tables/arm64tbl"
 )
 
-// TestSelfHostArm64TableRowsMatchGas is the vocabulary gate for the self-host
-// arm64 assembler, read from arm64tbl (#7903).
-//
-// arm64tbl.Scalar lists every mnemonic the self-host dispatches by name, with
-// a representative instruction per row; the self-host's predicates and
-// arm64_gas_known are generated from the same rows (cmd/arm64tblgen's
-// staleness test holds the committed output to it). So the SET of mnemonics
-// cannot drift. What can still go wrong is a row the self-host's dispatch does
-// not reach — the movn shape of #6060, a mnemonic in the allow-list with no
-// arm to encode it, which drops the instruction silently — and that is what
-// assembling every row through the self-host and GNU as and comparing the
-// words catches.
 func TestSelfHostArm64TableRowsMatchGas(t *testing.T) {
 	var cases, layout []string
 	for _, fam := range arm64tbl.Scalar {
@@ -32,8 +20,6 @@ func TestSelfHostArm64TableRowsMatchGas(t *testing.T) {
 	}
 	compareArm64Cases(t, cases)
 
-	// A layout row's word depends on where the image places the sections;
-	// acceptance is what it pins.
 	gcc, runner := x86_64Tooling(t)
 	bin := buildAsmBenchDriver(t, gcc)
 	for _, probe := range layout {
@@ -43,9 +29,6 @@ func TestSelfHostArm64TableRowsMatchGas(t *testing.T) {
 	}
 }
 
-// TestSelfHostArm64VecTableRowsMatchGas is the same gate for the Advanced
-// SIMD classes in arm64tbl.VecTables: every mnemonic of every class, in an
-// operand shape every row of the class accepts.
 func TestSelfHostArm64VecTableRowsMatchGas(t *testing.T) {
 	forms := map[string]string{
 		"arm64_v3int_entry":      "%s v0.16b, v1.16b, v2.16b",
@@ -70,10 +53,10 @@ func TestSelfHostArm64VecTableRowsMatchGas(t *testing.T) {
 		for _, o := range tbl.Ops {
 			probe := strings.Replace(form, "%s", o.Mnemonic, 1)
 			if tbl.FernFn == "arm64_across_entry" && o.Bool() {
-				probe = o.Mnemonic + " h0, v1.16b" // widening: one class up
+				probe = o.Mnemonic + " h0, v1.16b"
 			}
 			if tbl.FernFn == "arm64_vpolylong_entry" && o.Bool() {
-				probe = o.Mnemonic + " v0.8h, v1.16b, v2.16b" // the `2` is the Q bit
+				probe = o.Mnemonic + " v0.8h, v1.16b, v2.16b"
 			}
 			cases = append(cases, probe)
 		}

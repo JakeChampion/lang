@@ -7,21 +7,12 @@ import (
 	"fmt"
 )
 
-// The AES-GCM kernels std/crypto/aes_gcm is built on. The compiled backends
-// use the AES and carry-less multiply instructions (a bitsliced AES on wasm);
-// this is the oracle they answer to, so it spells each one from its
-// definition: the key schedule of FIPS-197 §5.2 over an S-box computed from
-// the field inverse, the block cipher from crypto/aes, and GHASH as SP
-// 800-38D's bit-at-a-time Algorithm 1.
-
 func registerAESGCM(i *Interp) {
 	i.Builtins["__aes_expand_key"] = &Builtin{Fn: builtinAESExpandKey}
 	i.Builtins["__aes_ctr32"] = &Builtin{Fn: builtinAESCtr32}
 	i.Builtins["__ghash"] = &Builtin{Fn: builtinGHASH}
 	i.Builtins["__aes_gcm_seal"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) { return aesGCM("__aes_gcm_seal", args, true) }}
 	i.Builtins["__aes_gcm_open"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) { return aesGCM("__aes_gcm_open", args, false) }}
-	// The interpreter has no SHA kernels, so std/crypto runs its own rounds
-	// here, as on wasm.
 	for _, name := range []string{"__sha256_hw", "__sha1_hw"} {
 		i.Builtins[name] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Bool(false), nil }}
 	}
@@ -35,7 +26,6 @@ func registerAESGCM(i *Interp) {
 	}
 }
 
-// byteView reads a [u8] argument: a u8[] or a string's bytes.
 func byteView(name string, v Value) ([]byte, error) {
 	switch x := v.(type) {
 	case String:
@@ -77,7 +67,6 @@ func byteViews(name string, args []Value, n int) ([][]byte, error) {
 	return out, nil
 }
 
-// gfMul multiplies in GF(2^8) modulo x^8 + x^4 + x^3 + x + 1.
 func gfMul(a, b byte) byte {
 	var p byte
 	for b != 0 {
@@ -94,8 +83,6 @@ func gfMul(a, b byte) byte {
 	return p
 }
 
-// sbox is FIPS-197 §5.1.1: the multiplicative inverse (0 for 0), then the
-// affine map.
 func sbox(x byte) byte {
 	inv := byte(0)
 	if x != 0 {
@@ -111,7 +98,6 @@ func sbox(x byte) byte {
 	return s ^ 0x63
 }
 
-// aesExpandKey is FIPS-197 §5.2 for Nk = 4 or 8.
 func aesExpandKey(key []byte) []byte {
 	nk := len(key) / 4
 	nr := nk + 6
@@ -144,8 +130,6 @@ func builtinAESExpandKey(_ *Interp, args []Value) (Value, error) {
 	return byteArray(aesExpandKey(v[0])), nil
 }
 
-// builtinAESCtr32 recovers the cipher key from the first round keys, which
-// are the key itself, so crypto/aes encrypts each counter block.
 func builtinAESCtr32(_ *Interp, args []Value) (Value, error) {
 	v, err := byteViews("__aes_ctr32", args, 3)
 	if err != nil {
@@ -179,8 +163,6 @@ func builtinAESCtr32(_ *Interp, args []Value) (Value, error) {
 	return byteArray(out), nil
 }
 
-// ghashMul is SP 800-38D Algorithm 1: X * Y in GF(2^128), bit 0 the most
-// significant bit of byte 0.
 func ghashMul(x, y [16]byte) [16]byte {
 	var z [16]byte
 	v := y
@@ -225,12 +207,6 @@ func builtinGHASH(_ *Interp, args []Value) (Value, error) {
 	return byteArray(yb[:]), nil
 }
 
-// aesGCM is __aes_gcm_seal (seal) or __aes_gcm_open over (round_keys, h,
-// nonce, aad, data): crypto/cipher's GCM, with the key recovered from the
-// round keys as in builtinAESCtr32. Opening answers the plaintext and the
-// tag the ciphertext should carry, which is the tag sealing that plaintext
-// gives. h goes unread: GCM derives it from the key, and the stdlib passes
-// the one that key gives.
 func aesGCM(name string, args []Value, seal bool) (Value, error) {
 	v, err := byteViews(name, args, 5)
 	if err != nil {

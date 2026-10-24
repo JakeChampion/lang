@@ -9,16 +9,6 @@ import (
 	"testing"
 )
 
-// nullStructDropProg releases a struct whose slot may be null at the release,
-// and poisons the low scratch a field walk through a null box would read:
-// field 1 off a null box lands at linear address 16, the WASI out-parameter
-// slot $__fern_random_i32 and the clock builtins write through.
-//
-// The while loop is what makes the fault deterministic rather than a coin
-// flip: it leaves a word at 16 that is even (an odd word is a tagged pointer
-// $__fern_arr_dec returns on) and far past any memory this module grows to, so
-// an unguarded walk hands $__fern_arr_dec a wild pointer every run. Answers 2,
-// the length of lp.xs.
 const nullStructDropProg = `struct P { n: i32, xs: i32[] }
 @noinline function inner_size(p: P): i32 { return p.xs.len(); }
 function main(): i32 {
@@ -30,11 +20,6 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostNullStructDropWasmIR covers #9481: a struct release on wasm that
-// walked its fields off a null box read the low WASI/clock/random scratch and
-// passed whatever a host builtin had left there to $__fern_arr_dec — a trap on
-// a program that had answered correctly until an unrelated call to a clock or
-// random_i32 was added anywhere in it.
 func TestSelfHostNullStructDropWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping null-struct-drop wasm IR e2e")
@@ -70,14 +55,6 @@ func TestSelfHostNullStructDropWasmIR(t *testing.T) {
 	}
 }
 
-// wasmFuncBodies returns each emitted `(func <prefix>…)` body in `wat`, header
-// line included, from the header through the line before the next function.
-//
-// Matching a function by name and reading its body is what lets a test assert
-// what is in ONE body: a bare substring search over the whole module spans
-// whatever follows, so it breaks whenever a prologue is added (the #9481 guard
-// broke six such assertions) and it can match text belonging to a different
-// type's body.
 func wasmFuncBodies(wat, prefix string) []string {
 	var out []string
 	lines := strings.Split(wat, "\n")

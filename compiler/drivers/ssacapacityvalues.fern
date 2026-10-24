@@ -100,8 +100,6 @@ function evaluate(v: value.Value, n: i32): i64 {
   return v.factor as i64 * (n as i64) + v.offset;
 }
 
-// Exhaustive independent specification: grow the quarter-power quantum by
-// comparing against its next four-quarter boundary, then use ceiling division.
 function scalar_expected(n: i32): i64 {
   if (n <= 256) {
     return n as i64;
@@ -114,8 +112,6 @@ function scalar_expected(n: i32): i64 {
   return if (rounded > 65535) { 65535 as i64 } else { rounded as i64 };
 }
 
-// The limit changes only the number of independently checked input values.
-// The complete partition and every symbolic rounding step are always checked.
 pub function audit(limit: i32): void {
   require(limit >= 1 && limit <= 65535, "audit input bound");
   let rows = value.intervals();

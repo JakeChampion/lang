@@ -7,11 +7,6 @@ import (
 	"testing"
 )
 
-// TestReactorOneShotWatch pins `async.ONESHOT` on the native reactors: a
-// plain watch reports a readable pipe at every wait, a one-shot watch reports
-// it once and then holds it until it is watched again, and a plain watch
-// after one is level-triggered again. std/serve watches a parked flight's
-// descriptors this way and skips the unwatch of the one that fired.
 func TestReactorOneShotWatch(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()

@@ -8,10 +8,6 @@ import (
 	"testing"
 )
 
-// Unary-minus operator overloading: `-v` on a struct/enum with a `neg`
-// method desugars to `v.neg()`, completing the composite-operator set
-// alongside `+ - * /` (add/sub/mul/div) and `== <` (eq/cmp). Here
-// -V{x:5} = V{x:-5}, so (-a).x + 100 = 95. See #2706.
 const unaryNegSrc = `struct V { x: i32 }
 function (self: V) neg(): V { return V { x: 0 - self.x }; }
 function main(): i32 {

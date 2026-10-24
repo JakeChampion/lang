@@ -8,32 +8,6 @@ import (
 	"testing"
 )
 
-// TestArm64DarwinGetcwdValue asserts what `getcwd()` ANSWERS on
-// arm64-darwin, against a directory the test chose.
-//
-// #9131: this backend issued Darwin 296 for getcwd, and 296 is
-// vm_pressure_monitor — there is no SYS___getcwd in the macOS SDK's
-// syscall.h at all. It SUCCEEDED, left the buffer untouched, and the
-// strlen loop measured uninitialised stack, so `getcwd()` answered a
-// short run of garbage and reported no error. Nothing caught it because
-// no test asserted the VALUE on this target.
-//
-// It also took its third argument as a pointer to copy a page count out
-// to, and the emitter set only x0/x1 — so the kernel wrote four bytes at
-// whatever the caller had left in x2. That is the corruption in #9722
-// (`ls --hyperlink` emitting pointer-shaped bytes where a path belongs)
-// and in chroot's two relative-NEWROOT corpus cases, whose diagnostics
-// quoted an operand with its first four bytes replaced by a page count:
-//
-//	fern: cannot change root directory to ''$'\000\000\000\000''oot': …
-//	fern: cannot change root directory to '!'$'\002\000\000''oups': …
-//
-// So the operand check below is not decoration: it is the half of the bug
-// that reached a program's output rather than just its own return value.
-//
-// macOS resolves the temp dir through a symlink (/var to /private/var),
-// and F_GETPATH answers the resolved path, so the expectation is the
-// symlink-evaluated form rather than what t.TempDir handed back.
 func TestArm64DarwinGetcwdValue(t *testing.T) {
 	const prog = `function main(): i32 {
   let a: string[] = args();

@@ -1,12 +1,12 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Map with GENERIC-ENUM values (Map[K, Option[Item]], valKind 4 via
-// dropFnNameFor's generic path). The boxed instantiation reclaims
-// through __drop_map_via___drop_enum_Option_LB_Item_RB_ → the
-// mangled generic-enum drop (box + Item payload + xs buffer) at the
-// map's last reference, retained on set/get. Churned 200x. it.xs[1]
-// = seed+1; sum_{0..199}(k+1) = 20100.
+
+
+
+
+
+
+
+
+
 import "core/int";
 import "core/map";
 struct Item { xs: i32[] }

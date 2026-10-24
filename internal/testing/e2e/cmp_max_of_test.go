@@ -7,35 +7,22 @@ import (
 	"testing"
 )
 
-// core/cmp's generic array reductions `max_of[T: Ord](xs) -> Option[T]` and
-// `min_of` — the any-`Ord`-type replacement for std/array's per-width
-// `max_i64` / `min_i64` / … family (#4387 item 2). Like the shipped `sort` /
-// `is_sorted`, the `T: Ord` bound monomorphises `.cmp` to a direct call per
-// element type, so the body lowers on the native backends AND the self-host IR
-// path. Empty -> None; ties keep the first extremum (strict `> 0` / `< 0`).
-//
-// Each inline case bundles a minimal `Ord` trait + `impl Ord for i32` + the
-// two reducers so the single-program self-host driver (which resolves no
-// imports) can compile it, then encodes the result as a small exit code.
 var maxOfCases = []struct {
 	name string
 	main string
 	want int
 }{
-	// max of [3,9,1,7,4] is 9; min is 1; 9*10 + 1 = 91.
 	{"i32-max-min", `pub trait Ord { function cmp(self: Self, other: Self): i32; }
 impl Ord for i32 { function cmp(self: Self, other: Self): i32 { if (self < other) { return 0 - 1; } if (self > other) { return 1; } return 0; } }
 function max_of[T: Ord](xs: T[]): Option[T] { if (xs.len() == 0) { return None; } let best: T = xs[0]; let i: i32 = 1; while (i < xs.len()) { if (xs[i].cmp(best) > 0) { best = xs[i]; } i = i + 1; } return Some(best); }
 function min_of[T: Ord](xs: T[]): Option[T] { if (xs.len() == 0) { return None; } let best: T = xs[0]; let i: i32 = 1; while (i < xs.len()) { if (xs[i].cmp(best) < 0) { best = xs[i]; } i = i + 1; } return Some(best); }
 function unwrap(o: Option[i32]): i32 { match (o) { Some(v) => { return v; }, None => { return 0 - 1; } } }
 function main(): i32 { let a: i32[] = [3, 9, 1, 7, 4]; return unwrap(max_of(a)) * 10 + unwrap(min_of(a)); }`, 91},
-	// empty array -> None for both; encode None as 5 (2 for max + 3 for min).
 	{"empty-none", `pub trait Ord { function cmp(self: Self, other: Self): i32; }
 impl Ord for i32 { function cmp(self: Self, other: Self): i32 { if (self < other) { return 0 - 1; } if (self > other) { return 1; } return 0; } }
 function max_of[T: Ord](xs: T[]): Option[T] { if (xs.len() == 0) { return None; } let best: T = xs[0]; let i: i32 = 1; while (i < xs.len()) { if (xs[i].cmp(best) > 0) { best = xs[i]; } i = i + 1; } return Some(best); }
 function min_of[T: Ord](xs: T[]): Option[T] { if (xs.len() == 0) { return None; } let best: T = xs[0]; let i: i32 = 1; while (i < xs.len()) { if (xs[i].cmp(best) < 0) { best = xs[i]; } i = i + 1; } return Some(best); }
 function main(): i32 { let e: i32[] = []; let r = 0; match (max_of(e)) { Some(v) => {}, None => { r = r + 2; } } match (min_of(e)) { Some(v) => {}, None => { r = r + 3; } } return r; }`, 5},
-	// singleton -> that element is both max and min; 42 via max.
 	{"singleton", `pub trait Ord { function cmp(self: Self, other: Self): i32; }
 impl Ord for i32 { function cmp(self: Self, other: Self): i32 { if (self < other) { return 0 - 1; } if (self > other) { return 1; } return 0; } }
 function max_of[T: Ord](xs: T[]): Option[T] { if (xs.len() == 0) { return None; } let best: T = xs[0]; let i: i32 = 1; while (i < xs.len()) { if (xs[i].cmp(best) > 0) { best = xs[i]; } i = i + 1; } return Some(best); }
@@ -43,8 +30,6 @@ function unwrap(o: Option[i32]): i32 { match (o) { Some(v) => { return v; }, Non
 function main(): i32 { let s: i32[] = [42]; return unwrap(max_of(s)); }`, 42},
 }
 
-// TestNativeCmpMaxOf runs the inline max_of/min_of programs on interp / x86-64 /
-// wasm, oracle-checked.
 func TestNativeCmpMaxOf(t *testing.T) {
 	for _, tc := range maxOfCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -66,8 +51,6 @@ func TestNativeCmpMaxOf(t *testing.T) {
 	}
 }
 
-// TestNativeCmpMaxOfModule exercises the shipped `import "core/cmp"` bodies over
-// the primitive `impl Ord` (i32 / string) and a user `Ord` struct.
 func TestNativeCmpMaxOfModule(t *testing.T) {
 	src := `import "core/cmp" as cmp;
 struct P { v: i32 }
@@ -106,9 +89,6 @@ function main(): i32 {
 	}
 }
 
-// TestSelfHostCmpMaxOfIRX86_64 drives the inline cases through the self-hosted
-// x86-64 compiler (asm_run), oracle-checking the exit code — pinning that the
-// generic Ord-bounded reducers lower + run on the self-host IR path.
 func TestSelfHostCmpMaxOfIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

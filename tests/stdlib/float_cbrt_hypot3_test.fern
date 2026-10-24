@@ -1,14 +1,6 @@
 import "std/test";
 import "std/f64";
 
-// tests/stdlib/float_cbrt_hypot3_test.fern — pure-Fern coverage of
-// std/f64.cbrt (real cube root, defined for negatives) and hypot3 (3-D
-// Euclidean length sqrt(x²+y²+z²), overflow-safe). Both f64 and f32. The
-// Go-side TestFloatCbrt and TestFloatHypot3 pin these across the native
-// backends (cbrt's wasmbin leg skips libm pow, hypot3 covers all four); this is
-// the migration-shaped companion. cbrt / hypot3 lower on the self-host asm_ir
-// path, so this runs in both self-host gates too.
-
 function test_cbrt_perfect(): test.TestOutcome {
   if (!float_near(27.0.cbrt(), 3.0)) {
     return test.fail("cbrt 27");
@@ -25,7 +17,6 @@ function test_cbrt_fractional(): test.TestOutcome {
 }
 
 function test_hypot3_pythagorean(): test.TestOutcome {
-  // The 2-3-6 and 1-2-2 Pythagorean-like quadruples give exact integers.
   if (!float_near(2.0.hypot3(3.0, 6.0), 7.0)) {
     return test.fail("2,3,6 -> 7");
   }

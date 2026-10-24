@@ -9,27 +9,19 @@ import (
 	"testing"
 )
 
-// An UNANNOTATED `let u = f()?` whose success payload is a STRUCT (or nominal
-// ENUM) lowers on the self-host IR path: `u` takes the payload's type, so
-// `u.field` / `u.method()` / `match (u)` lower exactly as they do after an
-// explicit `let u: User = f()?`. Each case is oracle-checked and
-// routing-pinned "ir".
 var tryStructPayloadIRCases = []struct {
 	name string
 	src  string
 }{
-	// The minimal case: a Result[Struct, E] try, read a field of the payload → 42.
 	{"result_struct", `struct User { id: i32 }
 function find(n: i32): Result[User, string] { if (n > 0) { return Ok(User { id: n }); } return Err("bad"); }
 function getid(n: i32): Result[i32, string] { let u = find(n)?; return Ok(u.id); }
 function main(): i32 { match (getid(42)) { Ok(id) => { return id; }, Err(e) => { return 0; } } }`},
-	// An Option[Struct] try, calling a METHOD on the payload → 21 * 2 = 42.
 	{"option_struct_method", `struct User { id: i32 }
 function (u: User) doubled(): i32 { return u.id * 2; }
 function find(n: i32): Option[User] { if (n > 0) { return Some(User { id: n }); } return None; }
 function getid(n: i32): Option[i32] { let u = find(n)?; return Some(u.doubled()); }
 function main(): i32 { match (getid(21)) { Some(v) => { return v; }, None => { return 0; } } }`},
-	// A nominal-ENUM payload, matched in the body → 42.
 	{"result_enum_match", `enum Color { Red, Green, Blue }
 function pick(n: i32): Result[Color, string] { if (n > 0) { return Ok(Color.Green); } return Err("bad"); }
 function go(n: i32): Result[i32, string] {
@@ -37,10 +29,6 @@ function go(n: i32): Result[i32, string] {
     match (c) { Color.Green => { return Ok(42); }, _ => { return Ok(0); } }
 }
 function main(): i32 { match (go(5)) { Ok(v) => { return v; }, Err(e) => { return 0; } } }`},
-	// RC stress: a struct payload with a STRING field, unwrapped via `?` in a
-	// 50-iteration loop — the leak-only payload must not over-release. Each round
-	// contributes id + name.len() = i + 1; sum(1..50) + 50 = 1275 + 50 = 1325;
-	// 1325 % 256 = 45.
 	{"rc_stress", `struct User { id: i32, name: string }
 function find(n: i32): Result[User, string] { if (n > 0) { return Ok(User { id: n, name: "u" }); } return Err("x"); }
 function getid(n: i32): Result[i32, string] { let u = find(n)?; return Ok(u.id + u.name.len()); }
@@ -51,7 +39,6 @@ function main(): i32 {
 }`},
 }
 
-// The x86-64 leg.
 func TestSelfHostTryStructPayloadIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := copySelfHostTree(t)
@@ -103,8 +90,6 @@ func TestSelfHostTryStructPayloadIR(t *testing.T) {
 	}
 }
 
-// The wasm leg: the fix lives in the shared lowering, so the wasm IR backend types
-// the try-payload slot the same way.
 func TestSelfHostTryStructPayloadWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping try-struct-payload wasm IR e2e")

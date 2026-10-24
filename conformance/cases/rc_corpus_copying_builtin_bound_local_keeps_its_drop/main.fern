@@ -1,12 +1,12 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// #7867 slice 2, the bound-local half — a distinct defect with
-// the same cause: computeFreeEligible tainted any local passed
-// to a builtin it did not know, so the binding lost its
-// FREEING scope-exit drop (measured 100/0, 3200 B live; the
-// two-word ABIs never took this taint, so the leak was
-// single-word x86-64's).
+
+
+
+
+
+
+
+
+
 @noinline
 function mk(pad: string, i: i32): string { return pad + "0123456789abcdef"; }
 

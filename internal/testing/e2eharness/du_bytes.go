@@ -108,9 +108,6 @@ func RunDUByteCases(t *testing.T, bin string, runner []string, target string, ce
 					t.Fatalf("GNU run: %v", err)
 				}
 				if tc.Collation && runtime.GOOS == "darwin" && !strings.Contains(target, "darwin") {
-					// GNU 9.12 on Linux matches f for both [[.f.]] and [[=f=]].
-					// Darwin uses the gnulib bracket fallback instead. Keep the
-					// cross-target cases, with the measured Linux expectation.
 					want = []byte("5\tab\n2\té🙂\n0\tempty\n8\tf]\n11\t=]\n")
 				}
 			}

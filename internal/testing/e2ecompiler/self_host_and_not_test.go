@@ -113,8 +113,6 @@ func TestSelfHostAndNot(t *testing.T) {
 	}
 }
 
-// Every register field and every aliasing pattern, at both widths, is pinned
-// against GNU as. This also drives the in-process assembler's mnemonic path.
 func TestSelfHostX86GasAndNot(t *testing.T) {
 	gcc, _ := x86_64Tooling(t)
 	var asm strings.Builder

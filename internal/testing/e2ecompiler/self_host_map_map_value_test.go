@@ -2,21 +2,10 @@ package e2ecompiler
 
 import "testing"
 
-// A map whose value column holds maps (#11071). A map box is counted on every
-// backend, so the column is a column of boxes like any other: a read retains
-// the inner map, an overwrite or delete releases the one it displaces, and the
-// outer map's last unit releases every inner one.
-//
-// Each program returns 0 only on the right answers with no rc underflow, and
-// every leg reads a balanced FERN_LEAKCHECK census. An integer- or
-// string-keyed outer map is core/map's; a struct-keyed one is the backend
-// runtime's, holding core/map maps, so both representations carry the column.
 var mapOfMapPrograms = []struct {
 	name string
 	src  string
 }{
-	// TestWasmMapSetCountedStoreBalanced's nested-map program, which the
-	// typed lowering refused whole.
 	{"read-through-match", `import "core/map";
 function build(i: i32): Map[i32, Map[i32, i32]] {
     let inner: Map[i32, i32] = map_new(2);
@@ -39,8 +28,6 @@ function main(): i32 {
     if (acc != 200) { return 99; }
     return __rc_underflow_count();
 }`},
-	// Insert, read an inner map out, mutate it and store it back under a new
-	// key, overwrite, delete, iterate, snapshot the values, drop the outer map.
 	{"round-trip", `import "core/map";
 
 function adjacency(n: i32): Map[i32, Map[i32, i32]] {
@@ -118,8 +105,6 @@ function main(): i32 {
     }
     return __rc_underflow_count();
 }`},
-	// A struct-keyed outer map over core/map maps, and a core/map outer map
-	// over struct-keyed ones.
 	{"struct-keyed", `import "core/map";
 import "core/cmp";
 
@@ -175,8 +160,6 @@ function main(): i32 {
     }
     return __rc_underflow_count();
 }`},
-	// An insert into a shared outer map copies it first; the copy holds a unit
-	// of every inner map and the original keeps answering its own entries.
 	{"shared-outer", `import "core/map";
 import "core/cmp";
 

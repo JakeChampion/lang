@@ -1,5 +1,3 @@
-// Three callers keep the real field multiply behind a call boundary. Each
-// reads only scalar limbs; the input elements stay live across all calls.
 import "std/crypto/field25519" as fe;
 import "std/i64";
 import "std/u64";

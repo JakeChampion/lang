@@ -2,22 +2,6 @@ package e2e
 
 import "testing"
 
-// Generic array combinators — `map` / `filter` / `fold` written as
-// user-level generic functions over `T[]` — exercise the single
-// highest-leverage stdlib shape (docs/STDLIB-ROADMAP.md item #1).
-//
-// They were blocked by a monomorph substitution-walker gap: a
-// generic body that calls an Array method (`push`) on a `T[]`
-// receiver stamps the method call's TypeArgs to `[T]`, and the
-// clone-substitution walker failed to rewrite those to the concrete
-// instantiation because `substituteExpr` had no `*ast.Assign` case
-// (so `out = out.append(x)` was never walked). The re-check then
-// compared the abstract `T[]` parameter against the concrete element
-// type and rejected with "expected T[], got i32[]".
-//
-// These cases pin the runtime result across the interpreter and the
-// x86-64 native backend (wasm too, when wasmtime is on PATH) so the
-// fix can't silently regress on any target.
 func TestGenericArrayCombinators(t *testing.T) {
 	cases := []struct {
 		name string
@@ -52,8 +36,6 @@ function main(): i32 {
 			want: 15,
 		},
 		{
-			// An empty seed binds nothing; the combinator's A comes from
-			// the lambda (#10499).
 			name: "fold seeded with an empty array",
 			src: `function fold_arr[T, A](xs: T[], init: A, f: (A, T) => A): A {
     let acc: A = init;
@@ -68,8 +50,6 @@ function main(): i32 {
 			want: 42,
 		},
 		{
-			// An empty literal at a `T[]` parameter takes its element type
-			// from whichever argument binds T, before or after it.
 			name: "empty array at an element-typed parameter",
 			src: `function zip[T](a: T[], b: T[]): T[] {
     let out: T[] = a;
@@ -80,7 +60,6 @@ function main(): i32 { return zip([], [1, 2, 3]).len() + zip([1, 2], []).len(); 
 			want: 5,
 		},
 		{
-			// At a `[T]` view parameter it is lent as a view like any array.
 			name: "empty array at a view parameter",
 			src: `function head2[T](xs: [T], ys: T[]): i32 { return xs.len() + ys.len(); }
 function main(): i32 { return head2([], [7, 8]); }`,
@@ -100,7 +79,7 @@ function main(): i32 {
     let evens: i32[] = filter_arr(xs, (n: i32): boolean => { return n % 2 == 0; });
     return evens.len() * 10 + evens[0] + evens[1] + evens[2];
 }`,
-			want: 42, // 3 evens (2,4,6): 3*10 + 2 + 4 + 6 (kept < 256 for the exit-code path)
+			want: 42,
 		},
 		{
 			name: "map+fold pipeline",
@@ -119,7 +98,7 @@ function main(): i32 {
     let doubled: i32[] = map_arr(xs, (n: i32): i32 => { return n + n; });
     return fold_arr(doubled, 0, (a: i32, n: i32): i32 => { return a + n; });
 }`,
-			want: 20, // (1+2+3+4)*2
+			want: 20,
 		},
 	}
 
@@ -139,19 +118,6 @@ function main(): i32 {
 	}
 }
 
-// TestStdArrayCombinators pins the std/array combinators
-// (`map` / `filter` / `fold` / `any` / `all` / `find` /
-// `enumerate`) as they ship in the stdlib — called qualified
-// through `import "std/array"` rather than declared inline.
-//
-// This is a distinct path from TestGenericArrayCombinators: the
-// stdlib bodies are mangled (`map` -> `array__map`) by modload
-// and only then monomorphised, so this guards that generic
-// instantiation survives the import-mangling pipeline on every
-// backend. It also covers the two shapes the inline test
-// doesn't — `find` returning `Option[T]` and `enumerate`
-// returning `(i32, T)[]` — which exercise generic enum and
-// tuple-in-array returns through codegen.
 func TestStdArrayCombinators(t *testing.T) {
 	cases := []struct {
 		name string
@@ -167,7 +133,7 @@ function main(): i32 {
     let evens: i32[] = array.filter(doubled, (n: i32): boolean => { return n % 4 == 0; });
     return array.fold(evens, 0, (a: i32, n: i32): i32 => { return a + n; });
 }`,
-			want: 24, // doubled=[2,4,6,8,10,12]; %4==0 -> [4,8,12]; sum=24
+			want: 24,
 		},
 		{
 			name: "any+all qualified",
@@ -180,7 +146,7 @@ function main(): i32 {
     if (array.any(xs, (n: i32): boolean => { return n == 7; })) { r = r + 1; }
     return r;
 }`,
-			want: 15, // all-even (10) + contains-6 (5); no 7
+			want: 15,
 		},
 		{
 			name: "find Option arms qualified",

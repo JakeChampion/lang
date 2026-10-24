@@ -9,7 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// pasteFile writes `content` under `dir` as `name` and returns its path.
 func pasteFile(t *testing.T, dir, name, content string) string {
 	t.Helper()
 	p := filepath.Join(dir, name)
@@ -23,14 +22,6 @@ func init() {
 	registerCorpus("paste", pasteCases)
 }
 
-// pasteCases is paste(1)'s corpus.
-//
-// Unequal file lengths are where the behaviour lives: the delimiter of a
-// file that has run out is HELD until a later column on the same line
-// produces something, so a short first file makes the following lines
-// start with delimiters. The other half is the delimiter list, where a
-// NUL entry writes nothing at all and an empty list is exactly one of
-// those, so `paste -d` with nothing after it concatenates.
 func pasteCases(t *testing.T) []invocation {
 	dir := t.TempDir()
 	three := pasteFile(t, dir, "three", "1\n2\n3\n")
@@ -47,17 +38,11 @@ func pasteCases(t *testing.T) []invocation {
 		t.Fatal(err)
 	}
 	d := filepath.Join(dir, "d")
-	// Several output blocks, which is what the write-failure cases need.
-	// Not more than that: the self-host leg runs this same corpus, and a
-	// self-host build accumulates output quadratically (#8793), so a
-	// fixture sized for the utility would be sized wrong for the gate.
 	bigA := pasteFile(t, dir, "bigA", strings.Repeat("left\n", 12000))
 	bigB := pasteFile(t, dir, "bigB", strings.Repeat("right\n", 12000))
-	// A line longer than one read block, so a column spans reads.
 	longline := pasteFile(t, dir, "long", strings.Repeat("x", 70000)+"\ntail\n")
 
 	cases := []invocation{
-		// Parallel.
 		{name: "one file", args: []string{three}},
 		{name: "two files", args: []string{three, two}},
 		{name: "three files", args: []string{three, two, one}},
@@ -75,7 +60,6 @@ func pasteCases(t *testing.T) []invocation {
 		{name: "same file twice", args: []string{three, three}},
 		{name: "long line", args: []string{longline, two}},
 
-		// -d.
 		{name: "one delimiter", args: []string{"-d,", three, two}},
 		{name: "delimiter list cycles", args: []string{"-d", ",;", three, two, one}},
 		{name: "more delimiters than columns", args: []string{"-d", ",;.:", three, two}},
@@ -94,7 +78,6 @@ func pasteCases(t *testing.T) []invocation {
 		{name: "trailing backslash", args: []string{"-d", `a\`, three}},
 		{name: "lone backslash", args: []string{"-d", `\`, three}},
 
-		// -s.
 		{name: "serial", args: []string{"-s", three}},
 		{name: "serial two files", args: []string{"-s", three, two}},
 		{name: "serial delimiter", args: []string{"-s", "-d,", three}},
@@ -107,13 +90,11 @@ func pasteCases(t *testing.T) []invocation {
 		{name: "long serial option", args: []string{"--serial", three, two}},
 		{name: "serial long line", args: []string{"-s", longline}},
 
-		// -z.
 		{name: "zero terminated", args: []string{"-z", nul, nul2}},
 		{name: "zero terminated serial", args: []string{"-z", "-s", nul}},
 		{name: "zero terminated on newline input", args: []string{"-z", "-s", three}},
 		{name: "long zero terminated option", args: []string{"--zero-terminated", nul, nul2}},
 
-		// Operands.
 		{name: "no operand reads stdin", stdin: "q\nr\n"},
 		{name: "lone dash", args: []string{"-"}, stdin: "q\nr\n"},
 		{name: "two dashes share stdin", args: []string{"-", "-"}, stdin: "q\nr\ns\nt\n"},
@@ -133,7 +114,6 @@ func pasteCases(t *testing.T) []invocation {
 		{name: "directory first", args: []string{d, three}},
 		{name: "serial directory", args: []string{"-s", d, three}},
 
-		// getopt.
 		{name: "invalid short option", args: []string{"-x"}},
 		{name: "unrecognized long option", args: []string{"--foo"}},
 		{name: "delimiter needs a value", args: []string{"-d"}},
@@ -146,7 +126,6 @@ func pasteCases(t *testing.T) []invocation {
 		{name: "version rejects a glued value", args: []string{"--version=x"}},
 		{name: "posix operand then option", args: []string{three, "-s"}, env: []string{"POSIXLY_CORRECT=1"}},
 
-		// Write failures.
 		{name: "stdout closed", args: []string{three}, stdout: stdoutClosed},
 		{name: "stdout full", args: []string{three}, stdout: stdoutFull},
 		{name: "stdout closed with a large output", args: []string{bigA, bigB}, stdout: stdoutClosed},
@@ -155,7 +134,6 @@ func pasteCases(t *testing.T) []invocation {
 		{name: "stdout closed with nothing to write", args: []string{empty}, stdout: stdoutClosed},
 		{name: "stdout closed with a missing file", args: []string{missing}, stdout: stdoutClosed},
 
-		// Bulk.
 		{name: "two large files", args: []string{bigA, bigB}},
 		{name: "large serial", args: []string{"-s", bigA}},
 		{name: "stdin across read blocks", args: []string{"-", three}, stdin: strings.Repeat("row\n", 20000)},

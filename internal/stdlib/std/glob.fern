@@ -1,37 +1,17 @@
-// std/glob — shell-style glob pattern matching over a path-like string.
-//
-// `glob_match(pattern, text)` reports whether `text` matches `pattern`:
-//
-//   *        any run of characters EXCEPT the path separator '/'
-//   ?        any single character except '/'
-//   **       any run of characters INCLUDING '/' (the "globstar")
-//   [abc]    one character from the set; ranges like [a-z]; a leading
-//            '!' or '^' negates ([!0-9]); a ']' right after '[' / '[!'
-//            is a literal ']'
-//   anything else matches itself
-//
-// The '/'-awareness means `src/*.fern` matches `src/a.fern` but not
-// `src/x/a.fern`, while `src/**` and `**/*.fern` cross directories.
-// Matching is anchored: the WHOLE text must match the WHOLE pattern.
-//
-// Backtracking matcher (like fnmatch); worst-case time is exponential
-// on pathological patterns with many `*`, as with any backtracking
-// globber — fine for realistic path patterns.
+// This module compares strings with shell glob patterns.
 
-// __glob_class tests `ch` against the bracket class starting at `[`
-// (index `start` in `p`), returning (matched, index-just-after-']').
 function __glob_class(p: string, start: i32, ch: i32): (boolean, i32) {
-  let i: i32 = start + 1;  // past '['
+  let i: i32 = start + 1;
   let negate: boolean = false;
-  if (i < p.len() && (p[i] == 33 || p[i] == 94)) {  // '!' or '^'
+  if (i < p.len() && (p[i] == 33 || p[i] == 94)) {
     negate = true;
     i = i + 1;
   }
   let matched: boolean = false;
   let first: boolean = true;
-  while (i < p.len() && (p[i] != 93 || first)) {  // ']' ends unless first
+  while (i < p.len() && (p[i] != 93 || first)) {
     first = false;
-    if (i + 2 < p.len() && p[i + 1] == 45 && p[i + 2] != 93) {  // range a-z
+    if (i + 2 < p.len() && p[i + 1] == 45 && p[i + 2] != 93) {
       if (ch >= p[i] as i32 && ch <= p[i + 2] as i32) {
         matched = true;
       }
@@ -44,7 +24,7 @@ function __glob_class(p: string, start: i32, ch: i32): (boolean, i32) {
     }
   }
   let next: i32 = i;
-  if (i < p.len()) {  // skip the closing ']'
+  if (i < p.len()) {
     next = i + 1;
   }
   if (negate) {
@@ -53,23 +33,17 @@ function __glob_class(p: string, start: i32, ch: i32): (boolean, i32) {
   return (matched, next);
 }
 
-// __glob_match is the anchored recursive matcher: does p[i..] match
-// t[j..] in full?
 function __glob_match(p: string, i: i32, t: string, j: i32): boolean {
   let pi: i32 = i;
   let tj: i32 = j;
   while (pi < p.len()) {
     let pc: i32 = p[pi] as i32;
-    if (pc == 42) {  // '*'
-      if (pi + 1 < p.len() && p[pi + 1] == 42) {  // '**' — crosses '/'
+    if (pc == 42) {
+      if (pi + 1 < p.len() && p[pi + 1] == 42) {
         let ni: i32 = pi;
         while (ni < p.len() && p[ni] == 42) {
           ni = ni + 1;
         }
-        // `**/` matches zero or more path segments — when it
-        // matches zero, the '/' is elided too, so also try the
-        // pattern PAST the slash at the current position (this is
-        // what lets `**/x` match a bare `x`).
         if (ni < p.len() && p[ni] == 47) {
           if (__glob_match(p, ni + 1, t, tj)) {
             return true;
@@ -84,7 +58,6 @@ function __glob_match(p: string, i: i32, t: string, j: i32): boolean {
         }
         return false;
       }
-      // single '*' — any run of NON-'/' chars
       let m: i32 = tj;
       let cont: boolean = true;
       while (cont) {
@@ -98,13 +71,13 @@ function __glob_match(p: string, i: i32, t: string, j: i32): boolean {
         }
       }
       return false;
-    } else if (pc == 63) {  // '?'
+    } else if (pc == 63) {
       if (tj >= t.len() || t[tj] == 47) {
         return false;
       }
       pi = pi + 1;
       tj = tj + 1;
-    } else if (pc == 91) {  // '['
+    } else if (pc == 91) {
       if (tj >= t.len() || t[tj] == 47) {
         return false;
       }
@@ -114,7 +87,7 @@ function __glob_match(p: string, i: i32, t: string, j: i32): boolean {
       }
       pi = res.1;
       tj = tj + 1;
-    } else {  // literal
+    } else {
       if (tj >= t.len() || t[tj] as i32 != pc) {
         return false;
       }
@@ -125,7 +98,6 @@ function __glob_match(p: string, i: i32, t: string, j: i32): boolean {
   return tj == t.len();
 }
 
-// `glob_match(pattern, text)` — does `text` match the glob `pattern`?
 pub function glob_match(pattern: string, text: string): boolean {
   return __glob_match(pattern, 0, text, 0);
 }

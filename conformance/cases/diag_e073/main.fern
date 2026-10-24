@@ -1,13 +1,13 @@
 // spec: MC-02
-//
-// Pins E073: `core/mem.Drop`'s `drop` is a finalizer. The generated drop
-// glue calls it when the value's last reference goes away, so an explicit
-// `w.drop()` runs the body a SECOND time on a value the runtime is still
-// going to finalize — releasing whatever it releases twice, with nothing
-// reporting it.
-//
-// The gate is the method name plus a `Drop` impl on the receiver's type,
-// so an ordinary method that happens to be called `drop` is unaffected.
+
+
+
+
+
+
+
+
+
 import "core/mem";
 
 struct Sink { n: i32 }
@@ -18,6 +18,6 @@ impl mem.Drop for Sink {
 
 function main(): i32 {
     let w: Sink = Sink { n: 1 };
-    w.drop();                       // error[E073]: the runtime will run this again
+    w.drop();
     return 0;
 }

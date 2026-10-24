@@ -1,4 +1,4 @@
-// A function passed as a parameter and invoked by the callee.
+
 function apply(f: (i32) => i32, x: i32): i32 {
     return f(x);
 }

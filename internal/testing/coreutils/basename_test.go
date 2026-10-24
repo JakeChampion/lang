@@ -8,8 +8,6 @@ func init() {
 
 func basenameCases(t *testing.T) []invocation {
 	return []invocation{
-		// The name rule: last component, trailing slashes dropped, all
-		// slashes is `/`, empty stays empty.
 		{name: "plain name", args: []string{"a"}},
 		{name: "path", args: []string{"/a/b"}},
 		{name: "trailing slash", args: []string{"/a/b/"}},
@@ -24,8 +22,6 @@ func basenameCases(t *testing.T) []invocation {
 		{name: "lone dash is a name", args: []string{"-"}},
 		{name: "name that is not valid UTF-8", args: []string{"\xff\xfe"}},
 
-		// The second operand is a suffix, removed only when it is a
-		// proper suffix of the name.
 		{name: "suffix", args: []string{"a.c", ".c"}},
 		{name: "suffix equal to the name", args: []string{"a.c", "a.c"}},
 		{name: "suffix once only", args: []string{"a.c.c", ".c"}},
@@ -42,7 +38,6 @@ func basenameCases(t *testing.T) []invocation {
 		{name: "root with a slash suffix", args: []string{"//", "/"}},
 		{name: "suffix that is not valid UTF-8", args: []string{"a\xff\xfe", "\xfe"}},
 
-		// -s implies -a, so every operand is a name; the last -s wins.
 		{name: "-s with a slash", args: []string{"-s", "/b", "/a/b"}},
 		{name: "-s equal to the name", args: []string{"-s", "b", "b"}},
 		{name: "-s empty", args: []string{"-s", "", "a"}},
@@ -70,7 +65,6 @@ func basenameCases(t *testing.T) []invocation {
 		{name: "-s with the option as its value", args: []string{"-s", "-a", "x"}},
 		{name: "-s and a name only", args: []string{"-s", ".c"}},
 
-		// -a: every operand is a name.
 		{name: "-a over three names", args: []string{"-a", "a", "b", "c"}},
 		{name: "-a with no names", args: []string{"-a"}},
 		{name: "-a then dashdash only", args: []string{"-a", "--"}},
@@ -78,7 +72,6 @@ func basenameCases(t *testing.T) []invocation {
 		{name: "-a -s over two names", args: []string{"-a", "-s", ".c", "a.c", "b.c"}},
 		{name: "-sa cluster", args: []string{"-sa", "a"}},
 
-		// -z: NUL terminators.
 		{name: "-z", args: []string{"-z", "a"}},
 		{name: "-z with a suffix operand", args: []string{"-z", "a", "b"}},
 		{name: "-z on an empty name", args: []string{"-z", ""}},
@@ -87,7 +80,6 @@ func basenameCases(t *testing.T) []invocation {
 		{name: "-az on empty names", args: []string{"-az", "", ""}},
 		{name: "--zero abbreviated", args: []string{"--z", "a"}},
 
-		// The scan is in order: the first operand ends the options.
 		{name: "option after the name is a suffix", args: []string{"a", "-a"}},
 		{name: "long option after the name is a suffix", args: []string{"a", "--zero"}},
 		{name: "option as a third operand", args: []string{"a", "b", "--zero"}},
@@ -101,7 +93,6 @@ func basenameCases(t *testing.T) []invocation {
 		{name: "posix changes nothing", args: []string{"a", "-a"}, env: []string{"POSIXLY_CORRECT=1"}},
 		{name: "posix option before the name", args: []string{"-a", "a", "b"}, env: []string{"POSIXLY_CORRECT=1"}},
 
-		// Operand counts.
 		{name: "no arguments"},
 		{name: "three operands", args: []string{"a", "b", "c"}},
 		{name: "four operands name the third", args: []string{"a", "b", "c", "d"}},
@@ -111,7 +102,6 @@ func basenameCases(t *testing.T) []invocation {
 		{name: "dashdash then help", args: []string{"--", "--help"}},
 		{name: "-s then dashdash", args: []string{"-s", "x", "--", "a"}},
 
-		// Getopt faults, worded as glibc words them.
 		{name: "invalid short option", args: []string{"-x", "a"}},
 		{name: "invalid short option after a valid one", args: []string{"-ax", "a"}},
 		{name: "invalid short option before a valid one", args: []string{"-xa", "a"}},
@@ -123,7 +113,6 @@ func basenameCases(t *testing.T) []invocation {
 		{name: "help with a value", args: []string{"--help=x"}},
 		{name: "bad option before help", args: []string{"--foo", "--help"}},
 
-		// The extra operand is quoted in the C locale's style.
 		{name: "extra operand with a space", args: []string{"a", "b", "c d"}},
 		{name: "extra operand with a newline", args: []string{"a", "b", "c\nd"}},
 		{name: "extra operand with a tab", args: []string{"a", "b", "c\td"}},
@@ -139,9 +128,6 @@ func basenameCases(t *testing.T) []invocation {
 		{name: "extra operand with question marks", args: []string{"a", "b", "c??(d"}},
 		{name: "extra operand that is empty", args: []string{"a", "b", ""}},
 
-		// A failing write: `>&-` and `> /dev/full` are the paths close_stdout
-		// and the exit status wire together, and they were left out until
-		// #8265 landed.
 		{name: "stdout closed", args: []string{"/a/b"}, stdout: stdoutClosed},
 		{name: "stdout full", args: []string{"/a/b"}, stdout: stdoutFull},
 		{name: "stdout closed with a suffix", args: []string{"/a/b.c", ".c"}, stdout: stdoutClosed},

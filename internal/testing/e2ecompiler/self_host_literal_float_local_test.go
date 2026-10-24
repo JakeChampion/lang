@@ -2,9 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// Checking alone accepted several of these shapes while lowering retained
-// integer or f64 locals at their old representation (#12395). Exercise both
-// arms, including f32 and whole-composite demands, on every backend.
 func TestSelfHostLiteralFloatLocals(t *testing.T) {
 	const program = `function pick[T](a: T, b: T): T { return a; }
 @noinline function exercise(c: boolean): i32 {

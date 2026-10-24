@@ -10,7 +10,6 @@ import (
 	"testing"
 )
 
-// odFile writes one input the corpus names and returns its path.
 func odFile(t *testing.T, dir, name string, content []byte) string {
 	t.Helper()
 	p := filepath.Join(dir, name)
@@ -20,9 +19,6 @@ func odFile(t *testing.T, dir, name string, content []byte) string {
 	return p
 }
 
-// odFloats packs `vals` at `size` bytes each, little-endian, so a
-// `-t f4` / `-t f8` case dumps values whose printed form is decided by
-// gnulib's shortest-round-trip rule rather than by a fixed precision.
 func odFloats(vals []float64, size int) []byte {
 	out := make([]byte, 0, len(vals)*size)
 	for _, v := range vals {
@@ -38,42 +34,34 @@ func odFloats(vals []float64, size int) []byte {
 	return out
 }
 
-// odExtended packs 80-bit x87 encodings, each in the sixteen bytes the
-// ABI gives `long double`: the 64-bit significand with its integer bit
-// STORED, then the sign and the biased exponent.
-//
-// The list is every class the format has except one: a pseudo-denormal
-// (a zero exponent with the integer bit set) is left out, because what
-// GNU prints for one is an x87 artefact rather than a value — see
-// docs/COREUTILS.md's known divergences.
 func odExtended() []byte {
 	type pat struct {
 		lo  uint64
 		exp uint16
 	}
 	pats := []pat{
-		{0, 0},                       // zero
-		{0, 0x8000},                  // negative zero
-		{1, 0},                       // the least subnormal
-		{1 << 62, 0},                 // a subnormal at half the least normal
-		{0x7fffffffffffffff, 0},      // the greatest subnormal
-		{1 << 63, 0x3fff},            // one
-		{1 << 63, 0xbfff},            // minus one
-		{1 << 63, 0x4000},            // two
-		{0xc000000000000000, 0x4000}, // three
-		{0x8000000000000001, 0x3fff}, // one plus an ulp
-		{1 << 63, 1},                 // the least normal
-		{0xffffffffffffffff, 0x7ffe}, // the greatest finite
-		{1 << 63, 0x7fff},            // infinity
-		{1 << 63, 0xffff},            // negative infinity
-		{0xc000000000000000, 0x7fff}, // a quiet NaN
-		{0xa000000000000000, 0xffff}, // a negative NaN
-		{1 << 62, 0x3fff},            // an unnormal, which is not a value at all
-		{0, 0x7fff},                  // a pseudo-infinity, likewise
-		{1, 0x7fff},                  // a pseudo-NaN, likewise
-		{0x8000000000000000, 0x0002}, // two ulps above the least normal
-		{0x9a209a84fbcff798, 0x400c}, // pi times a power of two
-		{0xb17217f7d1cf79ab, 0x3ffe}, // ln 2
+		{0, 0},
+		{0, 0x8000},
+		{1, 0},
+		{1 << 62, 0},
+		{0x7fffffffffffffff, 0},
+		{1 << 63, 0x3fff},
+		{1 << 63, 0xbfff},
+		{1 << 63, 0x4000},
+		{0xc000000000000000, 0x4000},
+		{0x8000000000000001, 0x3fff},
+		{1 << 63, 1},
+		{0xffffffffffffffff, 0x7ffe},
+		{1 << 63, 0x7fff},
+		{1 << 63, 0xffff},
+		{0xc000000000000000, 0x7fff},
+		{0xa000000000000000, 0xffff},
+		{1 << 62, 0x3fff},
+		{0, 0x7fff},
+		{1, 0x7fff},
+		{0x8000000000000000, 0x0002},
+		{0x9a209a84fbcff798, 0x400c},
+		{0xb17217f7d1cf79ab, 0x3ffe},
 	}
 	out := make([]byte, 0, len(pats)*16)
 	for _, p := range pats {
@@ -89,40 +77,19 @@ func init() {
 	registerCorpus("od", odCases)
 }
 
-// odCases is od(1)'s corpus.
-//
-// Three things carry most of it. The first is the column arithmetic:
-// several `-t` specs on one dump have to end in the same column, so each
-// one's block is padded to the widest and the padding is spread over its
-// fields — the `-t x1c` and `-t f4 -t f8 -t fL` cases are what pin that,
-// and every `z` case pins where the padding stops and the printable
-// trailer starts. The second is the shortest-round-trip float rendering,
-// which is why the float inputs are built from bit patterns rather than
-// from text. The third is the option surface: `-S` requires its value in
-// the short spelling and takes one only when glued in the long, `-w`
-// takes one only when glued in both, the traditional offset operand is
-// read only when no modern option was given, and ten hidden format
-// letters GNU never documents still work.
 func odCases(t *testing.T) []invocation {
 	dir := t.TempDir()
 	hello := odFile(t, dir, "hello", []byte("Hello, World!\nSecond line here\n"))
-	// Every byte, so -a, -c and the printable trailer all meet their
-	// whole table, and a 256-byte file is a whole number of blocks in
-	// every width the corpus asks for.
 	all := make([]byte, 256)
 	for i := range all {
 		all[i] = byte(i)
 	}
 	allBytes := odFile(t, dir, "allbytes", all)
-	// Runs of identical blocks in the middle and at both ends, so the
-	// `*` elision is exercised where it starts, where it stops, and
-	// against the short last block it may not stand for.
 	dup := odFile(t, dir, "dup", []byte(strings.Repeat("A", 16)+strings.Repeat("B", 48)+
 		strings.Repeat("C", 16)+strings.Repeat("B", 32)+"DDD"))
 	zeros := odFile(t, dir, "zeros", make([]byte, 64))
 	empty := odFile(t, dir, "empty", nil)
 	short := odFile(t, dir, "short", []byte("abcdefghijklmno"))
-	// Printable runs, some NUL-terminated and some not, for -S.
 	strs := odFile(t, dir, "strs", []byte("ABC\x00defgh\x00ij\x00ab\tcd\x01ef\x00gh\x7f\xffij\x00"))
 	rnd := rand.New(rand.NewSource(8314))
 	noise := make([]byte, 300)
@@ -130,14 +97,6 @@ func odCases(t *testing.T) []invocation {
 		noise[i] = byte(rnd.Intn(256))
 	}
 	random := odFile(t, dir, "random", noise)
-	// The second and third rows are where the shortest decimal and
-	// GNU's `%.*g` search part company: 2^-24 has a 16-digit decimal
-	// that reads back, but the 16-digit rounding of its exact value is
-	// a tie that rounds to even and does not, so GNU prints 17 digits;
-	// 2^-25 is the same tie one precision later. The rest sit on the
-	// style boundaries of `%g` (1e-5, 1e15..1e17), at the ends of the
-	// double's range, on the subnormal boundary, and where a rounding
-	// carries into a new digit.
 	floatVals := []float64{
 		0, math.Copysign(0, -1), 1, -1, 0.5, 1.0 / 3, 1e30, 1e-30,
 		3.4028235e38, 1.1754944e-38, 5e-324, math.Inf(1), math.Inf(-1),
@@ -161,29 +120,18 @@ func odCases(t *testing.T) []invocation {
 		t.Fatal(err)
 	}
 	d := filepath.Join(dir, "d")
-	// Created only where the filesystem holds the name; the cases naming it
-	// carry rawByteName and skip there.
 	raw := filepath.Join(dir, rawByteNameFixture)
 	if rawByteNamesHeld(t) {
 		raw = odFile(t, dir, rawByteNameFixture, []byte("x\n"))
 	}
-	// Past a read block, so the elision and the offsets cross one.
 	big := odFile(t, dir, "big", []byte(strings.Repeat("0123456789abcdef", 20000)))
-	// A run of identical blocks that straddles the seam between two
-	// reads at every block width, with a lone odd byte just before it
-	// and a short block after, so the fold that carries a block across
-	// the seam is the one being compared.
 	dupBig := odFile(t, dir, "dupbig", []byte(strings.Repeat("A", 66000)+"B"+strings.Repeat("A", 66000)+"tail"))
-	// Printable runs that cross a read boundary, one NUL-terminated and
-	// one broken by a newline just past it, for -S.
 	strsBig := odFile(t, dir, "strsbig", []byte(strings.Repeat("A", 66000)+"\x00"+strings.Repeat("B", 10)+"\n"+
 		strings.Repeat("C", 5)+"\x00"+strings.Repeat("D", 65540)+"\nabc\x00"))
-	// A run -N can cut, and one that ends at EOF with no terminator.
 	runLim := odFile(t, dir, "runlim", []byte("AAAAAAAA\x00BBBB\x00"))
 	noTerm := odFile(t, dir, "noterm", []byte("AAAA"))
 
 	cases := []invocation{
-		// The default dump.
 		{name: "default", args: []string{hello}},
 		{name: "no operand reads stdin", stdin: "hello from stdin\n"},
 		{name: "lone dash is stdin", args: []string{"-"}, stdin: "p\nq\n"},
@@ -196,7 +144,6 @@ func odCases(t *testing.T) []invocation {
 		{name: "every byte", args: []string{allBytes}},
 		{name: "past a read block", args: []string{big}},
 
-		// The traditional format letters, including the ten GNU hides.
 		{name: "a", args: []string{"-a", allBytes}},
 		{name: "b", args: []string{"-b", allBytes}},
 		{name: "c", args: []string{"-c", allBytes}},
@@ -221,7 +168,6 @@ func odCases(t *testing.T) []invocation {
 		{name: "every letter", args: []string{"-abcdfilosx", allBytes}},
 		{name: "a letter twice", args: []string{"-x", "-x", allBytes}},
 
-		// -t: kinds, sizes and the z trailer.
 		{name: "type a", args: []string{"-t", "a", allBytes}},
 		{name: "type c", args: []string{"-t", "c", allBytes}},
 		{name: "type d default size", args: []string{"-t", "d", allBytes}},
@@ -274,7 +220,6 @@ func odCases(t *testing.T) []invocation {
 		{name: "z on the first spec", args: []string{"-t", "cz", "-t", "x1", short}},
 		{name: "z on every kind", args: []string{"-t", "az", "-t", "cz", "-t", "x1z", "-t", "d2z", "-t", "f4z", random}},
 
-		// -t faults.
 		{name: "a takes no size", args: []string{"-t", "a1", allBytes}},
 		{name: "c takes no size", args: []string{"-t", "c1", allBytes}},
 		{name: "three-byte integer", args: []string{"-t", "x3", allBytes}},
@@ -288,12 +233,6 @@ func odCases(t *testing.T) []invocation {
 		{name: "a comma is not a separator", args: []string{"-t", "x1,x2", allBytes}},
 		{name: "a newline in a type string", args: []string{"-t", "x\n", allBytes}},
 
-		// A size too large to parse. GNU reports it WITHOUT the
-		// "this system doesn't provide a N-byte type" suffix, having no
-		// width to name, and its cutoff is i32 overflow — so the pair
-		// either side of 2^31 is what pins which message is chosen, and
-		// the sizes below it pin that the number is the one the user
-		// wrote rather than a truncation of it.
 		{name: "size over seven digits", args: []string{"-t", "x12345678", short}},
 		{name: "size at i32 max", args: []string{"-t", "x2147483647", short}},
 		{name: "size one past i32 max", args: []string{"-t", "x2147483648", short}},
@@ -302,7 +241,6 @@ func odCases(t *testing.T) []invocation {
 		{name: "float size past i32 max", args: []string{"-t", "f2147483648", short}},
 		{name: "leading zeros do not overflow", args: []string{"-t", "d00000004", short}},
 
-		// Floating point, where the digits are the shortest round trip.
 		{name: "floats", args: []string{"-t", "f4", f4}},
 		{name: "floats one per line", args: []string{"-A", "n", "-t", "f4", "-w4", "-v", f4}},
 		{name: "doubles", args: []string{"-t", "f8", f8}},
@@ -315,7 +253,6 @@ func odCases(t *testing.T) []invocation {
 		{name: "three float widths at once", args: []string{"-t", "f4", "-t", "f8", "-t", "fL", fx}},
 		{name: "a float beside its bytes", args: []string{"-t", "f4", "-t", "x4", f4}},
 
-		// -A.
 		{name: "address decimal", args: []string{"-A", "d", "-c", hello}},
 		{name: "address hex", args: []string{"-A", "x", "-c", hello}},
 		{name: "address octal", args: []string{"-A", "o", "-c", hello}},
@@ -327,7 +264,6 @@ func odCases(t *testing.T) []invocation {
 		{name: "empty radix", args: []string{"-A", "", hello}},
 		{name: "address none with several specs", args: []string{"-A", "n", "-t", "x1", "-t", "c", short}},
 
-		// -j, -N and their counts.
 		{name: "skip", args: []string{"-j", "4", "-t", "x1", short}},
 		{name: "skip glued", args: []string{"-j4", "-t", "x1", short}},
 		{name: "skip to the end", args: []string{"-j", "15", "-t", "x1", short}},
@@ -363,7 +299,6 @@ func odCases(t *testing.T) []invocation {
 		{name: "read long is not a number", args: []string{"--read-bytes=x", "-t", "x1", allBytes}},
 		{name: "read long abbreviated", args: []string{"--r", "4", "-t", "x1", allBytes}},
 
-		// -w.
 		{name: "width one", args: []string{"-w1", "-t", "x1", short}},
 		{name: "width three", args: []string{"-w3", "-t", "x1", short}},
 		{name: "width four", args: []string{"-w4", "-t", "x1", short}},
@@ -380,7 +315,6 @@ func odCases(t *testing.T) []invocation {
 		{name: "width seventeen", args: []string{"-w17", "-t", "c", allBytes}},
 		{name: "width fourteen for two-byte units", args: []string{"-w14", "-t", "x2", allBytes}},
 
-		// -v and the * elision.
 		{name: "elision", args: []string{"-t", "x1", dup}},
 		{name: "elision of a whole file", args: []string{zeros}},
 		{name: "no elision", args: []string{"-v", "-t", "x1", dup}},
@@ -392,7 +326,6 @@ func odCases(t *testing.T) []invocation {
 		{name: "elision starting mid file", args: []string{"-t", "x1", "-j", "16", dup}},
 		{name: "elision past a read block", args: []string{"-t", "x1", big}},
 
-		// --endian.
 		{name: "endian big", args: []string{"--endian=big", "-t", "x2", allBytes}},
 		{name: "endian little", args: []string{"--endian=little", "-t", "x2", allBytes}},
 		{name: "endian big four bytes", args: []string{"--endian=big", "-t", "x4", allBytes}},
@@ -404,7 +337,6 @@ func odCases(t *testing.T) []invocation {
 		{name: "endian is not one of the two", args: []string{"--endian=x", "-t", "x2", allBytes}},
 		{name: "endian abbreviated", args: []string{"--e=big", "-t", "x2", allBytes}},
 
-		// -S.
 		{name: "strings", args: []string{"-S", "3", strs}},
 		{name: "strings of two", args: []string{"-S", "2", strs}},
 		{name: "strings of four", args: []string{"-S", "4", strs}},
@@ -422,26 +354,17 @@ func odCases(t *testing.T) []invocation {
 		{name: "strings bounded", args: []string{"-S", "3", "-N", "12", strs}},
 		{name: "strings and a type", args: []string{"-S", "3", "-t", "x1", strs}},
 		{name: "strings and duplicates", args: []string{"-S", "3", "-v", strs}},
-		// A minimum length no run can reach is not an error: GNU sizes its
-		// buffer from it, scans, and prints nothing. The widths either side
-		// of INT_MAX and UINT_MAX are where a 32-bit length would wrap into
-		// a threshold that matches.
 		{name: "strings longer than int", args: []string{"-S", "2147483648", strs}},
 		{name: "strings at int max", args: []string{"-S", "2147483647", strs}},
 		{name: "strings longer than unsigned int", args: []string{"-S", "4294967296", strs}},
 		{name: "strings wrapping to a short length", args: []string{"-S", "4294967299", strs}},
 		{name: "strings of eight gibibytes", args: []string{"-S", "8589934592", strs}},
 		{name: "strings long option longer than int", args: []string{"--strings=2147483648", strs}},
-		// At PTRDIFF_MAX and above the buffer cannot exist on any host, so
-		// GNU's allocation fails rather than its scan.
 		{name: "strings at ptrdiff max", args: []string{"-S", "9223372036854775807", strs}},
 		{name: "strings past ptrdiff max", args: []string{"-S", "9223372036854775808", strs}},
 		{name: "strings at uintmax", args: []string{"-S", "18446744073709551615", strs}},
 		{name: "strings past uintmax", args: []string{"-S", "18446744073709551616", strs}},
 
-		// Every integer kind and size at every width, over bytes that
-		// reach the top bit, so the sign, the zero padding, the digit
-		// grouping and the field's own blank are all pinned per size.
 		{name: "x1 at width one", args: []string{"-w1", "-t", "x1", random}},
 		{name: "x2 at width two", args: []string{"-w2", "-t", "x2", random}},
 		{name: "x4 at width four", args: []string{"-w4", "-t", "x4", random}},
@@ -471,7 +394,6 @@ func odCases(t *testing.T) []invocation {
 		{name: "named characters at width sixty-four", args: []string{"-w64", "-t", "a", allBytes}},
 		{name: "characters at width sixty-four", args: []string{"-w64", "-t", "c", allBytes}},
 
-		// The pad a narrower spec gets from a wider one, per kind.
 		{name: "hex padded by octal", args: []string{"-t", "x1", "-t", "o2", random}},
 		{name: "octal padded by decimal", args: []string{"-t", "o8", "-t", "d1", random}},
 		{name: "hex padded by characters", args: []string{"-t", "x8", "-t", "c", random}},
@@ -481,9 +403,6 @@ func odCases(t *testing.T) []invocation {
 		{name: "one type string of two octal sizes", args: []string{"-t", "o1o8", random}},
 		{name: "padding on a short last block", args: []string{"-t", "x1", "-t", "o8", "-t", "c", short}},
 
-		// The address in each radix past its zero-padded width, which the
-		// label reaches without a two-mebibyte file: seven hex digits is
-		// an odd count, and eight decimal ones outgrow the field.
 		{name: "octal label past seven digits", args: []string{"--traditional", short, "4", "20000000"}},
 		{name: "hex label of seven digits", args: []string{"--traditional", "-A", "x", short, "4", "0x1000000"}},
 		{name: "hex label of eight digits", args: []string{"--traditional", "-A", "x", short, "4", "0x12345678"}},
@@ -494,7 +413,6 @@ func odCases(t *testing.T) []invocation {
 		{name: "address hex with octal eight-byte units", args: []string{"-A", "x", "-t", "o8", big}},
 		{name: "address decimal at width one", args: []string{"-A", "d", "-w1", "-t", "x1", short}},
 
-		// -j and -N against the unit, the block and the read.
 		{name: "skip to the last byte", args: []string{"-j", "15", "-N", "1", "-t", "x8", short}},
 		{name: "read one past a block", args: []string{"-N", "17", "-t", "x8", allBytes}},
 		{name: "skip one and read a block of eight-byte units", args: []string{"-j", "1", "-N", "16", "-t", "x8", allBytes}},
@@ -508,8 +426,6 @@ func odCases(t *testing.T) []invocation {
 		{name: "a short last block of eight-byte units at width thirty-two", args: []string{"-w32", "-t", "o8", random}},
 		{name: "a short last block of eight-byte hex at width sixty-four", args: []string{"-w64", "-t", "x8", "--endian=big", random}},
 
-		// The fold across the seam between reads, at widths that do and
-		// do not divide a read.
 		{name: "fold across a read", args: []string{"-t", "x1", dupBig}},
 		{name: "fold across a read at width seven", args: []string{"-w7", "-t", "x1", dupBig}},
 		{name: "fold across a read at width three", args: []string{"-w3", dupBig}},
@@ -521,7 +437,6 @@ func odCases(t *testing.T) []invocation {
 		{name: "no fold of the big file", args: []string{"-v", "-t", "x8", big}},
 		{name: "fold of the big file at width seven", args: []string{"-w7", "-t", "x1", big}},
 
-		// Byte order for every size and kind.
 		{name: "endian big octal eight bytes", args: []string{"--endian=big", "-t", "o8", random}},
 		{name: "endian big signed four bytes", args: []string{"--endian=big", "-t", "d4", random}},
 		{name: "endian big unsigned two bytes", args: []string{"--endian=big", "-t", "u2", random}},
@@ -530,13 +445,11 @@ func odCases(t *testing.T) []invocation {
 		{name: "endian big at a partial eight-byte unit", args: []string{"--endian=big", "-t", "x8", "-w7", short}},
 		{name: "endian big unsigned at width seven", args: []string{"--endian=big", "-t", "u2", "-w7", short}},
 
-		// The printable trailer at widths that put the pad before it.
 		{name: "z trailer at width sixty-four", args: []string{"-t", "x1z", "-w64", random}},
 		{name: "z trailer at width seven", args: []string{"-t", "o2z", "-w7", short}},
 		{name: "z trailer on eight-byte units", args: []string{"-t", "x8z", random}},
 		{name: "z trailer with a fold", args: []string{"-t", "x1z", dupBig}},
 
-		// -S with a run across a read boundary.
 		{name: "strings across a read", args: []string{"-S", "3", strsBig}},
 		{name: "strings across a read in hex", args: []string{"-A", "x", "-S", "3", strsBig}},
 		{name: "strings across a read with no address", args: []string{"-A", "n", "-S", "3", strsBig}},
@@ -546,9 +459,6 @@ func odCases(t *testing.T) []invocation {
 		{name: "strings bounded just past the run", args: []string{"-S", "3", "-N", "66001", strsBig}},
 		{name: "strings skipping to the seam", args: []string{"-S", "3", "-j", "65536", strsBig}},
 		{name: "strings skipping into the run", args: []string{"-S", "3", "-j", "65990", strsBig}},
-		// A run the limit cuts is printed, addressed one before its
-		// start; one EOF cuts is not, and one exactly N long is not
-		// started at all.
 		{name: "strings cut by the limit", args: []string{"-S", "3", "-N", "4", runLim}},
 		{name: "strings cut by the limit at N", args: []string{"-S", "3", "-N", "3", runLim}},
 		{name: "strings cut by the limit at N plus one", args: []string{"-S", "3", "-N", "4", "-j", "0", runLim}},
@@ -564,7 +474,6 @@ func odCases(t *testing.T) []invocation {
 		{name: "strings cut by the limit across files", args: []string{"-S", "3", "-N", "6", noTerm, noTerm}},
 		{name: "strings cut by the limit across a read", args: []string{"-S", "3", "-N", "65540", strsBig}},
 
-		// The traditional operand forms.
 		{name: "offset operand", args: []string{short, "4"}},
 		{name: "signed offset operand", args: []string{short, "+4"}},
 		{name: "offset operand alone", args: []string{"+4"}, stdin: "abcdefgh"},
@@ -593,7 +502,6 @@ func odCases(t *testing.T) []invocation {
 		{name: "traditional four operands", args: []string{"--traditional", "a", "b", "c", "d"}},
 		{name: "an eight is not octal", args: []string{"--traditional", short, "4", "8"}},
 
-		// Operands and the option scan.
 		{name: "missing file", args: []string{missing}},
 		{name: "two missing files", args: []string{missing, missing}},
 		{name: "a missing file before a real one", args: []string{"-A", "o", "-t", "x1", missing, short}},

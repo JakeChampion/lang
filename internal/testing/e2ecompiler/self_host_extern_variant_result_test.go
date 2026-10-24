@@ -11,17 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestSelfHostExternVariantResultCustomProvider is the self-host port of the
-// general-`variant` result (docs/WIT-BRING-YOUR-OWN.md, Go-side
-// TestExternVariantResultCustomProvider). A uniform-payload variant returns
-// indirectly (disc:u8 @0, payload @4). The self-host materializes a payloaded
-// user-enum value as a `[struct_id@0][payload@4]` box, so the wrapper maps the
-// disc to the matching variant's struct_id (extern_plain_enum_sid) and stores it
-// with the payload — leak-free and identical to normal variant construction.
-//
-// The provider exports `classify: func(n: s32) -> grade` over
-// `variant grade { low(s32), mid(s32), high(s32) }`. The self-host program
-// `match`es and recovers (tag, payload) for all three cases.
 func TestSelfHostExternVariantResultCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {

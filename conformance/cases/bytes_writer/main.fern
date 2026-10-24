@@ -2,22 +2,22 @@ import "std/io_buffered";
 import "std/string";
 import "core/int";
 
-// Exercises std/io_buffered's in-memory BytesWriter (data: u8[]) across all
-// four native backends: functional struct-spread append via write_string /
-// write_byte / write_bytes, len, validated into_string, reset, and
-// is_empty. FEATURE-AUDIT std/io_buffered row.
+
+
+
+
 function main(): i32 {
     let w: BytesWriter = io_buffered.bytes_writer_new();
     w = w.write_string("ab");
-    w = w.write_byte(67);                        // 'C'
-    w = w.write_bytes([68 as u8, 69 as u8]);     // "DE"
-    print(w.len().to_string());                  // 5
+    w = w.write_byte(67);
+    w = w.write_bytes([68 as u8, 69 as u8]);
+    print(w.len().to_string());
     match (w.into_string()) {
-        Some(s) => { print(s); },               // abCDE
+        Some(s) => { print(s); },
         None => { return 1; },
     }
     let w2: BytesWriter = w.reset();
-    print(w2.len().to_string());                 // 0
+    print(w2.len().to_string());
     if (w2.is_empty()) { print("empty"); } else { print("nonempty"); }
     return 0;
 }

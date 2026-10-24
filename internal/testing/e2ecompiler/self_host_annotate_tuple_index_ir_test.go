@@ -7,40 +7,22 @@ import (
 	"testing"
 )
 
-// annotateTupleIndexCases cover a tuple-element read whose tuple comes from an
-// INDEX of a call result — `mk()[i].N`.
-//
-// There is no named local to take the element type from, so it comes from the
-// checker's type on the index node (`ExprIndex.ty`, #6165), a canonical
-// "(f64, i32)" spelling. Lost, the element lowers as a 4-byte i32 and an f64
-// element fails the wasm validator ("type mismatch: expected f64, found i32").
 var annotateTupleIndexCases = []struct {
 	name string
 	src  string
 }{
-	// The gap: an f64 tuple element behind an index of a call result.
 	{"tuple_elem_call_array_f64", `function mk(): (f64, i32)[] { return [(1.5, 7), (2.5, 8)]; }
-function main(): i32 { return (mk()[1].0 * 10.0) as i32 + mk()[1].1; }`}, // 33
-	// The 8-byte integer sibling — pins that the element WIDTH comes from the
-	// tag too, not just the element's existence.
+function main(): i32 { return (mk()[1].0 * 10.0) as i32 + mk()[1].1; }`},
 	{"tuple_elem_call_array_i64", `function mk(): (i64, i32)[] { return [(7000000000, 7), (9000000000, 8)]; }
-function main(): i32 { return (mk()[1].0 / 1000000000) as i32 + mk()[1].1; }`}, // 17
-	// Negative guard: an all-i32 tuple must stay 4-byte. A consumer that widened
-	// on any non-empty tag would break this.
+function main(): i32 { return (mk()[1].0 / 1000000000) as i32 + mk()[1].1; }`},
 	{"tuple_elem_call_array_i32_narrow", `function mk(): (i32, i32)[] { return [(1, 2), (30, 12)]; }
-function main(): i32 { return mk()[1].0 + mk()[1].1; }`}, // 42
-	// Structural path, unchanged: the same read off a NAMED (tuple)[] local,
-	// which the slot walk resolves without ever consulting the tag.
+function main(): i32 { return mk()[1].0 + mk()[1].1; }`},
 	{"tuple_elem_local_array_f64", `function main(): i32 {
     let a: (f64, i32)[] = [(1.5, 7), (2.5, 8)];
     return (a[1].0 * 10.0) as i32 + a[1].1;
-}`}, // 33
+}`},
 }
 
-// TestSelfHostAnnotateTupleIndexIR_X86_64 pins tuple-index reads typed through
-// the ExprIndex.ty carrier on the self-host x86-64 IR path. asm_load_run.fern
-// is the driver because it runs checker.annotate_module; a driver that skips
-// annotation leaves every ty empty and cannot regress.
 func TestSelfHostAnnotateTupleIndexIR_X86_64(t *testing.T) {
 	dir, mmc, stdlibRoot, gcc, runner, interpBin := annotateF64ProjDir(t)
 

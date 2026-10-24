@@ -15,15 +15,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// readDirInoSource builds a directory of two files, a subdirectory and a
-// symlink, lists it with read_dir_ino, and prints one line per entry: the
-// name, the inode number read_dir_ino reported, whether lstat of the same path
-// reports that number too, and the entry's kind. read_dir_ino_all must hand
-// back read_dir_all's names in read_dir_all's order, "." and ".." typed as
-// directories where a kind is supplied, and a line says how many more names
-// it holds than read_dir_ino. read_dir_ino must hand back read_dir's names in read_dir's
-// order, so any difference is an exit code rather than a line. The last line
-// is the missing directory's error.
 const readDirInoSource = `import "std/i64";
 
 function main(): i32 {
@@ -81,10 +72,6 @@ function main(): i32 {
 }
 `
 
-// readDirInoWant is what a leg prints once the inode numbers are masked. The
-// kinds are stat's file-type bits for a regular file, a symlink and a
-// directory, or all 0 where the platform supplies none — preview 2, whose
-// directory listing also reports no "." or "..".
 func readDirInoWant(kinds bool) string {
 	file, link, dir := "kind=32768", "kind=40960", "kind=16384"
 	if !kinds {
@@ -97,21 +84,12 @@ func readDirInoWant(kinds bool) string {
 	return "a.txt N agrees " + file + "\nb.txt N agrees " + file + "\n" + dots + "\nlnk N agrees " + link + "\nmissing NotFound\nsub N agrees " + dir + "\n"
 }
 
-// readDirInoSource's inode contract per leg. A kernel's d_ino is the inode
-// lstat reports, so the native legs and the interpreter are checked against
-// the host's own os.Lstat. Preview 1's d_ino is the host's identifier for the
-// file, which wasmtime derives from the device and inode rather than passing
-// the inode through, so there it is checked against the program's own lstat
-// (the agrees column) and for being present. Preview 2's directory entry has
-// no inode, so every ino is 0 there — the documented "not supplied" answer.
 const (
 	inoHost = iota
 	inoPresent
 	inoAbsent
 )
 
-// checkReadDirIno masks the inode numbers in stdout after checking them
-// against `mode`, and compares what is left with readDirInoWant.
 func checkReadDirIno(t *testing.T, workDir, stdout string, mode int) {
 	t.Helper()
 	lines := strings.Split(strings.TrimSpace(stdout), "\n")
@@ -123,8 +101,6 @@ func checkReadDirIno(t *testing.T, workDir, stdout string, mode int) {
 			masked.WriteString(line + "\n")
 			continue
 		}
-		// An i64 holding the platform's unsigned number: wasmtime's
-		// identifier uses all 64 bits, so it can print negative.
 		signed, err := strconv.ParseInt(f[1], 10, 64)
 		if err != nil {
 			t.Fatalf("line %q: ino %q: %v", line, f[1], err)
@@ -150,17 +126,12 @@ func checkReadDirIno(t *testing.T, workDir, stdout string, mode int) {
 		}
 		masked.WriteString(f[0] + " N " + f[2] + " " + f[3] + "\n")
 	}
-	// Preview 2's names arrive without their types, so every kind is 0
-	// there, as every ino is.
 	want := readDirInoWant(mode != inoAbsent)
 	if got := masked.String(); got != want {
 		t.Errorf("read_dir_ino listing, inode numbers masked:\n%s\nwant:\n%s\nraw:\n%s", got, want, stdout)
 	}
 }
 
-// runReadDirIno runs cmd in a fresh directory and returns that directory,
-// stdout and stderr, failing on a non-zero exit (the code names the step in
-// readDirInoSource).
 func runReadDirIno(t *testing.T, cmd *exec.Cmd) (string, string, string) {
 	t.Helper()
 	if cmd.Dir == "" {
@@ -187,11 +158,6 @@ func writeReadDirInoSource(t *testing.T) string {
 	return src
 }
 
-// TestSelfHostReadDirIno runs readDirInoSource under the interpreter and
-// through the self-host compiler on x86-64, arm64 and wasm (a core module
-// over preview 1 and a component over preview 2), each compiled leg with the
-// leak census on: the entries, their names and the error all reach the
-// program as boxes the runtime built, and every one must be given back.
 func TestSelfHostReadDirIno(t *testing.T) {
 	src := writeReadDirInoSource(t)
 	t.Run("interp", func(t *testing.T) {
@@ -227,8 +193,6 @@ func TestSelfHostReadDirIno(t *testing.T) {
 	})
 }
 
-// TestSelfHostArm64DarwinReadDirIno is the getdirentries64 leg: XNU's record
-// puts the name two bytes later than Linux's, and d_ino at the same place.
 func TestSelfHostArm64DarwinReadDirIno(t *testing.T) {
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 		t.Skip("requires Apple Silicon")

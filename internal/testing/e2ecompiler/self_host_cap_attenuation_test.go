@@ -37,9 +37,6 @@ func attenuationChain(rootGrant, middleGrants string) map[string]string {
 	}
 }
 
-// The independent Go loader remains the manifest-rule oracle. Every program
-// is effect-free: attenuation is a check on granting edges, even when none
-// of the granted capabilities is exercised by the program.
 func TestSelfHostCapabilityAttenuation(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -87,8 +84,6 @@ func TestSelfHostCapabilityAttenuation(t *testing.T) {
 						t.Fatalf("success = %v, want %v: %v\n%s", runErr == nil, c.wantOK, runErr, out)
 					}
 					if oracleErr != nil {
-						// Compare every violation and its order, including the
-						// granting manifest's path, rather than one substring.
 						got := strings.TrimSpace(strings.TrimPrefix(string(out), "fern: "))
 						if got != oracleErr.Error() {
 							t.Errorf("attenuation diagnostics differ:\ngot:  %s\nwant: %s", got, oracleErr)
@@ -171,8 +166,6 @@ func TestSelfHostCapabilityAttenuationDependencyForms(t *testing.T) {
 					files["app/fern.toml"] = strings.ReplaceAll(files["app/fern.toml"], `path = "../a"`, "workspace = true")
 					files["a/fern.toml"] = strings.ReplaceAll(files["a/fern.toml"], `path = "../b"`, "workspace = true")
 				} else {
-					// The vendor tree overrides the declared path on both
-					// edges. A grant keyed by the unused path would miss a.
 					for name, text := range files {
 						if strings.HasPrefix(name, "a/") || strings.HasPrefix(name, "b/") {
 							files["app/vendor/"+name] = text

@@ -11,8 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The two entry shapes a program can be written in today. `handle` gets the
-// synthesised main; `main` is the program writing its own.
 var handlerKindPrograms = map[string]string{
 	"handle": `import "std/http";
 import "std/serve";
@@ -24,21 +22,6 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 	"main": "function main(): i32 { return 0; }\n",
 }
 
-// TestHandlerKindsMatchWhatTheCompilerAccepts pins Descriptor.HandlerKinds to
-// what the compiler will actually build, in BOTH directions: a declared kind
-// that no longer compiles fails, and a kind that compiles without being
-// declared fails too.
-//
-// The second direction is the one that matters. HandlerKinds shipped as a
-// purely declarative field -- `docs/PLATFORM-RESEARCH.md` Rec §5 is what will
-// consume it -- and because nothing read it, every one of the six emitting
-// targets declared a single kind while accepting both. A test that pinned the
-// declared list against a hand-written table would have encoded the same wrong
-// values; only compiling separates the two.
-//
-// It is also the gate a new kind lands against: adding `scheduled` or `alarm`
-// to a descriptor without the entry-point recognition to match fails here
-// rather than at whatever tries to invoke it.
 func TestHandlerKindsMatchWhatTheCompilerAccepts(t *testing.T) {
 	if testing.Short() {
 		t.Skip("compiles a program per target per handler kind; not a -short test")
@@ -80,11 +63,6 @@ func TestHandlerKindsMatchWhatTheCompilerAccepts(t *testing.T) {
 	}
 }
 
-// TestHandlerKindsCanonicalFirst pins the ordering contract the field's own
-// doc-comment states: the FIRST entry is canonical, and auto-`main` synthesis
-// targets it. A target whose canonical kind changed by accident -- a sort, an
-// append landing at the front -- would otherwise be invisible until something
-// dispatched on it.
 func TestHandlerKindsCanonicalFirst(t *testing.T) {
 	want := map[string]string{
 		"arm64-linux":      "handle",

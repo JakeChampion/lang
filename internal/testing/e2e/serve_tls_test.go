@@ -21,13 +21,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// std/serve under TLS (`Config.with_tls`) against Go's net/http client: two
-// requests on one kept connection, an upload echoed, a response of many
-// records, a file body (read and sealed, not moved by sendfile), a resumed
-// session on a fresh connection, and a plaintext client refused without
-// the server missing a beat. Then the same with `stream_bodies`, where the
-// handler pulls the body through the session, with Expect: 100-continue.
-// The interpreter and the native x86-64 backend.
 func TestServeTLSAgainstGoInterp(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	w := newServeTLSWorld(t)
@@ -83,8 +76,6 @@ func newServeTLSWorld(t *testing.T) *serveTLSWorld {
 	return w
 }
 
-// The server: TLS over the inherited listener, bodies streamed when
-// SERVE_STREAM is set.
 const serveTLSSource = `import "std/http";
 import "std/i32";
 import "std/platform";
@@ -257,8 +248,6 @@ func (w *serveTLSWorld) drive(t *testing.T, cmd *exec.Cmd, stream bool) {
 				t.Fatalf("/sum: %q, want %q", body, want)
 			}
 		}
-		// A plaintext client gets a TLS alert record, never a response, and
-		// the server goes on serving.
 		plain, err := net.DialTimeout("tcp", addr, 10*time.Second)
 		if err != nil {
 			t.Fatal(err)
@@ -270,7 +259,6 @@ func (w *serveTLSWorld) drive(t *testing.T, cmd *exec.Cmd, stream bool) {
 			t.Fatalf("a plaintext request was answered with %q", got[:n])
 		}
 		plain.Close()
-		// A fresh connection resumes from the ticket the first was issued.
 		tr.CloseIdleConnections()
 		if _, body := get("/c"); string(body) != "hello /c" || reused || !resumed {
 			t.Fatalf("/c: %q reused=%v resumed=%v", body, reused, resumed)

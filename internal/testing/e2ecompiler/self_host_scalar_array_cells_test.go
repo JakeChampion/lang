@@ -12,8 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// Every cell read is a snapshot: replacing the shared slot must not alter an
-// older read or its input, and repeated replacements must reclaim both arrays.
 func scalarArrayCellSources() []struct{ name, source string } {
 	var sources []struct{ name, source string }
 	for _, tc := range []struct{ name, typ, value, observe, want string }{

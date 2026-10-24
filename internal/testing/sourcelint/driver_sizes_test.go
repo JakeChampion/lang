@@ -9,8 +9,6 @@ import (
 	"testing"
 )
 
-// runSizeCheck invokes scripts/ci-check-driver-sizes with `env` overrides and
-// returns exit code plus combined output.
 func runSizeCheck(t *testing.T, env []string, args ...string) (int, string) {
 	t.Helper()
 	script, err := filepath.Abs(filepath.Join("..", "..", "..", "scripts", "ci-check-driver-sizes"))
@@ -43,17 +41,14 @@ func writeTemp(t *testing.T, name, body string) string {
 	return p
 }
 
-// The 2026-08-06 figures from #6826, as a baseline.
 const sizeBaseline0806 = `# tracked-artifact: fern.fern
 fern.fern 134243612
 asm_ir_run.fern 127504604
 wasm_ir_run.fern 58870908
 `
 
-// The 2026-08-14 figures from #6826 — the +16% regression nothing measured.
 const sizeReport0814 = "fern.fern\t155895596\nasm_ir_run.fern\t146081148\nwasm_ir_run.fern\t77378268\n"
 
-// A run whose sizes match the baseline says so and flags nothing.
 func TestCheckDriverSizesQuietOnBaseline(t *testing.T) {
 	base := writeTemp(t, "baseline.txt", sizeBaseline0806)
 	report := writeTemp(t, "report.txt", "fern.fern\t134243612\nasm_ir_run.fern\t127504604\nwasm_ir_run.fern\t58870908\n")
@@ -66,8 +61,6 @@ func TestCheckDriverSizesQuietOnBaseline(t *testing.T) {
 		if !strings.Contains(out, "Every driver measured here is within 5% of its baseline") {
 			t.Errorf("env %v: want the all-clear line, got:\n%s", env, out)
 		}
-		// The all-clear has to carry its own denominator. Unqualified, it read
-		// as whole-compiler cover over a fifth of the drivers (#7519).
 		if !strings.Contains(out, "Coverage: 3 of 3 baselined drivers measured.") {
 			t.Errorf("env %v: the all-clear must state what it covered, got:\n%s", env, out)
 		}
@@ -82,8 +75,6 @@ func TestCheckDriverSizesQuietOnBaseline(t *testing.T) {
 	}
 }
 
-// The size table is the "record it" half of #6826, so it has to reach the job
-// summary — and stdout regardless, so the script is usable by hand.
 func TestCheckDriverSizesWritesJobSummary(t *testing.T) {
 	base := writeTemp(t, "baseline.txt", sizeBaseline0806)
 	report := writeTemp(t, "report.txt", sizeReport0814)
@@ -110,8 +101,6 @@ func TestCheckDriverSizesWritesJobSummary(t *testing.T) {
 	}
 }
 
-// The #6826 incident itself: replaying the 08-14 sizes against the 08-06
-// baseline must report the growth that went unnoticed for eight days.
 func TestCheckDriverSizesFlagsTheHistoricalGrowth(t *testing.T) {
 	base := writeTemp(t, "baseline.txt", sizeBaseline0806)
 	report := writeTemp(t, "report.txt", sizeReport0814)
@@ -125,8 +114,6 @@ func TestCheckDriverSizesFlagsTheHistoricalGrowth(t *testing.T) {
 		"GREW: asm_ir_run.fern 127.5 MB -> 146.1 MB (+14.6%",
 		"GREW: wasm_ir_run.fern 58.9 MB -> 77.4 MB (+31.4%",
 		"::warning title=fern.fern grew +16.1%::",
-		// The message must name the driver as well as the title, or a raw log
-		// line reads "linked at 155.9 MB" with no subject.
 		"::fern.fern linked at 155.9 MB against a baseline of 134.2 MB",
 		"Corrected baseline",
 		"fern.fern 155895596",
@@ -137,8 +124,6 @@ func TestCheckDriverSizesFlagsTheHistoricalGrowth(t *testing.T) {
 	}
 }
 
-// A shrink is a finding too: an un-updated baseline after a win silently raises
-// the ceiling the next regression is measured against.
 func TestCheckDriverSizesFlagsShrink(t *testing.T) {
 	base := writeTemp(t, "baseline.txt", sizeBaseline0806)
 	report := writeTemp(t, "report.txt", "fern.fern\t100000000\n")
@@ -155,7 +140,6 @@ func TestCheckDriverSizesFlagsShrink(t *testing.T) {
 	}
 }
 
-// Drift under the tolerance is recorded in the table but is not a finding.
 func TestCheckDriverSizesToleratesSmallDrift(t *testing.T) {
 	base := writeTemp(t, "baseline.txt", "# tracked-artifact: fern.fern\nfern.fern 100000000\n")
 	report := writeTemp(t, "report.txt", "fern.fern\t103000000\n")
@@ -172,8 +156,6 @@ func TestCheckDriverSizesToleratesSmallDrift(t *testing.T) {
 	}
 }
 
-// A driver nobody baselined is measured but not compared, and one aggregate
-// annotation asks for the entry — one per driver would be too many.
 func TestCheckDriverSizesReportsUnbaselinedOnce(t *testing.T) {
 	base := writeTemp(t, "baseline.txt", "# tracked-artifact: fern.fern\nfern.fern 155895596\n")
 	report := writeTemp(t, "report.txt", "fern.fern\t155895596\nssa_run.fern\t40000000\nchecker_modload_run.fern\t41000000\n")
@@ -190,9 +172,6 @@ func TestCheckDriverSizesReportsUnbaselinedOnce(t *testing.T) {
 	}
 }
 
-// Measuring nothing must not read as green: that is the failure mode the whole
-// check exists to remove. Asserted on both channels, each under the environment
-// that selects it.
 func TestCheckDriverSizesReportsWhenItRanBlind(t *testing.T) {
 	base := writeTemp(t, "baseline.txt", sizeBaseline0806)
 
@@ -219,7 +198,6 @@ func TestCheckDriverSizesReportsWhenItRanBlind(t *testing.T) {
 	}
 }
 
-// The escalation to a hard failure is one variable.
 func TestCheckDriverSizesStrictModeIsFatal(t *testing.T) {
 	base := writeTemp(t, "baseline.txt", sizeBaseline0806)
 	report := writeTemp(t, "report.txt", sizeReport0814)
@@ -233,11 +211,6 @@ func TestCheckDriverSizesStrictModeIsFatal(t *testing.T) {
 	}
 }
 
-// #7519 itself: a report holding a fraction of the baselined drivers, every one
-// of them within tolerance, used to end in an unqualified all-clear — so a
-// five-row table read as the whole compiler while the drivers grew 2.3x. The
-// slice is legitimate (each job links its own set); claiming to be everything
-// is not.
 func TestCheckDriverSizesPartialReportSaysItIsPartial(t *testing.T) {
 	base := writeTemp(t, "baseline.txt", sizeBaseline0806)
 	report := writeTemp(t, "report.txt", "fern.fern\t134243612\n")
@@ -249,8 +222,6 @@ func TestCheckDriverSizesPartialReportSaysItIsPartial(t *testing.T) {
 	if !strings.Contains(out, "Coverage: 1 of 3 baselined drivers measured HERE") {
 		t.Errorf("a partial report must name its own denominator:\n%s", out)
 	}
-	// The two it never weighed are not findings here — this caller was never
-	// claiming to hold them — but the reader must not be told otherwise.
 	if strings.Contains(out, "MISSING") {
 		t.Errorf("a partial report must not report the drivers it never claimed:\n%s", out)
 	}
@@ -259,8 +230,6 @@ func TestCheckDriverSizesPartialReportSaysItIsPartial(t *testing.T) {
 	}
 }
 
-// The union caller says so, and then an absent driver is a finding: nothing else
-// can tell "this job linked five of fifteen" apart from "ten went unmeasured".
 func TestCheckDriverSizesCompleteModeFlagsUnmeasured(t *testing.T) {
 	base := writeTemp(t, "baseline.txt", sizeBaseline0806)
 	report := writeTemp(t, "report.txt", "fern.fern\t134243612\n")
@@ -277,8 +246,6 @@ func TestCheckDriverSizesCompleteModeFlagsUnmeasured(t *testing.T) {
 			t.Errorf("the unmeasured drivers must be named, missing %q:\n%s", want, out)
 		}
 	}
-	// One annotation for the set, as with UNBASELINED — one per driver would
-	// be too many for the channel this gate already lost once.
 	if n := strings.Count(out, "::warning"); n != 1 {
 		t.Errorf("want exactly 1 annotation for 2 unmeasured drivers, got %d:\n%s", n, out)
 	}
@@ -287,7 +254,6 @@ func TestCheckDriverSizesCompleteModeFlagsUnmeasured(t *testing.T) {
 	}
 }
 
-// The whole point of the escalation: the union job fails rather than warning.
 func TestCheckDriverSizesCompleteModeStrictFailsOnUnmeasured(t *testing.T) {
 	base := writeTemp(t, "baseline.txt", sizeBaseline0806)
 	report := writeTemp(t, "report.txt", "fern.fern\t134243612\n")
@@ -301,15 +267,10 @@ func TestCheckDriverSizesCompleteModeStrictFailsOnUnmeasured(t *testing.T) {
 	}
 }
 
-// A complete report that really is complete stays quiet, or the enforcing job
-// is red on every run and teaches the same lesson the warnings did.
 func TestCheckDriverSizesCompleteModeQuietWhenWhole(t *testing.T) {
 	base := writeTemp(t, "baseline.txt", sizeBaseline0806)
 	report := writeTemp(t, "report.txt", "fern.fern\t134243612\nasm_ir_run.fern\t127504604\nwasm_ir_run.fern\t58870908\n")
 
-	// GITHUB_ACTIONS is set so the annotation channel is the `::warning` form —
-	// ciEnv strips it, and without it the "no ::warning" check below passes
-	// against output that could never contain one.
 	code, out := runSizeCheck(t, []string{"FERN_SIZE_REPORT_COMPLETE=1", "FERN_CI_SIZE_GATE_STRICT=1", "GITHUB_ACTIONS=1"}, base, report)
 	if code != 0 {
 		t.Fatalf("want exit 0 for a whole, in-tolerance union, got %d: %s", code, out)
@@ -324,8 +285,6 @@ func TestCheckDriverSizesCompleteModeQuietWhenWhole(t *testing.T) {
 	}
 }
 
-// Measuring nothing is the loudest form of what this gate exists to catch, so
-// the enforcing caller must fail on it rather than pass an empty comparison.
 func TestCheckDriverSizesBlindIsFatalUnderStrict(t *testing.T) {
 	base := writeTemp(t, "baseline.txt", sizeBaseline0806)
 
@@ -347,9 +306,6 @@ func TestCheckDriverSizesBadUsage(t *testing.T) {
 	}
 }
 
-// The checked-in baseline has to be readable by the checker and has to name a
-// tracked artifact — the whole point of #6826's third proposal is that "the
-// self-host binary" means one specific file.
 func TestSelfHostDriverSizeBaselineIsWellFormed(t *testing.T) {
 	p := filepath.Join("..", "..", "..", ".github", "selfhost-driver-sizes.txt")
 	body, err := os.ReadFile(p)
@@ -388,8 +344,6 @@ func TestSelfHostDriverSizeBaselineIsWellFormed(t *testing.T) {
 	}
 }
 
-// The workflow must actually export the report path, or the check runs blind on
-// every run and says so forever.
 func TestSelfHostWorkflowExportsDriverSizeReport(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join("..", "..", "..", ".github", "workflows", "test-e2e-selfhost.yml"))
 	if err != nil {
@@ -401,19 +355,10 @@ func TestSelfHostWorkflowExportsDriverSizeReport(t *testing.T) {
 	if exports == 0 {
 		t.Error("no job exports FERN_DRIVER_SIZE_REPORT, so nothing records a driver size")
 	}
-	// ONE measuring job, which is also the one that checks: the driver-sizes
-	// job links every baselined driver itself, so the fifteen are weighed as
-	// a set in the job that measured them. A second measuring job would be a
-	// slice again — five rows reading as the whole table is how the drivers
-	// grew 2.3x with the gate green (#7519).
 	if exports != 1 || checks != 1 {
 		t.Errorf("%d job(s) export FERN_DRIVER_SIZE_REPORT and %d invoke ci-check-driver-sizes — "+
 			"want exactly one of each, both in the driver-sizes job (#7519)", exports, checks)
 	}
-	// The check is worth nothing without both variables: COMPLETE turns an
-	// unmeasured driver into a finding, STRICT turns findings into a failed
-	// job. Asserted on the `env:` spelling so prose about them elsewhere in
-	// the file does not satisfy this, and WITHIN the driver-sizes block.
 	job := driverSizesJob(t, src)
 	for _, want := range []struct{ needle, why string }{
 		{`FERN_SIZE_REPORT_COMPLETE: "1"`, "a baselined driver that reached no report would go unnoticed"},
@@ -426,10 +371,6 @@ func TestSelfHostWorkflowExportsDriverSizeReport(t *testing.T) {
 			t.Errorf("%s is set in %d places; a second job setting it makes the enforcing one ambiguous", want.needle, n)
 		}
 	}
-	// The third leg of the escalation, and the one that silently undoes the
-	// other two: a step whose exit status is discarded enforces nothing. The
-	// job's download step carries continue-on-error legitimately, so this is
-	// scoped to the check step rather than to the whole block.
 	step := enforcingStep(t, job)
 	if strings.Contains(step, "continue-on-error") {
 		t.Error("the aggregate size check carries continue-on-error, so a finding cannot fail the job — " +
@@ -437,9 +378,6 @@ func TestSelfHostWorkflowExportsDriverSizeReport(t *testing.T) {
 	}
 }
 
-// sliceBlock returns the text from the first match of `open` up to the next
-// match of `close` after it, or to the end. RE2 has no lookahead, so the two
-// bounds are found separately rather than in one pattern.
 func sliceBlock(src string, open, close *regexp.Regexp) string {
 	start := open.FindStringIndex(src)
 	if start == nil {
@@ -452,8 +390,6 @@ func sliceBlock(src string, open, close *regexp.Regexp) string {
 	return rest
 }
 
-// A job key is indented two spaces; everything inside one is indented deeper,
-// so the next two-space key ends the block.
 var (
 	driverSizesKey = regexp.MustCompile(`(?m)^  driver-sizes:$`)
 	anyJobKey      = regexp.MustCompile(`(?m)^  [a-zA-Z][\w-]*:$`)
@@ -461,7 +397,6 @@ var (
 	anyStep        = regexp.MustCompile(`(?m)^      - `)
 )
 
-// driverSizesJob returns the body of the `driver-sizes:` job.
 func driverSizesJob(t *testing.T, src string) string {
 	t.Helper()
 	job := sliceBlock(src, driverSizesKey, anyJobKey)
@@ -471,7 +406,6 @@ func driverSizesJob(t *testing.T, src string) string {
 	return job
 }
 
-// enforcingStep returns the body of the step that runs the complete check.
 func enforcingStep(t *testing.T, job string) string {
 	t.Helper()
 	step := sliceBlock(job, enforcingName, anyStep)

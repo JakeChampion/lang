@@ -5,16 +5,6 @@ import (
 	"testing"
 )
 
-// --- A struct payload's rc fields need a DEEP drop (#6127) -------------------
-//
-// `let o: Option[P] = Some(P { xs: [..], n: .. })` consumed by one `match (o)`
-// must release the payload's rc FIELDS as well as the payload box and the
-// option box. For a scalar-only struct the boxes are all there is; for a struct
-// with an rc-ARRAY field, a box-only drop strands the field buffer every round.
-//
-// The struct construction counts the field it stores, so the deep drop does
-// not over-release; the NoUnderflow test below checks that directly.
-
 func TestSelfHostOptStructPayloadDropX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
@@ -28,8 +18,6 @@ func TestSelfHostOptStructPayloadDropX86_64(t *testing.T) {
 		want int
 	}{
 		{
-			// The minimal shape: the arm reads only a SCALAR field, so nothing
-			// even mentions the buffer that leaked.
 			name: "single_bind_scalar_field_read",
 			src: `struct P { xs: i32[], n: i32 }
 function round(i: i32): i32 {
@@ -47,7 +35,6 @@ function main(): i32 {
 			want: 53,
 		},
 		{
-			// `.len()` on the array field — a borrow, and the drop must still run.
 			name: "single_bind_field_len",
 			src: `struct P { xs: i32[], n: i32 }
 function round(i: i32): i32 {
@@ -65,8 +52,6 @@ function main(): i32 {
 			want: 34,
 		},
 		{
-			// An indexed read of the field — the other borrow the escape walker
-			// must admit.
 			name: "single_bind_element_read",
 			src: `struct P { xs: i32[], n: i32 }
 function round(i: i32): i32 {
@@ -84,8 +69,6 @@ function main(): i32 {
 			want: 70,
 		},
 		{
-			// A 10-element field: the case that identified the leaked block, and
-			// the one that fails loudest if the drop reverts to box-only.
 			name: "single_bind_bigger_array_field",
 			src: `struct P { xs: i32[], n: i32 }
 function round(i: i32): i32 {
@@ -103,10 +86,6 @@ function main(): i32 {
 			want: 53,
 		},
 		{
-			// Result's Ok arm — the candidate is admitted for Ok/Err too, and the
-			// slot type Result[P, string] cannot name the payload struct, so the
-			// type has to be in the drop record rather than be read back off the
-			// slot.
 			name: "result_ok_struct_payload",
 			src: `struct P { xs: i32[], n: i32 }
 function round(i: i32): i32 {
@@ -124,10 +103,6 @@ function main(): i32 {
 			want: 4,
 		},
 		{
-			// A STRING field beside the array one, freed rc-aware. A literal's
-			// .rodata data is heap-guard-skipped, so a wrong second release
-			// would tick the underflow counter — which the hazards test asserts
-			// stays at zero.
 			name: "string_field_beside_the_array_field",
 			src: `struct P { xs: i32[], s: string }
 function round(i: i32): i32 {
@@ -145,10 +120,6 @@ function main(): i32 {
 			want: 36,
 		},
 		{
-			// Two Some arms, one guarded. The drop runs after the whole match on a
-			// box whose variant is statically known, so a guard changes nothing
-			// about WHAT is freed — but every Some arm has to be checked for a
-			// moved field, not just the first.
 			name: "guarded_arm",
 			src: `struct P { xs: i32[], n: i32 }
 function round(i: i32): i32 {
@@ -170,9 +141,6 @@ function main(): i32 {
 			want: 42,
 		},
 		{
-			// The other half of the split: a SCALAR-ONLY struct payload has no rc
-			// field, so freeing the box is the whole release. It must stay balanced
-			// under leakcheck alongside the rc-field shapes above.
 			name: "scalar_only_struct_payload_stays_balanced",
 			src: `struct P { n: i32, m: i32 }
 function round(i: i32): i32 {
@@ -224,18 +192,6 @@ function main(): i32 {
 	}
 }
 
-// TestSelfHostOptStructPayloadDropHazardsX86_64 — the deep drop frees the
-// payload's rc FIELDS, so it needs a stronger property than the box dec does:
-// no field may be moved out of the arm binding. `held = p.xs` keeps the payload
-// BOX inside the match while handing `held` the buffer the deep drop would
-// free.
-//
-// Each case pairs a live reference to a moved field with a read AFTER the match
-// and asserts BEHAVIOUR: a wrong answer or a crash means the drop freed a value
-// something else still holds. An early free can still exit correctly while the
-// freelist has not reused the block, so the free counts are asserted too.
-//
-// Every `want` is from `fern -interp`.
 func TestSelfHostOptStructPayloadDropHazardsX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
@@ -244,19 +200,9 @@ func TestSelfHostOptStructPayloadDropHazardsX86_64(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	for _, tc := range []struct {
-		name string
-		src  string
-		want int
-		// wantFrees is EXACT: the count separates "more reclaim" from "the moved
-		// field released under a live reference", which the exit code does not
-		// see until the freelist reuses the block.
-		//
-		// It was a `maxFrees` ceiling and is exact now because the ceiling let a
-		// value drift silently in the safe direction: #6319 made the nested-block
-		// candidate admissible and this row went 100 -> 300, which the ceiling
-		// reported only as "too many". Native frees 300 here too, so the move was
-		// reclaim rather than an over-release — but reading the number alone could
-		// not say which, and an exact value flags a DROP in reclaim as well.
+		name      string
+		src       string
+		want      int
 		wantFrees int64
 	}{
 		{
@@ -318,8 +264,6 @@ function main(): i32 {
 			wantFrees: 300,
 		},
 		{
-			// The whole payload box escapes. `hp` starts with the round number,
-			// so it is a heap box rather than a static one.
 			name: "whole_payload_struct_escapes",
 			src: `struct P { xs: i32[], n: i32 }
 function round(i: i32): i32 {
@@ -339,9 +283,6 @@ function main(): i32 {
 			wantFrees: 400,
 		},
 		{
-			// The consuming match in a NESTED block routes through the precise-drop
-			// path (a drop KIND rather than a drop record), so the gate has to be
-			// applied on both sides.
 			name: "nested_block_match_field_extracted",
 			src: `struct P { xs: i32[], n: i32 }
 function round(i: i32): i32 {
@@ -394,11 +335,6 @@ function main(): i32 {
 	}
 }
 
-// TestSelfHostOptStructPayloadDropNoUnderflowX86_64 — the deep drop rests on the
-// struct construction having counted its rc fields. An over-release lands on a
-// box whose count is already zero, which the runtime counts rather than crashes
-// on, so the counter is the direct test of the claim. Both programs return it;
-// 0 is the assertion.
 func TestSelfHostOptStructPayloadDropNoUnderflowX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -427,9 +363,6 @@ function main(): i32 {
 }`,
 		},
 		{
-			// A string LITERAL field is the sharpest version: its data lives in
-			// .rodata and the heap guard skips it, so a double release shows up
-			// only here.
 			name: "string_literal_field",
 			src: `struct P { xs: i32[], s: string }
 function round(i: i32): i32 {

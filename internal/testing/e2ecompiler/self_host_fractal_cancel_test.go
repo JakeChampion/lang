@@ -13,8 +13,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// A second HTTP connection must cancel work after it starts. Checking the
-// active count avoids a timing-only assertion or cancellation before dispatch.
 func TestSelfHostFractalCancellation(t *testing.T) {
 	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
 		t.Skip("live cancellation gate runs natively on x86-64 Linux")

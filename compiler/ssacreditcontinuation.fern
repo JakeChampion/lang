@@ -1,6 +1,3 @@
-// Scoped raw wrapper proof. Recompute both incoming and consumer obligations;
-// never accept an externally supplied successful proof or unbound call site.
-// The caller still supplies the selected ABI/layout facts required by reuse.
 import "./ssa";
 import "./ssacreditflowgraph" as graph;
 import "./ssacreditincoming" as incoming;
@@ -8,8 +5,6 @@ import "./ssacreditreuse" as reuse;
 import "./ssacredithelper" as helper;
 import "./util";
 
-// kind -1 is an unavailable or spent pre-call reference; 0 is a scalar;
-// 1 is an alias of the single owned consumer result. Copies create no credits.
 struct Value { kind: i32, scalar: i32 }
 
 struct State { ids: i32[], values: Value[], called: boolean, error: string }
@@ -34,8 +29,6 @@ function call(s: State, op: ssa.SInst, block: i32, site: incoming.Site): State {
   if (op.str != site.consumer || op.args[0] != site.argument || op.args[1] != site.incoming || site.parameter != 0 || site.words != 3) {
     return State { ...s, error: "continuation call site mismatch" };
   }
-  // The recomputed invocation consumed all pre-call local credits and returned
-  // exactly one new-generation credit. Every pre-call reference stays invalid.
   return State { ...s, values: s.values.with(util.index_of_i32(s.ids, op.result), Value { kind: 1, scalar: 0 }), called: true };
 }
 
@@ -92,7 +85,6 @@ function input_case(f: ssa.SFunc, checked: graph.Graph, site: incoming.Site): st
       }
     }
     if (active) {
-      // All phis read the predecessor snapshot, not preceding phi writes.
       let predecessor = rows[previous];
       for op in b.insts {
         s = instruction(s, op, b, f.blocks[previous], predecessor, site);

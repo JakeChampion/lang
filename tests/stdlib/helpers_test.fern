@@ -1,14 +1,5 @@
 import "std/test";
 
-// tests/stdlib/helpers_test.fern — exercises the
-// multi-substring / string-diff / numeric-range / file-state
-// / tempdir-tuple helpers added on top of the std/test base.
-//
-// Existing examples (`arithmetic_test`, `strings_test`,
-// `process_assertions_test`) cover the per-type assertion
-// shape; this file covers the layered convenience helpers
-// that fold common patterns into one-liners.
-
 function test_contains_all_pass(): test.TestOutcome {
   return test.assert_contains_all(
     "error: function `foo` undefined at line 5",
@@ -17,10 +8,6 @@ function test_contains_all_pass(): test.TestOutcome {
 }
 
 function test_contains_all_localises_missing(): test.TestOutcome {
-  // `assert_contains_all` should surface the FIRST missing
-  // needle in its failure message, not say "something didn't
-  // match" — we invert the assertion and check the message
-  // mentions the right needle.
   match (test.assert_contains_all("error: foo", ["error:", "xyzzy"])) {
     Fail(msg) => {
       if (!msg.contains("xyzzy")) {
@@ -50,8 +37,6 @@ function test_contains_in_order(): test.TestOutcome {
 }
 
 function test_contains_in_order_rejects_wrong_order(): test.TestOutcome {
-  // The needles appear in the haystack but in the wrong
-  // order — `in_order` must reject this.
   match (test.assert_contains_in_order(
     "got Y at line 5 expected X",
     ["expected", "line 5", "got"],
@@ -102,8 +87,6 @@ function test_string_diff_equal_strings(): test.TestOutcome {
 }
 
 function test_string_diff_localises_line(): test.TestOutcome {
-  // Two strings differ at line 3 (foo vs FOO). The failure
-  // message must name line 3 and show both values.
   match (test.assert_eq_string_diff("a\nb\nfoo\nd\n", "a\nb\nFOO\nd\n")) {
     Fail(msg) => {
       if (!msg.contains("line 3")) {
@@ -119,10 +102,6 @@ function test_string_diff_localises_line(): test.TestOutcome {
 }
 
 function test_file_helpers(r: test.TestRunner): test.TestRunner {
-  // Group the file-state helpers behind a temp-dir setup so
-  // they share one fixture lifecycle. `must_temp_dir` returns
-  // a (path, runner) tuple — empty path on failure with the
-  // runner already carrying a recorded skip.
   let (dir, rr) = test.must_temp_dir(r, "helpers-fs");
   if (dir == "") {
     return rr;

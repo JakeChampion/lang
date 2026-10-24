@@ -1,22 +1,6 @@
 import "std/test";
 import "std/http";
 
-// tests/stdlib/runner_self_test.fern — meta-test of the
-// `std/test` runner itself. Verifies that:
-//   - passing assertions return Pass
-//   - failing assertions return Fail(<message>) with the
-//     expected predicate name embedded
-//   - the messages quote both actual + expected so the diff
-//     is grep-able
-//
-// Because the runner reports via test.TestOutcome, we can
-// directly inspect what each assertion returned — no need to
-// shell out and parse TAP output. This is the smallest end-
-// to-end harness that confirms the runner's failure-reporting
-// contract holds.
-
-// Helper: assert that a TestOutcome is Pass (i.e. an
-// assertion that should have passed actually did).
 function expect_pass(o: test.TestOutcome): test.TestOutcome {
   match (o) {
     Pass => {
@@ -28,10 +12,6 @@ function expect_pass(o: test.TestOutcome): test.TestOutcome {
   }
 }
 
-// Helper: assert that a TestOutcome is Fail(...) and that
-// its message contains the given substring (so we can verify
-// the failure message's predicate name without pinning the
-// exact wording).
 function expect_fail_containing(o: test.TestOutcome, needle: string): test.TestOutcome {
   match (o) {
     Fail(msg) => {
@@ -45,11 +25,6 @@ function expect_fail_containing(o: test.TestOutcome, needle: string): test.TestO
     }
   }
 }
-
-// Each assertion helper has a passing case and a failing case.
-// The passing case must return test.pass(); the failing case must
-// return Fail with the assertion's predicate name in the
-// message.
 
 function test_assert_true_pass(): test.TestOutcome {
   return expect_pass(test.assert_true(true));
@@ -72,8 +47,6 @@ function test_eq_i32_pass(): test.TestOutcome {
 }
 
 function test_eq_i32_fail_message(): test.TestOutcome {
-  // The message must contain BOTH values, quoted — that's the
-  // contract callers will read in CI logs.
   let o: test.TestOutcome = test.assert_eq(4, 5);
   match (o) {
     Fail(msg) => {
@@ -92,9 +65,6 @@ function test_eq_i32_fail_message(): test.TestOutcome {
 }
 
 function test_eq_fail_quotes_empty_actual(): test.TestOutcome {
-  // Unquoted, an empty actual left the message ending after
-  // "got " with nothing behind it — a truncated-looking
-  // diagnostic instead of a visible empty value.
   let o: test.TestOutcome = test.assert_eq("", "x");
   match (o) {
     Fail(msg) => {
@@ -218,18 +188,9 @@ function test_eq_i32_array_pass(): test.TestOutcome {
 }
 
 function test_eq_i32_array_fail_index(): test.TestOutcome {
-  // First mismatch is at index 1 (2 vs 9); the message
-  // must localise that index.
   let o: test.TestOutcome = test.assert_eq_array([1, 2, 3], [1, 9, 3]);
   return expect_fail_containing(o, "index 1");
 }
-
-// Range assertions. The float pair's dangerous input is a NaN
-// BOUND, not a NaN value: every comparison against NaN is false,
-// so "not below and not above" reported Pass while asserting
-// nothing (#8469). An inverted range is the same shape of caller
-// bug and gets its own message rather than being blamed on
-// whichever side the value fell outside.
 
 function test_in_range_i32_pass(): test.TestOutcome {
   return expect_pass(test.assert_in_range_i32(5, 0, 10));
@@ -368,9 +329,6 @@ function test_in_range_inverted_fails(): test.TestOutcome {
   );
 }
 
-// A case body that always fails — the child runners above need
-// a real failing case to record, where `test_fail_returns_fail`
-// asserts ABOUT a failure and therefore passes.
 function test_fail_returns_fail_case(): test.TestOutcome {
   return test.fail("deliberate failure recorded through a dropped handle");
 }
@@ -383,24 +341,8 @@ function test_fail_returns_fail(): test.TestOutcome {
   return expect_fail_containing(test.fail("custom message"), "custom message");
 }
 
-// A TestRunner is a value: `it()` returns a new one, and a caller that
-// forgets to assign it back loses the counts on its own handle after
-// the TAP line was already printed. The runner therefore also counts
-// what reached the stream, in cells every handle derived from one
-// `test_new` shares (`emitted` / `emitted_failed`); `finish()` takes
-// the plan and the fail count from those, names the dropped results,
-// and exits 1 — a suite that lost a result is not passing (#8466).
-// These three pin that.
-//
-// Each uses an isolated quiet child runner so its `not ok` lines and
-// summary do not decide this suite's own exit code — the same shape
-// fail_fast_test.fern uses.
-
 function test_dropped_it_result_still_counts(): test.TestOutcome {
   let sub: test.TestRunner = test.test_new_quiet("dropped-it");
-  // Both results are DISCARDED — the mistake the runner has to
-  // survive. The passing path and the failing path are covered
-  // in one child so the stream count has to get both right.
   sub.it("dropped pass", test_pass_returns_pass);
   sub.it("dropped fail", test_fail_returns_fail_case);
   if (sub.emitted.get() != 2) {
@@ -415,8 +357,6 @@ function test_dropped_it_result_still_counts(): test.TestOutcome {
 function test_unused_subsuite_handle_still_counts(): test.TestOutcome {
   let sub: test.TestRunner = test.test_new_quiet("unused-subsuite");
   sub = sub.it("parent pass", test_pass_returns_pass);
-  // A subsuite handle that is never merged back: the child shares
-  // the parent's cells, so its cases still reach the parent's plan.
   let child: test.TestRunner = sub.subsuite("child");
   child = child.it("child pass", test_pass_returns_pass);
   child = child.it("child fail", test_fail_returns_fail_case);
@@ -430,9 +370,6 @@ function test_unused_subsuite_handle_still_counts(): test.TestOutcome {
 }
 
 function test_finish_exits_nonzero_for_dropped_result(): test.TestOutcome {
-  // finish() compares the stream against the counters, so a dropped
-  // result is exit 1 even when it passed; a dropped failure is exit 1
-  // through the fail count as well. An assigned-back child stays 0.
   let kept: test.TestRunner = test.test_new_quiet("kept");
   kept = kept.it("kept pass", test_pass_returns_pass);
   if (kept.finish() != 0) {
@@ -448,12 +385,6 @@ function test_finish_exits_nonzero_for_dropped_result(): test.TestOutcome {
   return test.assert_eq(bad.finish(), 1);
 }
 
-// NaN and the generic assertion helpers (#8588). These four are bounded by
-// `[T: cmp.Ord]` / `[T: cmp.Eq]`, so they cannot NaN-check `T` themselves —
-// the answer has to come from core/cmp's instances, and before the total order
-// landed every one of these PASSED while asserting nothing: `cmp` answered 0
-// for any NaN comparison, and 0 satisfies both `<= 0` and `>= 0`.
-
 function nan_f64(): f64 {
   let z: f64 = 0.0;
   return z / z;
@@ -464,9 +395,6 @@ function test_le_nan_fails(): test.TestOutcome {
 }
 
 function test_le_nan_bound_passes(): test.TestOutcome {
-  // The mirror of the `assert_ge` case below: NaN is the top of the order,
-  // so `1.0 <= nan` HOLDS. What matters is that each of the four now asserts
-  // something — before, both directions passed for the same empty reason.
   return expect_pass(test.assert_le(1.0, nan_f64()));
 }
 
@@ -479,8 +407,6 @@ function test_ge_nan_fails(): test.TestOutcome {
 }
 
 function test_ge_nan_lhs_passes(): test.TestOutcome {
-  // NaN sorts after every number, so `nan >= 1.0` is TRUE under the total
-  // order — the assertion holds rather than being vacuous.
   return expect_pass(test.assert_ge(nan_f64(), 1.0));
 }
 
@@ -492,7 +418,6 @@ function test_sorted_asc_nan_middle_fails(): test.TestOutcome {
 }
 
 function test_sorted_asc_nan_last_passes(): test.TestOutcome {
-  // The order NaN actually has: after every number.
   return expect_pass(test.assert_sorted_asc([1.0, 3.0, nan_f64()]));
 }
 
@@ -507,7 +432,6 @@ function test_unique_one_nan_passes(): test.TestOutcome {
   return expect_pass(test.assert_unique([1.0, nan_f64(), 2.0]));
 }
 
-// HTTP assertions: a response built by std/http's constructors.
 function http_resp(): HttpResponse {
   return http.ok("hello").with_header("X-Kind", "greeting");
 }

@@ -1,19 +1,5 @@
 import "std/test";
 
-// tests/stdlib/result_assertions_test.fern — batch 30
-// additions to std/test:
-//   * `test.assert_is_ok_string(res)` / `_array` — Result is
-//     Ok variant; payload irrelevant.
-//   * `test.assert_is_err_string(res)` / `_array` — Result is
-//     Err variant; payload of the Err irrelevant.
-//   * `test.assert_is_ok_eq_string(res, expected)` — Result is
-//     Ok AND the value matches.
-//
-// Result[T, IoError] is the canonical shape for fallible
-// I/O in the stdlib (read_file / read_dir / temp_dir /
-// fuzz.corpus_from_dir), which is what the helpers
-// specialise for.
-
 function test_is_ok_string_pass(r: test.TestRunner): test.TestRunner {
   let (dir, rr) = test.must_temp_dir(r, "ok-string");
   if (dir == "") {
@@ -33,7 +19,6 @@ function test_is_ok_string_pass(r: test.TestRunner): test.TestRunner {
 }
 
 function test_is_ok_string_err_fails(): test.TestOutcome {
-  // Reading a path that definitely doesn't exist.
   match (test.assert_is_ok_string(read_file(
     "/tmp/lang-no-such-file-batch30-zztop",
   ))) {
@@ -50,8 +35,6 @@ function test_is_ok_string_err_fails(): test.TestOutcome {
 }
 
 function test_is_err_string_pass(): test.TestOutcome {
-  // Reading a missing file should produce Err, which
-  // assert_is_err should accept.
   return test.assert_is_err_string(read_file(
     "/tmp/lang-no-such-file-batch30-zztop",
   ));
@@ -74,8 +57,6 @@ function test_is_err_string_ok_fails_with_value(r: test.TestRunner): test.TestRu
       return rr.it("Ok should fail is_err", () => test.fail("missed"));
     },
     Fail(msg) => {
-      // Diagnostic should embed the Ok payload so a
-      // regression has its bad value in the log.
       if (!msg.contains("Ok(\"data\")")) {
         return rr.it(
           "expected 'Ok(\"data\")' in msg",
@@ -125,7 +106,6 @@ function test_is_ok_eq_string_wrong_value(r: test.TestRunner): test.TestRunner {
       );
     },
     Fail(msg) => {
-      // Both sides should be in the failure.
       if (!msg.contains("Ok(\"actual\")")
         || !msg.contains("Ok(\"expected\")")) {
         return rr.it(
@@ -149,8 +129,6 @@ function test_is_ok_eq_string_err_distinct_diag(): test.TestOutcome {
       return test.fail("Err should fail is_ok_eq");
     },
     Fail(msg) => {
-      // Distinguishable from "Ok with wrong value":
-      // names "got Err" vs "got Ok(...)".
       if (!msg.contains("got Err")) {
         return test.fail("expected 'got Err': " + msg);
       }
@@ -181,7 +159,6 @@ function test_is_err_string_array_ok_embeds_length(r: test.TestRunner): test.Tes
   if (dir == "") {
     return rr;
   }
-  // Drop one file in so the Ok payload has a non-zero length.
   match (write_file(dir + "/a.txt", "")) {
     Err(_) => {
       return rr.it("write fixture", () => test.fail("io"));

@@ -1,14 +1,14 @@
-// A negative number is a literal, and a literal is a pattern.
-//
-// The sign is a separate token from the digits, so a single-token test for
-// "does a literal start here" declined `-1` and the arm was rejected — by a
-// message that listed "literal" among what it accepted. Every arm position
-// that takes a literal takes a negative one: a plain arm, an alternative in
-// an or-pattern, both ends of a range, and a tuple element.
-//
-// The float arms are here because the compiled backends have always matched
-// a float scrutinee while the interpreter refused one outright, so this
-// pins the two together.
+
+
+
+
+
+
+
+
+
+
+
 
 import "std/i32";
 
@@ -48,9 +48,9 @@ function sign_of(v: f64): string {
     }
 }
 
-// A tuple literal with a negated element, passed straight to a call: the
-// argument temp's drop needs the tuple's shape, and a negated element used
-// to leave that shape with a hole in it.
+
+
+
 function sum(t: (i32, i32)): i32 { return t.0 + t.1; }
 
 function main(): i32 {

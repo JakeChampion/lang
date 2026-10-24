@@ -11,14 +11,6 @@ import (
 	e2eharness "github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// `__str_hash(s, seed)` on the self-host IR path: the seeded word-at-a-time
-// string hash (compiler/ir.fern's str_hash has the definition).
-
-// strHashIRProg is SELF-CHECKING: it carries a Fern reference that assembles
-// each word a byte at a time and compares the kernel against it over every
-// length to 40 from several seeds, over 300 high bytes, and against eight
-// values an independent implementation computed, so the kernel and the
-// reference cannot drift together. 42 means every comparison matched.
 const strHashIRProg = `function word(s: string, at: i32, n: i32): i64 {
     let w: i64 = 0i64;
     let k: i32 = n - 1;
@@ -78,8 +70,6 @@ function main(): i32 {
 }
 `
 
-// runStrHashIR compiles strHashIRProg with the self-host modload driver for
-// the given register target and returns the exit code.
 func runStrHashIR(t *testing.T, target string) int {
 	t.Helper()
 	var runner, runPrefix, extra []string
@@ -124,10 +114,6 @@ func TestSelfHostStrHashIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrHashIRWasm runs the same program through the self-hosted
-// wasm IR driver. The helper's presence in the emitted text is asserted, so a
-// module that silently stopped needing it would fail rather than pass by
-// exercising nothing.
 func TestSelfHostStrHashIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host str_hash wasm IR e2e")
@@ -165,8 +151,6 @@ func TestSelfHostStrHashIRWasm(t *testing.T) {
 	}
 }
 
-// A string-keyed Map hashes its keys with a helper of its own; a module that
-// also calls __str_hash needs both, under different names.
 const strHashBesideMapProg = `import "core/map";
 function main(): i32 {
     let m: Map[string, i32] = map_new(8);

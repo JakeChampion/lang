@@ -7,10 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// A builder past 64 MiB through the SELF-HOST-emitted runtime (#8212, #7267). Each leg builds the probe with the self-host compiler and runs it, so
-// the grow copy, the append after a grow and the take of a buffer that grew all
-// execute in the emitted runtime.
-
 func TestSelfHostBufGrowsPastOldCeilingX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

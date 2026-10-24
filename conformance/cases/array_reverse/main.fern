@@ -1,6 +1,6 @@
 import "std/array";
-// reversed() returns a fresh reversed copy. [1,2,3,4] -> [4,3,2,1];
-// 4*10 + 1 = 41.
+
+
 function main(): i32 {
     let a = [1, 2, 3, 4];
     let r = a.reverse();

@@ -1,10 +1,3 @@
-// `dyn Trait` runtime dispatch on the wasm backend (slice 2b — see
-// docs/DYN-TRAITS.md §4.2.1). A concrete struct value coerces to a
-// `dyn Trait` fat pointer `[data, vtable]`; `d.m()` loads the method's
-// table index from the vtable and call_indirect's through it. These
-// tests compile + run real programs through wasmtime and assert the
-// output matches the interpreter (the source of truth — it dispatches
-// by the receiver's runtime type).
 package e2e
 
 import (
@@ -16,8 +9,6 @@ import (
 	"testing"
 )
 
-// dynInterpStdout runs src on the interpreter and returns its trimmed
-// stdout, failing the test on a non-zero exit.
 func dynInterpStdout(t *testing.T, src string) string {
 	t.Helper()
 	bin := buildLangBinForInterp(t)
@@ -37,9 +28,6 @@ func dynInterpStdout(t *testing.T, src string) string {
 	return strings.TrimSpace(out.String())
 }
 
-// TestWASMDynTraitStructDispatch: a single struct receiver behind a
-// `dyn Shape` local dispatches `area()` through its vtable. The wasm
-// output must match the interpreter.
 func TestWASMDynTraitStructDispatch(t *testing.T) {
 	src := `import "std/i32";
 trait Shape {
@@ -65,11 +53,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMDynTraitHeterogeneousArray: a `dyn Shape[]` holding two
-// different concrete types, iterated and dispatched in a loop. Each
-// element's vtable routes to its own concrete impl. Exercises the
-// two-trait-method case (area + a string-returning name) and the
-// two-word array-element store/load fan-out.
 func TestWASMDynTraitHeterogeneousArray(t *testing.T) {
 	src := `import "std/i32";
 trait Shape {
@@ -112,15 +95,6 @@ function main(): i32 {
 	}
 }
 
-// --- x86-64 boxed `dyn Trait` dispatch (slice 2c — docs/DYN-TRAITS.md
-// §4.2.2). On natives a `dyn Trait` value is a BOXED one-word pointer to
-// a heap `{data, vtable}` cell; the vtable is an array of absolute
-// `__method_*` function pointers. These differential tests run the same
-// sources the wasm tests use, through the native x86-64 backend, and
-// assert the stdout matches the interpreter. ---
-
-// TestX86_64DynTraitStructDispatch: single struct receiver behind a
-// `dyn Shape` local, dispatched through its boxed vtable.
 func TestX86_64DynTraitStructDispatch(t *testing.T) {
 	src := `import "std/i32";
 trait Shape {
@@ -150,11 +124,6 @@ function main(): i32 {
 	}
 }
 
-// TestX86_64DynTraitHeterogeneousArray: a `dyn Shape[]` holding two
-// different concrete types, iterated + dispatched in a loop. Exercises
-// the boxed one-word array-element store/load (single pointer stride),
-// the two-trait-method vtable (area + a string-returning name), and a
-// `dyn Shape` function parameter.
 func TestX86_64DynTraitHeterogeneousArray(t *testing.T) {
 	src := `import "std/i32";
 trait Shape {
@@ -201,17 +170,6 @@ function main(): i32 {
 	}
 }
 
-// --- arm64 boxed `dyn Trait` dispatch (slice 2d — docs/DYN-TRAITS.md
-// §4.2.2). arm64 is also ptrW==8, so it uses the SAME boxed one-word
-// representation as x86-64: a `dyn Trait` value is a single 8-byte
-// pointer to a heap `{data, vtable}` cell; the vtable is a .rodata array
-// of absolute `__method_*` function pointers. These differential tests
-// run the same sources the x86-64 / wasm tests use, through the native
-// arm64 backend under qemu-aarch64, and assert stdout matches the
-// interpreter. ---
-
-// TestArm64DynTraitStructDispatch: single struct receiver behind a
-// `dyn Shape` local, dispatched through its boxed vtable.
 func TestArm64DynTraitStructDispatch(t *testing.T) {
 	src := `import "std/i32";
 trait Shape {
@@ -241,11 +199,6 @@ function main(): i32 {
 	}
 }
 
-// TestArm64DynTraitHeterogeneousArray: a `dyn Shape[]` holding two
-// different concrete types, iterated + dispatched in a loop. Exercises
-// the boxed one-word array-element store/load (single pointer stride),
-// the two-trait-method vtable (area + a string-returning name), and a
-// `dyn Shape` function parameter.
 func TestArm64DynTraitHeterogeneousArray(t *testing.T) {
 	src := `import "std/i32";
 trait Shape {
@@ -291,19 +244,6 @@ function main(): i32 {
 		}
 	}
 }
-
-// --- `dyn Trait` over a PRIMITIVE receiver (i32) — regression for the
-// x86-64 OpBoxDyn register-clobber bug + the first proven slice of
-// "dyn over primitives". A primitive value isn't separately heap-
-// allocated, so the boxed `{data, vtable}` cell is the program's FIRST
-// allocation — which is exactly the case that triggers __fern_alloc's
-// heap-init mmap `syscall`. x86-64's OpBoxDyn used to hold data/vtable
-// in caller-save r10/r11 across that call; the syscall clobbered them
-// (r11 ← RFLAGS), so the cell came back as garbage and dispatch
-// segfaulted on the first `dyn` over an i32. Now data/vtable use
-// callee-saved rbx/r12 (the x86-64 mirror of arm64's x19/x20). wasm
-// carries the i32 inline (no box) and arm64 already used callee-saved
-// regs, so both already worked — these pin all three. ---
 
 const dynPrimI32Src = `import "std/i32";
 trait Show {
@@ -361,19 +301,6 @@ func TestWASMDynTraitPrimitiveReceiver(t *testing.T) {
 	}
 }
 
-// --- Uniform primitive boxing for `dyn Trait` (docs/DYN-TRAITS.md §4.2.3).
-// A primitive/string concrete coercing to `dyn` is heap-boxed so `data` is
-// always a one-word pointer, and the vtable slots point at unboxing wrappers
-// (`__dynbox_<C>_<m>`). The hard cases are i64/f64 on wasm (wider than the
-// inline i32 data slot) and string on wasm + arm64 (a two-word value /
-// non-integer receiver ABI). These differential tests run each across ALL
-// THREE backends and assert the stdout matches the interpreter
-// (backendsAgree + interpOracle). ---
-
-// dyn over i64 — the boxed `data` cell holds the full 8-byte value, which
-// wasm's inline i32 data slot would truncate.
-// Compiled-only: the interpreter can't dispatch dyn-over-i64 (width-less
-// Number), so this checks the three backends against a literal expectation.
 func TestDynTraitPrimitiveI64(t *testing.T) {
 	src := `import "std/i64";
 trait Show {
@@ -392,8 +319,6 @@ function main(): i32 {
 	backendsAgree(t, src, "v=9000001000")
 }
 
-// dyn over f64 — the boxed cell carries the 8-byte float and the wrapper
-// reloads it with the f64 ABI. wasm is the backend that needs this.
 func TestDynTraitPrimitiveF64(t *testing.T) {
 	src := `import "std/f64";
 trait Show {
@@ -412,9 +337,6 @@ function main(): i32 {
 	backendsAgree(t, src, interpOracle(t, src, "v=10"))
 }
 
-// dyn over string — the value-box holds the two-word `(data, len)` string
-// and the wrapper reloads it with the two-word load, which wasm + arm64
-// both need. The impl returns `self.len()` (the design's example).
 func TestDynTraitPrimitiveString(t *testing.T) {
 	src := `import "std/i32";
 trait Show {
@@ -433,9 +355,6 @@ function main(): i32 {
 	backendsAgree(t, src, interpOracle(t, src, "len=5"))
 }
 
-// Heterogeneous `dyn Show[]` mixing string + i32 concretes — each element's
-// vtable routes to its own unboxing wrapper, proving the per-concrete box
-// layout (two-word string vs one-word i32) and dispatch coexist in one array.
 func TestDynTraitPrimitiveHeterogeneous(t *testing.T) {
 	src := `import "std/i32";
 trait Show {
@@ -457,12 +376,9 @@ function main(): i32 {
     return 0;
 }
 `
-	// "hi".len()=2, 7+100=107, "world".len()=5 → 114
 	backendsAgree(t, src, interpOracle(t, src, "total=114"))
 }
 
-// A trait method WITH an argument on a primitive receiver — proves the
-// wrapper passes method args straight through past the unboxed receiver.
 func TestDynTraitPrimitiveMethodArg(t *testing.T) {
 	src := `import "std/i32";
 trait Adder {
@@ -481,9 +397,6 @@ function main(): i32 {
 	backendsAgree(t, src, interpOracle(t, src, "r=42"))
 }
 
-// A trait method with a STRING argument on a string receiver — both the
-// receiver (unboxed from the value cell) and the arg are two-word strings,
-// proving the two-word arg ABI survives past the unboxed receiver.
 func TestDynTraitPrimitiveStringMethodArg(t *testing.T) {
 	src := `import "std/i32";
 trait Joiner {
@@ -502,18 +415,6 @@ function main(): i32 {
 	backendsAgree(t, src, interpOracle(t, src, "n=5"))
 }
 
-// --- `e as? T` fallible downcast codegen (docs/DYN-TRAITS.md §9).
-// `e as? T` lowers to a vtable-pointer compare: extract the dyn value's
-// vtable word (boxed-cell deref on natives, inline high-word on wasm),
-// compare it against the static __vtable_<Trait>_<T> address
-// (OpConstVtable), and build Some(data) on a hit / None on a miss. These
-// differential tests run the compiled output (all three backends) against
-// the interpreter (the source of truth — it downcasts by the receiver's
-// runtime type tag). ---
-
-// TestDowncastStructHitMiss: a `dyn Shape` holding a Circle. `s as? Circle`
-// hits → Some, and the bound value is usable concretely (x.r); `s as? Rect`
-// misses → None. Exercises both arms of the vtable compare on every backend.
 func TestDowncastStructHitMiss(t *testing.T) {
 	src := `import "std/i32";
 trait Shape {
@@ -551,10 +452,6 @@ function main(): i32 {
 	backendsAgree(t, src, interpOracle(t, src, "circle r=5\nrect a=12"))
 }
 
-// TestDowncastHeterogeneousArrayCount: downcast each element of a
-// heterogeneous `dyn Shape[]` to Circle, summing the radii of the hits and
-// counting the misses. Proves the compare distinguishes concrete types
-// per-element (each element's vtable word identifies its own type).
 func TestDowncastHeterogeneousArrayCount(t *testing.T) {
 	src := `import "std/i32";
 trait Shape {
@@ -587,10 +484,6 @@ function main(): i32 {
 	backendsAgree(t, src, interpOracle(t, src, "circle_r_sum=3\nrects=2"))
 }
 
-// TestDowncastEnumTarget: an enum concrete target. A payload-carrying enum
-// dispatches (and downcasts) like any heap value; `d as? Box` hits when the
-// dyn holds the enum, misses for a struct. (A payloadless-only enum behind
-// dyn is a separate pre-existing dispatch limitation, not exercised here.)
 func TestDowncastEnumTarget(t *testing.T) {
 	src := `import "std/i32";
 trait Describe {
@@ -627,12 +520,6 @@ function main(): i32 {
 	backendsAgree(t, src, interpOracle(t, src, "a=7\nb=-1"))
 }
 
-// TestDowncastOnlyTargetRooted: a downcast target T (Rect) that is NEVER
-// coerced to `dyn Shape` — only ever appears as a downcast target. Its
-// __vtable_Shape_Rect (which the compare references) must still emit and
-// its __method_Rect_* must survive tree-shake / IR dead-function
-// elimination, or the build fails to link / find the func. Guards the
-// downcast-site rooting (docs/DYN-TRAITS.md §9).
 func TestDowncastOnlyTargetRooted(t *testing.T) {
 	src := `import "std/i32";
 trait Shape {
@@ -664,16 +551,6 @@ function main(): i32 {
 	backendsAgree(t, src, interpOracle(t, src, "not a rect\ncircle=25"))
 }
 
-// --- Multi-trait `dyn A + B` dispatch through the MERGED vtable
-// (docs/DYN-TRAITS.md §10). A concrete C impl-ing both traits coerces to
-// `dyn A + B`; calling a method from EACH trait dispatches through the
-// concatenated (sorted-set, concrete) vtable. The differential against the
-// interpreter (the source of truth) proves compiled == interp. ---
-
-// TestDynMultiTraitDispatch: a single `dyn Show + Weigh` value calls a
-// method from EACH trait (Show.show + Weigh.weight). Weigh.weight sits in
-// the merged vtable AFTER Show's methods, so this exercises a non-zero
-// global slot (the prefix offset), not just an append.
 func TestDynMultiTraitDispatch(t *testing.T) {
 	src := `import "std/i32";
 trait Show  { function show(self: Self): string; }
@@ -694,10 +571,6 @@ function main(): i32 {
 	backendsAgree(t, src, interpOracle(t, src, "apple=150"))
 }
 
-// TestDynMultiTraitHeterogeneousArray: a `dyn Show + Weigh[]` holding two
-// different concrete types, iterated with BOTH-trait calls per element.
-// Each element's merged vtable routes both traits' methods to its own
-// concrete impls.
 func TestDynMultiTraitHeterogeneousArray(t *testing.T) {
 	src := `import "std/i32";
 trait Show  { function show(self: Self): string; }
@@ -725,12 +598,6 @@ function main(): i32 {
 	backendsAgree(t, src, interpOracle(t, src, "apple=120\nbrick=2000\ntotal=2120"))
 }
 
-// TestDynThreeTraitMiddleSegment: a THREE-trait `dyn A + B + C` calling a
-// method from each trait — including the MIDDLE trait B, whose method sits
-// at a non-zero offset that is neither 0 (A) nor the tail (C). This proves
-// the global-slot math (prefix = sum of earlier traits' method counts),
-// not merely "first segment + appended last segment". A has 2 methods, so
-// B.b1 is at global slot 2 and C.c1 at slot 3.
 func TestDynThreeTraitMiddleSegment(t *testing.T) {
 	src := `import "std/i32";
 trait Aa { function a1(self: Self): i32; function a2(self: Self): i32; }
@@ -749,21 +616,9 @@ function main(): i32 {
     return 0;
 }
 `
-	// a1=3, a2=4, b1=30, c1=300 → 337
 	backendsAgree(t, src, interpOracle(t, src, "sum=337"))
 }
 
-// --- Multi-trait `dyn A + B` DOWNCAST (`e as? T`) through the MERGED
-// vtable (docs/DYN-TRAITS.md §10). emitDowncast keys OpConstVtable by the
-// whole trait set (dynVtableSetKey), so the compare references the same
-// `__vtable_<A+B>_<T>` cell a multi-trait coercion of T stores — exact for
-// any trait set. Differential vs the interpreter (source of truth). ---
-
-// TestDowncastMultiTraitHitMiss: a `dyn Show + Weigh` value downcast to the
-// matching concrete (Some) and to a non-matching concrete that ALSO impls
-// both traits (None). Proves the merged-vtable compare distinguishes the two
-// concretes — the box was coerced with Apple's merged vtable, so `as? Apple`
-// hits and `as? Brick` misses, and vice-versa.
 func TestDowncastMultiTraitHitMiss(t *testing.T) {
 	src := `import "std/i32";
 trait Show  { function show(self: Self): string; }
@@ -798,13 +653,6 @@ function main(): i32 {
 	backendsAgree(t, src, interpOracle(t, src, "apple g=150\nbrick kg=2"))
 }
 
-// TestDowncastMultiTraitOnlyTargetRooted: a multi-trait downcast target
-// (Brick) that is NEVER coerced to `dyn Show + Weigh` — only ever a downcast
-// target. The MERGED `__vtable_Show+Weigh_Brick` (which the compare
-// references) must still emit and ALL of Brick's __method_* (both traits)
-// must survive tree-shake, or the merged vtable cell references a dropped
-// symbol. Guards the multi-trait downcast-site rooting (rooting every
-// trait in the set, not just the primary).
 func TestDowncastMultiTraitOnlyTargetRooted(t *testing.T) {
 	src := `import "std/i32";
 trait Show  { function show(self: Self): string; }
@@ -834,10 +682,6 @@ function main(): i32 {
 	backendsAgree(t, src, interpOracle(t, src, "not a brick\napple=apple:7"))
 }
 
-// TestDowncastThreeTrait: a THREE-trait `dyn A + B + C` downcast — the
-// merged key has three segments; the downcast still keys the (set, T) vtable
-// correctly. Hit on the matching concrete, miss on a different concrete that
-// also impls all three.
 func TestDowncastThreeTrait(t *testing.T) {
 	src := `import "std/i32";
 trait Aa { function a1(self: Self): i32; }
@@ -875,24 +719,6 @@ function main(): i32 {
 	backendsAgree(t, src, interpOracle(t, src, "d=3\ne=-9"))
 }
 
-// `dyn` over the STDLIB `core/cmp.Display` — the trait every generic
-// "printable" bound names, and the first `dyn` set whose implementor list
-// is not written by the program under test. Two lowering gaps kept this
-// interpreter-only:
-//
-//   - `core/cmp` carries `impl Display for u8` (the byte type has no scalar
-//     module, so its Display impl has a real body). `u8` was absent from
-//     astTypeForConcreteName, so the value-box layout lookup failed and the
-//     whole `dyn cmp.Display` set was rejected before any code was emitted.
-//   - collectVtables over-approximates — a vtable per IMPLEMENTOR, not per
-//     coerced concrete. That is harmless for the vtables themselves (nothing
-//     names them, so no backend emits them) but not for the unboxing wrappers
-//     built from them: a wrapper for an implementor no site coerces is dead
-//     code still calling `__method_<C>_<m>`, which tree-shake dropped. The
-//     natives failed to link on the undefined label.
-//
-// Both are only reachable through a trait whose implementor set is wider
-// than the program's coercion sites, which is exactly what a stdlib trait is.
 func TestDynTraitStdlibDisplay(t *testing.T) {
 	src := `import "core/cmp";
 import "std/i32";
@@ -915,10 +741,6 @@ function main(): i32 {
 	backendsAgree(t, src, interpOracle(t, src, "42, hi, true"))
 }
 
-// A u8 element actually coerced into the `dyn cmp.Display` set, so the u8
-// value-box layout is exercised rather than merely tolerated: the byte is
-// boxed at the coercion site and read back through
-// `__dynbox_u8_to_string`.
 func TestDynTraitStdlibDisplayByte(t *testing.T) {
 	src := `import "core/cmp";
 import "std/i32";

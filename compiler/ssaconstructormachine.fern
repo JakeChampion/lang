@@ -1,14 +1,9 @@
-// Conditional machine effects of selected normal-x86 one/two-i32 constructors.
-// Allocator and linked shape guarantees remain explicit unproved premises.
 import "./asmcore";
 import "./ssacapacityisa" as isa;
 import "./ssaarrayboxmachine" as helper;
 import "./ssaconstructorbound" as boundary;
 import "./ssaprepare";
 
-// Half kinds: numeric, original register, stack pointer, fresh base, outer
-// return, initial stack, initial allocation, shape address, helper successor,
-// parameter carrier, allocator successor, opaque allocator scratch.
 struct Half { kind: i32, identity: i64, high: boolean }
 
 struct Word { low: Half, high: Half }
@@ -141,8 +136,6 @@ function cell_extent(s: State, kind: i32, at: i64, bytes: i32): i32 {
 }
 
 function writable(s: State, at: i32): boolean {
-  // Constructor writes only scratch below S and the selected shape/fields.
-  // The last allocated word, capacity and RC are never writable here.
   return at >= 0 && at < 16 || s.calls == 1 && at >= 26 && at < s.memory.len() - 2;
 }
 
@@ -207,8 +200,6 @@ function allocation(s: State, capacity: i32, pc: i32, successor: i32, op: isa.Op
   if (!pointer(sp) || sp.low.kind != 2 || sp.low.identity < -40 || sp.low.identity > 0 || sp.low.identity % 8 != 0) {
     return State { ...s, ok: false };
   }
-  // All addresses derive from the actual current SP. The helper's own proof
-  // derives request8*(C+3); its allocator normal-return contract is a premise.
   let called = store_at(s, cell(s, sp, -8, 64), 64, token(8, (pc + 1) as i64));
   called = store_at(called, cell(called, sp, -16, 64), 64, number(capacity as i64));
   called = store_at(called, cell(called, sp, -24, 64), 64, token(10, successor as i64));
@@ -308,8 +299,6 @@ function finished(s: State, capacity: i32, register_entry: boolean): boolean {
 }
 
 function finished_memory(s: State, original: State, capacity: i32): boolean {
-  // Scratch below S may change, including opaque lower allocator scratch.
-  // All outer return/argument cells and allocation cells have exact outcomes.
   let i = 16;
   while (i < s.memory.len()) {
     if (!same(s.memory[i], expected_memory(original, capacity, i))) {
@@ -374,16 +363,6 @@ function allocator_successor(output: string): i32 {
   return successor;
 }
 
-// Conditional normal-return implication, never a production certificate.
-// Canonical aligned writable stack S-64..S+23 is disjoint from the fresh
-// 8*(C+3)-byte allocation. Allocator success, freshness, alignment, permissions,
-// register/return preservation and symbolic shape relocation/identity are
-// UNPROVED premises. Lower allocator scratch is opaque. Full arbitrary64-bit
-// parameter carriers are preserved; selected i32 does not justify narrowing.
-// Both entries derive AX=B+16, SI=shape, DI=C, other original registers,
-// capacityC/RC1/shape/ordered fields and untouched extra word. The original
-// return and arguments survive, SP=S at RET then advances8. Scratch below S,
-// flags, unwind, terminal paths and other targets are not certified.
 pub function check(output: ssaprepare.Output, name: string): boolean {
   let bound = boundary.resolve(output, name);
   if (bound.error != "" || !helper.check(output.text)) {

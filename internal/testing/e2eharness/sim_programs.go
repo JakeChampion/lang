@@ -1,7 +1,5 @@
 package e2eharness
 
-// SimNetProgram exercises the same SimNet contracts as the TAP suite
-// without std/test, for the self-host and wasm legs. Exit 42 iff every check holds.
 const SimNetProgram = `import "std/async";
 import "std/time";
 import "std/sim";
@@ -61,11 +59,6 @@ function main(): i32 {
 }
 `
 
-// SimFaultProgram exercises the same fault contracts as the TAP suite
-// without std/test, for the self-host and wasm legs. Exit 42 iff every check holds.
-// The flaky(50) seed-1 pattern "FFFFFSFFFS" is the cross-backend
-// determinism golden: pure integer arithmetic, so the identical
-// program must produce the identical run on interp / native / wasm.
 const SimFaultProgram = `import "std/async";
 import "std/time";
 import "std/sim";

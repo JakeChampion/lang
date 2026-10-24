@@ -7,19 +7,6 @@ import (
 	"testing"
 )
 
-// genEnumOfGenStructIRCase is a self-host program where a generic enum's type
-// argument is itself a generic STRUCT — `Opt[Box[i32]]`, and the built-in
-// `Option[Box[i32]]` / `Result[Box[i32], …]` forms. This is a cross-pass
-// composite key: the struct monomorphiser (`Box[i32]` → `Box__i32`) runs before
-// the enum monomorphiser, but the enum/Option annotation `Opt[Box[i32]]` was
-// left with the un-mangled inner `Box[i32]` (mg_ty only recursed into the args
-// of a generic-STRUCT base), so the enum pass saw a composite arg it couldn't
-// key and the module bailed. The fix makes the struct pass's
-// mg_ty recurse into the args of a NON-generic-struct generic base too
-// (`Opt[Box[i32]]` → `Opt[Box__i32]`), so the enum pass then sees a plain
-// nominal arg `Box__i32` it keys the usual way. Native monomorphises these, so
-// this closes a goal-1 IR-subset gap. Each exit code is pinned against the
-// native interpreter oracle and kept <= 120.
 type genEnumOfGenStructIRCase struct {
 	name     string
 	src      string
@@ -27,40 +14,34 @@ type genEnumOfGenStructIRCase struct {
 }
 
 var genEnumOfGenStructIRCases = []genEnumOfGenStructIRCase{
-	// user generic enum wrapping a user generic struct, i32 payload.
 	{"user_enum_i32", `enum Opt[T] { Sm(T), Nn }
 struct Box[U] { v: U }
 function main(): i32 {
     let o: Opt[Box[i32]] = Sm(Box { v: 7 });
     match (o) { Sm(b) => { return b.v; }, Nn => { return 0; } }
 }`, 7},
-	// string payload, method dispatch on the inner struct's field.
 	{"user_enum_string", `enum Opt[T] { Sm(T), Nn }
 struct Box[U] { v: U }
 function main(): i32 {
     let o: Opt[Box[string]] = Sm(Box { v: "hi" });
     match (o) { Sm(b) => { return b.v.len(); }, Nn => { return 0; } }
 }`, 2},
-	// the unit variant pinned from the annotation (no payload to infer from).
 	{"user_enum_unit", `enum Opt[T] { Sm(T), Nn }
 struct Box[U] { v: U }
 function main(): i32 {
     let o: Opt[Box[i32]] = Nn;
     match (o) { Sm(b) => { return b.v; }, Nn => { return 9; } }
 }`, 9},
-	// built-in Option of a generic struct.
 	{"option_of_struct", `struct Box[U] { v: U }
 function main(): i32 {
     let o: Option[Box[i32]] = Some(Box { v: 5 });
     match (o) { Some(b) => { return b.v; }, None => { return 0; } }
 }`, 5},
-	// built-in Result of a generic struct, propagated across a call boundary.
 	{"result_of_struct", `struct Box[U] { v: U }
 function f(): Result[Box[i32], string] { return Ok(Box { v: 9 }); }
 function main(): i32 {
     match (f()) { Ok(b) => { return b.v; }, Err(e) => { return 0; } }
 }`, 9},
-	// a struct with two fields as the enum payload (read both via the binding).
 	{"struct_two_fields", `enum Opt[T] { Sm(T), Nn }
 struct Pt[U] { x: U, y: U }
 function main(): i32 {
@@ -69,9 +50,6 @@ function main(): i32 {
 }`, 7},
 }
 
-// TestSelfHostGenEnumOfGenStructIRX86_64 runs each case through the self-host
-// asm_run driver. A size bound proves the small IR path was taken rather than a
-// bail to the ~35 KB AST runtime.
 func TestSelfHostGenEnumOfGenStructIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -86,12 +64,6 @@ func TestSelfHostGenEnumOfGenStructIRX86_64(t *testing.T) {
 
 	for _, tc := range genEnumOfGenStructIRCases {
 		t.Run(tc.name, func(t *testing.T) {
-			// FERN_STRICT_IR=1 turns a bail into a refusal naming its site, so
-			// this asks the question directly rather than inferring it from an
-			// output size. The byte count was the old proxy and it had drifted
-			// too close: user_enum_string emits 18007 bytes — it pulls
-			// the string helpers its sibling does not — against a bound of
-			// 18000, so a module that lowers fine was read as a bail.
 			asm := runCaptureEnv(t, runner, driverBin, []byte(tc.src),
 				append(os.Environ(), "FERN_STRICT_IR=1"))
 			if len(asm) == 0 {
@@ -112,9 +84,6 @@ func TestSelfHostGenEnumOfGenStructIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostGenEnumOfGenStructWasmIR is the wasm sibling: both monomorphisers
-// are target-independent parser passes, so the wasm IR backend gets these for
-// free. Each case asserts the same oracle exit code.
 func TestSelfHostGenEnumOfGenStructWasmIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range genEnumOfGenStructIRCases {

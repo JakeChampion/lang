@@ -1,25 +1,9 @@
-// Package numeric is the Go-side mirror of
-// internal/stdlib/std/wasm/numeric.fern — arithmetic,
-// comparison, and bitwise instruction encoders for the
-// WebAssembly Core 1.0 binary format.
-//
-// Spec: https://webassembly.github.io/spec/core/binary/instructions.html#numeric-instructions
-//
-// Every numeric op is a single opcode byte with no immediate;
-// the encoders are one-liners. Ordered by family (i32, i64,
-// f32, f64) then sub-family (test/comparison/unary/binary)
-// matching the spec layout. Opcode constants are in-line
-// comments next to each function.
 package numeric
-
-// ---- i32 unary ----
 
 func InstI32Clz(buf []byte) []byte    { return append(buf, 0x67) }
 func InstI32Ctz(buf []byte) []byte    { return append(buf, 0x68) }
 func InstI32Popcnt(buf []byte) []byte { return append(buf, 0x69) }
 func InstI32Eqz(buf []byte) []byte    { return append(buf, 0x45) }
-
-// ---- i32 comparison ----
 
 func InstI32Eq(buf []byte) []byte  { return append(buf, 0x46) }
 func InstI32Ne(buf []byte) []byte  { return append(buf, 0x47) }
@@ -31,8 +15,6 @@ func InstI32LeS(buf []byte) []byte { return append(buf, 0x4c) }
 func InstI32LeU(buf []byte) []byte { return append(buf, 0x4d) }
 func InstI32GeS(buf []byte) []byte { return append(buf, 0x4e) }
 func InstI32GeU(buf []byte) []byte { return append(buf, 0x4f) }
-
-// ---- i32 binary ----
 
 func InstI32Add(buf []byte) []byte  { return append(buf, 0x6a) }
 func InstI32Sub(buf []byte) []byte  { return append(buf, 0x6b) }
@@ -50,14 +32,10 @@ func InstI32ShrU(buf []byte) []byte { return append(buf, 0x76) }
 func InstI32Rotl(buf []byte) []byte { return append(buf, 0x77) }
 func InstI32Rotr(buf []byte) []byte { return append(buf, 0x78) }
 
-// ---- i64 unary ----
-
 func InstI64Clz(buf []byte) []byte    { return append(buf, 0x79) }
 func InstI64Ctz(buf []byte) []byte    { return append(buf, 0x7a) }
 func InstI64Popcnt(buf []byte) []byte { return append(buf, 0x7b) }
 func InstI64Eqz(buf []byte) []byte    { return append(buf, 0x50) }
-
-// ---- i64 comparison ----
 
 func InstI64Eq(buf []byte) []byte  { return append(buf, 0x51) }
 func InstI64Ne(buf []byte) []byte  { return append(buf, 0x52) }
@@ -69,8 +47,6 @@ func InstI64LeS(buf []byte) []byte { return append(buf, 0x57) }
 func InstI64LeU(buf []byte) []byte { return append(buf, 0x58) }
 func InstI64GeS(buf []byte) []byte { return append(buf, 0x59) }
 func InstI64GeU(buf []byte) []byte { return append(buf, 0x5a) }
-
-// ---- i64 binary ----
 
 func InstI64Add(buf []byte) []byte  { return append(buf, 0x7c) }
 func InstI64Sub(buf []byte) []byte  { return append(buf, 0x7d) }
@@ -88,16 +64,12 @@ func InstI64ShrU(buf []byte) []byte { return append(buf, 0x88) }
 func InstI64Rotl(buf []byte) []byte { return append(buf, 0x89) }
 func InstI64Rotr(buf []byte) []byte { return append(buf, 0x8a) }
 
-// ---- f32 comparison ----
-
 func InstF32Eq(buf []byte) []byte { return append(buf, 0x5b) }
 func InstF32Ne(buf []byte) []byte { return append(buf, 0x5c) }
 func InstF32Lt(buf []byte) []byte { return append(buf, 0x5d) }
 func InstF32Gt(buf []byte) []byte { return append(buf, 0x5e) }
 func InstF32Le(buf []byte) []byte { return append(buf, 0x5f) }
 func InstF32Ge(buf []byte) []byte { return append(buf, 0x60) }
-
-// ---- f32 unary + binary ----
 
 func InstF32Abs(buf []byte) []byte      { return append(buf, 0x8b) }
 func InstF32Neg(buf []byte) []byte      { return append(buf, 0x8c) }
@@ -114,16 +86,12 @@ func InstF32Min(buf []byte) []byte      { return append(buf, 0x96) }
 func InstF32Max(buf []byte) []byte      { return append(buf, 0x97) }
 func InstF32Copysign(buf []byte) []byte { return append(buf, 0x98) }
 
-// ---- f64 comparison ----
-
 func InstF64Eq(buf []byte) []byte { return append(buf, 0x61) }
 func InstF64Ne(buf []byte) []byte { return append(buf, 0x62) }
 func InstF64Lt(buf []byte) []byte { return append(buf, 0x63) }
 func InstF64Gt(buf []byte) []byte { return append(buf, 0x64) }
 func InstF64Le(buf []byte) []byte { return append(buf, 0x65) }
 func InstF64Ge(buf []byte) []byte { return append(buf, 0x66) }
-
-// ---- f64 unary + binary ----
 
 func InstF64Abs(buf []byte) []byte      { return append(buf, 0x99) }
 func InstF64Neg(buf []byte) []byte      { return append(buf, 0x9a) }

@@ -1,13 +1,13 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// A field-place append whose root is a local bound from a FIELD READ:
-// `t` names the box `o` still holds, so an rc==1 in-place grow of
-// `t.xs` lengthened `o.inner.xs` as well — 44 where value semantics
-// say 43 (#8768). The buffer must have spare capacity for the
-// divergence to show, hence the appends that build it. A control
-// through a fresh call result, which may grow in place, sits beside
-// it. 43 + 4.
+
+
+
+
+
+
+
+
+
+
 struct Inner { xs: i32[] }
 struct Outer { inner: Inner, n: i32 }
 function mk(): Outer {

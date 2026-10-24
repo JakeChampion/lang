@@ -1,17 +1,17 @@
-// Map keys whose cmp.Eq / cmp.Hash are written by hand (#12650). Each key
-// type's eq ignores part of the value, so a map that compared keys
-// structurally instead of through the impls would hold two entries where
-// these hold one, and miss the lookups built with a different `junk`.
+
+
+
+
 import "core/cmp";
 import "core/map";
 import "std/i32";
 
-// Both impls hand-written: identity is `a` alone.
+
 struct K { a: i32, junk: i32 }
 impl cmp.Eq for K { function eq(self: Self, o: Self): boolean { return self.a == o.a; } }
 impl cmp.Hash for K { function hash(self: Self): i32 { return self.a; } }
 
-// An enum whose identity is the payload, whichever variant carries it.
+
 enum Shape { Circle(i32), Square(i32), Dot }
 impl cmp.Eq for Shape { function eq(self: Self, o: Self): boolean { return self.size() == o.size(); } }
 impl cmp.Hash for Shape { function hash(self: Self): i32 { return self.size(); } }
@@ -23,13 +23,13 @@ function (sh: Shape) size(): i32 {
   }
 }
 
-// A hand-written eq beside a derived hash.
+
 @derive(cmp.Hash)
 struct Mixed { a: i32, junk: i32 }
 impl cmp.Eq for Mixed { function eq(self: Self, o: Self): boolean { return self.a == o.a; } }
 
-// A derived key whose field compares by hand: the derived eq and hash
-// delegate to the field's impls.
+
+
 @derive(cmp.Eq, cmp.Hash)
 struct Outer { k: K, tag: i32 }
 

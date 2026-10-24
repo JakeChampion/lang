@@ -5,12 +5,6 @@ import (
 	"testing"
 )
 
-// A cross leg (docs/COREUTILS.md) compiles the utilities for
-// FERN_COREUTILS_TARGET and runs both sides under FERN_COREUTILS_QEMU. The
-// self-host compiler is built for that target too, so it needs the emulator
-// exactly as the utilities do — without it TestSelfHostCoreutilsParity died
-// with "exec format error" on every utility, which is the whole cross leg of
-// that gate silently unavailable from an x86-64 desk.
 func TestCrossArgvCarriesTheEmulator(t *testing.T) {
 	for _, tc := range []struct {
 		name string

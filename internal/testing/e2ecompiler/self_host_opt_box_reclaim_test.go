@@ -5,20 +5,6 @@ import (
 	"testing"
 )
 
-// Self-host RC: an Option / Result box is released whatever its payload is made
-// of — a scalar, an array, a struct, an IoError, a Reader — and a bound one
-// nothing consumes is released too (#8806); the built-in I/O producers' boxes
-// are released as well (#8811, the self-host half of #8405).
-//
-// Each leg pins INDEPENDENCE FROM THE ROUND COUNT: ten times the calls must cost
-// the same live bytes, and every block the loop allocates must come back. That
-// is what a per-call constant passing for a fix cannot satisfy, and unlike an
-// absolute byte count it does not go stale when another allocation joins the
-// probe.
-
-// optBoxNonScalarScrutSrc: `match (g(i))` on a user producer whose payload is a
-// struct-shaped IoError. No builtin is involved — the box leaked for the payload
-// KIND alone.
 func optBoxNonScalarScrutSrc(rounds int) string {
 	return fmt.Sprintf(`function g(x: i32): Option[IoError] { return None; }
 function main(): i32 {
@@ -31,9 +17,6 @@ function main(): i32 {
 }`, rounds)
 }
 
-// optBoxNonScalarBoundSrc is the same box reached through a written binding
-// rather than as a scrutinee — the two spellings measured identically before,
-// and both have to be covered because they are released by different analyses.
 func optBoxNonScalarBoundSrc(rounds int) string {
 	return fmt.Sprintf(`function g(x: i32): Option[IoError] { return None; }
 function main(): i32 {
@@ -47,9 +30,6 @@ function main(): i32 {
 }`, rounds)
 }
 
-// optBoxDeadScalarSrc: a scalar-payload Option bound and never looked at. Its
-// scalar sibling with a match after each binding was always released; dropping
-// the value without matching it was the one shape that kept the block.
 func optBoxDeadScalarSrc(rounds int) string {
 	return fmt.Sprintf(`function f(x: i32): Option[i32] { if (x > 0) { return Some(x); } return None; }
 function main(): i32 {
@@ -62,8 +42,6 @@ function main(): i32 {
 }`, rounds)
 }
 
-// optBoxDeadNonScalarSrc is the dead binding at a payload kind nothing released
-// either — the two gaps at once.
 func optBoxDeadNonScalarSrc(rounds int) string {
 	return fmt.Sprintf(`function g(x: i32): Option[IoError] { return None; }
 function main(): i32 {
@@ -76,11 +54,6 @@ function main(): i32 {
 }`, rounds)
 }
 
-// optBoxReturningArmSrc leaves the function from INSIDE the matched arm, so the
-// join release never runs on that path: only the return-path arming covers that
-// box. Written the obvious way — the loop condition ends it and the `return`
-// sits in an arm that never fires — it passes with the arming removed, which is
-// what a probe for this has to avoid.
 func optBoxReturningArmSrc(rounds int) string {
 	return fmt.Sprintf(`function g(x: i32): Option[IoError] { return None; }
 function main(): i32 {
@@ -96,10 +69,6 @@ function main(): i32 {
 }`, rounds)
 }
 
-// optBoxNestedMatchSrc keeps the box at a function's TOP LEVEL with its consuming
-// match one block deeper: the local is neither a top-level scrutinee nor a dead
-// binding (the `if` is a use), so its release falls to the scope-exit drop. The
-// round is a call so the shape repeats without the binding moving into a block.
 func optBoxNestedMatchSrc(rounds int) string {
 	return fmt.Sprintf(`function g(x: i32): Option[IoError] { return None; }
 function step(i: i32): i32 {
@@ -164,11 +133,6 @@ func TestSelfHostOptBoxReclaimX86_64(t *testing.T) {
 	}
 }
 
-// ioOpenCloseSrc is #8811's own reproducer: an open-and-close round, whose two
-// Result / Option boxes came back to nobody. #8813 gave __fern_open_res's
-// NUL-terminated path buffer an owner too, so the round now leaves NOTHING and
-// this leg reads the ordinary allocs-equal-frees assertion: one box a round
-// unreleased shows as 200 unfreed blocks, both as 400.
 func ioOpenCloseSrc(rounds int) string {
 	return fmt.Sprintf(`function main(): i32 {
     let i: i32 = 0;
@@ -183,10 +147,6 @@ func ioOpenCloseSrc(rounds int) string {
 }`, rounds)
 }
 
-// ioOpenCloseBoundSrc is the same round with the open's Result reached through a
-// `let` first — a binding rather than an anonymous match scrutinee, so it needs
-// its own leg. `Result[Reader, IoError]` carries no payload either side that
-// anything deep-drops, so the box-only release is all of it.
 func ioOpenCloseBoundSrc(rounds int) string {
 	return fmt.Sprintf(`function main(): i32 {
     let i: i32 = 0;
@@ -202,9 +162,6 @@ func ioOpenCloseBoundSrc(rounds int) string {
 }`, rounds)
 }
 
-// ioReadChunkSrc opens ONE reader outside the loop, so the round-count
-// independence is about the per-call boxes alone: read_chunk's Result box and
-// the string payload the arm binds.
 func ioReadChunkSrc(rounds int) string {
 	return fmt.Sprintf(`function main(): i32 {
     let acc: i32 = 0;
@@ -226,10 +183,6 @@ func ioReadChunkSrc(rounds int) string {
 }`, rounds)
 }
 
-// TestSelfHostIoResultBoxReclaimX86_64 — the built-in I/O half (#8811). The
-// family goes in together: an open-and-close round strands three boxes when none
-// is admitted, so admitting one or two cannot be told from admitting none by a
-// zero-live-bytes assertion alone, which is why this leg reads the SLOPE.
 func TestSelfHostIoResultBoxReclaimX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

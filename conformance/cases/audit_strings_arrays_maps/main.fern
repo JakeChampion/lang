@@ -1,24 +1,24 @@
 import "core/int";
 import "core/map";
 
-// Audit fixture: strings, owned arrays, and maps on every native backend
-// (interp / x86-64 / arm64 / wasm). Each failing check prints "FAIL <id>"
-// and returns a distinct non-zero code; success prints "OK".
-//
-// Covers (docs/FEATURE-AUDIT.md §A / §B / §C):
-//   string len / concat / ==/!= / byte index / slice;
-//   array literal / index / len / with (functional set) / iteration;
-//   Map insert / get_or / has / len, i32 and string keys.
+
+
+
+
+
+
+
+
 
 function main(): i32 {
-    // --- strings ---
+
     if ("hello".len() != 5) { print("FAIL str-len"); return 11; }
     if ("ab" + "cde" != "abcde") { print("FAIL str-concat"); return 12; }
     if (("ab" + "cde").len() != 5) { print("FAIL str-concat-len"); return 13; }
     if (!("abc" == "abc") || !("abc" != "abd")) { print("FAIL str-eq"); return 14; }
     if ("ABC"[0] != 65 || "ABC"[2] != 67) { print("FAIL str-index"); return 15; }
-    // `s[a:b]` is checked: `Option[str]`, `None` on a bad range or a
-    // split code point.
+
+
     match ("hello"[1:4]) {
         Some(sl) => {
             if (sl != "ell" || sl.len() != 3) { print("FAIL str-slice"); return 16; }
@@ -26,13 +26,13 @@ function main(): i32 {
         None => { print("FAIL str-slice"); return 16; }
     }
 
-    // --- arrays ---
+
     let a: i32[] = [10, 20, 30];
     if (a[0] + a[2] != 40) { print("FAIL arr-index"); return 17; }
     let b: i32[] = [1, 2, 3, 4];
     if (b.len() != 4) { print("FAIL arr-len"); return 18; }
-    // `.with` is the functional element-set; canonical idiom reassigns
-    // the binding (the old buffer may be reused in place).
+
+
     let w: i32[] = [10, 20, 30];
     w = w.with(1, 99);
     if (w[0] != 10 || w[1] != 99 || w[2] != 30) { print("FAIL arr-with"); return 19; }
@@ -40,17 +40,17 @@ function main(): i32 {
     for x in b { sum = sum + x; }
     if (sum != 10) { print("FAIL arr-iter"); return 20; }
 
-    // --- maps: i32 keys ---
+
     let mi: Map[i32, i32] = map_new(8);
     mi = mi.insert(1, 10);
     mi = mi.insert(2, 20);
-    mi = mi.insert(1, 99); // overwrite
+    mi = mi.insert(1, 99);
     if (mi.get_or(1, 0) != 99 || mi.get_or(2, 0) != 20) { print("FAIL map-i32"); return 21; }
     if (mi.get_or(7, -1) != (0 - 1)) { print("FAIL map-default"); return 22; }
     if (!mi.contains(1) || mi.contains(7)) { print("FAIL map-has"); return 23; }
     if (mi.len() != 2) { print("FAIL map-len"); return 24; }
 
-    // --- maps: string keys ---
+
     let ms: Map[string, i32] = map_new(8);
     ms = ms.insert("a", 3);
     ms = ms.insert("b", 4);

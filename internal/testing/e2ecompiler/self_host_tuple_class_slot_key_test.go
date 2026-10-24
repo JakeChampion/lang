@@ -9,38 +9,6 @@ import (
 	"testing"
 )
 
-// --- The tuple class credits, keyed on the binding rather than the name (#7272)
-//
-// The class credits are collected from the AST, before any slot exists, so their
-// key had always been the variable NAME — and a name has no scope. Two `let t` in
-// sibling blocks are two slots under one key, and when they are not the same class
-// the table hands each slot BOTH credits: the box takes the "TUP:" shallow dec AND
-// the "TUPRCS:" deep free, and is released twice.
-//
-//	self-host 99 (rc underflow)   native 10   interp 10
-//
-// with `allocs=400 frees=400 live_bytes=0` throughout — a doubly-released block
-// goes straight back to the freelist, so the byte count is clean and the answer is
-// only wrong because the probe checks the counter. Nothing else disagrees.
-//
-// What isolated it was a one-word diff: renaming the second block's local to `u`,
-// changing nothing else, made the same program correct (and left the alloc counts
-// identical, so it is the key resolution rather than the classes granted). Two
-// same-class blocks were already clean, in both directions.
-//
-// The fix is #7253's step 1 for this fact family: a `StmtVar` carries line and col,
-// so `name@line:col` names the BINDING, bind_var_slot records it on the slot, and
-// the four tuple predicates resolve the credit their own binding earned. The other
-// ~70 namespaces multiplexed into reclaimable_names are still name-keyed — #7253 is
-// the issue for the rest — so `reclaim_slot_name` is untouched and this is a
-// parallel accessor rather than a change to it.
-//
-// The shapes below are deliberately ordinary: the blocks do not have to be sibling
-// `{ }` scopes, and two `if` arms or two loop bodies collide the same way.
-//
-// Every want was confirmed against BOTH oracles — bin/fern -interp and the native
-// x86-64 backend agreed on each — never read off the self-host run under test.
-
 type tupClassKeyCase struct {
 	name string
 	src  string
@@ -50,7 +18,6 @@ type tupClassKeyCase struct {
 func tupClassKeyCases() []tupClassKeyCase {
 	return []tupClassKeyCase{
 		{
-			// The issue's repro: sibling blocks, ident element then array literal.
 			name: "sibling_blocks",
 			src: `function round(i: i32): i32 {
     let xs: i32[] = [i, i + 1];
@@ -63,9 +30,6 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 			want: 10,
 		},
 		{
-			// The reverse ordering. Which block comes first must not decide which
-			// release either binding gets, so both orders are pinned — a fix that
-			// only reorders a lookup would pass one and fail the other.
 			name: "sibling_blocks_reversed",
 			src: `function round(i: i32): i32 {
     let xs: i32[] = [i, i + 1];
@@ -78,8 +42,6 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 			want: 10,
 		},
 		{
-			// Two IF ARMS — the same collision in code nobody would call unusual,
-			// and the reason this is worth fixing at the key rather than per shape.
 			name: "if_arms",
 			src: `function round(i: i32): i32 {
     let xs: i32[] = [i, i + 1];
@@ -92,9 +54,6 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 			want: 5,
 		},
 		{
-			// Two LOOP BODIES, so each binding is also rebound per iteration — the
-			// rebind path reads "TUPREBIND:" / "TUPRC:" off the same slot, so this
-			// covers the credits the exit sweep does not.
 			name: "loop_bodies",
 			src: `function round(i: i32): i32 {
     let xs: i32[] = [i, i + 1];
@@ -109,10 +68,6 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 			want: 20,
 		},
 		{
-			// The control: two same-named locals of the SAME class. Already correct
-			// before the change, and it has to stay correct — a site key that failed
-			// to resolve at all would leak here rather than over-release, which the
-			// leakcheck assertions below would catch.
 			name: "same_class_both_blocks",
 			src: `function round(i: i32): i32 {
     let xs: i32[] = [i, i + 1];
@@ -125,10 +80,6 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 			want: 40,
 		},
 		{
-			// The other control: DIFFERENT names, different classes. This is the
-			// program the repro becomes under a one-word rename, and the diff that
-			// isolated the cause — it was already correct, and pins that the fix did
-			// not achieve its result by disabling the classes.
 			name: "distinct_names",
 			src: `function round(i: i32): i32 {
     let xs: i32[] = [i, i + 1];
@@ -143,9 +94,6 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 	}
 }
 
-// leakSummaryLine returns the LAST "leakcheck: " line of a probe's stderr, or ""
-// when the run emitted none. Last rather than first: the summary is printed at
-// exit, so a program that also writes diagnostics keeps the authoritative line.
 func leakSummaryLine(stderr string) string {
 	out := ""
 	for _, line := range strings.Split(stderr, "\n") {
@@ -156,14 +104,6 @@ func leakSummaryLine(stderr string) string {
 	return out
 }
 
-// TestSelfHostTupleClassSlotKeyX86_64 — each binding resolves its own class, so no
-// box is released twice and none is left unreleased.
-//
-// The exit code is the essential assertion here and the byte count is the
-// secondary guard. An over-release does not move `live_bytes` — the block returns to
-// the freelist — so only `__rc_underflow_count()` separates a correct compiler from the
-// broken one. `allocs == frees` is what catches the opposite failure: a site key
-// that resolves to nothing would deny the credit and leak instead.
 func TestSelfHostTupleClassSlotKeyX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -199,9 +139,6 @@ func TestSelfHostTupleClassSlotKeyX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostTupleClassSlotKeyWasmIR — the wasm sibling. Exit codes only, which
-// is the whole signal for this bug: an over-release does not change the byte count
-// on any backend.
 func TestSelfHostTupleClassSlotKeyWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping tuple class slot-key wasm IR e2e")
@@ -240,7 +177,6 @@ func TestSelfHostTupleClassSlotKeyWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostTupleClassSlotKeyIRArm64 — the arm64 sibling under qemu.
 func TestSelfHostTupleClassSlotKeyIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

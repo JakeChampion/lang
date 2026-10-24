@@ -7,12 +7,6 @@ import (
 	"testing"
 )
 
-// selfHostSemFileHandleSource opens a file four ways — the three flag words
-// `open_file` carries and the flags-word form — writes through each Writer,
-// reads it back through a Reader, and reports its own failures by exit code.
-// `open_exclusive` is asked twice on purpose: the second must refuse, which is
-// the only evidence that the O_EXCL bit reached the syscall rather than the
-// truncating word.
 func selfHostSemFileHandleSource(base string) string {
 	return fmt.Sprintf(`function main(): i32 {
     match (open_writer(%[1]q + "/w.txt")) {
@@ -76,13 +70,6 @@ func selfHostSemFileHandleSource(base string) string {
 `, base)
 }
 
-// TestSelfHostSemanticFileHandles drives the file half of the stream-handle
-// family through the PRODUCTION consumer of the typed semantic pipeline. The
-// stdin half is in semProductionPrograms, where it runs on all four targets;
-// this one opens host paths, so it runs only where the binary runs natively.
-//
-// Both halves assert the same two things: the module produces WHOLE, and the
-// produced program gives the expected answer.
 func TestSelfHostSemanticFileHandles(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -96,8 +83,6 @@ func TestSelfHostSemanticFileHandles(t *testing.T) {
 	copySelfHostDriver(t, dir, "fern.fern")
 	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
 
-	// A fresh tree: open_exclusive's second call must refuse because the
-	// FIRST one created the file.
 	base := t.TempDir()
 	src := filepath.Join(t.TempDir(), "main.fern")
 	if err := os.WriteFile(src, []byte(selfHostSemFileHandleSource(base)), 0o644); err != nil {

@@ -2,14 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/string.parse_int_radix(base) — the method form
-// of the arbitrary-base i32 parser (2..36, digits 0-9a-z case-insensitive,
-// optional +/-), the general form behind parse_int / parse_hex_int /
-// parse_bin_int. Returns Option[i32] (scalar), so it self-hosts cleanly.
-// Exercises several bases, sign handling, uppercase digits, and the failure
-// modes (digit >= base, empty, out-of-range base, lone sign). Returns 42 iff
-// every check holds across interp / x86-64 / wasm / arm64; each leg skips itself
-// when its toolchain is absent.
 const stringParseIntRadixProg = `
 import "std/string";
 function val(o: Option[i32], d: i32): i32 { match (o) { Some(v) => { return v; }, None => { return d; } } }

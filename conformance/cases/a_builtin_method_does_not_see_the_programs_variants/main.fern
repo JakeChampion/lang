@@ -1,6 +1,6 @@
-// std/option's ok_or builds Result's Ok inside a method on Option, which
-// flatten leaves with its bare name. The program's own Ok is not a name
-// there, any more than in a module it imports.
+
+
+
 import "std/option";
 import "std/result";
 

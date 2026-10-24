@@ -1,4 +1,3 @@
-// Example-local queue prototype. Construct through new_ring; fields are internal.
 pub struct Ring[T] {
   data: T[],
   empty: T,
@@ -35,7 +34,6 @@ pub fip function front_or[T](q: Ring[T], fallback: T): T {
   return at_or(q, 0, fallback);
 }
 
-// Status0: success;1: full;2: empty. Refusal preserves the logical sequence.
 pub fip function push[T](own q: Ring[T], value: T): Ring[T] {
   if (q.count == q.data.len()) {
     return Ring[T] { ...q, status: 1 };

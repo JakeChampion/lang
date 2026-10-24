@@ -1,11 +1,3 @@
-// The Go crypto/tls peer scripts/net-tls-interop runs. `gotls server`
-// is HTTPS on PORT answering /hello and /bulk (16 MiB), and the same on
-// MTLS_PORT requiring a client certificate under CLIENT_CA, with CERT and
-// KEY the server's own. `gotls client` is one line per case against the
-// Fern server on the same variables, the roots from CA and the client
-// certificate from CLIENT_CERT and CLIENT_KEY: a GET, a second request on
-// the kept connection, a resumed session on a fresh one, a bulk download
-// with its time, and the mTLS port with the certificate and without.
 package main
 
 import (

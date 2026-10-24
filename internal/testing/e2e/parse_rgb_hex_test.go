@@ -2,12 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/math.parse_rgb_hex across backends:
-// the 6-digit and 3-digit-shorthand forms (with and without a leading
-// '#'), case-insensitivity, the pack_rgb round-trip via to_rgb_hex, and
-// the None rejections (wrong length, bad digit, empty). Option[i32] (an
-// i32-width enum payload) lowers on all four backends. Returns 42 iff
-// every check holds. Each leg skips itself when its toolchain is absent.
 const parseRgbHexProg = `
 import "std/math" as math;
 import "std/i32";

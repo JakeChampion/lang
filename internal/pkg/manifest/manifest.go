@@ -1,22 +1,3 @@
-// Package manifest reads `fern.toml`, the per-package manifest that
-// names a Fern package and declares its dependencies. This is the
-// first implemented slice of the package-management design in
-// docs/PACKAGE-MANAGEMENT-SOTA.md + docs/MODULE-PACKAGES-RESEARCH.md
-// (Rec §1): local `path` dependencies only — no registry, no network,
-// no lockfile yet. A manifest-less program keeps today's behaviour;
-// once a `fern.toml` governs a file, bare (non-`./`, non-std) import
-// prefixes may name a declared dependency and resolve into that
-// package's directory, and modload enforces that a dependency import
-// is declared (resolver-side isolation — the phantom-dependency
-// defence layout alone cannot give, per the refuted pnpm claim the
-// SOTA doc records).
-//
-// The parser accepts the small TOML subset the manifest needs —
-// `[section]` headers, `key = "string"` pairs, and inline tables
-// `key = { k = "v", ... }` — and rejects everything else with a
-// pointed error. Zero third-party dependencies, mirroring the
-// repo's Go module (and the "manifests must be parseable cheaply"
-// stance the research doc takes against manifests-as-code).
 package manifest
 
 import (
@@ -30,70 +11,30 @@ import (
 	"github.com/jakechampion/lang/internal/pkg/pkgcache"
 )
 
-// FileName is the manifest file modload looks for next to (or above)
-// a loaded module.
 const FileName = "fern.toml"
 
-// DefaultLib is the module a bare `import "<dep>"` resolves to inside
-// the dependency's directory when its manifest doesn't set `lib`.
 const DefaultLib = "lib.fern"
 
-// Dep is one declared dependency, from exactly one source:
-//   - Path: a directory containing the dependency package, relative to
-//     the manifest's own directory (or absolute).
-//   - URL + Hash: a hash-addressed remote archive (.tar.gz). THE HASH
-//     IS THE IDENTITY — `sha256:<hex>` of the archive bytes; the URL is
-//     just a mirror hint (the Zig/Roc model the research settled on,
-//     closing trust-on-first-use with zero infrastructure). Fetching is
-//     an explicit `fern fetch` step into the content-addressed cache;
-//     the compiler never touches the network.
 type Dep struct {
-	Path string
-	URL  string
-	Hash string // "sha256:<64 lowercase hex>" — of the archive bytes
-	// Workspace is true for a `{ workspace = true }` dependency: the
-	// dependency is another member of the enclosing workspace, located by
-	// its package name rather than a path/url. Keeps cross-member deps
-	// explicit (isolation) while removing brittle `../../member` paths.
-	Workspace bool
-	// Version is the Minimum-Version-Selection constraint of a versioned
-	// dependency (`dep = "1.2.0"` or `{ version = "1.2.0" }`): the LOWEST
-	// acceptable version. The concrete version is chosen by MVS over the
-	// [package] index and pinned in fern.lock — never a range, so
-	// resolution stays deterministic and lockfile-driven (internal/pkg/mvs).
-	Version string
-	// Capabilities is the dependency's capability grant
-	// (docs/PACKAGE-CAPABILITIES-BRIEF.md phase 2): the v1 capabilities
-	// (internal/pkg/caps.Capabilities) this package allows the dependency's
-	// code to reach, sorted + deduped. nil means the key is ABSENT
-	// (warn-and-allow); an empty non-nil slice means `capabilities = []`
-	// (nothing granted). Valid on every dependency form.
+	Path         string
+	URL          string
+	Hash         string
+	Workspace    bool
+	Version      string
 	Capabilities []string
 }
 
-// Manifest is a parsed fern.toml.
 type Manifest struct {
-	Dir     string // absolute directory containing the manifest
-	Name    string // [package] name (empty for a workspace-only manifest)
-	Version string // [package] version (informational; a package's own version)
-	Lib     string // [package] lib — entry module for `import "<name>"`; DefaultLib when unset
-	Index   string // [package] index — path to the version index for MVS deps (empty = none)
-	Deps    map[string]Dep
-	// Members is the [workspace] members list (relative directories),
-	// non-nil only when a [workspace] table is present. A manifest may be
-	// workspace-only (no [package]) or both a package and a workspace root.
-	Members []string
-	// Excludes is the [exclude] table: package name → versions banned from
-	// MVS ("1.9 is broken"). Go's answer to MVS's inexpressible upper
-	// bounds, copied per the SOTA research: a demand for an excluded
-	// version rounds up to the next higher non-excluded indexed version.
-	// Only the TOP-LEVEL manifest's excludes apply during `fern -resolve`
-	// (a dependency's [exclude] is ignored), preserving determinism.
+	Dir      string
+	Name     string
+	Version  string
+	Lib      string
+	Index    string
+	Deps     map[string]Dep
+	Members  []string
 	Excludes map[string][]string
 }
 
-// VersionDeps returns the names→min-version of this manifest's versioned
-// (MVS) dependencies.
 func (m *Manifest) VersionDeps() map[string]string {
 	out := map[string]string{}
 	for name, d := range m.Deps {
@@ -104,11 +45,8 @@ func (m *Manifest) VersionDeps() map[string]string {
 	return out
 }
 
-// IsWorkspace reports whether this manifest declares a [workspace] table.
 func (m *Manifest) IsWorkspace() bool { return m.Members != nil }
 
-// DepDir resolves a declared dependency's directory to an absolute
-// path (Path entries are relative to the manifest directory).
 func (m *Manifest) DepDir(name string) (string, bool) {
 	d, ok := m.Deps[name]
 	if !ok {
@@ -120,8 +58,6 @@ func (m *Manifest) DepDir(name string) (string, bool) {
 	return filepath.Join(m.Dir, d.Path), true
 }
 
-// MemberDir resolves a [workspace] member entry to an absolute
-// directory (members are relative to the workspace manifest's dir).
 func (m *Manifest) MemberDir(rel string) string {
 	if filepath.IsAbs(rel) {
 		return filepath.Clean(rel)
@@ -129,9 +65,6 @@ func (m *Manifest) MemberDir(rel string) string {
 	return filepath.Join(m.Dir, rel)
 }
 
-// FindWorkspace walks from dir toward the filesystem root and returns
-// the nearest manifest declaring a [workspace] table, or (nil, nil) if
-// none governs dir.
 func FindWorkspace(dir string) (*Manifest, error) {
 	d, err := filepath.Abs(dir)
 	if err != nil {
@@ -153,8 +86,6 @@ func FindWorkspace(dir string) (*Manifest, error) {
 	}
 }
 
-// Load reads and parses `<dir>/fern.toml`. Returns (nil, nil) when the
-// file does not exist.
 func Load(dir string) (*Manifest, error) {
 	p := filepath.Join(dir, FileName)
 	b, err := os.ReadFile(p)
@@ -179,8 +110,6 @@ func Load(dir string) (*Manifest, error) {
 	return m, nil
 }
 
-// FindForDir walks from dir toward the filesystem root and loads the
-// nearest fern.toml. Returns (nil, nil) when no manifest governs dir.
 func FindForDir(dir string) (*Manifest, error) {
 	d, err := filepath.Abs(dir)
 	if err != nil {
@@ -202,9 +131,8 @@ func FindForDir(dir string) (*Manifest, error) {
 	}
 }
 
-// Error is a manifest the parser refuses (E088), at the line it is on.
 type Error struct {
-	Path string // the fern.toml, once Load has read it
+	Path string
 	Line int
 	Msg  string
 }
@@ -223,14 +151,9 @@ func lineError(line int, format string, args ...any) *Error {
 	return &Error{Line: line, Msg: fmt.Errorf(format, args...).Error()}
 }
 
-// Parse parses manifest source. Exposed for tests and future tooling
-// (`fern add` will rewrite manifests; keeping parse round-trippable
-// and strict now is cheaper than loosening later).
 func Parse(src string) (*Manifest, error) {
 	m := &Manifest{Lib: DefaultLib, Deps: map[string]Dep{}}
 	section := ""
-	// TOML defines a table or a key once; a repeat is refused rather than
-	// silently overriding the first.
 	seenSections := map[string]bool{}
 	seenKeys := map[[2]string]bool{}
 	pkgLine := 1
@@ -309,10 +232,6 @@ func Parse(src string) (*Manifest, error) {
 			}
 			m.Members = ms
 		case "lint", "lint.options":
-			// The linter (compiler/lint.fern) reads these tables; the
-			// manifest is rejected here only for what it rejects too: a
-			// value that is neither a quoted string nor a number, and an
-			// undotted [lint.options] key.
 			if _, err := parseScalar(val); err != nil {
 				return nil, lineError(ln+1, "[%s] %s: %w", section, key, err)
 			}
@@ -340,16 +259,12 @@ func Parse(src string) (*Manifest, error) {
 			return nil, lineError(ln+1, "%q outside a section (start with [package], [dependencies], or [workspace])", key)
 		}
 	}
-	// A workspace-only manifest (a virtual root that just lists members)
-	// needs no [package] name; a package manifest still does.
 	if m.Name == "" && !m.IsWorkspace() {
 		return nil, &Error{Line: pkgLine, Msg: "missing [package] name"}
 	}
 	return m, nil
 }
 
-// Line is a manifest-format source line without its comment or the space
-// around it: a `#` outside a double-quoted string starts a comment.
 func Line(raw string) string {
 	quoted := false
 	for i := 0; i < len(raw); i++ {
@@ -365,8 +280,6 @@ func Line(raw string) string {
 	return strings.TrimSpace(raw)
 }
 
-// parseStringArray parses an inline TOML array of double-quoted strings
-// on a single line: `["a", "b/c"]`. Empty (`[]`) is allowed.
 func parseStringArray(val string) ([]string, error) {
 	if !strings.HasPrefix(val, "[") || !strings.HasSuffix(val, "]") {
 		return nil, fmt.Errorf("expected an array like [\"a\", \"b\"], got %q", val)
@@ -398,10 +311,6 @@ func splitKeyValue(line string) (key, val string, ok bool) {
 	return strings.TrimSpace(line[:i]), strings.TrimSpace(line[i+1:]), true
 }
 
-// parseString accepts a double-quoted basic string with no escapes —
-// paths and names don't need them, and rejecting `\` early avoids
-// silently mangling Windows-style separators (write `/`; they work on
-// every platform via filepath.Join).
 func parseString(val string) (string, error) {
 	if len(val) < 2 || val[0] != '"' || val[len(val)-1] != '"' {
 		return "", fmt.Errorf("expected a double-quoted string, got %q", val)
@@ -413,9 +322,6 @@ func parseString(val string) (string, error) {
 	return s, nil
 }
 
-// parseScalar accepts either a quoted string or a bare integer, for the
-// tables whose values are not all one type. Anything else errors, so a
-// mistyped value is reported rather than passed on as a literal.
 func parseScalar(val string) (string, error) {
 	if strings.HasPrefix(val, "\"") {
 		return parseString(val)
@@ -434,14 +340,7 @@ func parseScalar(val string) (string, error) {
 	return val, nil
 }
 
-// parseDep accepts the declared-dependency forms this slice supports:
-// `{ path = "…" }`, `{ url = "…", hash = "sha256:…" }`, and
-// `{ workspace = true }` — version-only deps (`dep = "1.2"`) belong to
-// the registry/MVS slice and error with a pointer at what IS supported.
 func parseDep(val string) (Dep, error) {
-	// Bare-string form: `dep = "1.2.0"` is a versioned (MVS) dependency,
-	// its value the minimum acceptable version. The concrete version comes
-	// from the index via MVS and is pinned in fern.lock.
 	if !strings.HasPrefix(val, "{") {
 		s, err := parseString(val)
 		if err != nil {
@@ -532,10 +431,6 @@ func parseDep(val string) (Dep, error) {
 	}
 }
 
-// splitTopLevel splits an inline-table body on commas that sit outside
-// any quoted string or `[...]` — so an array-valued entry
-// (`capabilities = ["net", "fs"]`) stays one item, and so does a path
-// containing a comma or a bracket.
 func splitTopLevel(body string) []string {
 	var out []string
 	depth, start := 0, 0
@@ -559,13 +454,6 @@ func splitTopLevel(body string) []string {
 	return append(out, body[start:])
 }
 
-// ParseCapabilities parses a dependency's `capabilities = ["net", …]`
-// grant list and validates every name against the v1 vocabulary
-// (internal/pkg/caps.Capabilities), failing fast at manifest load so a
-// typo'd grant can't silently deny (or a stale name silently allow).
-// The result is sorted + deduped, and non-nil even when empty —
-// `capabilities = []` grants nothing, which is different from the key
-// being absent (Dep.Capabilities == nil, warn-and-allow).
 func ParseCapabilities(val string) ([]string, error) {
 	names, err := parseStringArray(val)
 	if err != nil {
@@ -591,9 +479,6 @@ func ParseCapabilities(val string) ([]string, error) {
 	return out, nil
 }
 
-// IsVersion reports whether s is a bare MAJOR.MINOR.PATCH version (the
-// only form MVS constraints and the index use — no ranges, no
-// pre-release, keeping resolution deterministic).
 func IsVersion(s string) bool {
 	parts := strings.Split(s, ".")
 	if len(parts) != 3 {

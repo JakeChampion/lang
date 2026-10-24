@@ -52,7 +52,7 @@ let s: string = "hi \"there\"";
 **⟨the main loop⟩+≡**
 
 ```fern
-let n: i32 = 0x1F + 2.5; // a comment & <tag>
+let n: i32 = 0x1F + 2.5; // This comment contains & and <tag>.
 ```
 *⟨the main loop⟩ is used in ⟨*⟩.*
 

@@ -8,9 +8,6 @@ import (
 	"testing"
 )
 
-// TestArm64DarwinTz runs tests/stdlib/tz_darwin_test.fern, std/tz under
-// tzcode's rules, which only a Darwin build follows. Off Apple Silicon the
-// build is what is checked.
 func TestArm64DarwinTz(t *testing.T) {
 	bin := buildFernCLI(t)
 	out := filepath.Join(t.TempDir(), "tz_darwin_test")

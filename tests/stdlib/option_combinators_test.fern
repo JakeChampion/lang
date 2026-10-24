@@ -1,15 +1,6 @@
 import "std/test";
 import "std/option";
 
-// tests/stdlib/option_combinators_test.fern — pure-Fern coverage of the
-// std/option COMBINATOR surface (distinct from option_and_set_ops_test, which
-// covers the std/test Option assertion helpers): is_some / is_none /
-// unwrap_or / unwrap_or_else / map / and_then / or_else / filter / ok_or /
-// map_or / is_some_and / or / and — the Rust-parity vocabulary (#2691), as
-// ordinary generic methods on Option[T] with closure args. The Go-side suite
-// unit-tests these; this is the migration-shaped (pure-Fern, std/test-driven,
-// self-host-gated) companion.
-
 function test_is_some_is_none(): test.TestOutcome {
   let s: Option[i32] = Some(5);
   let n: Option[i32] = None;
@@ -101,7 +92,6 @@ function test_ok_or(): test.TestOutcome {
 }
 
 function test_ok_or_else(): test.TestOutcome {
-  // None takes the lazy error arm; Some ignores it and yields Ok.
   let n: Option[i32] = None;
   match (n.ok_or_else((): i32 => 99)) {
     Ok(v) => {
@@ -114,7 +104,6 @@ function test_ok_or_else(): test.TestOutcome {
 }
 
 function test_map_or_else(): test.TestOutcome {
-  // Some routes through `f`; None computes the lazy default.
   let s: Option[i32] = Some(5);
   let n: Option[i32] = None;
   let a: i32 = s.map_or_else((): i32 => 0, (x: i32): i32 => x + 1);
@@ -126,7 +115,6 @@ function test_zip(): test.TestOutcome {
   let a: Option[i32] = Some(1);
   let b: Option[i32] = Some(2);
   let n: Option[i32] = None;
-  // Both present -> Some((1, 2)); either None -> None.
   match (a.zip(b)) {
     Some(p) => {
       if (!(p.0 == 1 && p.1 == 2)) {
@@ -141,7 +129,6 @@ function test_zip(): test.TestOutcome {
 }
 
 function test_unzip(): test.TestOutcome {
-  // unzip is the inverse of zip: Some((7,"hi")) -> (Some(7), Some("hi")).
   let some: Option[(i32, string)] = Some((7, "hi"));
   let sa: (Option[i32], Option[string]) = some.unzip();
   if (sa.0.unwrap_or(0) != 7) {
@@ -150,7 +137,6 @@ function test_unzip(): test.TestOutcome {
   if (sa.1.unwrap_or("") != "hi") {
     return test.fail("second");
   }
-  // None -> (None, None).
   let none: Option[(i32, string)] = None;
   let na: (Option[i32], Option[string]) = none.unzip();
   return test.assert_true(na.0.is_none() && na.1.is_none());
@@ -160,7 +146,6 @@ function test_xor(): test.TestOutcome {
   let s: Option[i32] = Some(5);
   let t: Option[i32] = Some(9);
   let n: Option[i32] = None;
-  // Exactly one present -> that one; both or neither -> None.
   return test.assert_true(
     s.xor(n).unwrap_or(0) == 5
       && n.xor(s).unwrap_or(0) == 5
@@ -173,7 +158,6 @@ function test_flatten(): test.TestOutcome {
   let s: Option[Option[i32]] = Some(Some(7));
   let inner_none: Option[Option[i32]] = Some(None);
   let outer_none: Option[Option[i32]] = None;
-  // Some(Some(x)) -> Some(x); Some(None) and None both -> None.
   return test.assert_true(
     s.flatten().unwrap_or(0) == 7
       && inner_none.flatten().is_none()

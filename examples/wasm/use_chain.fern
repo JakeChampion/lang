@@ -1,31 +1,3 @@
-// use_chain.fern — Gleam-style `use` syntax for chained
-// fallible operations, plus the closure-factory pattern.
-//
-// `use n: i32 <- f(arg);` desugars at parse time to:
-//   f(arg, (n: i32) => { <rest of block> });
-// flattening the pyramid that `match` / `if-let` would
-// otherwise force on right-leaning chains.
-//
-// Showcases: closures (the `adder` factory returns a
-// closure capturing `n`), `use` desugaring across
-// fallible Option-returning calls, defunctionalisation —
-// the closure factory's return-target is monomorphic, so
-// PR #204 rewrites the call site to a direct call, then
-// PR #205 drops the closure-pair allocation entirely.
-// Final emitted wat for `add7(35)` ends up as a direct
-// call (or fully inlined when the body fits) with no
-// call_indirect at all.
-//
-// Note on `use`: closures capture outer-scope variables by
-// value on every backend — scalars and pointer-shaped values
-// (arrays / strings / structs) alike — though a reference-typed
-// capture is read-only inside the closure. The chain here
-// threads scalars, which the factory pattern returns directly.
-//
-//   $ wasmtime use_chain.wasm
-//   triple-doubled then plus two: 10
-//   adder factory: 7 + 35 = 42
-// `.to_string()` on i32 inside main's match arm.
 import "std/i32";
 
 function adder(n: i32): (i32) => i32 {
@@ -35,10 +7,6 @@ function adder(n: i32): (i32) => i32 {
   return add;
 }
 
-// Helper that wraps the result-or-fail Option pattern in
-// the use-friendly `(value, callback) -> result` shape.
-// The use-syntax expects the receiving function to take a
-// callback as its LAST parameter.
 function maybe_double(n: i32, cb: (i32) => Option[i32]): Option[i32] {
   return cb(n + n);
 }
@@ -47,13 +15,6 @@ function maybe_plus2(n: i32, cb: (i32) => Option[i32]): Option[i32] {
   return cb(n + 2);
 }
 
-// Triple-double + 2 via `use`. Equivalent to:
-//   maybe_double(start, fn(a) {
-//     maybe_double(a, fn(b) {
-//       maybe_double(b, fn(c) { Some(c + 2) })
-//     })
-//   })
-// but written linearly without the right-leaning pyramid.
 function chain(start: i32): Option[i32] {
   function __use_4(a: i32): Option[i32] {
     function __use_3(b: i32): Option[i32] {

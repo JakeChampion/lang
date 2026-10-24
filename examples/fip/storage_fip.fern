@@ -1,7 +1,5 @@
 import "./storage_core";
 
-// Kinds: read=0, write=1, flush=2, evict=3. API statuses: invalid=1,
-// queue-full=2, stale=3, pending=4, exhausted=5. Completion errors start at10.
 pub fip function submit(own s: storage_core.State, kind: i32, page: i32, offset: i32, value: i64, delay: i32, fault: boolean): storage_core.State {
   if (kind < 0 || kind > 3 || page < 0 || page >= s.pages || offset < 0 || offset >= s.width || delay < 0 || delay > 1024) {
     return storage_core.result(s, 1, -1, 0i64, 0i64);
@@ -102,7 +100,6 @@ fip function complete(own s: storage_core.State, slot: i32): storage_core.State 
   let frame: i32 = s.frame[slot];
   let page: i32 = s.page[slot];
   let kind: i32 = s.kind[slot];
-  // Error and success release the same reservations. Only success changes data.
   s = storage_core.State { ...s, frame_pin: s.frame_pin.with(frame, 0) };
   s = storage_core.State { ...s, page_pin: s.page_pin.with(page, 0) };
   if (s.fault[slot] != 0) {
@@ -131,7 +128,6 @@ fip function complete(own s: storage_core.State, slot: i32): storage_core.State 
   return finish(s, slot, 0, result);
 }
 
-// A visited slot makes at most one transition, including zero-delay requests.
 pub fip function advance(own s: storage_core.State): storage_core.State {
   if (s.tick == 9223372036854775807i64) {
     s = storage_core.State { ...s, work: 0, transitions: 0 };

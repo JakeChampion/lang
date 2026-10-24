@@ -13,9 +13,6 @@ const (
 	stringFern = "../../internal/stdlib/std/string.fern"
 )
 
-// The cache entry must be the ceiling of the exact rational 10^k * 2^shift,
-// and must be normalised (top bit set) so Dragonbox's fixed shift amounts land
-// where it expects.
 func TestCacheEntryIsNormalisedCeiling(t *testing.T) {
 	for _, tc := range []struct{ minK, maxK, width int }{
 		{MinK64, MaxK64, 128},
@@ -27,7 +24,6 @@ func TestCacheEntryIsNormalisedCeiling(t *testing.T) {
 				t.Fatalf("width %d, k=%d: entry has %d bits, want exactly %d (top bit must be set)",
 					tc.width, k, v.BitLen(), tc.width)
 			}
-			// Re-derive independently with big.Rat and check ceiling.
 			shift := tc.width - 1 - FloorLog2Pow10(k)
 			exact := new(big.Rat).SetInt(new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(abs(k))), nil))
 			if k < 0 {
@@ -48,7 +44,6 @@ func TestCacheEntryIsNormalisedCeiling(t *testing.T) {
 			}
 		}
 	}
-	// k = 0 is exactly 2^(width-1).
 	if got, want := CacheEntry(0, 128), new(big.Int).Lsh(big.NewInt(1), 127); got.Cmp(want) != 0 {
 		t.Errorf("CacheEntry(0,128) = %s, want 2^127", got)
 	}
@@ -61,8 +56,6 @@ func abs(x int) int {
 	return x
 }
 
-// The committed f64.fern must carry exactly what the generator produces, so
-// regenerating is a no-op.
 func TestCommittedFileIsUpToDate(t *testing.T) {
 	for _, path := range []string{floatFern, stringFern} {
 		src, err := os.ReadFile(path)
@@ -80,8 +73,6 @@ func TestCommittedFileIsUpToDate(t *testing.T) {
 	}
 }
 
-// committedTable reads the elements of `const name: u64[]` out of a committed
-// Fern source.
 func committedTable(t *testing.T, path, name string) []uint64 {
 	t.Helper()
 	src, err := os.ReadFile(path)
@@ -116,7 +107,6 @@ func checkTable(t *testing.T, name string, got, want []uint64) {
 	}
 }
 
-// Every word of the committed Dragonbox tables is the big.Int cache's.
 func TestCommittedTablesMatchCache(t *testing.T) {
 	checkTable(t, "DB_CACHE64", committedTable(t, floatFern, "DB_CACHE64"), flat(Cache64()))
 	checkTable(t, "DB_CACHE32", committedTable(t, floatFern, "DB_CACHE32"), Cache32())
@@ -130,10 +120,6 @@ func TestGenerateIsDeterministic(t *testing.T) {
 	}
 }
 
-// The Eisel-Lemire table rounds DOWN everywhere except the band where 5^|q|
-// still fits in a 64-bit word, which rounds UP. That asymmetry is essential
-// — it is what makes "low <= 1" a sound tie signal — and it is exactly what
-// distinguishes this table from the Dragonbox one, so pin it directly.
 func TestPow5RoundingConvention(t *testing.T) {
 	two127 := new(big.Int).Lsh(big.NewInt(1), 127)
 	two128 := new(big.Int).Lsh(big.NewInt(1), 128)
@@ -142,7 +128,6 @@ func TestPow5RoundingConvention(t *testing.T) {
 		if got.Cmp(two127) < 0 || got.Cmp(two128) >= 0 {
 			t.Fatalf("q=%d: entry is not normalised into [2^127, 2^128)", q)
 		}
-		// Re-derive the exact rational 5^q * 2^s and take both roundings.
 		num, den := big.NewInt(1), big.NewInt(1)
 		if q >= 0 {
 			num.Exp(big.NewInt(5), big.NewInt(int64(q)), nil)
@@ -165,7 +150,6 @@ func TestPow5RoundingConvention(t *testing.T) {
 			t.Fatalf("q=%d: Pow5Entry = %s, want %s (roundsUp=%v)", q, got, want, roundsUp)
 		}
 	}
-	// The band boundary is where 5^|q| stops fitting in 64 bits.
 	if fits := new(big.Int).Exp(big.NewInt(5), big.NewInt(27), nil); fits.BitLen() > 64 {
 		t.Errorf("5^27 should still fit in 64 bits (BitLen=%d)", fits.BitLen())
 	}
@@ -174,14 +158,10 @@ func TestPow5RoundingConvention(t *testing.T) {
 	}
 }
 
-// Every word of the committed Eisel-Lemire table is the big.Int table's.
 func TestCommittedPow5MatchesTable(t *testing.T) {
 	checkTable(t, "EL_POW5", committedTable(t, stringFern, "EL_POW5"), flat(Pow5()))
 }
 
-// The two tables must NOT be accidentally unified: they agree on their leading
-// bits but differ in the last one, and each algorithm depends on its own
-// convention.
 func TestDragonboxAndPow5TablesDiffer(t *testing.T) {
 	same, diff := 0, 0
 	for k := MinK64; k <= MaxK64; k++ {

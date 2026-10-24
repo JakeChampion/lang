@@ -2,11 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/i32.ordinal across backends: the st/nd/rd/th
-// suffixes, the 11/12/13 exception (and its 111/112/113 recurrence), the
-// tens carrying through (21st/102nd), zero, and a negative keeping its
-// sign. Returns 42 iff every check holds. Each leg skips itself when its
-// toolchain is absent.
 const ordinalProg = `
 import "std/i32";
 function main(): i32 {

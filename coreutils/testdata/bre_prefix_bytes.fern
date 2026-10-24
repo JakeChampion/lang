@@ -16,8 +16,8 @@ function check_scalar(pattern: string, text: string, n: i32): boolean {
 }
 
 function main(): i32 {
-  // Quantifiers operate on the final byte, leaving an incomplete scalar
-  // in the required literal prefix. Match a different final byte.
+
+
   if (!check_scalar("é*", "ê", 1)) {
     return 1;
   }

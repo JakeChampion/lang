@@ -1,12 +1,12 @@
-// Nested match patterns (#5353) desugar at parse time to a flat outer arm that
-// re-matches the payload, so every backend sees only flat arms.
-//
-// A flat sibling of a nested arm is merged into the inner match as a
-// wildcard, so a bare name there was a binder too — `Wrap(Err2)`
-// beside `Wrap(Ok2(n))` matched `Wrap(Third)` and returned 9. The
-// empty parens are the spelling that tests the tag; this folds all
-// three payloads so the exit code depends on which arm ran.
-// exit: 5 + 90 + 100
+
+
+
+
+
+
+
+
+
 enum Res { Ok2(i32), Err2, Third }
 enum Nest { Wrap(Res), Bare }
 function g(w: Nest): i32 {

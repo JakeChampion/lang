@@ -12,16 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExportResourceHandleParamComposes is the P6 Slice 6 entry gate
-// (docs/WIT-BRING-YOUR-OWN.md): the composer lifts an `@export` whose parameter
-// is a handle (`borrow<R>`) to an imported resource — the shape
-// `wasi:http`'s `incoming-handler#handle` needs (`own<incoming-request>`). A
-// Fern reactor `@export handle(t: borrow Thing): u32` over an `@import`ed
-// `resource Thing` composes: the composer surfaces the imported `thing`
-// resource and references it from the export's `borrow<thing>` functype. Gated
-// by `wasm-tools validate` + the component WIT declaring the handle param
-// (running it needs a resource-provider harness — a later slice, as the scalar
-// export slice first shipped validate-only).
 func TestExportResourceHandleParamComposes(t *testing.T) {
 	wasmtools, err := exec.LookPath("wasm-tools")
 	if err != nil {
@@ -35,8 +25,6 @@ func TestExportResourceHandleParamComposes(t *testing.T) {
 		}
 	}
 
-	// A world that IMPORTS a resource interface and EXPORTS a handler taking a
-	// borrow of that resource.
 	witDir := filepath.Join(dir, "wit")
 	if err := os.MkdirAll(witDir, 0o755); err != nil {
 		t.Fatalf("mkdir wit: %v", err)
@@ -66,10 +54,6 @@ world m {
 		t.Fatalf("DecodeWorldBytes: %v", err)
 	}
 
-	// A reactor implementing handle. `borrow Thing` is the handle vocabulary
-	// (P5); it erases to the i32 handle, so the core func is `(i32) -> i32`.
-	// The Fern function is NOT named `handle` (that name triggers the checker's
-	// handler-main synthesis → serve.supervise); the @export WIT name is "handle".
 	prog := `@import("local:test/res@0.1.0", "thing")
 resource Thing;
 

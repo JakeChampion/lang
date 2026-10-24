@@ -6,19 +6,8 @@ import (
 	"testing"
 )
 
-// Static data past the first 64 KiB page. Data segments are written at
-// INSTANTIATION, before any code — and so before __fern_alloc's
-// memory.grow — can run, so a module whose literals reach past its
-// initial memory traps while starting up ("out of bounds memory access")
-// and never reaches `main`. The emitter sized every module's memory at
-// one page, which capped every wasm program at 64 KiB of static data.
-//
-// The literals have to survive to runtime: `"...".len()` on a literal
-// constant-folds away, taking the data with it, so the strings are held
-// in an array and indexed through a loop instead. Each is distinct
-// because identical literals intern to one data-segment entry.
 func TestWASMStaticDataPastOnePage(t *testing.T) {
-	const count, width = 40, 2048 // 80 KiB of literals, comfortably past one page
+	const count, width = 40, 2048
 	var b strings.Builder
 	b.WriteString("function main(): i32 {\n    let xs: string[] = [\n")
 	for i := 0; i < count; i++ {

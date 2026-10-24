@@ -1,9 +1,9 @@
-// `let PAT = E else { … }` reads the shared pattern grammar (#5356); the else
-// must diverge, so the bindings are live for the rest of the block.
-//
-// Or-pattern: each alternative binds its own name set, and the rest
-// of the block is cloned per alternative.
-// exit: 6*10 + 4 + 0
+
+
+
+
+
+
 enum E { A(i32), B(i32), C }
 function pick(e: E): i32 {
   let A(x) | B(x) = e else { return 0; };

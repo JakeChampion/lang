@@ -8,27 +8,10 @@ import (
 	"time"
 )
 
-// date(1) is one instant and one format, so the corpus is the grammar
-// behind `-d` — every item kind, the fixed and local zone words, the
-// relative words, the `@` form, the `TZ="…"` prefix, the gaps and
-// repeated hours a real zone has — the strftime conversions with every
-// flag and width, the option faults, the `-f` batch, and the `--debug`
-// commentary, which is compared line for line.
-//
-// The harness pins TZ=UTC; the zone-sensitive cases pass their own.
-// Nothing here prints the clock: a bare `date` cannot be compared
-// across two runs. Every case runs without the privilege to set the
-// clock, so a valid `-s STRING` or `MMDDhhmm` operand is refused with
-// EPERM on both sides — GNU's `cannot set date: Operation not
-// permitted`, then the date anyway, then exit 1 — and the machine's
-// clock is never moved, whoever runs the suite.
-
 func init() {
 	registerCorpus("date", dateCases)
 }
 
-// dateTree seeds a batch file, a reference file with a fixed
-// modification time, and a directory.
 func dateTree(t *testing.T, dir string) {
 	t.Helper()
 	lines := "2024-01-01\nfoo\n\n2024-02-02 12:00\n@0\n  2024-03-03T04:05:06Z  \n"
@@ -59,31 +42,22 @@ func dateTree(t *testing.T, dir string) {
 func dateCases(t *testing.T) []invocation {
 	var cases []invocation
 	add := func(inv invocation) { cases = append(cases, inv) }
-	// d runs `-d STR` under the pinned UTC with a fixed format.
 	d := func(str string) {
 		add(invocation{name: "-d " + str, args: []string{"-d", str, "+%F %T %Z %z %s %N"}})
 	}
-	// dn runs a string that starts from the clock: the two runs are
-	// moments apart, so only the day and the zone are compared.
 	dn := func(str string) {
 		add(invocation{name: "-d " + str, args: []string{"-d", str, "+%F %Z %z"}})
 	}
-	// zoned runs `-d STR` under TZ=zone.
 	zoned := func(zone, str string) {
 		add(invocation{name: zone + " -d " + str, args: []string{"-d", str, "+%F %T %Z %z %s"}, env: []string{"TZ=" + zone}})
 	}
-	// dbg compares the --debug commentary too, so its strings name a
-	// day: one that starts from the clock prints the current second,
-	// and two runs a moment apart straddle one.
 	dbg := func(zone, str string) {
 		add(invocation{name: "debug " + zone + " -d " + str, args: []string{"--debug", "-d", str, "+%F %T %Z"}, env: []string{"TZ=" + zone}})
 	}
-	// fmt renders one fixed instant with FORMAT.
 	fmtc := func(format string) {
 		add(invocation{name: "format " + format, args: []string{"-d", "2024-06-15 12:34:56.123456789", "+" + format}})
 	}
 
-	// ---- the grammar, in UTC: strings that name their day ----
 	for _, s := range []string{
 		"2024-06-15", "2024-6-5", "24-05-03", "5-06-15", "0024-06-15", "99999-01-01", "2000000-01-01",
 		"2024-01-01T12", "2024-01-01T12:00", "2024-01-01T12+0100", "2024-01-01 T 12:00",
@@ -139,20 +113,14 @@ func dateCases(t *testing.T) []invocation {
 		"TZ=\"Not/AZone\" 2024-06-15 12:00", "TZ=\"XXX-5:30\" 2024-06-15 12:00", "TZ=\"<-03>3\" 2024-06-15 12:00",
 		"2024-06-15 12:00 foo", "jan 1 2024 foo", "2024-06-15 ;", "2024-06-15\n12:00", "2024-06-15\t12:00",
 		"2024-06-15 \xff",
-		// The European dotted date, and the decimals it has to stay
-		// distinct from: the lexer decides between them by whether a
-		// second '.' turns up where the fraction would be.
 		"1.2.3", "31.12.99", "1.2.2024", "01.02.2024", "13.13.13", "29.2.24", "2024.06.15",
 		"1.2", "1.2.3.4", "5.6.7890", "17.6.", "17.6", "1.2.3 4:5:6", "1,2,3", "1.2,3",
 		"1.234567890.5", "1.23456789.5", "0.0.0", "1.2.3 UTC", "12.12.12 12:12:12",
 		"1.2.3.", ".1.2", "1..2", "1.2.3 bogus", "1.2.3 +1 day", "@1.2.3",
-		// The most negative epoch second there is, which the lexer only
-		// holds because it accumulates the sign with each digit.
 		"@-9223372036854775808", "@-9223372036854775807", "@-99999999999999999999",
 	} {
 		d(s)
 	}
-	// ---- and strings that start from the clock, compared by day ----
 	for _, s := range []string{
 		"-0.0000000001 seconds", "1.9999999999 seconds", "+99999999 days", "", " ", "0", "now", "today", "tomorrow", "yesterday", "- tomorrow", "-tomorrow", "- -1 day",
 		"1 jan 12:00", "jan 1 12:00", "june", "jan 1", "jun 15,", "june 15, 24", "15 -june 24", "sept 5", "thur",
@@ -177,7 +145,6 @@ func dateCases(t *testing.T) []invocation {
 		dn(s)
 	}
 
-	// ---- the local zone's own words, gaps and repeated hours ----
 	for _, zone := range []string{"America/New_York", "Australia/Sydney", "Europe/Berlin", "Asia/Kolkata", "America/Whitehorse", "EST5EDT,M3.2.0/2,M11.1.0/2", "UTC0", "XXX-5:30"} {
 		for _, s := range []string{
 			"2024-06-15 12:00", "2024-01-15 12:00", "2024-06-15 12:00 EST", "2024-06-15 12:00 EDT", "2024-01-15 12:00 EST",
@@ -202,7 +169,6 @@ func dateCases(t *testing.T) []invocation {
 		}
 	}
 
-	// ---- --debug, line for line ----
 	for _, zone := range []string{"UTC0", "America/New_York", "Asia/Tokyo"} {
 		for _, s := range []string{
 			"2024-06-15 12:00", "2024-06-15", "12:00", "12:00 pm", "12:34:56.5 +0100", "next monday", "3 monday",
@@ -231,7 +197,6 @@ func dateCases(t *testing.T) []invocation {
 	add(invocation{name: "debug with --resolution", args: []string{"--debug", "--resolution"}})
 	add(invocation{name: "debug batch", args: []string{"--debug", "-f", "lines", "+%F %T"}, seedTree: dateTree})
 
-	// ---- formats ----
 	for _, c := range []string{"a", "A", "b", "B", "c", "C", "d", "D", "e", "F", "g", "G", "h", "H", "I", "j", "k", "l", "m", "M", "n", "N", "p", "P", "q", "r", "R", "s", "S", "t", "T", "u", "U", "V", "w", "W", "x", "X", "y", "Y", "z", "Z", "%", "Q", "E", "O"} {
 		for _, flag := range []string{"", "-", "_", "0", "^", "#", "+", "_#", "0+", "+0", "+_", "^0"} {
 			for _, w := range []string{"", "1", "3", "5", "12"} {
@@ -255,14 +220,11 @@ func dateCases(t *testing.T) []invocation {
 	for _, format := range rawTimeFormats() {
 		add(invocation{name: "raw time format " + quote([]byte(format)), args: []string{"-d", "2024-06-15 12:34:56.123456789", "+" + format}})
 	}
-	// Formats at other instants: the epoch, before it, a leap day, the
-	// year-boundary ISO weeks, five-digit years and the biggest year.
 	for _, when := range []string{"@0", "@-1", "@-86401", "2024-02-29 00:00:00", "2024-12-30", "2021-01-03 01:02:03", "2020-12-31", "2027-01-01", "10000-01-01 23:59:59", "275817-05-26 04:05:06", "1900-01-01 00:00:00", "0001-01-01", "0000-01-01", "2147485547-12-31 23:59:59", "1969-12-31 23:59:59.999999999"} {
 		for _, f := range []string{"%F %T %N %s", "%c", "%C %y %g %G %V %U %W %j %u %w %q", "%+F %+Y %+C %+G %+g %+y", "%12Y %-Y %_Y %012Y %+12Y", "%x %X %D %r %R %e %k %l %I %p %P"} {
 			add(invocation{name: "format " + f + " at " + when, args: []string{"-d", when, "+" + f}})
 		}
 	}
-	// A zone with seconds in its offset and one west of Greenwich.
 	for _, zone := range []string{"Africa/Monrovia", "Asia/Kathmandu", "America/New_York", "Pacific/Chatham", "XXX-5:45:30", "YYY8"} {
 		for _, when := range []string{"1970-01-01 00:00:00", "1971-06-15 12:00", "2024-06-15 12:34:56.5", "2024-01-15 12:34:56.5"} {
 			add(invocation{name: zone + " format at " + when, args: []string{"-d", when, "+%z %:z %::z %:::z %Z %_12::z %-:z %12z"}, env: []string{"TZ=" + zone}})
@@ -273,7 +235,6 @@ func dateCases(t *testing.T) []invocation {
 	add(invocation{name: "TZ colon only", args: []string{"-d", "2024-06-15 12:00", "+%F %T %Z %z"}, env: []string{"TZ=:"}})
 	add(invocation{name: "TZ bogus", args: []string{"-d", "2024-06-15 12:00", "+%F %T %Z %z"}, env: []string{"TZ=Not/AZone"}})
 
-	// ---- the fixed output formats ----
 	for _, o := range [][]string{{"-I"}, {"-Id"}, {"-Ih"}, {"-Im"}, {"-Is"}, {"-Ins"}, {"-Idate"}, {"-Ihours"}, {"-Iminutes"}, {"-Iseconds"}, {"-Ins"}, {"--iso-8601"}, {"--iso-8601=date"}, {"--iso-8601=s"}, {"--iso=n"}, {"--i=h"}, {"-R"}, {"--rfc-email"}, {"--rfc-822"}, {"--rfc-2822"}, {"--rfc-8"}, {"--rfc-e"}, {"--rfc-3339=date"}, {"--rfc-3339=d"}, {"--rfc-3339=seconds"}, {"--rfc-3339=s"}, {"--rfc-3339=ns"}, {"--rfc-3339=n"}, {"--rfc-3339", "date"}, {"-I", "-d", "2024-06-15 12:34:56.5"}} {
 		args := append([]string{}, o...)
 		if !strings.Contains(strings.Join(o, " "), "-d") {
@@ -294,8 +255,6 @@ func dateCases(t *testing.T) []invocation {
 	add(invocation{name: "--rfc-3339=minutes", args: []string{"--rfc-3339=minutes"}})
 	add(invocation{name: "--rfc-3339=", args: []string{"--rfc-3339="}})
 	add(invocation{name: "--rfc-3339=n'x", args: []string{"--rfc-3339=n'x"}})
-	// The last format option wins and prints an instant, so these pin one:
-	// two runs a moment apart straddle a second, and did on CI.
 	add(invocation{name: "-R -I", args: []string{"-R", "-I", "-d", "2024-06-15 12:34:56"}})
 	add(invocation{name: "-I -R", args: []string{"-I", "-R", "-d", "2024-06-15 12:34:56"}})
 	add(invocation{name: "-I -I", args: []string{"-I", "-I", "-d", "2024-06-15 12:34:56"}})
@@ -305,7 +264,6 @@ func dateCases(t *testing.T) []invocation {
 	add(invocation{name: "-R -x", args: []string{"-R", "-x"}})
 	add(invocation{name: "-R -I -x", args: []string{"-R", "-I", "-x"}})
 
-	// ---- operands ----
 	add(invocation{name: "two formats", args: []string{"+%F", "+%T"}})
 	add(invocation{name: "format then junk", args: []string{"+%F", "x"}})
 	add(invocation{name: "an operand with -d", args: []string{"-d", "2024-01-01", "2024"}})
@@ -334,7 +292,6 @@ func dateCases(t *testing.T) []invocation {
 	add(invocation{name: "a format before -d", args: []string{"+%F", "-d", "2024-06-15"}})
 	add(invocation{name: "an option-shaped format", args: []string{"-d", "2024-06-15", "+-x"}})
 
-	// ---- the date sources ----
 	add(invocation{name: "-d and -r", args: []string{"-d", "x", "-r", "ref"}, seedTree: dateTree})
 	add(invocation{name: "-d and -f", args: []string{"-d", "x", "-f", "lines"}, seedTree: dateTree})
 	add(invocation{name: "-r and --resolution", args: []string{"-r", "ref", "--resolution"}, seedTree: dateTree})
@@ -418,7 +375,6 @@ func dateCases(t *testing.T) []invocation {
 	add(invocation{name: "help with a value", args: []string{"--help=x"}})
 	add(invocation{name: "version with a value", args: []string{"--version=1"}})
 
-	// ---- -f ----
 	add(invocation{name: "-f a file", args: []string{"-f", "lines", "+%F %T %N"}, seedTree: dateTree})
 	add(invocation{name: "-f a file with the default format", args: []string{"-f", "lines"}, seedTree: dateTree})
 	add(invocation{name: "-f a file in Tokyo", args: []string{"-f", "lines", "+%F %T %Z"}, seedTree: dateTree, env: []string{"TZ=Asia/Tokyo"}})
@@ -442,7 +398,6 @@ func dateCases(t *testing.T) []invocation {
 	add(invocation{name: "-f each line keeps its own offset guess", args: []string{"-f", "-", "+%F %T %Z"}, stdin: "2024-11-03 01:30\n2024-11-03 01:30\n2024-03-10 03:30\n2024-11-03 01:30\n", env: []string{"TZ=America/New_York"}})
 	add(invocation{name: "-f twice", args: []string{"-f", "missing", "-f", "lines", "+%F"}, seedTree: dateTree})
 
-	// ---- the write-failure paths ----
 	add(invocation{name: "a closed stdout", args: []string{"-d", "2024-06-15"}, stdout: stdoutClosed})
 	add(invocation{name: "a closed stdout with an invalid date", args: []string{"-d", "x y"}, stdout: stdoutClosed})
 	add(invocation{name: "a closed stdout with -f", args: []string{"-f", "lines"}, seedTree: dateTree, stdout: stdoutClosed})
@@ -451,9 +406,6 @@ func dateCases(t *testing.T) []invocation {
 	add(invocation{name: "a full stdout with --debug", args: []string{"--debug", "-d", "2024-06-15"}, stdout: stdoutFull})
 	add(invocation{name: "a full stdout with a usage error", args: []string{"-x"}, stdout: stdoutFull})
 
-	// A spelling the parser wrongly accepted would otherwise set the clock,
-	// so the privilege is withheld from every case rather than from the
-	// ones meant to reach settime.
 	for i := range cases {
 		cases[i].withoutClockPrivilege = true
 	}

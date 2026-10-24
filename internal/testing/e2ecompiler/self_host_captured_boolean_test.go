@@ -9,8 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// A plain if accepts an integer truth value in the interpreter's desugared
-// guard path. Logical operators and equality expose a lost Boolean type.
 func TestSelfHostCapturedBooleanType(t *testing.T) {
 	const src = `function both(a: boolean, b: boolean): boolean { return a && b; }
 function main(): i32 {

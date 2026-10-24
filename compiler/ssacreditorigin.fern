@@ -1,6 +1,3 @@
-// Independent capacity origin for straight-line record constructors.
-// Caller binds the selected ABI and ordered layout: one parameter per field,
-// scalar parameters or consuming references as marked below. No production gate.
 import "./ssa";
 import "./ssacredithelper" as helper;
 import "./util";
@@ -11,9 +8,6 @@ function refused(f: ssa.SFunc, why: string): Origin {
   return Origin { proof: helper.Proof { ok: false, function_name: f.name, message: why }, words: 0 };
 }
 
-// Success proves one fresh returned allocation of exactly words slots, with its
-// shape and all fields initialized. Reference arguments may alias: each has its
-// own incoming credit. This does not prove any arbitrary caller's input capacity.
 pub function producer(f: ssa.SFunc, shape: string, references: boolean[]): Origin {
   if (f.name == "" || util.str_has_prefix(f.name, "__fern_") || shape == "" || references.len() < 1 || references.len() > 2 || f.nparams != references.len() || f.takes_env || f.blocks.len() != 1) {
     return refused(f, "unsupported allocation producer boundary");
@@ -22,12 +16,7 @@ pub function producer(f: ssa.SFunc, shape: string, references: boolean[]): Origi
   if (b.id < 0 || b.id != f.entry || b.preds.len() != 0 || b.term.kind_tag != 1 || f.nvals < f.nparams) {
     return refused(f, "unsupported allocation producer graph");
   }
-  // Undefined=-1, scalar literal=0, fresh allocation=1, shape address=2,
-  // parameter identities=3+i. Store results remain unreadable.
   let values: i32[] = [];
-  // Index proof state by encountered definitions, never the external value ID.
-  // register_form can remove definitions without renumbering surviving values.
-  // Unused trailing value capacity remains outside this scoped boundary.
   let defined: i32[] = [];
   let last: i32 = -1;
   let i: i32 = 0;
@@ -46,7 +35,6 @@ pub function producer(f: ssa.SFunc, shape: string, references: boolean[]): Origi
     if (original.result < 0 || original.result >= f.nvals || util.index_of_i32(defined, original.result) >= 0) {
       return refused(f, "invalid allocation producer definition");
     }
-    // Read before defining the result, so self references cannot gain availability.
     let args: i32[] = [];
     for arg in original.args {
       let position = util.index_of_i32(defined, arg);
@@ -84,7 +72,6 @@ pub function producer(f: ssa.SFunc, shape: string, references: boolean[]): Origi
       if (op.imm == 0 && source == 2 && !shaped) {
         shaped = true;
       } else {
-        // Check the bounded offset before division or indexing, including extremes.
         if (op.imm < 8 || op.imm > references.len() * 8 || op.imm % 8 != 0) {
           return refused(f, "invalid allocation producer initialization");
         }

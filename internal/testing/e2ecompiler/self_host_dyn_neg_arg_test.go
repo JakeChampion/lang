@@ -5,11 +5,6 @@ import (
 	"testing"
 )
 
-// A negation's operand takes the destination's type only when an operator
-// can run at it. A `dyn` destination passed through, so `dg(-1, 1)` lowered
-// the literal at `dyn Tr` and was refused ("operator contract: - dyn Tr"),
-// as was a folded `40 - 665`. Found by fernsmith's trait productions
-// (printable seed 464).
 const dynNegArgSrc = `import "std/i32";
 trait Tr { function m(self: Self, x: i32): i32; function d(self: Self): i32 { return 3; } }
 impl Tr for i32 { function m(self: Self, x: i32): i32 { return self - x; } }

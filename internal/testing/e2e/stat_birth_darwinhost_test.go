@@ -7,8 +7,6 @@ import (
 	"testing"
 )
 
-// hostBirth is st_birthtimespec, what a FileStat's btime / btime_nsec must
-// read.
 func hostBirth(t *testing.T, path string) (int64, int64) {
 	t.Helper()
 	var st syscall.Stat_t
@@ -18,8 +16,6 @@ func hostBirth(t *testing.T, path string) (int64, int64) {
 	return st.Birthtimespec.Sec, st.Birthtimespec.Nsec
 }
 
-// hostDevs is (st_dev, st_rdev) as the host's own stat(2) reports them,
-// sign-extended from Darwin's 32-bit dev_t as FileStat's are.
 func hostDevs(t *testing.T, path string) (int64, int64) {
 	t.Helper()
 	var st syscall.Stat_t

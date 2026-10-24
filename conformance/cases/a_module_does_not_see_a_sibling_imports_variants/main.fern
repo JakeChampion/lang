@@ -1,7 +1,7 @@
-// The program imports two modules: one declares an enum with a variant named
-// like a builtin IoError variant, the other matches and constructs IoError's
-// by its bare name without importing the first. Each module sees only the
-// variants of the modules IT imports, so lib's `Other` stays IoError's.
+
+
+
+
 import "kinds";
 import "lib";
 

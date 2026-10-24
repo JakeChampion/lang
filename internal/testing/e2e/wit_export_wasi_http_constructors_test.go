@@ -12,18 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExportWasiHttpHandlerCallsConstructorsComposes is the next step toward a
-// running wasi:http handler (docs/WIT-BRING-YOUR-OWN.md): the exported
-// `incoming-handler#handle` body CALLS `wasi:http/types` resource constructors
-// (`[constructor]fields`, `[constructor]outgoing-response`) — `@import` externs
-// returning / taking owned handles — and lets the constructed response auto-drop.
-// This integrates the P5 import resource-method path INSIDE a P6 resource-handle
-// export, composed against the real `wasi:http` WIT: the composer wires the
-// constructor imports (handle in/out, no memory) + the owned-handle
-// `[resource-drop]` and lifts the void two-handle export. (Producing an actual
-// response still needs `response-outparam.set`, whose `result<own<…>,
-// error-code>` arg is the remaining marshalling piece.) Compose-gated by
-// `wasm-tools validate`.
 func TestExportWasiHttpHandlerCallsConstructorsComposes(t *testing.T) {
 	wasmtools, err := exec.LookPath("wasm-tools")
 	if err != nil {
@@ -50,10 +38,6 @@ func TestExportWasiHttpHandlerCallsConstructorsComposes(t *testing.T) {
 		t.Fatalf("DecodeWorldBytes: %v", err)
 	}
 
-	// The handler constructs an empty `fields`, builds an `outgoing-response`
-	// from it (consuming the fields handle), and returns — the response handle is
-	// a local owned handle, so it auto-drops. (Not named `handle`: that triggers
-	// the checker's handler-main synthesis.)
 	prog := `@import("wasi:http/types@0.2.0", "incoming-request")
 resource IncomingRequest;
 @import("wasi:http/types@0.2.0", "response-outparam")

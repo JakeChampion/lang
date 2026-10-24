@@ -5,12 +5,6 @@ import (
 	"strings"
 )
 
-// fernPrinters are checked-Fern definitions of the number printers and the
-// stdin integer reader that test programs call. Neither checker knows these
-// names, so a program that uses one has to define it. The printers write
-// decimal text with no newline and allocate nothing; read_int consumes one
-// stdin line and parses its optional '-' and leading decimal digits, 0 at
-// EOF.
 var fernPrinters = []struct {
 	name string
 	def  string
@@ -82,8 +76,6 @@ func init() {
 	}
 }
 
-// WithPrintInt appends to src the definition of each of print_int, print_i64
-// and read_int that src calls without defining itself.
 func WithPrintInt(src string) string {
 	for _, p := range fernPrinters {
 		if fernPrinterUse[p.name].MatchString(src) && !strings.Contains(src, "function "+p.name+"(") {

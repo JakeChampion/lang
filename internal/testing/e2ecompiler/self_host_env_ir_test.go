@@ -9,14 +9,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostEnvIR pins `env(name)` lowering on the self-host x86-64 IR path.
-// env looks up an environment variable and returns Option[string] (Some(value)
-// when set, None otherwise); it lowers to op_env, a call into the __fern_env
-// runtime, with the env-gated _start saving envp.
-//
-// The program reads FERN_ENV_IR_TEST and exits 0/1/2 for set-matching /
-// set-mismatched / unset; the test runs it under all three to exercise the
-// Some(value) and None arms plus the value comparison.
 func TestSelfHostEnvIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -44,8 +36,6 @@ func TestSelfHostEnvIR(t *testing.T) {
 	}
 	progBin := buildBin(t, gcc, dir, "env_prog", string(asm))
 
-	// A variable whose name extends the one asked for, or is a prefix of it,
-	// shares its leading bytes and must not match; an empty value is Some("").
 	cases := []struct {
 		vars     []string
 		wantExit int
@@ -68,11 +58,6 @@ func TestSelfHostEnvIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostEnvIRWasm is the wasm mirror: wasm_ir emits `call $__fern_env`,
-// and the module pulls in the preview1 environ_sizes_get / environ_get imports
-// + the $__fern_env body + the heap. wasmtime supplies env vars via
-// `--env KEY=VAL`; the three cases exercise the Some(value) match, the value
-// comparison, and the None arm.
 func TestSelfHostEnvIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host env wasm IR e2e")
@@ -108,7 +93,7 @@ func TestSelfHostEnvIRWasm(t *testing.T) {
 	}
 
 	cases := []struct {
-		val      string // "" with set=false means unset
+		val      string
 		set      bool
 		wantExit int
 	}{
@@ -133,7 +118,6 @@ func TestSelfHostEnvIRWasm(t *testing.T) {
 	}
 }
 
-// filterEnv returns environ with any KEY=... entry for key removed.
 func filterEnv(environ []string, key string) []string {
 	out := environ[:0:0]
 	for _, e := range environ {

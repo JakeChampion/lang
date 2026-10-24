@@ -8,11 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostLambdaWasmIR is the wasm gate for closures slice 2a (the x86
-// sibling is TestSelfHostLambdaX86IR): a no-capture lambda passed directly as a
-// call argument. lift.lift_lambdas hoists it to a top-level __lam_<k> and the
-// argument becomes a bare reference, so it lowers through slice 1's
-// const_func/call_indirect funcref table. Pinned to hardcoded oracle exit codes.
 func TestSelfHostLambdaWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host lambda wasm IR e2e")

@@ -2,21 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// timeSpanIRCases exercise std/time's calendar/absolute arithmetic — `add_span`
-// (Date + Span, calendar add with month-end clamp), `add_duration` /
-// `duration_since` (Instant ± Duration, i64 + nsec carry/borrow), and
-// `days_until` (returns a Span) — through the self-host IR path on x86-64 +
-// wasm. This closes the std/time "self-host pending" row (after the pure-i32
-// helpers, Date methods, date_parse_iso, and RFC-3339).
-//
-// New ground vs the earlier std/time coverage: an **8-field struct passed by
-// value as a parameter** (`add_span(s: Span)`) and a Duration struct combining
-// an i64 `sec` with an i32 `nsec` carry/borrow. The bodies are std/time's
-// verbatim except the structs are renamed (`Date`/`Span`/`Duration`/`Instant`
-// are reserved built-ins, E010) to `Civil`/`Sp`/`Dur`/`Moment`. No imports are
-// needed for the oracle (pure builtins + structs). Each case returns a value
-// kept <= 126 and is oracle-checked against the interpreter. FEATURE-AUDIT
-// std/time row.
 const timeSpanIRPrelude = `struct Civil { year: i32, month: i32, day: i32 }
 struct Sp { years: i32, months: i32, weeks: i32, days: i32, hours: i32, minutes: i32, seconds: i32, nanos: i32 }
 struct Dur { sec: i64, nsec: i32 }
@@ -83,21 +68,12 @@ var timeSpanIRCases = []struct {
 	name string
 	main string
 }{
-	// add_span month rollover with month-end clamp: Jan 31 + 1 month -> Feb 29
-	// (2024 leap). month*2 + day = 2*2 + 29 = 33. (8-field struct by-value param.)
 	{"add-span-month-clamp", `let d: Civil = Civil { year: 2024, month: 1, day: 31 }; let e: Civil = d.add_span(span_months(1)); return e.month * 2 + e.day;`},
-	// add_span weeks: 2024-03-30 + 1 week -> 2024-04-06. month*10 + day = 46.
 	{"add-span-weeks", `let d: Civil = Civil { year: 2024, month: 3, day: 30 }; let e: Civil = d.add_span(span_weeks(1)); return e.month * 10 + e.day;`},
-	// add_duration with nsec carry: 999999999 + 2 -> sec+1, nsec=1. return sec (11).
 	{"add-duration-carry", `let m: Moment = Moment { sec: 10 as i64, nsec: 999999999 }; let r: Moment = m.add_duration(Dur { sec: 0 as i64, nsec: 2 }); return r.sec as i32;`},
-	// add_duration carry, read nsec: -> 1.
 	{"add-duration-carry-nsec", `let m: Moment = Moment { sec: 10 as i64, nsec: 999999999 }; let r: Moment = m.add_duration(Dur { sec: 0 as i64, nsec: 2 }); return r.nsec;`},
-	// duration_since: 100s - 40s = 60s. return sec (60).
 	{"duration-since-sec", `let a: Moment = Moment { sec: 100 as i64, nsec: 0 }; let b: Moment = Moment { sec: 40 as i64, nsec: 0 }; return a.duration_since(b).sec as i32;`},
-	// duration_since with nsec borrow: 5.000000000 - 1.000000500 -> 3s + (1e9-500)ns.
-	// return sec (3) after the borrow.
 	{"duration-since-borrow", `let a: Moment = Moment { sec: 5 as i64, nsec: 0 }; let b: Moment = Moment { sec: 1 as i64, nsec: 500 }; return a.duration_since(b).sec as i32;`},
-	// days_until returns a Span carrying the day delta; read .days (10).
 	{"days-until", `let a: Civil = Civil { year: 2024, month: 1, day: 1 }; let b: Civil = Civil { year: 2024, month: 1, day: 11 }; return a.days_until(b).days;`},
 }
 
@@ -105,8 +81,6 @@ func timeSpanIRSrc(mainBody string) string {
 	return timeSpanIRPrelude + "\nfunction main(): i32 { " + mainBody + " }\n"
 }
 
-// TestSelfHostTimeSpanIR compiles each case with the self-host CLI for
-// x86-64 and wasm and checks the exit code against the interpreter.
 func TestSelfHostTimeSpanIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	interpBin := buildLangBinForInterp(t)

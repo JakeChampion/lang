@@ -8,16 +8,6 @@ import (
 	"testing"
 )
 
-// `__ptr_width()` on the native register path (#11555).
-//
-// The SSA lift took IR `ptr_width` through the flat-op fallback: an opaque
-// value the register allocator treats as a call, materialised by the stack
-// arm's push and pop. core/map reads it for every entry stride, so
-// `__map_lookup_keyed` paid the push, the pop and the call-shaped clobber on
-// every lookup. Both lifted ISAs are 64-bit, so the lift now makes it the
-// constant 8. The map program checks the answers on both ISAs; the lift itself
-// is checked directly, since on arm64 the flat op's result and a constant both
-// spell `mov xN, #8` and only the register differs.
 const ptrWidthLiftSrc = `import "core/map";
 
 function main(): i32 {
@@ -84,8 +74,6 @@ func TestSelfHostPtrWidthLiftArm64(t *testing.T) {
 	}
 }
 
-// Lift `ptr_width; return` and read the instruction back: a constant 8 (SSA
-// kind 1), not the flat op (kind 59).
 const ptrWidthLiftOpsProg = `import "./ir";
 import "./ssa";
 import "./ssa_lift";

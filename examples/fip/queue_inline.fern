@@ -1,4 +1,3 @@
-// Scalar inline control for the generic bounded ring. Same capacity and clearing.
 pub struct Ring {
   data: i64[],
   empty: i64,

@@ -4,26 +4,6 @@ import (
 	"testing"
 )
 
-// Literal-sized buffer reclamation (scalar-arg taint, docs/RC-PERCEUS-PLAN.md).
-// rhsTainted used to taint EVERY NumberLit (it fell through to the conservative
-// default), so a fresh owned buffer whose only "borrowed" input is a literal
-// size arg — `let b: u8[] = __alloc_u8(8)` — read as ineligible and was not
-// reclaimed at its last reference. NumberLit/FloatLit/BoolLit are now untainted
-// (they alias nothing), so such a pure temp reclaims, lowering the steady-state
-// heap high-water of hot scratch-buffer code (e.g. int_to_string_radix's
-// 33-byte `digits` reached via `(n).to_hex()`). The bump is bounded either way
-// (the freelist already caps it), so this asserts the high-water is STABLE
-// across a 10x iteration count — a reclaimed temp keeps it flat.
-//
-// Two guards keep this safe and are exercised elsewhere:
-//   - a buffer cast to a raw integer (`buf as usize`) is escape-tainted in
-//     computeFreeEligible, so int_to_string's scratch stays protected (heavy
-//     coverage via every `(n).to_string()` / radix path);
-//   - random_bytes' result is a fresh rc=1 u8[] box, untainted like
-//     __alloc_u8's — guarded by the TestX/Arm64/WASM RandomBytes tests.
-// The scalar-BINARY arg case is deliberately left tainted: untainting it
-// over-released int_to_string_radix's result buffer (see TestToRgbHexNoOverRelease).
-
 func literalAllocBumpSrc(n string) string {
 	return `function main(): i32 {
     let before: i32 = (__heap_bump_bytes() as i32);
@@ -63,12 +43,6 @@ func TestWASMLiteralAllocReclaim(t *testing.T) {
 	}
 }
 
-// Over-release regression: int_to_string_radix (reached via (n).to_hex() →
-// (n).to_rgb_hex()) builds a result buffer sized by a scalar BINARY (`k + 1`).
-// Untainting scalar binaries made that buffer eligible and the exit sweep
-// over-released it under free-on, so to_rgb_hex returned the wrong hex for
-// values whose component layout triggered the freelist reuse (e.g. 65280 →
-// "#00ff00"). Locks the value-correctness on all native backends with free on.
 const toRgbHexOverRelease = `import "std/i32";
 function main(): i32 {
     if ((0).to_rgb_hex() != "#000000") { return 1; }
@@ -80,9 +54,6 @@ function main(): i32 {
 }`
 
 func TestToRgbHexNoOverRelease(t *testing.T) {
-	// Per-backend sub-tests: the arm64 leg is unreachable behind the x86 one
-	// on any host missing a toolchain, because the gate inside each runner is
-	// a t.Skip that ends the whole function.
 	t.Run("x86_64", func(t *testing.T) {
 		if _, code := compileAndRunX86_64FreeOn(t, toRgbHexOverRelease); code != 0 {
 			t.Errorf("x86_64: to_rgb_hex over-release/value error, code=%d", code)

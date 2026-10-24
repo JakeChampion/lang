@@ -12,10 +12,6 @@ function measure[T: Shape](s: T): i32 { return s.area(); }
 function skip[T](s: i32, a: T): T { return a; }
 `
 
-// A generic function named as a value takes its type arguments from the
-// function type the value is wanted at: a parameter, a let, a field, a return,
-// a generic callee's parameter once its other arguments pin it, and an
-// enclosing generic's own parameter.
 func TestGenericFnValueInstantiatedFromExpectedType(t *testing.T) {
 	cases := map[string]string{
 		"argument": `function apply(a: i32, f: (i32, i32) => i32): i32 { return f(1, a); }
@@ -38,9 +34,6 @@ function main(): i32 { return outer(7); }`,
 	}
 }
 
-// A bound the value's type arguments meet only once a generic callee's other
-// arguments pin them is monomorph's to check, as a call's is; TestGenericFnValue
-// covers that at the CLI level.
 func TestGenericFnValueErrors(t *testing.T) {
 	cases := []struct{ name, src, want string }{
 		{"bound unmet", `function apply_i(f: (i32) => i32, v: i32): i32 { return f(v); }

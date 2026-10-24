@@ -9,38 +9,6 @@ import (
 	"testing"
 )
 
-// strViewBorrowReleaseCases pin the release of a SLICE TEMP standing at a string
-// BORROW POSITION — `base[a:b].len()`, `base[a:b] == x`, `base[a:b] + y`, and the
-// rest of the positions in the table below.
-//
-// The backends reach "this temp costs nothing" by different routes. On the
-// register backends the slice's 24-byte box lives in reserved frame slots
-// (op_str_slice_frame) and never reaches the heap. wasm has no such storage —
-// its str_slice copies into a fresh inline block — so there every borrow
-// position builds a payload-sized heap COPY that must be released after the
-// consuming op.
-//
-// Unreleased vs released, 400 rounds:
-//
-//	position              x86-64      wasm
-//	.len() receiver         0      48000 -> 0
-//	== comparison           0      48000 -> 0
-//	concat operand          0      48000 -> 0
-//	index base              0      48000 -> 0
-//	slice source            0      54400 -> 0
-//	len(x) builtin          0      48000 -> 0
-//
-// The register columns are 0 either way, so these gates only fail on the wasm
-// leg. They are still run on all three: a future change that made the register
-// path allocate would show up here, and the cost of the extra legs is a second.
-//
-// One real limit on the ORDERING. The drain lands after the consuming op, which
-// is the only correct place — the op still has to read the box. But a build that
-// frees BEFORE the op passes every probe here, because the free and the use are
-// adjacent with no allocation able to intervene, so the read finds stale-but-
-// intact memory. The placement is correct by construction and CONTRACT-ONLY by
-// measurement; what the byte gates below witness is that the release happens at
-// all, not where.
 const viewBorrowPrelude = `import "std/i32";
 import "std/i64";
 import "std/string";
@@ -48,9 +16,6 @@ import "std/string";
 function own2(s: string): string { return s + ""; }
 `
 
-// viewBorrowHeap wraps a `round` body in the churn/heap-delta harness. 4096 is
-// far under the 48000 each position stranded and far over the 0 a released copy
-// produces.
 func viewBorrowHeap(body string) string {
 	return viewBorrowPrelude + `function round(pre: string): i32 {
     let base: string = w(pre);
@@ -81,13 +46,7 @@ var strViewBorrowReleaseCases = []struct {
 	{"str-view-borrow-concat-operand", viewBorrowHeap(`    let t: string = slice_unchecked(base, 4, base.len()) + "-tail";
     return t.len();`), 0},
 	{"str-view-borrow-index-base", viewBorrowHeap(`    return (slice_unchecked(base, 4, base.len())[0] as i32);`), 0},
-	// A slice OF a slice: the inner one is the outer op's operand. On wasm the
-	// outer str_slice copies, so the inner copy is dead the moment it has been
-	// read — which is why this is a borrow position and not an alias.
 	{"str-view-borrow-slice-source", viewBorrowHeap(`    return slice_unchecked(slice_unchecked(base, 4, base.len()), 1, 5).len();`), 0},
-	// LIVENESS across every position at once, with the SOURCE and each RESULT
-	// read afterwards behind decoy allocations that would be handed the freed
-	// block if a release had landed too early.
 	{"str-view-borrow-all-positions-live", viewBorrowPrelude + `function round(pre: string): i32 {
     let base: string = w(pre);
     let n: i32 = slice_unchecked(base, 4, base.len()).len();
@@ -114,10 +73,6 @@ var strViewBorrowReleaseCases = []struct {
 function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 3000) { let r: i32 = round(pre); if (r != 102) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 }
 
-// TestSelfHostStrViewBorrowReleaseIRX86_64 is the x86-64 leg. Every case here
-// already measured 0 before the change — the frame form is what makes that true —
-// so this leg guards the register path against a regression rather than pinning
-// a fix.
 func TestSelfHostStrViewBorrowReleaseIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -145,8 +100,6 @@ func TestSelfHostStrViewBorrowReleaseIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrViewBorrowReleaseIRArm64 is the arm64 leg, the register path's
-// twin.
 func TestSelfHostStrViewBorrowReleaseIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -170,8 +123,6 @@ func TestSelfHostStrViewBorrowReleaseIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrViewBorrowReleaseWasmIR is the leg this change is for: every
-// case fails with 98 on the parent, where the slice copy is stranded.
 func TestSelfHostStrViewBorrowReleaseWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping view-borrow release wasm IR e2e")

@@ -9,16 +9,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostScriptMainIRX86_64 pins that SCRIPT-shaped programs — top-level
-// statements with no `main` — compile through the IR path (#3457).
-//
-// The IR emitters are whole-program emitters whose `_start` does `call
-// __fn_main`, so asmcore.synth_script_main desugars the script into
-// `function main(): i32 { … }` before the gate, and the one IR pipeline serves
-// both shapes.
-//
-// The assertion is two-part: each case checks its exit code and that the
-// emitted asm carries the IR shape (`call __fn_main`).
 func TestSelfHostScriptMainIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -35,9 +25,7 @@ func TestSelfHostScriptMainIRX86_64(t *testing.T) {
 		{"two-vars", "let a = 3; let b = 4; return a * b;", 12},
 		{"while-loop", "let i = 1; let s = 0; while (i <= 5) { s += i; i += 1; } return s;", 15},
 		{"if-else", "if (1 < 2) { return 9; } return 3;", 9},
-		// No trailing `return`: synth_script_main appends `return 0;`.
 		{"no-trailing-return", "let x = 1;", 0},
-		// Subtraction from zero; this pins the answer, not the encoding.
 		{"unary-negation", "return 0 - 5 + 10;", 5},
 	}
 

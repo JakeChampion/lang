@@ -1,12 +1,8 @@
-// Pure SSA semantics for one-pointer uniqueness leaves. All arrays use actual
-// definition/block counts, not the external value extent. Cycles refuse.
 import "./ssa";
 import "./util";
 
 pub struct Meaning { ok: boolean, yes: i32, no: i32 }
 
-// Sort positions, keeping the supplied graph's identities and order intact.
-// External IDs never size an array. Only this module constructs these indexes.
 struct IdIndex { ids: i32[], order: i32[], ok: boolean }
 
 struct Graph { values: i32[], slots: IdIndex, blocks: IdIndex, preds: IdIndex[], ok: boolean }
@@ -124,9 +120,6 @@ function operation(op: ssa.SInst, b: ssa.SBlock, entry: i32): boolean {
   if (op.kind_tag == 1 || op.kind_tag == 2) {
     return constant(op);
   }
-  // The optional alignment annotation does not change is_unique's value.
-  // Ignore it here; the machine proof must independently justify any omitted
-  // normalization from its input ABI, never from this annotation.
   if (ssa.plain_imm(op) != 0 && !(op.imm == 4 && op.kind_tag == 11 && op.str == "__fern_rc_is_unique")) {
     return false;
   }
@@ -221,8 +214,6 @@ function readable(row: boolean[], ids: IdIndex, id: i32): boolean {
   return at >= 0 && row[at];
 }
 
-// Edges and duplicate predecessors were checked against this same graph.
-// Each declared edge discharges one predecessor, and each block queues once.
 function block_order(f: ssa.SFunc, blocks: IdIndex): i32[] {
   let remaining: i32[] = [];
   let order: i32[] = [];
@@ -324,7 +315,6 @@ function unary_value(kind: i32, v: i32, unique: boolean): i32 {
   return 0;
 }
 
-// Values match the machine proof: 1 pointer, 3 zero, 4 one, 6 seven, 7 nine.
 function value(op: ssa.SInst, source: i32[], ids: IdIndex, phi_position: i32, unique: boolean): i32 {
   if (op.kind_tag == 6) {
     return 1;
@@ -375,8 +365,6 @@ function run(f: ssa.SFunc, g: Graph, unique: boolean): i32 {
     seen = seen.with(at, true);
     let b = f.blocks[at];
     let incoming = values;
-    // Index positions retain the supplied predecessor order, which is also
-    // the phi argument order. Every phi reads the same incoming snapshot.
     let phi_position = position(g.preds[at], pred);
     for op in b.insts {
       let v = value(op, if (op.kind_tag == 8) { incoming } else { values }, g.slots, phi_position, unique);

@@ -1,7 +1,3 @@
-// tokenize — a lexer-shaped scan over an embedded source string: byte
-// classification, identifier slicing and keyword comparison. This is the
-// closest proxy in the corpus for the self-hosted compiler's own hot path,
-// where __fern_strcmp was measured at 20.5% of runtime.
 function is_ident_byte(c: u8): boolean {
   if (c >= 97 as u8 && c <= 122 as u8) {
     return true;
@@ -29,7 +25,6 @@ function scan(src: string): i32 {
       i = i + 1;
     }
     let word: str = slice_unchecked(src, start, i);
-    // Keyword comparison — the strcmp-bound half.
     if (word == "function" || word == "return" || word == "while" || word == "let" || word == "if" || word == "else") {
       kw = kw + 1;
     }

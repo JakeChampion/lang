@@ -10,8 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// arrayReportCLI writes src as main.fern and runs `fern ARGS... main.fern
-// STDLIB` with env added, returning stdout, stderr and the exit status.
 func arrayReportCLI(t *testing.T, src string, env []string, args ...string) (string, string, int) {
 	t.Helper()
 	dir := t.TempDir()
@@ -75,8 +73,6 @@ function main(): i32 {
 `, []string{
 		"main: reduce_axis; layout=packed; axis=1; element=add$wrap",
 	}},
-	// A structural map key makes the lowering build its key helpers from
-	// source; their lowering is the compiler's, and reports nothing.
 	{"structural map key", `import "core/map";
 import "std/array";
 function main(): i32 {
@@ -92,9 +88,6 @@ function main(): i32 {
 	}},
 }
 
-// `fern -array-report FILE` prints on stdout exactly the report a
-// FERN_ARRAY_REPORT=1 compile of FILE prints on stderr, and writes nothing
-// else (#12674).
 func TestSelfHostArrayReportCLI(t *testing.T) {
 	for _, tc := range arrayReportCLICases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -125,8 +118,6 @@ func TestSelfHostArrayReportCLI(t *testing.T) {
 	}
 }
 
-// The report follows -target, and FERN_ARRAY_REPORT does not also send it to
-// stderr when -array-report asked for stdout.
 func TestSelfHostArrayReportCLITargetAndEnv(t *testing.T) {
 	src := arrayReportCLICases[0].src
 	report, stderr, code := arrayReportCLI(t, src, []string{"FERN_ARRAY_REPORT=1"}, "-array-report", "-target", "x86-64-linux")
@@ -138,8 +129,6 @@ func TestSelfHostArrayReportCLITargetAndEnv(t *testing.T) {
 	}
 }
 
-// A program the compiler refuses reports its diagnostic, not an empty report;
-// -o and -run are refused because the mode writes no output.
 func TestSelfHostArrayReportCLIRefusals(t *testing.T) {
 	stdout, stderr, code := arrayReportCLI(t, "function main(): i32 { return true; }\n", nil, "-array-report")
 	if code == 0 || !strings.Contains(stderr, "E0") || strings.Contains(stdout, "decisions:") {

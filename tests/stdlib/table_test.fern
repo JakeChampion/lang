@@ -1,13 +1,7 @@
 import "std/test";
 import "std/table" as table;
 
-// tests/stdlib/table_test.fern — pure-Fern coverage of std/table:
-// column-aligned rendering (last column unpadded, short rows padded
-// with empty cells, code-point-width alignment) and the header variant
-// with its `-` rule.
-
 function test_render_basic(): test.TestOutcome {
-  // Column 0 padded to width 3; the last column carries no trailing pad.
   return test.assert_eq(table.render([["a", "bb"], ["ccc", "d"]]), "a    bb\nccc  d");
 }
 
@@ -21,12 +15,10 @@ function test_render_empty(): test.TestOutcome {
 }
 
 function test_render_short_rows(): test.TestOutcome {
-  // A short row is padded out with empty trailing cells.
   return test.assert_eq(table.render([["x", "y", "z"], ["1"]]), "x  y  z\n1     ");
 }
 
 function test_codepoint_alignment(): test.TestOutcome {
-  // 'é' counts as one column, so `café` (4 code points) aligns.
   return test.assert_eq(table.render([["café", "x"], ["a", "y"]]), "café  x\na     y");
 }
 

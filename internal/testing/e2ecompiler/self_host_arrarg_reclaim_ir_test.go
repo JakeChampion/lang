@@ -7,31 +7,11 @@ import (
 	"testing"
 )
 
-// arrArgReclaimCases pin the borrowed-call-arg temp reclaim for ARRAYS (#4365):
-// a fresh scalar-element array literal passed directly to a borrowing free
-// function (`take([i, i+1])`) is released right after the call, so the buffer
-// allocated per evaluation does not accumulate — the array sibling of the #4355
-// string literal-arg box reclaim.
-//
-// The last four cases widen the shape: a fresh array a producer function
-// returned is the same temp one step removed, and a param the callee stores
-// still takes one when every appearance of that parameter is a counted store or
-// a non-retaining read, so the caller's dec nets it to a single owner either
-// way. Pointer-element arrays use only that counted-store half: the release is
-// the shallow buffer dec, which at a borrowable position would strand the
-// element boxes.
-//
-// The consuming-callee case pins that a param that is REASSIGNED
-// (`xs = xs.append(9)`) or used as an `.append` receiver
-// (`let ys = xs.append(7)`) is never borrowable: append reuses/frees a unique
-// receiver buffer on growth, so a caller-side release after such a callee
-// would double-free (rc underflow).
 var arrArgReclaimCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// The core churn shape: a fresh scalar array literal arg, rebuilt per call.
 	{"arrarg-churn-flat", `function take(xs: i32[]): i32 {
     return xs[0] + xs[1];
 }
@@ -48,9 +28,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// Multi-arg frees, a forwarding callee (borrow via the interproc registry),
-	// f64 elements, and a string-element literal (excluded from the reclaim —
-	// leak-mode but CORRECT at detector zero, values exact).
 	{"arrarg-multi-fwd-flat", `function take2(xs: i32[], ys: i32[]): i32 {
     return xs[0] + ys[1];
 }
@@ -91,8 +68,6 @@ function main(): i32 {
     if (acc < 0) { return 94; }
     return 0;
 }`, 0},
-	// ESCAPE negative: the callee returns its arg — ownership moves out, the
-	// param is non-borrowable, no post-call free (values exact, no dangle).
 	{"arrarg-escape-safe", `function keep(xs: i32[]): i32[] {
     return xs;
 }
@@ -102,11 +77,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return acc;
 }`, 15},
-	// CONSUMING-callee negative (the soundness fix): `xs = xs.append(9)` and the
-	// unbound `let ys = xs.append(7)` both free a unique receiver buffer on
-	// growth — the param must be non-borrowable so neither the call-arg temp
-	// reclaim nor the Level-2 named-local precise drop releases the buffer a
-	// second time. Was a pre-existing rc underflow for the named-local shape.
 	{"arrarg-consuming-callee-safe", `function mut(xs: i32[]): i32 {
     xs = xs.append(9);
     return xs[2] + xs.len();
@@ -124,15 +94,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// POINTER-ELEMENT producer arg at a COUNTED-RETAIN position (#6522): the
-	// `deps_of(pre)` temp in `node(w(pre), deps_of(pre), n)` is a fresh string[]
-	// nothing released — the stash arm admitted only scalar-element "ARR:"
-	// producers, because a shallow buffer dec of a pointer-element array at a
-	// BORROWABLE position would strand the element boxes. At a counted-retain
-	// position the callee's struct construction has already retained the array,
-	// so the same dec takes rc 2 -> 1 and the struct's own drop deep-frees the
-	// elements it owns. Bounded high-water: 544 KB of leaked buffers over the
-	// second 2000-iteration churn before, flat after.
 	{"arrarg-strarr-producer-counted-flat", `struct Node { name: string, deps: string[], mtime: i32 }
 function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
 function deps_of(pre: string): string[] { let out: string[] = []; let i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
@@ -149,10 +110,6 @@ function main(): i32 {
     if (w0 != x) { return 97; }
     return 0;
 }`, 0},
-	// The released temp's array must SURVIVE the call: the caller holds the
-	// struct across three further array allocations, and deps_of's LENGTH varies
-	// with n, so a buffer freed by an unbalanced dec and re-served from the
-	// freelist reports the wrong element count. Value-exact over 2000 rounds.
 	{"arrarg-strarr-counted-held-struct", `struct Held { deps: string[], n: i32 }
 function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
 function deps_of(pre: string, n: i32): string[] { let out: string[] = []; let i: i32 = 0; while (i < (n % 5) + 1) { out = out.append(w(pre)); i = i + 1; } return out; }
@@ -166,22 +123,11 @@ function round(pre: string, n: i32): i32 {
     return h.deps.len() + h.n - n;
 }
 function main(): i32 { let pre: string = "ab"; let i: i32 = 0; while (i < 2000) { if (round(pre, i) != (i % 5) + 1) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
-	// A READ-ONLY callee is counted-retain too (nothing in the use vocabulary
-	// refuses `p.len()`), and there the dec takes rc 1 -> 0 and frees the buffer
-	// outright — 56 B/round recovered. The element boxes stay leaked: the release
-	// is the shallow __fern_rc_dec, not the element walk. Sound, and the deep
-	// free is a later slice — a borrowable callee may hand an element back out.
 	{"arrarg-strarr-read-only-callee-safe", `function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
 function deps_of(pre: string): string[] { let out: string[] = []; let i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
 function count(p: string[]): i32 { return p.len() + p.len(); }
 function churn(n: i32): i32 { let pre: string = "ab"; let i: i32 = 0; while (i < n) { if (count(deps_of(pre)) != 6) { return 97; } i = i + 1; } return 0; }
 function main(): i32 { let a: i32 = churn(2000); if (a != 0) { return a; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
-	// The tier now admits a STRUCT-RETURNING callee, so a SCALAR-array param
-	// reaches the release through a shape the concrete-scalar-result guard used
-	// to exclude: `esci` stores the argument in a local struct (a counted store)
-	// and hands it out again through a FIELD READ into the struct it returns.
-	// The field-read copy takes its own construction retain, so the returned
-	// struct owns a counted reference and the caller's dec cannot strand it.
 	{"arrarg-scalar-struct-ret-alias-safe", `struct SIn { a: i32[] }
 struct SOut { b: i32[] }
 function nums_of(n: i32): i32[] { let out: i32[] = []; let i: i32 = 0; while (i < 4) { out = out.append(n + i); i = i + 1; } return out; }
@@ -190,8 +136,6 @@ function round(n: i32): i32 { let o: SOut = esci(nums_of(n)); let k: i32[] = num
 function main(): i32 { let i: i32 = 0; while (i < 2000) { if (round(i) != 7) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 }
 
-// TestSelfHostArrArgReclaimIRX86_64 drives the cases through the self-hosted
-// x86-64 compiler (asm_run), heap-bump + underflow guarded.
 func TestSelfHostArrArgReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

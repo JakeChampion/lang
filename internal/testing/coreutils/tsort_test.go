@@ -6,7 +6,6 @@ import (
 	"testing"
 )
 
-// tsortFile writes `content` under `dir` as `name` and returns its path.
 func tsortFile(t *testing.T, dir, name, content string) string {
 	t.Helper()
 	p := filepath.Join(dir, name)
@@ -35,8 +34,6 @@ func tsortCases(t *testing.T) []invocation {
 		{name: "file names that are not valid UTF-8", args: []string{binary}},
 		{name: "file loop of binary names", args: []string{binaryLoop}},
 		{name: "distinct names with the same FNV hash", stdin: "costarring liquid liquid zz"},
-		// The queue phase: byte-ordered seeds, FIFO, each written name
-		// freeing its successors most recent first.
 		{name: "one pair", stdin: "a b\n"},
 		{name: "empty input", stdin: ""},
 		{name: "newline only", stdin: "\n"},
@@ -67,8 +64,6 @@ func tsortCases(t *testing.T) []invocation {
 		{name: "names that are not valid UTF-8", stdin: "a\xff b\xfe\n"},
 		{name: "loop of names that are not valid UTF-8", stdin: "a\xff b\xfe b\xfe a\xff\n"},
 
-		// Separators: space, tab and newline, nothing else; a NUL cuts
-		// the name.
 		{name: "tabs and blank lines", stdin: "a  b\tc\nd\n"},
 		{name: "leading and trailing spaces", stdin: " a b "},
 		{name: "runs of separators", stdin: "  a   b\n\n"},
@@ -82,14 +77,11 @@ func tsortCases(t *testing.T) []invocation {
 		{name: "NUL cuts a name", stdin: "a\x00 b c d\n"},
 		{name: "NUL cuts a name to nothing", stdin: "\x00 b c d\n"},
 
-		// Odd token counts: an error before anything is written.
 		{name: "one token", stdin: "a\n"},
 		{name: "three tokens", stdin: "a b c\n"},
 		{name: "five tokens", stdin: "a b c d e\n"},
 		{name: "odd with a loop", stdin: "a b b a c\n"},
 
-		// Loops: the predecessor chain from the smallest unresolved
-		// name, printed head first, the closing edge dropped.
 		{name: "two-cycle", stdin: "a b\nb a\n"},
 		{name: "two-cycle reversed", stdin: "b a a b\n"},
 		{name: "three-cycle", stdin: "a b b c c a\n"},
@@ -158,7 +150,6 @@ func tsortCases(t *testing.T) []invocation {
 		{name: "loop through a dangling two-cycle to r", stdin: "q r r q q a a b b c c r\n"},
 		{name: "loop of a prefix and its name", stdin: "abc abd abd abc\n"},
 
-		// Operands: at most one, `-` for stdin.
 		{name: "dash", args: []string{"-"}, stdin: "a b\n"},
 		{name: "dashdash", args: []string{"--"}, stdin: "a b\n"},
 		{name: "dashdash then dash", args: []string{"--", "-"}, stdin: "a b\n"},
@@ -182,7 +173,6 @@ func tsortCases(t *testing.T) []invocation {
 		{name: "extra operand with a backslash", args: []string{"a", "b\\c"}},
 		{name: "extra operand that is empty", args: []string{"a", ""}},
 
-		// Missing files, and the shell quoting of their names.
 		{name: "missing file", args: []string{"/nope"}},
 		{name: "missing file under a missing directory", args: []string{"/nosuch/x"}},
 		{name: "a directory operand is a read error", args: []string{"/tmp"}},
@@ -253,7 +243,6 @@ func tsortCases(t *testing.T) []invocation {
 		{name: "missing file that is a tab and a quote", args: []string{"\t'"}},
 		{name: "missing file with a quote and a high byte", args: []string{"a'b\xffc"}},
 
-		// Getopt faults.
 		{name: "invalid short option", args: []string{"-x"}, stdin: "a b\n"},
 		{name: "unrecognized long option", args: []string{"--foo"}, stdin: "a b\n"},
 		{name: "unrecognized long option after dash", args: []string{"-", "--zz"}, stdin: "a b\n"},

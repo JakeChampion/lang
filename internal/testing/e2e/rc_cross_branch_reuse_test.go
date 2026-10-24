@@ -4,20 +4,6 @@ import (
 	"testing"
 )
 
-// #4402 opt 3: the runtime contract for the two widened reuse pairings.
-//
-//   - CROSS-BRANCH sharing: one dead donor feeds a construction in EVERY arm
-//     of a branch. The adversarial case is alternation — each arm must find a
-//     usable box on the pass that takes it and must not double-free the box
-//     the other arm did not take.
-//   - CROSS-KIND pairing at equal box class: a dead tuple, and a dead enum,
-//     each hand their box to a struct construction. The donor's OLD pointer
-//     payload is released through the DONOR's layout before the recipient
-//     stores its own fields, so a wrong layout here shows up as a leak (bump
-//     growth) or a double free (rc underflow), not a wrong value.
-//
-// Every leg returns __rc_underflow_count() so a mis-balanced release fails
-// the run rather than passing quietly.
 const crossBranchReuseSrc = `struct Holder { n: i32, items: i32[] }
 enum Wrapper { Wrap(i32[]) }
 

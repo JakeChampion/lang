@@ -1,33 +1,33 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Map[K, string] value reclamation across set / get / drop.
-// On wasm the values are stored as boxed (data, len) cells and
-// the generated __drop_map_str_values column walk str_decs each;
-// on natives the values are stored as direct data pointers and
-// the same generated walk rc_decs each (the prereq 1+2 L2 layout
-// gives every heap string an rc header at data-8 and every
-// literal a 0x80000000 sentinel, so the rc_dec is uniformly safe).
-// Set-retain bumps an aliased value's rc so the map co-owns it
-// alongside the source local; Map.get's returned Option co-owns
-// via the same retain mechanism (str_inc on wasm, rc_inc on
-// natives).
-//
-// Exercises: fresh value set (moves in, no inc), aliased value set
-// (inc'd), Map.get retain (Option keeps a live copy), drop reclaim
-// (column walk decs each entry). Long values force real heap
-// strings (short strings inline on wasm; natives have no inline).
-// Per iter: shared_len(33) + got_len(33) = 66; 500x → 33000.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import "core/int";
 import "core/map";
 import "std/string";
 function mk(): i32 {
     let shared: string = "value-aaaaaaaaaaaaaaaaaaaa-shared";
     let m: Map[i32, string] = map_new(8);
-    m = m.insert(1, shared);                              // aliased set
-    m = m.insert(2, shared);                              // second alias
-    m = m.insert(3, "value-bbbbbbbbbbbbbbbbbbbb-fresh"); // fresh value (moves in)
-    let got: Option[string] = m.get(1);                // get retains
+    m = m.insert(1, shared);
+    m = m.insert(2, shared);
+    m = m.insert(3, "value-bbbbbbbbbbbbbbbbbbbb-fresh");
+    let got: Option[string] = m.get(1);
     let got_len: i32 = 0;
     match (got) { Some(s) => { got_len = s.len(); }, None => {} }
     return shared.len() + got_len;

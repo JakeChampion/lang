@@ -11,14 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestSelfHostExternRecordResultCustomProvider is the self-host port of the
-// record `@import` result (docs/WIT-BRING-YOUR-OWN.md): the self-hosted wasm
-// backend materializes a self-host struct from a canonical record result. The
-// host writes the record's fields inline into the return area (field i @ i*4,
-// all i32); the wrapper allocs a self-host struct (type-id@0, fields@+4), stores
-// the struct's type id + each field, and returns its pointer. Tested via the
-// custom-provider harness: a `make-point: func(a, b: s32) -> record { x, y: s32 }`
-// provider returns {x:a, y:b}. Mirror of the Go TestExternRecordResultCustomProvider.
 func TestSelfHostExternRecordResultCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -37,7 +29,6 @@ func TestSelfHostExternRecordResultCustomProvider(t *testing.T) {
 		}
 	}
 
-	// --- Provider component exporting local:test/src@0.1.0 make-point. ---
 	provWit := filepath.Join(dir, "provwit")
 	if err := os.MkdirAll(provWit, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -47,9 +38,6 @@ func TestSelfHostExternRecordResultCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export src; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// make-point returns the record indirectly: an 8-byte area (x@0, y@4) via
-	// cabi_realloc, returning its pointer (the canonical record-result export
-	// convention).
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)
   (global $h (mut i32) (i32.const 1024))
@@ -71,7 +59,6 @@ func TestSelfHostExternRecordResultCustomProvider(t *testing.T) {
 	run(wasmtools, "component", "embed", provWit, "-w", "provider", filepath.Join(dir, "prov_core.wasm"), "-o", filepath.Join(dir, "prov_embed.wasm"))
 	run(wasmtools, "component", "new", filepath.Join(dir, "prov_embed.wasm"), "-o", provider)
 
-	// --- User world (custom src iface + wasi stdout). ---
 	userWit := filepath.Join(dir, "userwit")
 	if out, err := exec.Command("cp", "-r", "../../../cmd/fern/wit/deps", filepath.Join(userWit, "deps")).CombinedOutput(); err != nil {
 		_ = os.MkdirAll(userWit, 0o755)
@@ -100,7 +87,6 @@ func TestSelfHostExternRecordResultCustomProvider(t *testing.T) {
 		t.Fatalf("DecodeWorldBytes: %v", err)
 	}
 
-	// --- Self-host backend: emit the core from the record-result program. ---
 	copySelfHostDriver(t, dir, "drivers/wasm_runio_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_runio_run.fern", "wasm_runio_run")
 

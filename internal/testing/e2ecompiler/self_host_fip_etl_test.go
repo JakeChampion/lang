@@ -166,8 +166,6 @@ func TestSelfHostFipETLBoundaries(t *testing.T) {
 		binary.LittleEndian.PutUint32(data[i*8+4:], 0xffffff00+uint32(i))
 	}
 	invalid, filtered, accepted, total, low, high, hist, out := etlOracle(data)
-	// Pin the reference at both inclusive temperature boundaries and the
-	// first histogram boundary, including unsigned sequence bytes.
 	if invalid != 8 || filtered != 2 || accepted != 4 || total != 18547 || low != 0 || high != 16500 || hist[0] != 2 || hist[1] != 1 || hist[15] != 1 {
 		t.Fatalf("boundary oracle: %d %d %d %d %d %d %v", invalid, filtered, accepted, total, low, high, hist)
 	}

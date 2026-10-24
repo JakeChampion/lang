@@ -21,7 +21,6 @@ func writeCheckTree(t *testing.T, files map[string]string) string {
 	return root
 }
 
-// A workspace root checks every member; all-valid → success.
 func TestCheckWorkspaceAllOk(t *testing.T) {
 	root := writeCheckTree(t, map[string]string{
 		"fern.toml":       "[workspace]\nmembers = [\"lexer\", \"app\"]\n",
@@ -35,8 +34,6 @@ func TestCheckWorkspaceAllOk(t *testing.T) {
 	}
 }
 
-// One broken member fails the whole check, but the others are still
-// checked (the error reports the aggregate count).
 func TestCheckWorkspaceReportsBrokenMember(t *testing.T) {
 	root := writeCheckTree(t, map[string]string{
 		"fern.toml":       "[workspace]\nmembers = [\"lexer\", \"app\"]\n",
@@ -51,7 +48,6 @@ func TestCheckWorkspaceReportsBrokenMember(t *testing.T) {
 	}
 }
 
-// A member's `lib` key selects its entry module.
 func TestCheckWorkspaceHonoursLibKey(t *testing.T) {
 	root := writeCheckTree(t, map[string]string{
 		"fern.toml":     "[workspace]\nmembers = [\"m\"]\n",
@@ -64,7 +60,6 @@ func TestCheckWorkspaceHonoursLibKey(t *testing.T) {
 	}
 }
 
-// A plain (non-workspace) package directory checks its entry module.
 func TestCheckPlainPackageDir(t *testing.T) {
 	root := writeCheckTree(t, map[string]string{
 		"fern.toml": "[package]\nname = \"solo\"\n",
@@ -75,7 +70,6 @@ func TestCheckPlainPackageDir(t *testing.T) {
 	}
 }
 
-// An application package (main.fern, no lib.fern) is checked via main.
 func TestCheckPlainPackageAppEntry(t *testing.T) {
 	root := writeCheckTree(t, map[string]string{
 		"fern.toml": "[package]\nname = \"app\"\n",
@@ -86,7 +80,6 @@ func TestCheckPlainPackageAppEntry(t *testing.T) {
 	}
 }
 
-// A single .fern file argument keeps the original single-entry behavior.
 func TestCheckSingleFileUnchanged(t *testing.T) {
 	root := writeCheckTree(t, map[string]string{
 		"prog.fern": "function main(): i32 { return 0; }",
@@ -96,7 +89,6 @@ func TestCheckSingleFileUnchanged(t *testing.T) {
 	}
 }
 
-// A directory with no fern.toml is a clear error (not a silent pass).
 func TestCheckBareDirErrors(t *testing.T) {
 	if err := runCheckTarget(t.TempDir(), ""); err == nil {
 		t.Fatal("a directory with no fern.toml should error")

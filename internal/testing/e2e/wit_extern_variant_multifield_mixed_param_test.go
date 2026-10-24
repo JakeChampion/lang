@@ -12,21 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExternVariantMultiFieldMixedParamCustomProvider is the *general* multi-field
-// `variant` *parameter* gate (docs/WIT-BRING-YOUR-OWN.md): a Fern enum whose cases
-// carry more than one payload AND whose fields are mixed-width / float — `enum Ev {
-// Move(i32, i64), Spin(f32, f64), Stop }` — passed to an `@import` extern taking the
-// WIT `variant ev { move(tuple<s32, s64>), spin(tuple<f32, f64>), stop }`.
-//
-// The canonical join is computed position-wise: slot0 = join(s32, f32) = i32,
-// slot1 = join(s64, f64) = i64. So the flattened param is (disc:i32, s0:i32,
-// s1:i64). The Move arm's fields pass directly (i32, i64); the Spin arm's f32 occupies
-// the i32 slot as its raw bits and its f64 occupies the i64 slot as its raw bits —
-// the provider recovers them with f32.reinterpret_i32 / f64.reinterpret_i64.
-//
-// `take: func(e: ev) -> s32`: Move(a,b) → a + b*1000, Spin(f,d) → trunc(f) +
-// trunc(d)*1000 + 500000, Stop → -1. The Fern side passes Move(5,7), Spin(2.0,3.0),
-// Stop, each weighted so a wrong slot width / coercion fails.
 func TestExternVariantMultiFieldMixedParamCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -53,8 +38,6 @@ func TestExternVariantMultiFieldMixedParamCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export sink; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// take receives the variant flattened to (disc:i32, s0:i32, s1:i64). For Spin
-	// the i32/i64 slots carry the f32/f64 bits, recovered via reinterpret.
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)
   (func (export "local:test/sink@0.1.0#take") (param $disc i32) (param $s0 i32) (param $s1 i64) (result i32)

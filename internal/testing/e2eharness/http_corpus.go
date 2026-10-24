@@ -11,19 +11,14 @@ import (
 	"testing"
 )
 
-// HTTPCorpusCase is one request of the parser corpus under
-// internal/testing/e2e/testdata/http-corpus: the wire bytes of an upstream parser's
-// test fixture, what that parser made of them, and what std/http's parser
-// is pinned to make of them.
 type HTTPCorpusCase struct {
 	Name     string
-	Kind     string // the upstream fixture's mode, e.g. `request-lenient-headers`
-	Upstream string // ok, error or partial, as the upstream test expects
+	Kind     string
+	Upstream string
 	Wire     []byte
-	Verdict  string // std/http's pinned answer; empty when not yet recorded
+	Verdict  string
 }
 
-// HTTPCorpusCases reads every corpus file under dir, in file then line order.
 func HTTPCorpusCases(t *testing.T, dir string) []HTTPCorpusCase {
 	t.Helper()
 	files, err := filepath.Glob(filepath.Join(dir, "*.txt"))
@@ -65,11 +60,6 @@ func HTTPCorpusCases(t *testing.T, dir string) []HTTPCorpusCase {
 	return cases
 }
 
-// HTTPCorpusSource is a program that parses each case with
-// `http_parse_request_framed` and prints its name and verdict, one line
-// each, in corpus order. The wire arrives hex-encoded so no byte has to
-// survive a string literal, and a path is printed with every byte outside
-// visible ASCII as `%XX`, so a verdict is one printable line.
 func HTTPCorpusSource(cases []HTTPCorpusCase) string {
 	var b strings.Builder
 	b.WriteString(`import "std/http";
@@ -152,8 +142,6 @@ function main(): i32 {
 	return b.String()
 }
 
-// HTTPCorpusDiff names each case whose measured line differs from its
-// pinned one, with both, or the shape mismatch when the line counts do.
 func HTTPCorpusDiff(cases []HTTPCorpusCase, got string) []string {
 	lines := strings.Split(strings.TrimRight(got, "\n"), "\n")
 	if len(lines) != len(cases) {

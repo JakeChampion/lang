@@ -10,9 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The wasm leg of the std/crypto and std/tls suites, which the stdtest
-// differential runs on x86-64 and arm64: each component's TAP output must
-// match the interpreter's byte for byte.
 func TestSelfHostCryptoSuitesWasm(t *testing.T) {
 	wasmtime := e2eharness.Wasmtime(t)
 	cli := buildSelfHostCLI(t)
@@ -35,8 +32,6 @@ func TestSelfHostCryptoSuitesWasm(t *testing.T) {
 	}
 }
 
-// RFC 7748 §5.2's iterated vector at 1,000 steps, compiled: too slow for the
-// interpreter suite, and the strongest single check of the field arithmetic.
 func TestSelfHostX25519Iterated1000(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := filepath.Join(t.TempDir(), "main.fern")
@@ -78,9 +73,6 @@ function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
 	}
 }
 
-// The std/crypto/ecdsa suite, compiled on all three targets. Its verifications
-// run on core/bigint and take the interpreter minutes, so it is not a stdtest
-// differential case; each target must pass every case instead.
 func TestSelfHostECDSASuite(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := langSrcAbs(t, "tests/stdlib/ecdsa_test.fern")

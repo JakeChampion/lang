@@ -6,9 +6,6 @@ import (
 	"testing"
 )
 
-// TestTableIsCurrent fails when the table checked into std/tz is not what
-// the generator makes from the pinned release: a hand edit, a generator
-// change that was not rerun, or a tzdata bump that was not regenerated.
 func TestTableIsCurrent(t *testing.T) {
 	path := filepath.Join("..", "..", "..", TzFern)
 	src, err := os.ReadFile(path)
@@ -24,8 +21,6 @@ func TestTableIsCurrent(t *testing.T) {
 	}
 }
 
-// TestRecordsRoundTrip decodes every encoded record back to the zone it
-// came from, the reading std/tz's decode_record mirrors.
 func TestRecordsRoundTrip(t *testing.T) {
 	files, err := Load()
 	if err != nil {

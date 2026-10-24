@@ -3,12 +3,6 @@ import "std/pvec" as pvec;
 import "std/option";
 import "std/i32";
 
-// tests/stdlib/pvec_test.fern — pure-Fern coverage of std/pvec, the
-// persistent vector (32-way trie + tail). The essential contracts
-// exercised here are STRUCTURAL SHARING (a snapshot taken before a
-// write is unchanged after it), the trie / tail invariants across every
-// growth and shrink boundary (`is_valid` after each append and pop
-// through several trie levels), and index order everywhere.
 function test_new_is_empty(): test.TestOutcome {
   let v: pvec.PVec[i32] = pvec.pvec_new();
   if (!v.is_empty() || v.len() != 0) {
@@ -69,7 +63,6 @@ function test_with_is_persistent(): test.TestOutcome {
     }
     i = i + 1;
   }
-  // Out-of-range writes are no-ops.
   return test.assert_eq(v.with(5000, 1).len(), 1500);
 }
 
@@ -119,7 +112,6 @@ function test_pop(): test.TestOutcome {
   if (!v.is_empty() || full.len() != 1100 || !full.is_valid()) {
     return test.fail("snapshot after pops");
   }
-  // Popping an empty vector is None; appending again works.
   if (v.pop().is_some()) {
     return test.fail("pop on empty");
   }

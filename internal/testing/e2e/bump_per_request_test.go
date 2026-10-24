@@ -11,18 +11,12 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// #9853's per-request gate, bump half, through the Go compiler on both
-// native targets: 100k requests on one keep-alive connection, and the bump
-// high-water mark a tenth of the way in is the one at the last request.
-// The self-host twin is TestSelfHostBumpPerRequest.
 func TestBumpPerRequest(t *testing.T) {
 	compiler := buildFernCLI(t)
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {
 			rounds := e2eharness.BumpPerRequestRounds
 			if target == "arm64-linux" && arm64QemuOrEmpty(t) != "" {
-				// Under qemu one request costs about a millisecond; a tenth
-				// of the count still warms the free lists ten times over.
 				rounds /= 10
 			}
 			bin := buildNativeServer(t, compiler, target, e2eharness.BumpPerRequestServerSource())
@@ -32,9 +26,6 @@ func TestBumpPerRequest(t *testing.T) {
 	}
 }
 
-// The Go compiler's twin of TestSelfHostServeListenFailure: a server on a
-// port something else holds exits 98 and says why, from the single loop
-// and from the supervisor alike.
 func TestServeListenFailure(t *testing.T) {
 	compiler := buildFernCLI(t)
 	for _, supervised := range []bool{false, true} {
@@ -46,8 +37,6 @@ func TestServeListenFailure(t *testing.T) {
 	}
 }
 
-// heldLoopbackPort answers a port a listener of the test's holds until the
-// test ends, on every interface, as a server's own listen would bind it.
 func heldLoopbackPort(t *testing.T) int {
 	t.Helper()
 	held, err := net.Listen("tcp", "0.0.0.0:0")
@@ -58,7 +47,6 @@ func heldLoopbackPort(t *testing.T) int {
 	return held.Addr().(*net.TCPAddr).Port
 }
 
-// buildNativeServer compiles src with the Go compiler for target.
 func buildNativeServer(t *testing.T, compiler, target, src string) string {
 	t.Helper()
 	dir := t.TempDir()

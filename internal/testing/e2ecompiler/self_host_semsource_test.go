@@ -1,3 +1,4 @@
+// CI-DARK: FERN_UPDATE_GOLDEN — This flag regenerates the reference data.
 package e2ecompiler
 
 import (
@@ -11,12 +12,6 @@ import (
 
 	"github.com/jakechampion/lang/internal/envflag"
 )
-
-// The checked-source producer (semsource.fern) is the typed frontend import of
-// the self-hosted pre-RC pipeline: checked syntax in, verified semantic values
-// out. The print driver pins the produced graphs, types and parameter modes;
-// the executable driver runs the whole program through the unit planner and
-// physical RC lowering on every target.
 
 const semsourcePrintFixture = `
 import "std/string";
@@ -852,10 +847,6 @@ function main(): i32 {
 }
 `
 
-// The inference over a call cycle. `same` and `same_all` read their
-// parameters and call each other; a fixpoint seeded consumed kept both
-// counted, since each kept the other's parameters carried. `keep` stores its
-// parameter and is counted.
 const semsourceInferFixture = `
 struct Arr { elem: Ty }
 struct Tup { elements: Ty[] }
@@ -970,10 +961,6 @@ func TestSelfHostSemanticSourcePrint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("print driver: %v\n%s", err, got)
 	}
-	// CI-DARK: FERN_UPDATE_GOLDEN — a regeneration tool, not coverage: it
-	// rewrites the golden from the driver's output before the compare, so a
-	// lane setting it would disable this gate. The compare below is the CI
-	// behaviour.
 	if envflag.On("FERN_UPDATE_GOLDEN") {
 		if err := os.WriteFile("testdata/semsource_print.golden", got, 0o644); err != nil {
 			t.Fatal(err)
@@ -988,10 +975,6 @@ func TestSelfHostSemanticSourcePrint(t *testing.T) {
 	}
 }
 
-// goldenDiff reports the first differing line with a window either side.
-// Printing the whole output instead buries the one changed line in several
-// thousand, and the reader's next move is to extract it from the CI log and
-// diff it by hand.
 func goldenDiff(want, got string) string {
 	w, g := strings.Split(want, "\n"), strings.Split(got, "\n")
 	at := 0
@@ -3876,122 +3859,6 @@ function main(): i32 {
 }
 `
 
-// tally(1): unwrap(q) = xs[0] = 1; keep = q → 1; unwrap(r) = n + xs[1] = 2 + 3 = 5 → 7.
-// tally(5): 5 + unwrap(r) (6 + 7 = 13) + 13 → 31.
-// sum_shapes(4): Dot 0, Line(1) 10, Full([2, 3]) 3, Pair(3, [3]) 6, plus the kept Full: 22.
-// A total match closes a value-returning body with no trailing return, and its
-// last arm carries no test: shape_code(Pair(3, [3])) = 3 + 1 = 4,
-// eat_shape(Full([2, 3])) consumes its own parameter for 2 + 2 = 4, and
-// node_tag over the struct-union narrows a Leaf for 7 — tag_probe(0) is their
-// 15. shape_codes(4) runs the first two over a fresh Shape per step —
-// 1 + 3 + 6 + 13 = 23 — and closes with node_tag(Twig([4, 5])) = 4, for 27.
-// boxed_shape(3): Pair takes the wildcard 7, Full([3]) 3: 10; boxed_shape(0): 7 + 0.
-// node_sum(3): Leaf 7, Twig([1,2]) 2, Twig([2,3]) 3, plus the kept Twig 2 = 14.
-// node_sum(1): the Leaf 7 only, plus the kept Leaf { n: 0 } = 7.
-// build_sum(1): u is Fork(Fork(Tip 1, Tip 2), Tip 3) = 6, plus its shared
-// subtree t = 3 → 9; build_sum(0): 3 + 1 = 4. A Fork field is typed by the
-// union that owns Fork, so Tree reaches itself and only a helper can drop it.
-// chain_build(2): Link(3, Link(2, End)) = 5, plus the shared tail d = 2 → 7;
-// chain_build(0): 1 + 0 = 1. Chain is the recursive DECLARED enum, the layout
-// the compiler's own sources never exercise.
-// mk_s2(4).a = 4: a struct with no reference field, so the caller releases it
-// with the box dec alone.
-// The shared projection is 8: w.s.a stays 1 because the reuse demand on a
-// shared donor forks to a fresh box rather than writing through, c.a = 5 and
-// d.b = 2. This is the path the bare-name row makes reachable, and the guard
-// that keeps it safe lives in the reuse emitters, not in the row's gate.
-// size_of(fill(2)) = 3 and sum_all = 2 + 3 + 4 = 9; fresh_size(1) = 3 + 4 = 7;
-// eat_size(fill(5)) = 3; "hello" is 5 bytes; grown_size(3) is "abccc" = 5 and
-// grown_size(0) is "ab" = 2; inner_size reads [1, 2] = 2 from a P literal
-// main owns.
-// grow_to(9) is [0..8]: 9 long, summing to 36; grow_to(0) is empty.
-// borrow_acc(g, 3) is 12 and g is still 9 long afterwards.
-// The not-moved receivers all copy: push_borrowed over fill(2) sums 18 and
-// leaves bxs 3 long, set_borrowed sums 16 and leaves bxs[0] at 2,
-// push_field_len is 3 and 2, set_field_at 7 and 1, elem_push 3 and 2,
-// push_kept 4 and 3, build_rows [0..3] and word_lens 3 words of which the
-// pushed one is 3 bytes, word_set a 4-byte replacement over a 2-byte element.
-// push_temp(1) pushes onto [1, 2, 3] for 4. row_total(4) reads element 0 of
-// fill(0..3) = 0+1+2+3 = 6; word_bytes(3) is three "wx" at 2 bytes = 6.
-// The for-loop tail runs over lens = fill(2) = [2, 3, 4]: sum 9; skip_two drops
-// the 2 for 7; until_two_for breaks at once for 0; first_gt past 2 is 3;
-// shadow_for is 9 plus the outer x of 100; temp_for(2) sums [2, 3, 4] again.
-// The cell shapes: slot_pair lends its own Slot to slot_share, which retains
-// the cell into a fresh Slot it consumes for 3 + 1 = 4, then consumes its own
-// for 3 — 7, with the cell released twice and freed once. note_pair is the
-// same over a string cell: 5 + 2 = 7 then 5, for 12. held_n(Bare(6)) takes the
-// payload-free arm for 6, and slot_held binds its Slot's cell, retains it into
-// a Celled payload, drops the Slot and consumes the payload for 8 + 1 = 9.
-// nested_for(3) walks [0,1,2], [1,2,3], [2,3,4] skipping every 1 and breaking
-// at the 4: 2 + (2+3) + (2+3) = 12. copy_words(2) is 2 words of 2 bytes = 4,
-// and an empty array iterates zero times.
-// shift_by(4, 5) adds the captured 4 to 5 for 9; shift_loop(3, 4) builds one
-// box per step and sums 3 * (0+1+2+3) = 18; pick_shift(2, 3) takes the second
-// arm for (3-2) + (0-2) = -1 and pick_shift(2, 1) the first for 3 + 2 = 5.
-// The wide elements answer in units of 2^32: wide_lit_sum(5e9) sums 25000000001
-// for 5, wide_grow(2^32, 6) sums six steps from 2^32 for 6 and wide_grow(_, 0)
-// is 0, and wide_copy_set replaces element 1 of a shared [1, 2^32, 3] with 2^33
-// for (2^33 + 2^32) >> 32 = 3. The float elements: float_lit_sum(1.5) sums
-// [1.5, 3.0, 2.5] for 70, float_grow(0.5, 5) replaces the 0.5 with 2.0 and
-// doubles 14.0 for 28, and float_grow(2.0, 1) doubles the replaced 8.0 for 16.
-// The u64 elements answer the same way at the same slot: uwide_lit_sum(5e9)
-// is 5, uwide_grow(2^32, 6) is 6, and uwide_copy_set is 3.
-// The wide TUPLE elements: wide_pair_sum(5e9) takes 15e9 >> 32 for 3 and adds
-// the narrow 7 beside it for 10, and float_pair_sum(2.5) takes the 5.0 and the
-// two bytes of the string element beside it for 7.
-// The unsigned tail, every value chosen so a signed opcode gives a DIFFERENT
-// number: 4294967295u32 is above 1 (1), divides by 3 to 1431655765 and leaves
-// 3 mod 7, shifts right by 28 to 15 rather than to -1, masks to the byte 255
-// and reinterprets as the i32 -1; 65536 * 65536 wraps to 0 at 2^32; -1 widens
-// into the u32 whose top byte is 255; the u32 converts to the f64 4294967295,
-// a millionth of which truncates to 4294, and 3e9 truncates back into the u32
-// 3000000000, an eighth of a kibi of which is 11718750. At 64 bits 2^63 is
-// above 1 (1), divides by 10^15 to 9223 and leaves 854775808 mod 10^9, shifts
-// right by 60 to 8; -1 sign-extends into a u64 whose top nibble is 15 where a
-// u32's 4294967295 zero-extends to a value 255 after a 24-bit shift; 2^63 +
-// 12345 keeps only the 12345 in its low word, 771 after a 4-bit shift; the u64
-// converts to the f64 2^63, a quadrillionth of which is 9223; and 10^19
-// truncates back into the u64 whose high word is 2328306436 — the i32 print
-// of which is -1966660860, where a signed truncation would have clamped at
-// INT64_MAX and printed 2147483647.
-// map_vstr overwrites "ab" with "cdabcd" and adds "cd" -> "ab", so the reads
-// are 6 + 2 and the miss answers its 2-byte default: 10. map_vwords overwrites
-// the two-element value at "ab" with a one-element one, and its miss answers a
-// one-element default: 1 + 1 = 2. Both columns are counted, so every value the
-// overwrite supersedes is released with the map rather than left behind.
-// points(65) fills a char[] of its own with 65 and 66 and sums them for 131,
-// with the box freed on the way out; point_eq(65) takes the inequality arm
-// for 2, char having no ordering to take.
-// The string comparisons: "ab" is under "b" (1 + 2 = 3), "b" over it
-// (4 + 8 = 12), and a string is under-or-equal and over-or-equal itself
-// (2 + 8 = 10). Two views of one string order by the bytes they point at, and
-// a concatenation this function owns orders before it is released.
-// The cross-type pairings: cross_loop(4) reads each Glyph's second element
-// plus 100 for 103 + 104 + 105 + 106 = 418, cross_back(5) rebuilds a Mote in
-// a Glyph's box for 10, and cross_wide(3) offers a two-field donor to a
-// three-field construction, which the runtime declines, for 5 + 5 + 2 = 12.
-// The tuple forms: tuple_loop(4) sums 2i + 5 over i = 0..3 for 32,
-// tuple_from_rec(3) is 5 + 2 + 6 = 13 and rec_from_tuple(5) is 13 + 2 = 15.
-// empty_push(10) is ten allocations and 0 + 1 + ... + 9 for 10045.
-// The append chains: chain_fill(100) is 400 elements and no copies for 4000,
-// chain_kept(4) is 200 + 60 + 2 = 262, chain_words_run(5) is 18 words, 15
-// held and a last "xc" for 18152, and chain_tail_run(7) is 5 elements ending
-// in 8, then the caller's 3 for 5083.
-// reread_one(spare(5)) keeps b at 5 beside c's 6 for 56, and reread_chain
-// keeps b at 5 ending in 4 beside d's 7 for 574. reread_loop keeps b at 5
-// across both turns for 50.
-// loop_fill(100) is 400 bytes and no copies for 4000. loop_kept holds "abc"
-// ending in 'c' (99) beside "abcde" for 300 + 50 + 0 = 350. loop_early_run(9)
-// calls with n = 0,1,2,3,0,1,2,3,0, adding 1, 2, 3 and 2 elements per round
-// of four (n = 3 returns at i == 2), 2 * 8 + 1 = 17 ending in "end" for 173.
-// loop_drop(spare(5),
-// 4) sums 6 + 7 + 8 + 9 = 30.
-// loop_pre_fill(50) is 100 elements and no copies for 1000; loop_skip_run(6)
-// is 12 words held and 14 after for 1412; loop_inside(spare(5), 3) is
-// 0 + 1 + 2 + 3 + 4 plus three 5s for 25. sib_steal(4) reads three elements
-// through the record beside its id for 34. views_kept(7) reads "ab7", "cde7" and
-// "ghi7" through views of strings dead at their calls: 300 + 40 + 4, plus
-// 'c' - 'g' = -4, for 340.
 const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n12\n9\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n3\n9\n3\n4\n4\n5\n3\n5\n5\n0\n3\n1\n0\n10\n-2147483648\n0\n28\n8\n-20\n2\n6\n3\n7\n6\n4\n10\n9\n98\n196\n98\n98\n97\n97\n195\n0\n0\n2\n144\n1\n1\n1\n44\n65\n65\n90\n128\n0\n1\n35\n35\n705032739\n1\n3\n1\n2\n1\n40\n1\n0\n625\n38\n30\n3\n3\n25\n150\n0\n-1\n1\n10\n10\n5000\n6\n9\n10\n4\n5\n6\n0\n3\n5\n6\n3\n10\n7\n70\n28\n16\n21\n8\n5\n12\n7\n5\n5\n6\n42\n3\ntick\n2\n1\n5\n2\n11\n-2\n3\n0\n6\n9\n48\n4224\n0\n3\n2\n13\n12\n16\n0\n8\n11\n5\n9\n-3\n2\n9\n18\n-1\n5\n18\n3\n16\n2\n32\n71\n32\n43\n43\n332\n42\n15\n27\n0\n15\n0\n0\n4\n4\n2\n0\n3\n-1\n1\nA66\n2\n0\n0\n0\n0\n0\n7\n12\n6\n9\n1\n1431655765\n3\n15\n0\n255\n-1\n255\n4294\n11718750\n1\n9223\n854775808\n8\n15\n255\n771\n9223\n-1966660860\n3\n12\n10\n1\n0\n1\n13\n6\n6\n1\n23\n5\n1\n3\n1\n2\n3\n2\n3\n2\n5\n0\n2\n4\n3\n17\n7\n13\n8\n6\n6\n17\n8\n1\n1\n7\n1\n0\n1\n0\n7\n8\n5\n6\n3\n6\n16777216\n1036831949\n1266679808\n1056964609\n1\n1077936128\n14\n6\n15\n13\n4\n7\n9\n397\n15\n10\n0\n20\n0\n21\n8\n18\n131\n2\n67\n7\n5\n1\n0\n10\n2\n51\n234\n9\n4743\n61\n121\n12\n210\n13\n-2147452531\n11\n0\n15\n8\n-1\n255100\n-7\n4\n224\n223\n22\n11\n1804\n642\n94\n915\n152\n50128\n85\n3\n101\n205\n0\n1004\n14\n3\n7\n1\n18\n7\n8\n10\n40\n4\n2\n7\n0\n11\nelem!\n5\nelem\n4\n48\n12\npt:pt\n5\npt\n2\n5\n12\n107\n34\n12\n3\n9\n42\n50\n1072\n13\npt!\n6\n9\n17\n14\n3\n9\n3\n6\n6\n4\nob\nob\nob\n13\n2\n60\n9\n50\n36\n1\n2\n72\n17\n418\n10\n12\n32\n13\n15\n10045\n4000\n262\n18152\n5083\n56\n574\n50\n4000\n350\n173\n30\n1000\n1412\n25\n34\n340\n"
 
 const semsourceRCDriver = `import "./parser"; import "./lexer"; import "./checker"; import "./asm_ir"; import "./asm_arm64_ir"; import "./wasm_ir"; import "./util";
@@ -4036,10 +3903,6 @@ function main(): i32 {
 }
 `
 
-// inScratchDir runs the program in a fresh directory of its own, so the
-// writers it exercises touch nothing else: the working directory for a native
-// run, and the one preopened directory for wasm, where a relative path
-// resolves against the first preopen.
 func inScratchDir(t *testing.T, run *exec.Cmd, target string) *exec.Cmd {
 	t.Helper()
 	scratch := t.TempDir()
@@ -4050,8 +3913,6 @@ func inScratchDir(t *testing.T, run *exec.Cmd, target string) *exec.Cmd {
 	return run
 }
 
-// semsourceProgram writes program into a directory of its own with the
-// stdlib staged beside it, which is where the driver resolves its imports.
 func semsourceProgram(t *testing.T, program string) string {
 	t.Helper()
 	progDir := t.TempDir()
@@ -4086,10 +3947,6 @@ func TestSelfHostSemanticSourceRC(t *testing.T) {
 				t.Fatalf("semantic lowering: %v\n%s", err, diagnostics.String())
 			}
 			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum", "leaf", "fork", "tree_sum", "build_sum", "chain_len", "chain_build", "mk_s2", "proj", "total", "make_counter", "twice_total", "size_of", "eat_size", "fresh_size", "text_size", "inner_size", "sum_all", "grown_size", "grow_to", "push_temp", "borrow_acc", "push_borrowed", "set_borrowed", "push_field_len", "set_field_at", "push_elem_len", "elem_push", "push_kept", "build_rows", "push_word", "word_lens", "set_word_borrowed", "word_set", "words", "word_bytes", "rows", "row_total", "sum_for", "skip_two", "until_two_for", "first_gt", "shadow_for", "temp_for", "nested_for", "copy_words", "head_of", "mid_of", "temp_slice", "scan_slices", "grown", "boxed_len", "deep_len", "paired_len", "longs_len", "span_len", "div_of", "rem_of", "bit_ops", "shifts", "int_min", "ratio_of", "bump", "pure_copy", "reorder", "from_temp", "retag", "nested_up", "out_of_order", "byte_at", "first_last", "temp_byte", "outlives", "checksum", "byte_wrap", "byte_shift", "byte_mask", "wide_wrap", "wide_mul", "narrow", "upper", "wide_shift", "wide_product", "wide_low", "wide_byte", "wide_narrow", "wide_neg", "wide_count", "wide_hex", "wide_cmp", "wide_div", "wide_of", "wide_hi", "wide_call", "view_len", "copied", "scan_views", "lent_views", "view_of_temp", "scale", "ratio", "float_cmp", "float_loop", "float_call", "wide_float", "wide_fields", "span_wide", "mk_wide", "mk_span", "wide_lit", "wide_sum", "wide_lit_sum", "wide_grow", "wide_set", "wide_copy_set", "uwide_lit", "uwide_sum", "uwide_lit_sum", "uwide_grow", "uwide_set", "uwide_copy_set", "wide_pair", "wide_pair_sum", "float_pair", "float_pair_sum", "float_arr", "float_sum", "float_lit_sum", "float_grow", "set_at", "fill_squares", "copy_set", "set_word", "word_swap", "shared_word", "set_p", "halves", "unpack", "unpack_discard", "unpack_words", "based", "tagged", "tick", "ticked", "built", "find_byte", "bump_each", "line_each", "word_recs", "dbl", "negate", "apply_int", "call_twice", "head_of_arr", "apply_arr", "lend_array", "text_len", "apply_text", "lend_text", "boxed_of", "apply_box", "drop_box", "box_via", "pick_fn", "shift_by", "shift_loop", "pick_shift", "shape_code", "eat_shape", "node_tag", "tag_probe", "shape_codes", "env_len", "touch_env", "read_len", "dir_count", "wrapped_len", "drop_opt", "pick_opt", "mk_result", "has_args", "emit_byte", "bits_to_int", "underflow_now", "bytes_len", "stat_seen", "lstat_seen", "shared_pushes", "slot_n", "note_n", "held_n", "slot_share", "note_share", "slot_pair", "note_pair", "slot_held", "u32_cmp", "u32_div", "u32_rem", "u32_shift", "u32_wrap", "u32_widen", "u32_signed", "u32_byte", "u32_float", "u32_of_f64", "u64_cmp", "u64_div", "u64_rem", "u64_shift", "u64_from_i32", "u64_from_u32", "u64_narrow", "u64_float", "u64_of_f64", "ord_bits", "ord_view", "ord_temp", "add_at", "or_over", "fold_acc", "fold_twice", "fold_loop", "folded_sum", "folded_twice", "folded_loop", "folded_flag", "held_across", "keep_words", "add_word", "fold_words", "words_kept", "words_grown", "words_lambda", "words_held", "pick_len", "pick_word", "pick_word_len", "pick_kept", "pick_flip", "pick_nested", "cap_text", "cap_words", "cap_pick", "cap_loop", "cap_held", "cap_rec", "made_dir", "wrote", "unlinked", "removed", "cell_count", "cell_share", "cell_words", "cell_wide", "cell_float", "cell_closure", "f32_round_int", "f32_lit_bits", "f32_sum_bits", "f32_field", "f32_cmp", "f32_from_int", "buf_text", "buf_handle_round", "via_cap", "cap_fn", "map_tally", "map_words", "map_eat", "map_hand", "alloc_bytes", "scan_temp", "addr_walk", "addr_order", "addr_text", "addr_eq", "float_bits", "wide_some", "wide_maybe", "float_some", "float_maybe", "mixed_res", "wide_or_text", "text_methods", "points", "point_eq", "map_vstr", "map_vwords", "acc_push", "acc_push_own", "acc_fill", "acc_kept", "acc_loop", "tags_add", "tags_total", "acc_osz", "acc_via", "acc_via_fill", "acc_via_kept", "acc_via_shared", "thread_step", "thread_run", "thread_shared", "sat_mix", "chk_count", "chk_wide", "sat_byte", "chk_unsigned", "vb_words", "vb_rows", "lit_of", "lit_int", "churn", "lit_bytes", "set_kept", "fill_field", "set_shared_field", "set_word_field", "word_field_set", "map_ints", "map_int_words", "map_get_hit", "map_get_int", "opt_has", "opt_words", "lam_inferred", "lam_text", "float_bound", "map_lit_words", "show", "show_pt", "labelled_sum", "inc_by", "inc_calls", "nested_arms", "mk_out", "nested_case", "guarded_pick", "guarded_words", "for_pairs", "mk_dp", "struct_unpack", "at_unpack", "nested_unpack", "guarded_and", "qualified_pick", "assoc_make", "tm_word", "tm_show", "tm_sum", "tm_words", "sm_pick", "sm_show", "map_vrec", "map_venum", "map_varr", "checked_head", "checked_mid", "checked_temp", "checked_miss", "checked_split", "checked_scan", "open_base", "open_window", "try_even", "try_quarter", "try_opt", "try_head", "try_view", "try_parse", "try_msg", "try_loop", "tick_ns", "napped", "reused_step", "reuse_loop", "reuse_shared", "sigil_code", "cross_step", "cross_back", "cross_back_code", "cross_loop", "cross_wide", "tuple_step", "tuple_loop", "tuple_from_rec", "rec_from_tuple", "empty_push", "chain_le32", "chain_fill", "chain_kept", "chain_words", "chain_words_run", "chain_tail", "chain_tail_run", "reread_one", "reread_chain", "reread_loop", "spare", "loop_raw", "loop_fill", "loop_kept", "loop_early", "loop_early_run", "loop_drop", "loop_pre", "loop_pre_fill", "loop_skip", "loop_skip_run", "loop_inside", "sib_read", "sib_steal", "view_of", "view_via", "tail_of", "views_kept", "print_int"} {
-				// A method is keyed by its receiver type, `Counter.total`, a
-				// generic function is monomorphised before lowering, so it is
-				// produced as its instances, `fold_acc__i32`, and one spliced
-				// into every caller is produced there.
 				d := diagnostics.String()
 				if !strings.Contains(d, "produced "+name+"\n") && !strings.Contains(d, "."+name+"\n") && !strings.Contains(d, "produced "+name+"__") && !strings.Contains(d, "spliced "+name+"\n") {
 					t.Fatalf("%s was not produced:\n%s", name, d)
@@ -4106,11 +3963,6 @@ func TestSelfHostSemanticSourceRC(t *testing.T) {
 			if !strings.HasPrefix(string(got), semsourceRCWant) {
 				t.Fatalf("program output:\n%s", got)
 			}
-			// Everything the program prints has to be in the want above. The
-			// prefix is what lets the leak-check summary follow it, and it also
-			// means a print appended to main without a value appended here is
-			// asserted by nothing: three fixture sets landed that way before
-			// this check existed, and each read as green.
 			for _, line := range strings.Split(strings.TrimPrefix(string(got), semsourceRCWant), "\n") {
 				if line == "" || strings.HasPrefix(line, "leakcheck:") {
 					continue

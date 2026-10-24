@@ -1,7 +1,7 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Struct holding both a union and an array.
+
+
+
+
 import "core/int";
 import "std/string";
 struct VInt { v: i32 }

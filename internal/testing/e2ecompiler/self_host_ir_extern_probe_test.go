@@ -9,18 +9,12 @@ import (
 	"testing"
 )
 
-// TestSelfHostIRExternProbe pins how `asm_ir_run -ir-probe` judges a call into
-// a sibling module of a per-module build (#3451). The typed lowering checks a
-// whole program, so the probe lowers the module together with the siblings
-// `-ir-sigs` names: a call to a function one of them defines is produced, and a
-// call to a name none of them defines is the checker's undefined-name error.
 func TestSelfHostIRExternProbe(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostFiles(t, dir, "asm_arm64_ir.fern", "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "airun")
 
-	// probe runs `<driver> -ir-probe [extra...]` with prog on stdin.
 	probe := func(t *testing.T, prog string, extra ...string) string {
 		t.Helper()
 		args := append([]string{"-ir-probe"}, extra...)

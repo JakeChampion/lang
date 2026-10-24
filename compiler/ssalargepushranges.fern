@@ -1,7 +1,3 @@
-// Input partitions and an independent ordered-bin specification for large
-// recycling. These records are mathematical data, not instruction effects or
-// ownership certificates. The unsigned oversized family is deliberately not
-// represented by a signed interval here.
 import "core/cmp";
 
 pub struct Interval { low: i32, high: i32 }
@@ -10,8 +6,6 @@ pub function valid(r: Interval): boolean {
   return r.low >= 0 && r.low <= r.high && r.high <= 1073741824;
 }
 
-// Ascending capacities: four quarter-power bins per octave, ending at 1 GiB.
-// This specification does not compute the instruction sequence's class.
 pub function capacities(): i32[] {
   let result: i32[] = [];
   let quarter = 131072;
@@ -46,8 +40,6 @@ pub function expected_class(r: Interval): i32 {
   return if (low == class_at(r.high, bins)) { low } else { -1 };
 }
 
-// Split each independent bin at original-input highest-bit boundaries. The
-// initial clamp boundary is included even though both sides round alike.
 pub function intervals(): Interval[] {
   let result: Interval[] = [];
   let low = 0;
@@ -76,9 +68,6 @@ function highest(n: i64): i32 {
   return bit;
 }
 
-// Rounded capacity through ceiling division, separate from the machine's
-// negative-mask implementation. Equal monotone endpoint quotients establish
-// the result for every input in the interval, not just sampled endpoints.
 pub function rounded(r: Interval): i64 {
   if (!valid(r)) {
     return -(1 as i64);

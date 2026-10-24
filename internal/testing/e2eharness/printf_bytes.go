@@ -67,7 +67,6 @@ func RunPrintfByteCases(t *testing.T, bin string, runner []string, census func(*
 			argv := append(append(append([]string{}, runner...), bin), tc.Args...)
 			cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 			cmd.Env = append(os.Environ(), "LC_ALL=C", "POSIXLY_CORRECT=")
-			// POSIXLY_CORRECT is tested by presence, so remove it entirely.
 			var env []string
 			for _, v := range cmd.Env {
 				if !strings.HasPrefix(v, "POSIXLY_CORRECT=") {

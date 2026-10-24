@@ -6,17 +6,12 @@ import (
 	"testing"
 )
 
-// `fern-oracle -version` exists because the release channel is a ROLLING
-// tag: without it a user cannot say which build they have, and neither can a
-// bug report.
 func TestVersionStringNamesBinaryGoAndPlatform(t *testing.T) {
 	out := versionString()
 
 	if !strings.HasPrefix(out, "fern-oracle ") {
 		t.Errorf("version output does not name the binary:\n%s", out)
 	}
-	// The Go version and platform are the next two questions anyone
-	// triaging a miscompile asks, so they are printed with the commit.
 	if !strings.Contains(out, runtime.Version()) {
 		t.Errorf("version output omits the Go version %q:\n%s", runtime.Version(), out)
 	}
@@ -25,10 +20,6 @@ func TestVersionStringNamesBinaryGoAndPlatform(t *testing.T) {
 	}
 }
 
-// The build identity is rendered from what ReadBuildInfo supplies, and
-// each of its four shapes has to say something a bug report can use.
-// (Go does not stamp VCS data into `go test` binaries, which is why this
-// tests the rendering rather than calling buildVersion.)
 func TestFormatBuildVersion(t *testing.T) {
 	for _, tc := range []struct {
 		name     string

@@ -5,58 +5,26 @@ import "std/i64";
 import "../../coreutils/lib/pwdb" as pwdb;
 import "../../coreutils/lib/utmp" as utmp;
 
-// tests/stdlib/coreutils_pwdb_test.fern — the two databases whoami,
-// id, groups and logname read.
-//
-// internal/testing/coreutils compares the utilities against GNU on the machine
-// that runs them, which is the right oracle and cannot reach the rules
-// that depend on what is IN the databases: a malformed line, a
-// duplicate name, a gid no group entry claims. Those need a passwd file
-// a test can write, so the lookups take the file's TEXT here and the
-// utilities' own wrappers supply the path.
-//
-// The utmp half is the record layout, which is a table of byte offsets
-// and widths and therefore silent when it is wrong: every field lands
-// inside a buffer the kernel filled and reads a real value out of its
-// neighbour. The fixture is assembled here field by field, and the
-// offsets it writes to were checked against a database util-linux's
-// `utmpdump -r` produced — so a wrong row fails here rather than
-// agreeing with itself.
-
-// A passwd file with every shape the parse has to survive.
 function passwd_fixture(): string {
   let s: string = "";
   s = s + "root:x:0:0:root:/root:/bin/bash\n";
-  // A comment and a blank line are not entries.
   s = s + "# a comment\n";
   s = s + "\n";
-  // Too few fields.
   s = s + "broken:x:7\n";
-  // A uid that is not a decimal, and a gid that is not.
   s = s + "hex:x:0x10:10::/:/bin/sh\n";
   s = s + "nogid:x:11:-1::/:/bin/sh\n";
   s = s + "alice:x:1000:1000:Alice:/home/alice:/bin/sh\n";
-  // A second entry for a name and for a uid already seen: the first
-  // of each is the one a lookup finds.
   s = s + "alice:x:2000:2000::/:/bin/sh\n";
   s = s + "bob:x:1000:1000::/:/bin/sh\n";
-  // The gecos field finger reads: a comma-separated list whose first
-  // element is the real name, and `&` standing for the login name
-  // with its first letter capitalised.
   s = s + "dan:x:1002:1002:Dan Jones,Room 1,x1,x2:/home/dan:/bin/sh\n";
   s = s + "erin:x:1003:1003:& Smith:/home/erin:/bin/sh\n";
   s = s + "frank:x:1004:1004:&&:/home/frank:/bin/sh\n";
   s = s + "gina:x:1005:1005:,nothing before the comma:/home/gina:/bin/sh\n";
-  // A line that stops after the gid is still an entry, with nothing
-  // where the gecos, the directory and the shell would be.
   s = s + "short:x:1006:1006\n";
-  // No trailing newline on the last line.
   s = s + "carol:x:1001:1001::/:/bin/sh";
   return s;
 }
 
-// The tail of the entry pinky prints: the gecos field, the home
-// directory and the shell.
 function user_of(o: Option[pwdb.User]): pwdb.User {
   match (o) {
     Some(u) => {
@@ -110,8 +78,6 @@ function group_fixture(): string {
   s = s + "malformed:x\n";
   s = s + "alice:x:1000:\n";
   s = s + "sudo:x:27:bob,alice\n";
-  // A member list whose entries are prefixes of the name asked for,
-  // and one that is a suffix: neither is a membership.
   s = s + "trap:x:33:ali,alicia,malice\n";
   s = s + "dup:x:4:alice\n";
   s = s + "empty:x:99:\n";
@@ -154,9 +120,6 @@ function test_last_line_without_a_newline(): test.TestOutcome {
   }
 }
 
-// A malformed line is skipped, not fatal: the entries after it are
-// still found, which is what keeps a truncated database a lookup
-// failure rather than an error.
 function test_malformed_lines_are_not_entries(): test.TestOutcome {
   if (!is_none_user(pwdb.user_by_name_in(passwd_fixture(), "broken"))) {
     return test.fail("too few fields");
@@ -197,14 +160,10 @@ function joined(gids: i64[]): string {
   return s;
 }
 
-// getgrouplist's order: the primary gid first, then the memberships in
-// FILE order, with a repeat of one already listed dropped.
 function test_group_list_order(): test.TestOutcome {
   return test.assert_eq(joined(pwdb.group_list_in(group_fixture(), "alice", 1000 as i64)), "1000 4 27");
 }
 
-// A member list is compared entry by entry: a name that is a prefix,
-// an extension or a substring of a member is not a member.
 function test_membership_is_not_a_substring(): test.TestOutcome {
   if (joined(pwdb.group_list_in(group_fixture(), "ali", 5 as i64)) != "5 33") {
     return test.fail("ali is a member of trap only");
@@ -215,8 +174,6 @@ function test_membership_is_not_a_substring(): test.TestOutcome {
   return test.assert_eq(joined(pwdb.group_list_in(group_fixture(), "nobody", 5 as i64)), "5");
 }
 
-// The primary gid leads even when a membership would have put it later,
-// and a membership equal to it is not repeated.
 function test_primary_gid_leads(): test.TestOutcome {
   return test.assert_eq(joined(pwdb.group_list_in(group_fixture(), "alice", 27 as i64)), "27 4");
 }
@@ -241,9 +198,6 @@ function named(names: Option[string][]): string {
   return s;
 }
 
-// The whole point of resolving a list in one pass: a gid no entry
-// claims answers None rather than a name, and the FIRST line with a
-// gid names it — `dup` shares 4 with `adm` and never wins.
 function test_group_names(): test.TestOutcome {
   let gids: i64[] = [0 as i64, 4 as i64, 99999 as i64, 1000 as i64, 99 as i64];
   return test.assert_eq(named(pwdb.group_names_in(group_fixture(), gids)), "root adm ? alice empty");
@@ -254,8 +208,6 @@ function test_empty_gid_list(): test.TestOutcome {
   return test.assert_eq(pwdb.group_names_in(group_fixture(), none).len(), 0);
 }
 
-// parse_id is the files backend's id field: digits and nothing else,
-// and nothing past a 32-bit id.
 function test_parse_id(): test.TestOutcome {
   if (!is_none_id(pwdb.parse_id(""))) {
     return test.fail("empty");
@@ -293,28 +245,10 @@ function is_none_id(v: Option[i64]): boolean {
   }
 }
 
-// ---- utmp -------------------------------------------------------------------
-
-// Two records built with `utmpdump -r`: a USER_PROCESS for alice on
-// pts/3 and a DEAD_PROCESS for tty1, whose fields are what a reader
-// that got an offset wrong would pick up instead.
 function utmp_fixture_path(): string {
   return "coreutils_pwdb_test_utmp.bin";
 }
 
-// One record, written for the layout the RUNNING TARGET reads.
-//
-// Everything up to ut_exit at 332 is the same everywhere. The tail is not:
-// glibc sizes ut_session and ut_tv by __WORDSIZE_TIME64_COMPAT32, so where
-// that is 1 (x86-64) the two fields keep 32-bit widths and the record is
-// 384 bytes with tv_sec at 340, and where it is 0 (arm64) ut_session is a
-// `long` and ut_tv a real struct timeval, so the record is 400 with tv_sec
-// at 344. `lib/utmp.fern` reads whichever the target uses, so a fixture
-// fixed at 384 pins nothing on a target that reads 400 — it hands the
-// reader one and a bit records instead of two.
-//
-// Each branch spells its own offsets out rather than asking the reader for
-// them, so the two layouts stay independently stated here.
 function put_record(bs: u8[], typ: i32, pid: i64, line: string, id: string, user: string, host: string, sec: i64): u8[] {
   let out: u8[] = bs;
   out = put_u16(out, typ);
@@ -325,15 +259,11 @@ function put_record(bs: u8[], typ: i32, pid: i64, line: string, id: string, user
   out = put_field(out, user, 32);
   out = put_field(out, host, 256);
   if (target_arch() == "x86-64") {
-    // ut_exit@332 (two i16) + ut_session@336 (i32), tv_sec@340 (i32),
-    // tv_usec@344, ut_addr_v6@348 and the reserved bytes: 384 total.
     out = put_pad(out, 8);
     out = put_i32(out, sec);
     out = put_pad(out, 4);
     return put_pad(out, 36);
   }
-  // ut_exit@332 (two i16), ut_session@336 (i64), tv_sec@344 (i64),
-  // tv_usec@352 (i64), ut_addr_v6@360 and the reserved bytes: 400 total.
   out = put_pad(out, 12);
   out = put_i64(out, sec);
   out = put_pad(out, 8);
@@ -342,8 +272,6 @@ function put_record(bs: u8[], typ: i32, pid: i64, line: string, id: string, user
 
 function utmp_fixture_bytes(): u8[] {
   let bs: u8[] = [];
-  // Record 1: a USER_PROCESS. Record 2: a DEAD_PROCESS with no user,
-  // which no lookup answers.
   bs = put_record(bs, 7, 1234 as i64, "pts/3", "ts/1", "alice", "10.0.0.1", 1788775872 as i64);
   bs = put_record(bs, 8, 99 as i64, "tty1", "", "", "", 1788775873 as i64);
   return bs;
@@ -448,9 +376,6 @@ function test_utmp_record_fields(): test.TestOutcome {
   return test.assert_eq(es[1].line, "tty1");
 }
 
-// A short tail is not a record, and a file that is not there is no
-// records rather than an error — which is how a container with no
-// login database reads.
 function test_utmp_partial_and_missing(): test.TestOutcome {
   let bs: u8[] = utmp_fixture_bytes();
   let short: u8[] = [];
@@ -471,8 +396,6 @@ function test_utmp_partial_and_missing(): test.TestOutcome {
   return test.assert_eq(utmp.read_all("coreutils_pwdb_test_absent.bin").len(), 0);
 }
 
-// getlogin's question: the USER_PROCESS entry for a terminal. A
-// DEAD_PROCESS on the line asked for is not an answer.
 function test_utmp_user_on_line(): test.TestOutcome {
   if (!write_utmp_fixture()) {
     return test.fail("the fixture could not be written");

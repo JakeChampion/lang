@@ -1,16 +1,6 @@
 import "std/test";
 import "std/net";
 
-// tests/stdlib/net_test.fern — std/net's `is_global`, the predicate
-// behind std/fetch's block list: every block it refuses, by one address
-// in each and one just past its edge, and the IPv6 forms that carry an
-// IPv4 address (IPv4-mapped, NAT64, 6to4), which answer for the address
-// they carry.
-//
-// Run:  fern -interp tests/stdlib/net_test.fern
-
-// `kind(text)` — `global` or `special` for an address, `unparsed` for
-// anything else.
 function kind(text: string): string {
   match (net.ip_parse(text)) {
     Some(a) => {
@@ -26,7 +16,6 @@ function kind(text: string): string {
   return "unparsed";
 }
 
-// `kinds(texts)` — each address's kind, space-separated.
 function kinds(texts: string[]): string {
   let out: string = "";
   for t in texts {
@@ -70,15 +59,10 @@ function test_v6_carrying_a_public_v4_address(): test.TestOutcome {
   return test.assert_eq(kinds(["::ffff:8.8.8.8", "64:ff9b::808:808", "2002:808:808::"]), "global global global");
 }
 
-// 64:ff9b:1::/48, where the operator picks the prefix length: the same
-// 169.254.169.254 laid out under /48, /64 and /96 is special, and
-// 8.8.8.8 under /48 is global.
 function test_local_use_nat64(): test.TestOutcome {
   return test.assert_eq(kinds(["64:ff9b:1:a9fe:a9:fe00::", "64:ff9b:1:0:a9:fea9:fe00:0", "64:ff9b:1::a9fe:a9fe", "64:ff9b:1:808:8:800::"]), "special special special global");
 }
 
-// `carried(text, bits)` — the address `text` carries under a prefix of
-// `bits`, or "none".
 function carried(text: string, bits: i32): string {
   match (net.ip_parse(text)) {
     Some(a) => {
@@ -102,8 +86,6 @@ function test_embedded_v4(): test.TestOutcome {
   return test.assert_eq(carried("64:ff9b::c000:201", 96) + " " + carried("2001:db8:1:2:c0:2:100:0", 64) + " " + carried("64:ff9b:1:a9fe:a9:fe00::", 48) + " " + carried("64:ff9b::c000:201", 50) + " " + carried("192.0.2.1", 96), "192.0.2.1 192.0.2.1 169.254.169.254 none none");
 }
 
-// `quad(text)` — `yes` or `no` from `is_ipv4`, and `!` after it when
-// `ipv4_parse` disagrees.
 function quad(text: string): string {
   let said: string = "no";
   if (net.is_ipv4(text)) {

@@ -1,44 +1,16 @@
 package componenttype
 
-// world_lift.go is P2 slice 1 of bring-your-own WIT
-// (docs/WIT-BRING-YOUR-OWN.md): lift the raw decoded World (the type-tree P1
-// produced) into a queryable per-interface model. P1 proved we can decode and
-// round-trip the component-type binary; P2 starts using it — and the first
-// thing the import classifier and type-import emitter both need is, per
-// imported interface, its exported functions and resources. Later P2 slices
-// resolve full signatures and re-emit the type-import sections.
-
-// WorldInterface is one imported WASI interface of a world: its versioned
-// name plus the functions and resources it exports.
 type WorldInterface struct {
 	Name      string
 	Funcs     []string
 	Resources []string
 
-	// FuncSigs are the exported functions with resolved signatures (P2 slice
-	// 2), parallel in order to Funcs. LocalTypes is the interface's
-	// type-index space: a function param/result Valtype with IsPrim == false
-	// resolves to LocalTypes[Idx] (nil for a slot introduced by a type alias —
-	// i.e. an imported resource handle, which lowers as a scalar).
-	FuncSigs   []WorldFunc
-	LocalTypes []*TypeDef
-	// LocalTypeNames is parallel to LocalTypes: the WIT name of a type slot when
-	// it was introduced by a named type export (`export "thing" (type …)`), else
-	// "". A handle param's `own/borrow <Resource>` indexes here to recover the
-	// resource's name (e.g. "thing"), which the P6 export lift needs to surface
-	// the imported resource (docs/WIT-BRING-YOUR-OWN.md).
-	LocalTypeNames []string
-	// LocalTypeOwners is parallel to LocalTypes: the interface whose type-index
-	// space a slot's definition reads, when a WIT `use` brought the type in from
-	// another interface (an `alias outer` into the world's type slots, which
-	// name that interface's export), else nil for a slot of this interface. A
-	// definition's inner indices resolve against its owner, so a `use`d
-	// variant carrying strings classifies as the heap type it is.
+	FuncSigs        []WorldFunc
+	LocalTypes      []*TypeDef
+	LocalTypeNames  []string
 	LocalTypeOwners []*WorldInterface
 }
 
-// ownerOf returns the interface whose type-index space the slot `idx`'s
-// definition reads: another interface for a `use`d type, else this one.
 func (wi *WorldInterface) ownerOf(idx uint32) *WorldInterface {
 	if int(idx) < len(wi.LocalTypeOwners) && wi.LocalTypeOwners[idx] != nil {
 		return wi.LocalTypeOwners[idx]
@@ -46,32 +18,18 @@ func (wi *WorldInterface) ownerOf(idx uint32) *WorldInterface {
 	return wi
 }
 
-// WorldFunc is an exported function with its decoded signature. Resolve a
-// param/result type index against the owning interface's LocalTypes.
 type WorldFunc struct {
 	Name string
 	Sig  *FuncType
 }
 
-// Interfaces lifts the world's import declarations into per-interface
-// function/resource inventories, in import order. It resolves each import's
-// instance type through the world component's type-index space (which grows
-// on both `type` decls and `type` aliases).
 func (w *World) Interfaces() []WorldInterface {
 	world := w.worldComponent()
 	if world == nil {
 		return nil
 	}
-	// localTypes mirrors the world component's type-index space; entries are
-	// nil for slots introduced by a type alias. slotAliases is parallel: the
-	// alias that introduced a slot, when one did — a WIT `use` is an
-	// `alias export <instance> "name"` here, which an interface's own
-	// `alias outer` then points at.
 	var localTypes []*TypeDef
 	var slotAliases []*Alias
-	// instances are the imported instances in import order, which is the
-	// instance-index space an alias export names; lifted holds each one once
-	// lifted, by name, so a later interface's `use` resolves into it.
 	var instances []string
 	lifted := map[string]*WorldInterface{}
 	var out []WorldInterface
@@ -97,16 +55,16 @@ func (w *World) Interfaces() []WorldInterface {
 	for i := range world.Decls {
 		d := &world.Decls[i]
 		switch d.Kind {
-		case 0x01: // type
+		case 0x01:
 			localTypes = append(localTypes, d.Type)
 			slotAliases = append(slotAliases, nil)
-		case 0x02: // alias
-			if d.Alias != nil && d.Alias.Sort == 0x03 { // type alias occupies a type slot
+		case 0x02:
+			if d.Alias != nil && d.Alias.Sort == 0x03 {
 				localTypes = append(localTypes, nil)
 				slotAliases = append(slotAliases, d.Alias)
 			}
-		case 0x03: // import
-			if d.Extern == nil || d.Extern.Kind != 0x05 { // 0x05 = instance
+		case 0x03:
+			if d.Extern == nil || d.Extern.Kind != 0x05 {
 				continue
 			}
 			instances = append(instances, d.Name)
@@ -122,8 +80,6 @@ func (w *World) Interfaces() []WorldInterface {
 	return out
 }
 
-// worldComponent returns the inner world component type — the first `type`
-// decl of the outer wrapper component whose type is itself a component.
 func (w *World) worldComponent() *TypeDef {
 	if len(w.Types) == 0 || w.Types[0].Tag != tagComponent {
 		return nil
@@ -137,22 +93,8 @@ func (w *World) worldComponent() *TypeDef {
 	return nil
 }
 
-// liftInterface collects an interface instance type's exported functions
-// (externdesc func) and resources (externdesc type with a `sub` bound), and
-// resolves each function's signature against the interface's local type-index
-// space.
-// `resolve`, when given, answers an `alias outer` into the world's type slots
-// (a WIT `use` of another interface's type) with that type's definition and
-// the interface whose type-index space it reads; nil leaves such a slot an
-// opaque scalar.
 func liftInterface(name string, inst *TypeDef, resolve func(idx uint32) (*TypeDef, *WorldInterface)) WorldInterface {
 	wi := WorldInterface{Name: name}
-	// Build the instance's type-index space. Anything that binds a type index
-	// advances it: a `type` decl (its defined type), a `type` alias, and an
-	// import/export whose externdesc is a type — the latter covers resource
-	// exports (`export X: (type (sub resource))`) and type re-exports, which
-	// we only need as nil slots to keep the indices aligned so a function's
-	// externdesc typeidx lands on the right func type.
 	for i := range inst.Decls {
 		d := &inst.Decls[i]
 		switch {
@@ -170,19 +112,7 @@ func liftInterface(name string, inst *TypeDef, resolve func(idx uint32) (*TypeDe
 			wi.LocalTypeNames = append(wi.LocalTypeNames, "")
 			wi.LocalTypeOwners = append(wi.LocalTypeOwners, owner)
 		case (d.Kind == 0x03 || d.Kind == 0x04) && d.Extern != nil && d.Extern.Kind == 0x03:
-			// A named type export/import (`export "thing" (type (eq N))`) records
-			// the name for the slot so a handle param's `own/borrow <slot>` can
-			// recover the resource name (P6 export lift). The eq/sub resolution of
-			// the slot's def is unchanged below.
 			wi.LocalTypeNames = append(wi.LocalTypeNames, d.Name)
-			// A type externdesc binds an index. `(type (eq N))` re-exports an
-			// earlier type — e.g. `export "datetime" (type (eq 0))` aliases the
-			// record at index 0 — so resolve the slot to that target def. A
-			// function whose param/result references this slot must then see the
-			// underlying type (the datetime record is a 2-field KindMem result,
-			// not an opaque handle); leaving it nil mis-lowers `now` as a no-opt
-			// and drops the required `memory` canonical option. A
-			// `(type (sub resource))` bound is a genuine opaque handle → nil.
 			if d.Extern.Bound == 0x00 && int(d.Extern.BoundIdx) < len(wi.LocalTypes) {
 				wi.LocalTypes = append(wi.LocalTypes, wi.LocalTypes[d.Extern.BoundIdx])
 				wi.LocalTypeOwners = append(wi.LocalTypeOwners, wi.LocalTypeOwners[d.Extern.BoundIdx])
@@ -194,11 +124,11 @@ func liftInterface(name string, inst *TypeDef, resolve func(idx uint32) (*TypeDe
 	}
 	for i := range inst.Decls {
 		d := &inst.Decls[i]
-		if d.Kind != 0x04 || d.Extern == nil { // export
+		if d.Kind != 0x04 || d.Extern == nil {
 			continue
 		}
 		switch {
-		case d.Extern.Kind == 0x01: // func
+		case d.Extern.Kind == 0x01:
 			wi.Funcs = append(wi.Funcs, d.Name)
 			var sig *FuncType
 			if idx := int(d.Extern.TypeIdx); idx >= 0 && idx < len(wi.LocalTypes) &&
@@ -206,18 +136,13 @@ func liftInterface(name string, inst *TypeDef, resolve func(idx uint32) (*TypeDe
 				sig = wi.LocalTypes[idx].Func
 			}
 			wi.FuncSigs = append(wi.FuncSigs, WorldFunc{Name: d.Name, Sig: sig})
-		case d.Extern.Kind == 0x03 && d.Extern.Bound == 0x01: // type (sub) = resource
+		case d.Extern.Kind == 0x03 && d.Extern.Bound == 0x01:
 			wi.Resources = append(wi.Resources, d.Name)
 		}
 	}
 	return wi
 }
 
-// ExportedInterfaces lifts the world's *export* declarations into per-interface
-// function/resource inventories (mirroring Interfaces for imports), in
-// declaration order. A world export is an instance the component must provide
-// (e.g. `export wasi:cli/run@0.2.0` / a custom `local:test/math@0.1.0`); P6
-// (docs/WIT-BRING-YOUR-OWN.md) lifts a Fern `@export` function as one of these.
 func (w *World) ExportedInterfaces() []WorldInterface {
 	world := w.worldComponent()
 	if world == nil {
@@ -228,14 +153,14 @@ func (w *World) ExportedInterfaces() []WorldInterface {
 	for i := range world.Decls {
 		d := &world.Decls[i]
 		switch d.Kind {
-		case 0x01: // type
+		case 0x01:
 			localTypes = append(localTypes, d.Type)
-		case 0x02: // alias
+		case 0x02:
 			if d.Alias != nil && d.Alias.Sort == 0x03 {
 				localTypes = append(localTypes, nil)
 			}
-		case 0x04: // export
-			if d.Extern == nil || d.Extern.Kind != 0x05 { // 0x05 = instance
+		case 0x04:
+			if d.Extern == nil || d.Extern.Kind != 0x05 {
 				continue
 			}
 			idx := int(d.Extern.TypeIdx)
@@ -248,10 +173,6 @@ func (w *World) ExportedInterfaces() []WorldInterface {
 	return out
 }
 
-// ExportFunc finds the signature of an exported function `name` on the world's
-// exported interface `iface` (P6). Returns (sig, true) when the world declares
-// it; sig may be nil if the interface exports the name but its type didn't
-// resolve to a func type.
 func (w *World) ExportFunc(iface, name string) (*FuncType, bool) {
 	for _, wi := range w.ExportedInterfaces() {
 		if wi.Name != iface {
@@ -266,8 +187,6 @@ func (w *World) ExportFunc(iface, name string) (*FuncType, bool) {
 	return nil, false
 }
 
-// ResolveDef returns the defined type a value type refers to within this
-// interface, or nil for a primitive or an unresolved (handle) slot.
 func (wi WorldInterface) ResolveDef(v Valtype) *DefinedType {
 	if v.IsPrim || int(v.Idx) >= len(wi.LocalTypes) {
 		return nil
@@ -276,15 +195,9 @@ func (wi WorldInterface) ResolveDef(v Valtype) *DefinedType {
 	if td == nil {
 		return nil
 	}
-	return td.Def // nil unless td is a defvaltype
+	return td.Def
 }
 
-// HandleResource reports, when `v` resolves to an `own<R>` / `borrow<R>` handle,
-// the resource's WIT name and whether it's owned (own vs borrow). Returns
-// ("", false, false) otherwise. The P6 export lift uses it to surface the
-// imported resource type for a handle-typed export parameter (a WIT
-// `incoming-handler#handle` takes `own<incoming-request>` —
-// docs/WIT-BRING-YOUR-OWN.md).
 func (wi WorldInterface) HandleResource(v Valtype) (name string, owned bool, ok bool) {
 	d := wi.ResolveDef(v)
 	if d == nil || (d.Tag != tagOwn && d.Tag != tagBorrow) {
@@ -300,12 +213,6 @@ func (wi WorldInterface) HandleResource(v Valtype) (name string, owned bool, ok 
 	return name, d.Tag == tagOwn, true
 }
 
-// ListElemPrim reports, when `v` resolves to a `list<P>` whose element `P` is a
-// primitive, that primitive's CValtype byte (the single-byte code, which is
-// also the component-model valtype byte). Returns (0, false) otherwise. The P6
-// export lift (docs/WIT-BRING-YOUR-OWN.md) uses it to build the `list<T>`
-// component type for a numeric-array export result without exposing the
-// internal tag constants.
 func (wi WorldInterface) ListElemPrim(v Valtype) (byte, bool) {
 	d := wi.ResolveDef(v)
 	if d == nil || d.Tag != tagList || !d.Elem.IsPrim {
@@ -314,10 +221,6 @@ func (wi WorldInterface) ListElemPrim(v Valtype) (byte, bool) {
 	return d.Elem.Prim, true
 }
 
-// OptionElemPrim reports, when `v` resolves to an `option<P>` whose element is a
-// primitive, that primitive's CValtype byte. The P6 export lift uses it to emit
-// the `option` component type for an Option export result without exposing the
-// internal tag constants.
 func (wi WorldInterface) OptionElemPrim(v Valtype) (byte, bool) {
 	d := wi.ResolveDef(v)
 	if d == nil || d.Tag != tagOption || !d.Elem.IsPrim {
@@ -326,10 +229,6 @@ func (wi WorldInterface) OptionElemPrim(v Valtype) (byte, bool) {
 	return d.Elem.Prim, true
 }
 
-// ResultArmPrims reports, when `v` resolves to a `result<ok, err>` with both
-// arms present and primitive, the two arms' CValtype bytes. Returns (0,0,false)
-// otherwise. The P6 export lift uses it to emit the `result` component type for
-// a Result export result; Fern's Result[T,E] always carries both arms.
 func (wi WorldInterface) ResultArmPrims(v Valtype) (ok byte, err byte, both bool) {
 	d := wi.ResolveDef(v)
 	if d == nil || d.Tag != tagResult || !d.HasOk || !d.HasErr || !d.Ok.IsPrim || !d.Err.IsPrim {
@@ -338,10 +237,6 @@ func (wi WorldInterface) ResultArmPrims(v Valtype) (ok byte, err byte, both bool
 	return d.Ok.Prim, d.Err.Prim, true
 }
 
-// TupleElemPrims reports, when `v` resolves to a `tuple<...>` whose elements are
-// all primitive, their CValtype bytes in order. Returns (nil, false) otherwise.
-// The P6 export lift uses it to emit the `tuple` component type for a tuple
-// export result without exposing the internal tag constants.
 func (wi WorldInterface) TupleElemPrims(v Valtype) ([]byte, bool) {
 	d := wi.ResolveDef(v)
 	if d == nil || d.Tag != tagTuple || len(d.Elems) == 0 {

@@ -9,9 +9,6 @@ import (
 	"time"
 )
 
-// vdsoClockSource reads each clock: 100k monotonic reads that never go back
-// and do advance, now_ns agreeing with now_unix_ms, and the wall clock on
-// stderr for the test to hold against its own.
 const vdsoClockSource = `import "std/i64";
 
 function main(): i32 {
@@ -40,10 +37,6 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostVdsoClock pins the Linux clocks reading through the vDSO
-// (#12537): _start keeps AT_SYSINFO_EHDR, the runtime looks clock_gettime up
-// in the image and calls it through __c_call2, and the values it answers are
-// the clocks' own. Darwin keeps its clocks as they were.
 func TestSelfHostVdsoClock(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := filepath.Join(t.TempDir(), "main.fern")

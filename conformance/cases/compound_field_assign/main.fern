@@ -1,10 +1,10 @@
-// Rejection fixture: compound assignment to a struct field (`a.v += n`)
-// desugars to `a.v = a.v + n`, so it is banned the same way as a plain
-// field assignment (E048).
+
+
+
 struct Acc { v: i32 }
 function main(): i32 {
     let a: Acc = Acc { v: 7 };
-    a.v += 35;   // 42
+    a.v += 35;
     a.v -= 0;
     return a.v;
 }

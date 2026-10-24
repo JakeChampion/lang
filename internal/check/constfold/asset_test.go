@@ -11,8 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// assetSet writes name -> contents to a temp dir and loads it as an
-// embed.Set, mirroring what `-embed DIR` builds at the CLI.
 func assetSet(t *testing.T, files map[string]string) *embed.Set {
 	t.Helper()
 	root := t.TempDir()
@@ -32,7 +30,6 @@ func assetSet(t *testing.T, files map[string]string) *embed.Set {
 	return set
 }
 
-// foldAssets parses src and folds it against an asset set.
 func foldAssets(t *testing.T, src string, set *embed.Set) *ast.Program {
 	t.Helper()
 	prog, err := parser.Parse(src)
@@ -45,7 +42,6 @@ func foldAssets(t *testing.T, src string, set *embed.Set) *ast.Program {
 	return prog
 }
 
-// foldAssetsErr expects the fold to fail and returns the message.
 func foldAssetsErr(t *testing.T, src string, set *embed.Set) string {
 	t.Helper()
 	prog, err := parser.Parse(src)
@@ -59,8 +55,6 @@ func foldAssetsErr(t *testing.T, src string, set *embed.Set) string {
 	return ""
 }
 
-// firstStringLit returns the first StringLit anywhere in the program, which
-// for these single-expression fixtures is the substituted asset.
 func firstStringLit(t *testing.T, prog *ast.Program) string {
 	t.Helper()
 	var found *ast.StringLit
@@ -92,8 +86,6 @@ function main(): i32 {
 	}
 }
 
-// A const initialiser is resolved by evalConst, a different path from the
-// body substituter — an asset has to work in both.
 func TestAssetSubstitutedInConstInitialiser(t *testing.T) {
 	set := assetSet(t, map[string]string{"page.html": "<p>const</p>"})
 	prog := foldAssets(t, `
@@ -107,8 +99,6 @@ function main(): i32 {
 	}
 }
 
-// Assets are constants, so const-expression arithmetic still applies to
-// them: concatenation must fold at compile time like any string literal.
 func TestAssetFoldsIntoConstConcatenation(t *testing.T) {
 	set := assetSet(t, map[string]string{"a.txt": "AAA", "b.txt": "BBB"})
 	prog := foldAssets(t, `
@@ -122,7 +112,6 @@ function main(): i32 {
 	}
 }
 
-// firstArrayLit returns the first ArrayLit anywhere in the program.
 func firstArrayLit(t *testing.T, prog *ast.Program) *ast.ArrayLit {
 	t.Helper()
 	var arr *ast.ArrayLit
@@ -138,7 +127,6 @@ func firstArrayLit(t *testing.T, prog *ast.Program) *ast.ArrayLit {
 	return arr
 }
 
-// u8Bytes reads a u8[] literal back as bytes, failing on anything else.
 func u8Bytes(t *testing.T, e ast.Expr) string {
 	t.Helper()
 	arr, ok := e.(*ast.ArrayLit)
@@ -159,7 +147,6 @@ func u8Bytes(t *testing.T, e ast.Expr) string {
 	return string(out)
 }
 
-// NUL bytes and bytes >= 0x80 survive the bytes form intact, as u8[].
 func TestAssetBytesCarriesBinaryBytes(t *testing.T) {
 	blob := string([]byte{0x00, 0x80, 0xff, 0x00, 'e', 'n', 'd'})
 	set := assetSet(t, map[string]string{"blob.bin": blob})
@@ -173,8 +160,6 @@ function main(): i32 {
 	}
 }
 
-// The bytes form may initialise a const, and an empty file is a typed empty
-// array rather than one demanding an annotation.
 func TestAssetBytesInConst(t *testing.T) {
 	set := assetSet(t, map[string]string{"icon.png": "\x89PNG", "empty": ""})
 	prog := foldAssets(t, `
@@ -202,8 +187,6 @@ function main(): i32 {
 	}
 }
 
-// A string is always valid UTF-8, so the text form refuses a file that is
-// not, naming it and pointing at the bytes form — in a body and in a const.
 func TestAssetTextRefusesInvalidUTF8(t *testing.T) {
 	set := assetSet(t, map[string]string{"img/favicon.png": "\x89PNG\r\n\x1a\n\xff", "ok.txt": "héllo"})
 	for _, src := range []string{
@@ -302,7 +285,6 @@ func TestAssetErrors(t *testing.T) {
 	}
 }
 
-// Passing -embed does not change a program that never asks for an asset.
 func TestAssetsUnusedIsHarmless(t *testing.T) {
 	set := assetSet(t, map[string]string{"unused.txt": "x"})
 	foldAssets(t, `
@@ -310,10 +292,6 @@ const N: i32 = 2 + 3;
 function main(): i32 { return N; }`, set)
 }
 
-// --- slice 3: enumeration -----------------------------------------
-
-// tupleElems returns the (name, contents) pairs of the array literal
-// __fern_assets() expanded to, in emitted order.
 func tupleElems(t *testing.T, prog *ast.Program) [][2]string {
 	t.Helper()
 	var arr *ast.ArrayLit
@@ -346,8 +324,6 @@ func tupleElems(t *testing.T, prog *ast.Program) [][2]string {
 	return out
 }
 
-// Enumeration order is Names(), which is sorted — a filesystem-order walk
-// would make the emitted program differ between hosts.
 func TestAssetsEnumeratesSortedWithContents(t *testing.T) {
 	set := assetSet(t, map[string]string{
 		"sub/b.txt": "BB",
@@ -371,7 +347,6 @@ function main(): i32 {
 	}
 }
 
-// The enumeration may be held in a const, as it may in a var (#7987).
 func TestAssetsInConst(t *testing.T) {
 	set := assetSet(t, map[string]string{"b.txt": "BB", "a.txt": "AAA"})
 	prog := foldAssets(t, `
@@ -387,8 +362,6 @@ function main(): i32 {
 	}
 }
 
-// The bytes enumeration carries binary contents as u8[], sorted like the
-// text one, and may initialise a const.
 func TestAssetsBytesCarriesBinaryBytes(t *testing.T) {
 	blob := string([]byte{0x00, 0x80, 0xff, 0x00, 'z'})
 	set := assetSet(t, map[string]string{"blob.bin": blob, "a.txt": "AAA"})
@@ -416,8 +389,6 @@ func TestAssetsBytesCarriesBinaryBytes(t *testing.T) {
 	}
 }
 
-// The text enumeration refuses a bundle holding a file that is not UTF-8,
-// naming the file.
 func TestAssetsTextRefusesInvalidUTF8(t *testing.T) {
 	set := assetSet(t, map[string]string{"a.txt": "AAA", "font.woff2": "wOF2\xc0\x00"})
 	got := foldAssetsErr(t, `function main(): i32 { let xs = __fern_assets(); return 0; }`, set)
@@ -428,9 +399,6 @@ func TestAssetsTextRefusesInvalidUTF8(t *testing.T) {
 	}
 }
 
-// An embed directory holding no files is legitimate. The empty array it
-// expands to carries a stamped ElemType, so the checker does not demand an
-// annotation the user has no way to write.
 func TestAssetsEmptyBundleIsTypedNotBare(t *testing.T) {
 	set := assetSet(t, map[string]string{})
 	prog := foldAssets(t, `function main(): i32 { let xs = __fern_assets(); return 0; }`, set)

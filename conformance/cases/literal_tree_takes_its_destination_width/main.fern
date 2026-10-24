@@ -1,8 +1,8 @@
-// A tree of unsuffixed integer literals is evaluated at the type of the
-// destination it is written to — a typed `let`, an assignment, a `return`, an
-// argument, a method's argument — so `2147483647 + 1` written to an i64 is 2147483648, not an i32
-// wrap. A u8 computation wraps at 8 bits, and the smallest i32 literal is an
-// i32 that wraps on the way down.
+
+
+
+
+
 import "std/i32";
 import "std/i64";
 import "std/u64";

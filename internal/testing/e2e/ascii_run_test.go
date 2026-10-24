@@ -7,26 +7,6 @@ import (
 	"testing"
 )
 
-// `__ascii_run(s, from)` — the second kernel of docs/ATLAS-PLATFORM-PLAN.md §3,
-// and a cheaper one than `__memchr`: `pmovmskb` (x86) and `i8x16.bitmask`
-// (wasm) gather the top bit of each byte, which IS the ASCII test, so the
-// vector body needs no splat and no compare.
-//
-// Differential-tested against a Go reference over an exhaustive length ×
-// position sweep, for the same reason memchr_test.go is: the failures this
-// class of code has are at boundaries nobody enumerates by hand — the last
-// byte, a high byte exactly at `from`, a `from` past the end, and every offset
-// where a 16-byte block straddles the end of the string.
-//
-// Two contract differences from __memchr, both essential and both swept
-// below:
-//   - it returns len(s), not -1, when the rest is ASCII, so a validator can
-//     write `i = __ascii_run(s, i)` as a branch-free skip;
-//   - the test is the high bit, so EVERY byte >= 0x80 is a hit — including
-//     0x80 and 0xFF themselves, which are not valid UTF-8 lead bytes. This
-//     intrinsic finds "not ASCII", not "start of a codepoint".
-
-// asciiRunRef is the reference semantics, matching the interpreter builtin.
 func asciiRunRef(s string, from int) int {
 	if from < 0 {
 		from = 0
@@ -49,42 +29,32 @@ func asciiRunCases() []struct {
 	}
 	var out []c
 
-	// Exhaustive over length and high-byte position, straddling the 16-byte
-	// block size (0..40 covers two full blocks plus a partial tail).
 	for n := 0; n <= 40; n++ {
 		base := strings.Repeat("a", n)
-		// All ASCII: the answer is n, the branch-free-skip case.
 		out = append(out, c{base, 0})
 		for at := 0; at < n; at++ {
 			hi := base[:at] + "\xc3" + base[at+1:]
 			out = append(out, c{hi, 0})
-			out = append(out, c{hi, at})     // high byte exactly at `from`
-			out = append(out, c{hi, at + 1}) // skipped past it
+			out = append(out, c{hi, at})
+			out = append(out, c{hi, at + 1})
 		}
 	}
 
-	// Every high byte is a hit, not just UTF-8 lead bytes. 0x80 is a bare
-	// continuation and 0xFF is not legal UTF-8 at all; both must still be
-	// found, because this intrinsic answers "not ASCII".
 	for _, b := range []byte{0x80, 0xBF, 0xC0, 0xE0, 0xF0, 0xF5, 0xFE, 0xFF} {
 		out = append(out, c{"abc" + string([]byte{b}) + "def", 0})
 		out = append(out, c{strings.Repeat("x", 20) + string([]byte{b}), 0})
 	}
 
-	// 0x7F is the last ASCII byte and must NOT be a hit — the off-by-one that
-	// a `>` / `>=` slip on the sign test would produce.
 	out = append(out,
 		c{"\x7f\x7f\x7f", 0},
 		c{strings.Repeat("\x7f", 20), 0},
 		c{"", 0},
-		c{"abc", 100},   // from past the end -> len
-		c{"abc", -5},    // negative from clamps to 0
-		c{"\xffabc", 0}, // hit at index 0
+		c{"abc", 100},
+		c{"abc", -5},
+		c{"\xffabc", 0},
 		c{strings.Repeat("a", 300) + "\xc3", 300},
 	)
 
-	// Deterministic randoms: high bytes at irregular offsets, dense enough
-	// that the vector loop and the tail both see hits.
 	rng := rand.New(rand.NewSource(20260807))
 	for i := 0; i < 60; i++ {
 		n := rng.Intn(70)
@@ -102,8 +72,6 @@ func asciiRunCases() []struct {
 	return out
 }
 
-// runAsciiRunCorpus drives the corpus through one backend and compares every
-// answer against asciiRunRef.
 func runAsciiRunCorpus(t *testing.T, run func(t *testing.T, src string) string) {
 	t.Helper()
 	cases := asciiRunCases()
@@ -154,13 +122,6 @@ func TestX86_64AsciiRun(t *testing.T) {
 	})
 }
 
-// The arm64 leg. Not a formality: arm64 passes a `string` in TWO registers, so
-// `from` arrives in w2 here and in esi there, and the two kernels reach their
-// answer by different routes — x86 needs no compare (pmovmskb IS the test),
-// arm64 needs no splat (cmlt compares against zero). The mask extraction also
-// differs: NEON has no pmovmskb, so a lane index is the lowest set bit of a
-// nibble-per-byte mask divided by four, and that /4 is exactly the kind of
-// thing that produces a plausible wrong index rather than a crash.
 func TestArm64AsciiRun(t *testing.T) {
 	runAsciiRunCorpus(t, func(t *testing.T, src string) string {
 		out, exit := compileAndRunArm64(t, src)
@@ -171,17 +132,9 @@ func TestArm64AsciiRun(t *testing.T) {
 	})
 }
 
-// The wasm leg covers the representation neither native backend has: a string
-// under 8 bytes lives IN its two words with no address at all, so every short
-// case in the sweep above takes the kernel's scalar path rather than its v128
-// one. The sweep starting at length 0 is what makes both paths reachable from
-// one corpus.
 func TestWASMAsciiRun(t *testing.T) {
 	runAsciiRunCorpus(t, func(t *testing.T, src string) string {
 		out, _ := invokeWasmtime(t, src)
-		// wasmtime's --invoke prints main()'s return as one extra line. Checking it is this leg's only
-		// signal that the program ran to completion rather than stopping
-		// early with the right prefix.
 		lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
 		if n := len(lines); n == 0 || strings.TrimSpace(lines[n-1]) != "0" {
 			t.Fatalf("main() result line = %q, want \"0\"", lines[len(lines)-1])

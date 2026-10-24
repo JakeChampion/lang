@@ -1,24 +1,12 @@
 import "std/test";
 import "std/fetch";
 
-// tests/stdlib/fetch_proxy_test.fern — std/fetch's proxy selection,
-// pure: which variables `proxy_env_from` reads (the lowercase
-// `http_proxy` only, `https_proxy` before `HTTPS_PROXY`, none under
-// `REQUEST_METHOD`, `no_proxy` before `NO_PROXY`), which proxy each scheme
-// takes, and what `proxy_for` answers for each `no_proxy` form (`*`,
-// a domain with and without its leading dot, a `:port`, an address, a
-// bracketed address with a zone, a CIDR block of either family) and for
-// the hosts never proxied (`localhost` and loopback).
-//
-// Run:  fern -interp tests/stdlib/fetch_proxy_test.fern
-
 const PROXY: string = "http://proxy.example:3128";
 
 function skipping(skip: string): fetch.ProxyEnv {
   return fetch.proxies(PROXY, "", skip);
 }
 
-// `via(p, url)` — the proxy `p` picks for `url`, or `direct`.
 function via(p: fetch.ProxyEnv, u: string): string {
   match (p.proxy_for(u)) {
     Some(s) => {
@@ -31,7 +19,6 @@ function via(p: fetch.ProxyEnv, u: string): string {
   return "direct";
 }
 
-// `routes(p, urls)` — `proxy` or `direct` per URL, space-separated.
 function routes(p: fetch.ProxyEnv, urls: string[]): string {
   let out: string = "";
   for u in urls {
@@ -129,8 +116,6 @@ function test_https_proxy_lowercase_wins_over_uppercase(): test.TestOutcome {
   return test.assert_eq(lower.https_proxy + "|" + upper.https_proxy, "http://a:1|http://b:2");
 }
 
-// `allocations(p, url, n)` — what `n` calls of `p.proxy_for(url)` allocate
-// after a first call, as the allocator counts them; 0 under -interp.
 function allocations(p: fetch.ProxyEnv, u: string, n: i32): i64 {
   let warm: string = via(p, u);
   let before: i64 = __heap_alloc_count();

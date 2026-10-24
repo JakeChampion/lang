@@ -6,25 +6,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostWasmUnsupportedBuiltins pins the wasm ERROR ENDPOINTS: builtins
-// with no wasm meaning at all, which both wasm drivers reject before emit with
-// the CLI's target gate — E066 naming the builtin, non-zero exit, and NO WAT —
-// rather than emitting a call against a symbol nothing defines.
-//
-//   - subprocess (#4320) — child-process spawning, unsupportable on wasm/WASI.
-//   - timer_fd (#4317) — the native fd-based CLOCK_MONOTONIC timerfd. wasm has
-//     no pollable file descriptors, and its analog already lowers:
-//     wasm_timer_pollable, which returns a wasi:io/poll pollable. Emitted, a
-//     call fails at load with the unhelpful
-//     `unknown func: failed to find name $timer_fd`.
-//   - __c_call<n> (#4375) — the C-FFI call primitive. wasm has no C ABI, so
-//     there is no __c_call runtime on any wasm path.
-//   - the raw-memory / syscall floor (#6946) — `rawmem` (__raw_alloc,
-//     __raw_environ, …) and `syscall` (__syscall3 … __syscall6). They exist so
-//     the register backends' runtime helpers can be written in Fern; wasm
-//     serves those helpers with hand-written WAT and lowers none of them.
-//
-// Both stdin drivers, wasm_ir_run and wasm_run, are exercised.
 func TestSelfHostWasmUnsupportedBuiltins(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -32,7 +13,6 @@ func TestSelfHostWasmUnsupportedBuiltins(t *testing.T) {
 	irDriver := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 	prodDriver := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
-	// run feeds src to a driver and returns (exit, stdout, stderr).
 	run := func(bin, src string) (int, string, string) {
 		cmd := runX86_64Bin(runner, bin)
 		cmd.Stdin = strings.NewReader(src)
@@ -66,17 +46,10 @@ func TestSelfHostWasmUnsupportedBuiltins(t *testing.T) {
 			mustSay: "timer_fd",
 		},
 		{
-			// FFI __c_call<n> (#4375) is written directly as a builtin call. Wasm
-			// has no C ABI — no __c_call runtime on any wasm path — so both drivers
-			// reject it on `cabi`.
 			name:    "c_call",
 			src:     `function main(): i32 { let cb: usize = 0; return __c_call0(cb) as i32; }` + "\n",
 			mustSay: "__c_call0",
 		},
-		// One per shape of the raw floor (#6946): a syscall, an argument-taking
-		// raw-memory op, and the zero-argument one — the last because an op with
-		// no operands is the arity that keeps the wasm operand stack balanced
-		// when it is dropped, so it is the one a silent miscompile hides in.
 		{
 			name:    "syscall3",
 			src:     `function main(): i32 { return __syscall3(1, 1, 0, 0); }` + "\n",
@@ -130,7 +103,6 @@ func TestSelfHostWasmUnsupportedBuiltins(t *testing.T) {
 			})
 		}
 
-		// The gate must not reject ordinary modules on either driver.
 		t.Run(d.name+"/ordinary_module_still_emits", func(t *testing.T) {
 			code, out, errOut := run(d.bin, `function main(): i32 { return 42; }`+"\n")
 			if code != 0 {
@@ -142,8 +114,6 @@ func TestSelfHostWasmUnsupportedBuiltins(t *testing.T) {
 		})
 	}
 
-	// timer_fd's diagnostic must point at the wasm analog — the whole reason it
-	// is an error rather than a silent deferral is that there IS a right answer.
 	t.Run("timer_fd_names_the_analog", func(t *testing.T) {
 		_, _, errOut := run(prodDriver, rejected[1].src)
 		if !strings.Contains(errOut, "wasm_timer_pollable") {

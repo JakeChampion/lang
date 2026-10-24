@@ -14,10 +14,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestSelfHostExternRecordResultWallClock reads wasi:clocks/wall-clock's `now`,
-// a `datetime { seconds: u64, nanoseconds: u32 }` returned through a return
-// area with the u32 at offset 8. The import used to be declared returning an
-// i32, which no host signature matches.
 func TestSelfHostExternRecordResultWallClock(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	wasmtime, err := exec.LookPath("wasmtime")
@@ -63,15 +59,6 @@ function main(): i32 {
 	assertBalancedCensus(t, stderr.String())
 }
 
-// TestSelfHostExternRecordWideFieldsCustomProvider passes records whose
-// fields are 64-bit integers and floats to and from a provider component:
-//   - `wide` mixes a u8, a u64, an f32, an f64 and an s32, so each field sits
-//     at its own alignment (0, 8, 16, 24, 32) in a 40-byte return area;
-//   - `outer` nests a record { f32, u8 } ahead of an s64;
-//   - `one` and `onef`, a lone u64 and a lone f32, come back by value as an
-//     i64 and an f32;
-//   - `wide` and `outer` go back as parameters, flattened to their leaves;
-//   - a list<u64> comes back and goes out again, eight bytes an element.
 func TestSelfHostExternRecordWideFieldsCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -283,10 +270,6 @@ function main(): i32 {
 	}
 }
 
-// TestSelfHostExternRecordOutsideTheBridgeIsRefused compiles an `@import` whose
-// record carries a string, as a result and as a parameter. The bridge flattens
-// only scalar leaves, so the build stops with a diagnostic naming the import
-// rather than declaring a core import no host signature matches.
 func TestSelfHostExternRecordOutsideTheBridgeIsRefused(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range []struct{ name, decl, call, want string }{

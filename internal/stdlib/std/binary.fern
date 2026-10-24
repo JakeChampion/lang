@@ -1,4 +1,4 @@
-// Fixed-width integers in network byte order.
+// This module reads and writes fixed-width integers in network byte order.
 
 import "core/cmp";
 import "std/error";

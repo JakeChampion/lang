@@ -4,10 +4,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostArrTupProducerReclaimWasmIR is the wasm port of
-// TestSelfHostArrTupProducerReclaimIRX86_64. The element walk lowers through
-// backend-common IR ops (block / loop / arr_len / arr_get / rc_dec), so wasm needs
-// no dedicated helper. Case table shared with the x86-64 leg.
 func TestSelfHostArrTupProducerReclaimWasmIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range arrtupProducerReclaimCases {

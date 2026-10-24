@@ -8,18 +8,6 @@ import (
 	"testing"
 )
 
-// Qualified imported-union-member match patterns (`mod.Variant(x)`) on the
-// self-host IR path. A `type Line = Row | Blank` union whose members are
-// imported structs is matched via a QUALIFIED pattern `rows.Row(r)`. The
-// pattern's type_name stays qualified ("rows.Row") through flatten (rewrite_pattern
-// does not mangle it, unlike ctor / field references), while the member struct's
-// flattened decl name is the MANGLED "rows__Row". The match lowering resolves
-// the '.'->'__' mangled form, so `r` binds typed "rows__Row" and
-// `r.cells.len()` dispatches as a string[] read rather than to an undefined
-// `i32__len`.
-//
-// Asserts: the module decides `ir`, the emitted asm has no `__fn_i32__len`, and
-// the self-host binary's exit code matches the interpreter oracle.
 func TestSelfHostUnionVariantFieldIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := copySelfHostTree(t)
@@ -29,8 +17,6 @@ func TestSelfHostUnionVariantFieldIR(t *testing.T) {
 		t.Fatalf("abs stdlib root: %v", err)
 	}
 
-	// The imported library: a union of two structs, one carrying a string[]
-	// field (the shape that exposed the mis-dispatch).
 	lib := `pub struct Row { cells: string[] }
 pub struct Blank {  }
 pub type Line = Row | Blank;
@@ -42,11 +28,6 @@ pub function mk_blank(): Line { return Blank {  }; }
 		t.Fatalf("write lib: %v", err)
 	}
 
-	// count() matches the qualified imported-union members and reads the string[]
-	// field's length off the bound payload — the case that used to bail. The
-	// zero-field variant is matched with `_` (a binding on a zero-field struct
-	// trips the module's field-count bail and would refuse it for an
-	// unrelated reason, masking the qualified-pattern behaviour under test).
 	entrySrc := `import "./uvrows";
 
 function count(l: uvrows.Line): i32 {

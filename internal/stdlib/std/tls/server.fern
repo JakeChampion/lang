@@ -1,20 +1,4 @@
-// std/tls/server — a TLS 1.3 server: std/tls/handshake's server signing its
-// CertificateVerify with the certificate's private key, as a sans-IO
-// `Session` any transport can carry, and as a `Connection` over an accepted
-// TCP socket.
-//
-//   let id: identity.Identity = identity.from_pem(chain_pem, key_pem)?;
-//   let cfg: server.Config = server.config(id).with_alpn(["http/1.1"]);
-//   let c: server.Connection = server.accept(fd, cfg, time.duration_seconds(10 as i64))?;
-//   let got: server.Received = c.recv(time.duration_seconds(30 as i64))?;
-//   c = got.conn.send("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".bytes())?;
-//
-// The identity is std/tls/identity's: a P-256, P-384 or Ed25519 key with
-// its chain. The signature scheme offered is the key's, so a client that
-// does not accept it gets handshake_failure. The server takes every
-// suite, X25519MLKEM768, X25519, secp256r1 and SecP256r1MLKEM768, asking
-// for a share by HelloRetryRequest when the client sent none of them, and
-// chooses the first of its own protocols the client offers by ALPN.
+// This module provides TLS 1.3 server sessions and connections.
 
 import "std/crypto";
 import "std/crypto/chacha20poly1305";
@@ -30,14 +14,8 @@ import "std/tls/message";
 import "std/tls/record";
 import "std/tls/verify";
 
-// Config — the identity to present, the protocols to accept by ALPN in
-// preference order, and the session tickets: whether to issue one per
-// connection, how long it lives, and the key it is sealed under, which
-// every server that is to resume it must share.
 pub struct Config { identity: identity.Identity, alpn: string[], tickets: boolean, ticket_lifetime: Duration, ticket_key: u8[], client_roots: Option[verify.Roots] }
 
-// config accepts no application protocol and issues tickets that live two
-// hours under a key drawn for this config.
 pub function config(id: identity.Identity): Config {
   return Config { identity: id, alpn: [], tickets: true, ticket_lifetime: time.duration_seconds(7200 as i64), ticket_key: random_bytes(32), client_roots: None };
 }
@@ -46,8 +24,6 @@ pub function (c: Config) with_alpn(protocols: string[]): Config {
   return Config { ...c, alpn: protocols };
 }
 
-// with_ticket_key seals tickets under a key derived from the caller's
-// bytes, so that servers sharing them resume each other's sessions.
 pub function (c: Config) with_ticket_key(key: u8[]): Config {
   return Config { ...c, ticket_key: crypto.sha256_new().update(key).final_bytes() };
 }
@@ -56,33 +32,18 @@ pub function (c: Config) with_ticket_lifetime(d: Duration): Config {
   return Config { ...c, ticket_lifetime: d };
 }
 
-// without_tickets issues none; a ticket offered is still resumed when it
-// opens under the key.
 pub function (c: Config) without_tickets(): Config {
   return Config { ...c, tickets: false };
 }
 
-// with_client_roots asks every client for a certificate and requires one
-// whose chain reaches the roots at the current time, allowed a TLS
-// client, with a CertificateVerify under its key; a client sending none
-// is refused with certificate_required. A resumed session asks for none:
-// the ticket stands for the certificate shown when it was issued.
 pub function (c: Config) with_client_roots(roots: verify.Roots): Config {
   return Config { ...c, client_roots: Some(roots) };
 }
 
-// Session — one connection's TLS, bytes in and bytes out: the handshake's
-// server, the config it signs and seals tickets with, and the bytes of a
-// record still arriving.
 pub struct Session { server: handshake.Server, config: Config, held: u8[] }
 
-// Step — the session after a call, the bytes to send, the application data
-// read, whether the peer has sent close_notify, and, once offloaded, the
-// keys a KeyUpdate gave the kernel to take next.
 pub struct Step { session: Session, output: u8[], data: u8[], closed: boolean, rekeyed: handshake.KernelKeys }
 
-// start waits for a ClientHello: there is nothing to send until `read` has
-// taken one.
 pub function start(config: Config): Result[Session, tls.TlsError] {
   let asks: boolean = false;
   match (config.client_roots) {
@@ -103,21 +64,13 @@ pub function start(config: Config): Result[Session, tls.TlsError] {
   return Err(tls.ClosedEarly);
 }
 
-// read takes bytes from the client that arrived at `now`, in Unix
-// milliseconds, signing the CertificateVerify when the handshake reaches
-// it; a client's chain and a ticket are judged at that time. Whole records
-// go to the handshake one at a time: the keys change only between records,
-// so a failure's alert is sealed under the keys the records before it left.
 pub function (s: Session) read(input: [u8], now: i64): Result[Step, tls.Failure] {
-  // Only a partial record held from the last read is copied; otherwise the
-  // records are read where the caller's bytes are.
   if (s.held.len() == 0) {
     return __read(s, input, now);
   }
   return __read(Session { ...s, held: [] }, __cat(__copy(s.held), input), now);
 }
 
-// __read takes each whole record in buf and holds what is left.
 function __read(s: Session, buf: [u8], now: i64): Result[Step, tls.Failure] {
   let session: Session = s;
   let output: u8[] = [];
@@ -145,7 +98,6 @@ function __read(s: Session, buf: [u8], now: i64): Result[Step, tls.Failure] {
   return Ok(Step { session: Session { ...session, held: held }, output: output, data: data, closed: closed, rekeyed: keys });
 }
 
-// __then is a followed by b, b itself when a is empty.
 function __then(own a: u8[], b: u8[]): u8[] {
   if (a.len() == 0) {
     return b;
@@ -165,34 +117,23 @@ function __record(s: Session, record: [u8], now: i64): Result[Step, tls.Failure]
   return Err(tls.Failure { error: tls.ClosedEarly, alert: [] });
 }
 
-// write seals application data; the session must be connected.
 pub function (s: Session) write(data: [u8]): Result[Step, tls.TlsError] {
   let step: handshake.ServerStep = __step(s.server.write(data))?;
   return Ok(Step { session: Session { ...s, server: step.server }, output: step.output, data: [], closed: false, rekeyed: __no_keys() });
 }
 
-// close is the close_notify to send; nothing more may be written.
 pub function (s: Session) close(): Result[Step, tls.TlsError] {
   let step: handshake.ServerStep = __step(s.server.close())?;
   return Ok(Step { session: Session { ...s, server: step.server }, output: step.output, data: [], closed: false, rekeyed: __no_keys() });
 }
 
-// update_keys sends a KeyUpdate and moves to the next write key; `request`
-// asks the client to move to its next one too.
 pub function (s: Session) update_keys(request: boolean): Result[Step, tls.TlsError] {
   let step: handshake.ServerStep = __step(s.server.update_keys(request))?;
   return Ok(Step { session: Session { ...s, server: step.server }, output: step.output, data: [], closed: false, rekeyed: handshake.rekeyed(step.server.cipher_suite(), step.events) });
 }
 
-// Offloaded — a session whose records the kernel now seals and opens
-// (std/tls/ktls), and the keys to give it.
 pub struct Offloaded { session: Session, keys: handshake.KernelKeys }
 
-// offload hands the record layer to the kernel, or None while the session
-// is not connected or holds bytes of a record still arriving. Afterwards
-// `write`, `close` and a failure's alert are plaintext records for the
-// kernel to seal, `read` takes the records the kernel opened, framed as
-// they arrived, and a KeyUpdate either way is in a step's `rekeyed`.
 pub function (s: Session) offload(): Option[Offloaded] {
   if (s.held.len() != 0) {
     return None;
@@ -210,29 +151,22 @@ pub function (s: Session) connected(): boolean {
   return s.server.connected();
 }
 
-// Whether the kernel seals and opens the session's records (`offload`).
 pub function (s: Session) offloaded(): boolean {
   return s.server.offloaded();
 }
 
-// The protocol chosen by ALPN, empty when none was.
 pub function (s: Session) alpn(): string {
   return s.server.alpn;
 }
 
-// The name the client asked for by SNI, empty when it sent none.
 pub function (s: Session) server_name(): string {
   return s.server.server_name;
 }
 
-// Whether the handshake resumed from a ticket, in which case no
-// certificate was sent.
 pub function (s: Session) resumed(): boolean {
   return s.server.resumed();
 }
 
-// The chain the client presented, leaf first, judged against the config's
-// client roots; empty when the session resumed or no roots were set.
 pub function (s: Session) client_chain(): u8[][] {
   return s.server.client_chain();
 }
@@ -261,9 +195,6 @@ function __failed(srv: handshake.Server, r: Result[handshake.ServerStep, handsha
   return Err(tls.Failure { error: tls.ClosedEarly, alert: [] });
 }
 
-// __signed answers each event in a step that asks something of the server
-// (a signature, a ticket lookup, a ticket to issue once connected) and
-// gathers what the handshake goes on to produce.
 function __signed(s: Session, first: handshake.ServerStep, now: i64): Result[Step, tls.Failure] {
   let srv: handshake.Server = first.server;
   let output: u8[] = first.output;
@@ -299,7 +230,6 @@ function __peer_closed(e: handshake.Event): boolean {
   return false;
 }
 
-// __answered is what the server does about one event: nothing, for most.
 function __answered(s: Session, srv: handshake.Server, e: handshake.Event, now: i64): Result[handshake.ServerStep, tls.Failure] {
   match (e) {
     handshake.SignNeeded(sg) => {
@@ -335,8 +265,6 @@ function __answered(s: Session, srv: handshake.Server, e: handshake.Event, now: 
   return Ok(handshake.ServerStep { server: srv, output: [], data: [], events: [] });
 }
 
-// __client_trusted judges a client's chain against the config's roots at
-// `now`, in Unix milliseconds, and its CertificateVerify under the leaf's key.
 function __client_trusted(config: Config, v: handshake.Verification, now: i64): Result[void, tls.TlsError] {
   let roots: verify.Roots = verify.no_roots();
   match (config.client_roots) {
@@ -367,10 +295,6 @@ function __client_trusted(config: Config, v: handshake.Verification, now: i64): 
   return Err(tls.SignatureInvalid);
 }
 
-// The alert a refused client certificate draws: certificate_required for
-// none, bad_certificate for an untrusted chain, decrypt_error for a
-// CertificateVerify that does not verify and illegal_parameter for one
-// under a scheme the key cannot make (§4.4.3, §4.2.3).
 function __client_alert(e: tls.TlsError): handshake.HandshakeError {
   match (e) {
     tls.CertificateMissing => {
@@ -389,16 +313,10 @@ function __client_alert(e: tls.TlsError): handshake.HandshakeError {
   return handshake.BadCertificate;
 }
 
-// Tickets. A ticket is the PSK it stands for, the suite it was issued
-// under, when it was issued and for how long, and the name it was issued
-// to, sealed under the config's key behind a fresh nonce (§4.6.1).
-
 const TICKET_AAD: string = "fern tls ticket";
 
 const TICKET_VERSION: i32 = 1;
 
-// __issue is the ticket to send once connected: nonce 0 is the only one
-// issued per connection.
 function __issue(config: Config, srv: handshake.Server, now: i64): message.NewSessionTicket {
   let nonce: u8[] = [0 as u8];
   let lifetime: i64 = config.ticket_lifetime.as_millis() / (1000 as i64);
@@ -425,9 +343,6 @@ function __issue(config: Config, srv: handshake.Server, now: i64): message.NewSe
   return message.NewSessionTicket { lifetime: lifetime as u32, age_add: __u32_of(age_add), nonce: nonce, ticket: __cat(ticket_nonce, sealed), extensions: [] };
 }
 
-// __lookup is the first ticket offered that opens under the key, was issued
-// under a suite with the chosen suite's hash, to the name asked for, and is
-// still alive at `now`; None resumes nothing.
 function __lookup(config: Config, offer: handshake.Offer, now: i64): Option[handshake.Resumed] {
   let i: i32 = 0;
   while (i < offer.identities.len()) {
@@ -457,7 +372,6 @@ function __open_ticket(config: Config, offer: handshake.Offer, id: [u8], now: i6
   return None;
 }
 
-// __usable_ticket reads an opened ticket and judges it against the offer.
 function __usable_ticket(body: u8[], offer: handshake.Offer, now: i64): Option[u8[]] {
   let size: i32 = offer.suite.hash().size();
   if (body.len() < 21 || body[0] as i32 != TICKET_VERSION) {
@@ -550,23 +464,10 @@ function __more(own a: handshake.Event[], b: handshake.Event[]): handshake.Event
   return a;
 }
 
-// Over a socket.
-
-// Connection — a session over an accepted TCP socket, with the application
-// data the client sent in the same read as the end of the handshake, and
-// whether it has already closed.
-// `open` is whether the socket is still the connection's: a failure in
-// `recv` or `send` sends the alert and closes it, and `close` after that
-// does nothing.
 pub struct Connection { fd: i32, session: Session, pending: u8[], ended: boolean, open: Cell[boolean] }
 
-// Received — what `recv` read: application data, empty when the wait
-// passed first, and whether the peer has ended the stream, by close_notify
-// or by closing the socket.
 pub struct Received { conn: Connection, data: u8[], ended: boolean }
 
-// accept completes a handshake on a socket just accepted, within
-// `timeout`. The socket is closed if the handshake fails.
 pub function accept(fd: i32, config: Config, timeout: Duration): Result[Connection, tls.TlsError] {
   match (__handshake_on(fd, config, monotonic_ns() + timeout.as_nanos())) {
     Ok(c) => {
@@ -608,7 +509,6 @@ function __handshake_on(fd: i32, config: Config, deadline: i64): Result[Connecti
   return Ok(Connection { fd: fd, session: s, pending: pending, ended: ended, open: cell_new(true) });
 }
 
-// send writes data to the client.
 pub function (c: Connection) send(data: [u8]): Result[Connection, tls.TlsError] {
   if (c.session.offloaded()) {
     __send_fd(c.fd, data)?;
@@ -619,12 +519,6 @@ pub function (c: Connection) send(data: [u8]): Result[Connection, tls.TlsError] 
   return Ok(Connection { ...c, session: step.session });
 }
 
-// offload moves the connection's records into the kernel (std/tls/ktls),
-// which then seals what `send` writes and opens what `recv` reads. Where
-// the kernel has no TLS record layer, or the session holds bytes of a
-// record still arriving, the connection is returned as it was and goes on
-// sealing its own (`offloaded` says which). It fails only when the kernel
-// took one direction and refused the other, which closes the socket.
 pub function (c: Connection) offload(): Result[Connection, tls.TlsError] {
   if let Some(o) = c.session.offload() {
     match (ktls.attach(c.fd, o.keys)) {
@@ -642,16 +536,10 @@ pub function (c: Connection) offload(): Result[Connection, tls.TlsError] {
   return Ok(c);
 }
 
-// Whether the kernel seals and opens the connection's records (`offload`).
 pub function (c: Connection) offloaded(): boolean {
   return c.session.offloaded();
 }
 
-// update_keys sends a KeyUpdate and moves to the next write key; `request`
-// asks the client to move to its next one too. Once offloaded the kernel takes
-// the new key after the KeyUpdate it seals under the old one; a kernel
-// that refuses it (before 6.14) leaves the socket unusable, and it is
-// closed.
 pub function (c: Connection) update_keys(request: boolean): Result[Connection, tls.TlsError] {
   let step: Step = c.session.update_keys(request)?;
   __send_out(c.fd, c.session, step.output)?;
@@ -664,8 +552,6 @@ pub function (c: Connection) update_keys(request: boolean): Result[Connection, t
   return Ok(Connection { ...c, session: step.session });
 }
 
-// recv waits at most `wait` for application data, answering first with
-// what arrived with the handshake.
 pub function (c: Connection) recv(wait: Duration): Result[Received, tls.TlsError] {
   if (c.pending.len() > 0 || c.ended) {
     return Ok(Received { conn: Connection { ...c, pending: [] }, data: c.pending, ended: c.ended });
@@ -676,9 +562,6 @@ pub function (c: Connection) recv(wait: Duration): Result[Received, tls.TlsError
   return __recv_until(c, monotonic_ns() + wait.as_nanos());
 }
 
-// __recv_kernel reads records the kernel opened until application data or
-// the end of the stream arrives, or the deadline passes; any other record
-// goes through the session.
 function __recv_kernel(c: Connection, deadline: i64): Result[Received, tls.TlsError] {
   let s: Session = c.session;
   while (true) {
@@ -695,8 +578,6 @@ function __recv_kernel(c: Connection, deadline: i64): Result[Received, tls.TlsEr
   return Ok(__received(c, s, [], true));
 }
 
-// Kerneled — the session after one record off an offloaded socket, and
-// what `recv` answers when that record ends the wait (`done`).
 struct Kerneled { session: Session, got: Received, done: boolean }
 
 function __kernel_next(c: Connection, s: Session, read: ktls.Read): Result[Kerneled, tls.TlsError] {
@@ -725,8 +606,6 @@ function __kernel_next(c: Connection, s: Session, read: ktls.Read): Result[Kerne
   return Err(tls.ClosedEarly);
 }
 
-// __kernel_failed is a read the kernel refused: a record that did not open
-// or overflowed gets its alert, and the socket is closed either way.
 function __kernel_failed(c: Connection, errno: i32): tls.TlsError {
   let err: tls.TlsError = tls.NetFailed(net.error_from_host(errno));
   if (errno == 74) {
@@ -741,8 +620,6 @@ function __kernel_failed(c: Connection, errno: i32): tls.TlsError {
   return err;
 }
 
-// __recv_until reads until application data or the end of the stream
-// arrives, or the deadline passes.
 function __recv_until(c: Connection, deadline: i64): Result[Received, tls.TlsError] {
   let s: Session = c.session;
   while (true) {
@@ -771,8 +648,6 @@ function __received(c: Connection, s: Session, data: u8[], ended: boolean): Rece
   return Received { conn: Connection { ...c, session: s, ended: ended }, data: data, ended: ended };
 }
 
-// __stream_ended is the socket's end of stream: the peer has gone, which
-// inside a record is a cut.
 function __stream_ended(c: Connection, s: Session): Result[Received, tls.TlsError] {
   if (s.held.len() > 0) {
     return Err(tls.RecordCut);
@@ -780,8 +655,6 @@ function __stream_ended(c: Connection, s: Session): Result[Received, tls.TlsErro
   return Ok(__received(c, s, [], true));
 }
 
-// __exchange reads input on an open connection and sends what the session
-// answers; a failure sends its alert and closes the socket.
 function __exchange(c: Connection, s: Session, input: [u8]): Result[Step, tls.TlsError] {
   match (__exchange_fd(c.fd, s, input)) {
     Ok(step) => {
@@ -796,9 +669,6 @@ function __exchange(c: Connection, s: Session, input: [u8]): Result[Step, tls.Tl
   return Err(tls.ClosedEarly);
 }
 
-// __exchange_fd reads input and sends what the session answers, or the
-// alert a failure calls for. Once offloaded, the keys a KeyUpdate set go to
-// the kernel after what the session answered under the old ones.
 function __exchange_fd(fd: i32, s: Session, input: [u8]): Result[Step, tls.TlsError] {
   match (s.read(input, now_unix_ms())) {
     Ok(step) => {
@@ -817,8 +687,6 @@ function __exchange_fd(fd: i32, s: Session, input: [u8]): Result[Step, tls.TlsEr
   return Err(tls.ClosedEarly);
 }
 
-// __send_out sends what a session wrote: records it sealed, or once
-// offloaded the records it framed for the kernel.
 function __send_out(fd: i32, s: Session, out: [u8]): Result[void, tls.TlsError] {
   if (!s.offloaded()) {
     return __send_fd(fd, out);
@@ -830,7 +698,6 @@ function __send_out(fd: i32, s: Session, out: [u8]): Result[void, tls.TlsError] 
   return Ok(());
 }
 
-// close sends close_notify and closes the socket, once.
 pub function (c: Connection) close(): void {
   if (!c.open.get()) {
     return;
@@ -857,8 +724,6 @@ function __send_fd(fd: i32, data: [u8]): Result[void, tls.TlsError] {
   return Ok(());
 }
 
-// __await is the next bytes off the socket before `deadline`, empty at the
-// end of the stream, or None once the deadline has passed.
 function __await(fd: i32, deadline: i64): Result[Option[u8[]], tls.TlsError] {
   let left: i64 = deadline - monotonic_ns();
   if (left <= 0) {
@@ -867,8 +732,6 @@ function __await(fd: i32, deadline: i64): Result[Option[u8[]], tls.TlsError] {
   return __recv_fd(fd, time.duration_nanos(left));
 }
 
-// __recv_fd is the next bytes off the socket within `wait`, empty at the
-// end of the stream, or None when the wait passed first.
 function __recv_fd(fd: i32, wait: Duration): Result[Option[u8[]], tls.TlsError] {
   match (net.read_deadline(fd, 65536, wait)) {
     Ok(net.Chunk(b)) => {

@@ -2,25 +2,6 @@ package e2e
 
 import "testing"
 
-// Lending an array to a `[T]` view parameter allocates a header nobody owned.
-//
-// The checker rewrites `f(xs)` against `f(src: [T])` into `f(xs[:])`
-// (lendArrayAsView), and that SliceExpr materialises a (data, len) header —
-// 16 bytes on the natives, 8 on wasm32. `__slice_make` is rcResultRaw, so no
-// rc unit exists to release it and nothing did: one header stranded per call,
-// on every backend, unbounded in a loop (#8502).
-//
-// stashLentViewTemp / emitLentViewDrops fixed that; nothing covered it. This
-// is the gate for the shape, not a second implementation of the fix.
-//
-// Pinned as an ABSOLUTE census rather than a differential: the array itself
-// already reclaims, so the only question this shape asks is whether the header
-// comes back, and the answer has to be all of it.
-//
-// The control is the whole argument. Change exactly one thing — the parameter
-// from `[u8]` to `u8[]`, so the argument is passed rather than lent — and the
-// leak is gone, which puts it on the lend and not on the array, the loop or
-// __alloc_u8.
 func TestSliceLendHeaderIsReclaimed(t *testing.T) {
 	src := func(param string) string {
 		return `
@@ -68,7 +49,6 @@ function main(): i32 {
 			} {
 				t.Run(shape.name, func(t *testing.T) {
 					_, stderr, code := tc.run(t, src(shape.param))
-					// 20 is the program's own answer; wasm reports 0.
 					if code != 20 && code != 0 {
 						t.Fatalf("exit=%d, want the program's own 20 (or wasm's 0) — "+
 							"a non-zero __rc_underflow_count() returns 99", code)

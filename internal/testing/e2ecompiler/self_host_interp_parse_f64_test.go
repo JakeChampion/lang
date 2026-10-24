@@ -8,14 +8,8 @@ import (
 	"testing"
 )
 
-// interpFloatLitBatchSize is how many literals go into one generated program.
-// The batch reports the 1-based index of its first mismatch as its exit status,
-// so it has to stay under the 255 an exit code can carry.
 const interpFloatLitBatchSize = 200
 
-// floatShapedLit makes s lex as a float literal. A spelling with no `.`, `e` or
-// `E` — every midpoint of two large doubles is a plain integer — would otherwise
-// be an integer literal, and `f64_bits` of one is a type error.
 func floatShapedLit(s string) string {
 	if strings.ContainsAny(s, ".eE") {
 		return s
@@ -23,11 +17,6 @@ func floatShapedLit(s string) string {
 	return s + ".0"
 }
 
-// interpFloatLitCorpus is parseF64Corpus restricted to what can appear as a
-// float literal in SOURCE: the native front end rejects an out-of-range
-// spelling outright (P002, "invalid float literal"), so `1e309` and `1e-400`
-// have no double to agree on and only the assemblers' runtime `.double`
-// operands reach them.
 func interpFloatLitCorpus() (lits []string, want []int64) {
 	all, bits := parseF64Corpus()
 	for i, s := range all {
@@ -40,10 +29,6 @@ func interpFloatLitCorpus() (lits []string, want []int64) {
 	return lits, want
 }
 
-// interpFloatLitBatch builds one program comparing each literal's f64_bits
-// against the strtod oracle's, returning the 1-based index of the first
-// mismatch, or 0 when every literal agrees. The expected bits go in as decimal
-// integer literals, which both engines read exactly.
 func interpFloatLitBatch(lits []string, want []int64) string {
 	var b strings.Builder
 	b.WriteString("function main(): i32 {\n")
@@ -54,23 +39,6 @@ func interpFloatLitBatch(lits []string, want []int64) string {
 	return b.String()
 }
 
-// TestSelfHostInterpFloatLiteralBits pins the self-host interpreter's decimal
-// float literal reader against the native interpreter, bit for bit. The native
-// interpreter is the differential oracle the whole self-host test strategy is
-// measured against, so a literal the two engines read to different doubles
-// makes every float-heavy differential comparison a comparison of two subtly
-// different programs. It read literals by accumulating digits into an f64 and
-// then multiplying or dividing by 10 once per exponent step, which compounds a
-// rounding error: `1e30` came out 1 ULP low, `1e100` 3 ULP high, `1e-100` 6 ULP
-// high and `8.98846567431158e307` 7 ULP low (#6824).
-//
-// Comparing f64_bits rather than a rendering keeps this a test of PARSING: the
-// shortest-round-trip formatter prints whatever double it is handed, so a
-// printing difference and a parsing difference show up in the same place.
-//
-// Host modes mirror TestSelfHostInterpU64: on Apple Silicon the driver is built
-// for arm64-darwin through the in-process Mach-O path, off it with the Go
-// x86-64 backend.
 func TestSelfHostInterpFloatLiteralBits(t *testing.T) {
 	native := runtime.GOOS == "darwin" && runtime.GOARCH == "arm64"
 

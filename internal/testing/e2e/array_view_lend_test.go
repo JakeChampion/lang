@@ -2,14 +2,6 @@ package e2e
 
 import "testing"
 
-// arrayViewLendProgram exercises the `T[]` → `[T]` argument borrow (#6798)
-// end-to-end: an owned array flows into a view PARAMETER without the caller
-// spelling a range, at concrete and generic element types, from an array
-// literal, from a struct method's argument list, and re-lent through a view
-// parameter into another one. The explicit slice spellings — including the
-// newly un-reserved full-range `xs[:]` — run alongside them, because the
-// implicit form desugars to exactly `xs[:]` and the two must not diverge.
-// Exits 0 on success, a distinct code per failed step.
 const arrayViewLendProgram = `struct Sink { base: i32 }
 
 function sum_u8(bs: [u8]): i32 {

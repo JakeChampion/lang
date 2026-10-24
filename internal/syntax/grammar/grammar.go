@@ -1,18 +1,3 @@
-// Package grammar reads Fern's syntactic grammar (spec/grammar.ebnf) and
-// matches token streams against it.
-//
-// The grammar is a PEG, not a context-free grammar, and that is a
-// deliberate choice rather than an implementation shortcut: the artefact
-// it describes is a hand-written recursive-descent parser, and PEG is
-// the formalism that actually models one. Alternation is ORDERED — the
-// first branch that matches wins, exactly as a chain of `if p.match(...)`
-// does — and repetition is greedy and possessive, exactly as a `for`
-// loop over `p.accept(...)` is. A CFG would describe a parser nobody
-// wrote, and its ambiguities would have to be resolved by prose.
-//
-// The consequence to keep in mind when editing spec/grammar.ebnf: a rule
-// like `{ X } X` can never match, because the repetition consumes every
-// X and does not give one back. Order alternatives longest-first.
 package grammar
 
 import (
@@ -21,27 +6,25 @@ import (
 	"strings"
 )
 
-// Node kinds in a parsed grammar expression.
 type nodeKind int
 
 const (
-	nSeq   nodeKind = iota // a b c
-	nAlt                   // a | b | c   (ordered)
-	nRep                   // { a }       (greedy, possessive)
-	nOpt                   // [ a ]
-	nRef                   // RuleName
-	nLit                   // 'text'      keyword or punctuation
-	nClass                 // IDENT, NUMBER, FLOAT, STRING, FSTRING, CHAR, BYTE
+	nSeq nodeKind = iota
+	nAlt
+	nRep
+	nOpt
+	nRef
+	nLit
+	nClass
 )
 
 type node struct {
 	kind  nodeKind
 	kids  []*node
-	text  string // nLit, nRef, nClass
-	ruleI int    // nRef: resolved rule index, -1 until linked
+	text  string
+	ruleI int
 }
 
-// Grammar is a linked set of rules ready to match against.
 type Grammar struct {
 	names []string
 	rules []*node
@@ -49,22 +32,17 @@ type Grammar struct {
 	start int
 }
 
-// RuleNames returns every rule name, sorted — for coverage reporting.
 func (g *Grammar) RuleNames() []string {
 	out := append([]string(nil), g.names...)
 	sort.Strings(out)
 	return out
 }
 
-// tokenClasses are the terminals produced by the lexical grammar. Every
-// other terminal is a literal keyword or punctuator.
 var tokenClasses = map[string]bool{
 	"IDENT": true, "NUMBER": true, "FLOAT": true, "STRING": true, "FSTRING": true,
 	"CHAR": true, "BYTE": true,
 }
 
-// Parse reads grammar source: a sequence of `Name = expr ;` rules, with
-// `#` comments. The first rule is the start symbol.
 func Parse(src string) (*Grammar, error) {
 	g := &Grammar{index: map[string]int{}}
 
@@ -102,9 +80,6 @@ func Parse(src string) (*Grammar, error) {
 	return g, nil
 }
 
-// link resolves every nRef to a rule index, so matching never does a map
-// lookup, and reports references to rules that do not exist — the most
-// common way to break a grammar file.
 func (g *Grammar) link() error {
 	var missing []string
 	var walk func(*node)
@@ -131,9 +106,6 @@ func (g *Grammar) link() error {
 	return nil
 }
 
-// splitRules cuts the source into `...;` chunks, dropping comments. A
-// `;` inside a quoted terminal (the language has one, `';'`) does not
-// end a rule.
 func splitRules(src string) []string {
 	var out []string
 	var cur strings.Builder
@@ -164,7 +136,6 @@ func splitRules(src string) []string {
 	return out
 }
 
-// commentStart finds a `#` that is not inside a quoted terminal.
 func commentStart(line string) int {
 	inQuote := false
 	for i, r := range line {
@@ -179,8 +150,6 @@ func commentStart(line string) int {
 	}
 	return -1
 }
-
-// --- the grammar-file's own tiny parser ------------------------------------
 
 type gparser struct {
 	toks []string
@@ -269,8 +238,6 @@ func (p *gparser) parseItem() (*node, error) {
 	return &node{kind: nRef, text: t, ruleI: -1}, nil
 }
 
-// lexGrammar splits a rule body into tokens: quoted terminals, names,
-// and the metasyntax punctuation.
 func lexGrammar(s string) []string {
 	var out []string
 	for i := 0; i < len(s); {
@@ -297,7 +264,7 @@ func lexGrammar(s string) []string {
 				j++
 			}
 			if j == i {
-				j++ // never stall on an unexpected byte
+				j++
 			}
 			out = append(out, s[i:j])
 			i = j

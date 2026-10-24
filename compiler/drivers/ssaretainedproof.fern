@@ -71,7 +71,6 @@ function effects(row: ssaprepare.Emitted, architecture: string): void {
   }
   require(hits > 0, 54);
   let bad = ssa.SFunc { ...f, blocks: [ssa.SBlock { ...b, insts: insts }] };
-  // The old LowerResult remains valid. Only the retained final effects change.
   check([ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, formed: ssa.Formed { ...row.body.formed, f: bad } } }], row.label_name, architecture, false);
   let boundaries = [ssa.SFunc { ...f, takes_env: true }, ssa.SFunc { ...f, nparams: 1 }];
   for changed in boundaries {
@@ -103,7 +102,6 @@ function entry(row: ssaprepare.Emitted, architecture: string): void {
   require(bound.resolve([release], row.label_name, architecture).error == "mismatched native release entry selection", 60);
   release = ssaprepare.Emitted { ...release, release_entry: ircore.release_entry(r, architecture, false, release.context.reg_entries) };
   require(bound.resolve([release], row.label_name, architecture).error == "unproved native release entry effects", 55);
-  // Disabling that fast path permits binding, not an allocation proof.
   release = ssaprepare.Emitted { ...release, context: ssaprepare.Context { ...release.context, rc_free_debug: true } };
   require(bound.resolve([release], row.label_name, architecture).error == "mismatched native release entry selection", 70);
   release = ssaprepare.Emitted { ...release, release_entry: ircore.release_entry(r, architecture, true, release.context.reg_entries) };
@@ -121,16 +119,11 @@ pub function run(arm: boolean): void {
   let scalar = bound.resolve(emit(arm, true, true), "parent", architecture).rows[0];
   check([scalar], "parent", architecture, true);
   require(abi.check_emitted_producer([row], "parent", architecture).words == 3 && abi.check_emitted_producer([scalar], "parent", architecture).words == 2, 59);
-  // Both producers use local index zero and the same type/function names,
-  // but their layouts differ. Each row must keep its own metadata.
   require(row.body.selected.origin.producer == 0 && scalar.body.selected.origin.producer == 0, 58);
   let other = renamed(scalar, "Other.parent");
   check([other, row], "parent", architecture, true);
   check([other, row], "Other.parent", architecture, true);
   check([metadata(row, scalar.body.selected.producers[0])], "parent", architecture, false);
-  // A coherent two-scalar ABI has the same untyped store graph as two owned
-  // references. The proof relies on the selected metadata's producer binding;
-  // it cannot authenticate a deliberately replaced, internally coherent ABI.
   let same_graph = bound.resolve(emit(arm, true, false), "parent", architecture).rows[0];
   check([same_graph], "parent", architecture, true);
   check([metadata(row, same_graph.body.selected.producers[0])], "parent", architecture, true);

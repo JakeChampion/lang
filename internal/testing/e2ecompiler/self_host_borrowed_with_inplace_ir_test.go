@@ -7,21 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostBorrowedWithInPlaceIRX86_64 pins #6158: the in-place store
-// behind a `x = x.with(i, v)` SELF-REASSIGN is sound only when `x` is a sole
-// owner. For a BORROWED value the write must not land in an array the caller
-// still owns.
-//
-// SCOPE: the FIELD-READ shapes, the bare-ident REBIND shapes (#6170) —
-// `let heap = heap_in; heap = heap.with(…)` over a borrowed param, and
-// `let b = a; b = b.with(…)` over a still-live local — and the DIRECT form
-// (#6185), `function f(buf: i32[]) { buf = buf.with(…); }`. A mutated capture
-// is the opposite case: its `$cell$` storage must be written THROUGH, which
-// `mut-capture-cell-param-writes-through` pins.
-//
-// Every expected value came from `bin/fern -interp`, and each failing case was
-// confirmed to diverge on the pre-fix compiler at the value named in its
-// comment.
 func TestSelfHostBorrowedWithInPlaceIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -53,10 +38,6 @@ func TestSelfHostBorrowedWithInPlaceIRX86_64(t *testing.T) {
 		}
 	}
 
-	// The shape #6158 was filed as: an array field read off a BORROWED struct
-	// param. std/regex's __rx_addthread is written this way, which is how the
-	// bug reached the regex engine. Called twice with the same `st`, so the
-	// second call observes the first's write. Pre-fix: 10.
 	run(t, `struct St { seen: i32[], n: i32 }
 function mark(st: St, pc: i32): St {
     let sn: i32[] = st.seen;
@@ -71,8 +52,6 @@ function main(): i32 {
     return a.n * 10 + b.n;
 }`, "borrowed-struct-param-field", 11)
 
-	// The source need not be a param: a LOCAL struct still read afterwards has
-	// the same hazard. Pre-fix: 11 (st.seen[2] became 1).
 	run(t, `struct St { seen: i32[], n: i32 }
 function main(): i32 {
     let st: St = St { seen: [0, 0, 0, 0], n: 0 };
@@ -81,11 +60,6 @@ function main(): i32 {
     return st.seen[2] * 10 + sn[2];
 }`, "local-struct-field", 1)
 
-	// MUST NOT REGRESS: the `own` param + field-clear idiom. The field is
-	// emptied before the mutation, so the local genuinely is the only
-	// reference and the in-place write is correct. This is arm64_asm_resolve's
-	// shape — the three quadratic patch loops #6011 made fast — and an
-	// ownership-blind fix would send it down the clone path.
 	run(t, `struct St { seen: i32[], n: i32 }
 function bump(own st: St, pc: i32): St {
     let sn: i32[] = st.seen;
@@ -98,9 +72,6 @@ function main(): i32 {
     return a.seen[2] * 10 + a.n;
 }`, "own-param-field-cleared", 11)
 
-	// `.append` is NOT this bug — #6155 fixed that path by bracketing the
-	// receiver. Here so a future change to the shared gate cannot quietly
-	// alter it.
 	run(t, `struct St { xs: i32[], n: i32 }
 function grow(st: St, v: i32): i32 {
     let a: i32[] = st.xs;
@@ -114,16 +85,6 @@ function main(): i32 {
     return p * 10 + q;
 }`, "append-unaffected", 33)
 
-	// The PERF guard, and the reason it is an assertion rather than a comment:
-	// an over-broad fix to this gate fails as SILENT QUADRATIC COPYING, not as
-	// a wrong answer, so every correctness case above would still pass while
-	// the assembler's patch loops became O(n^2).
-	//
-	// 4000 `.with` writes through an `own` param must allocate nothing — the
-	// whole point of the annotation. Measured with __heap_bump_bytes() (the
-	// bump allocator's high-water mark) rather than RSS, which is not
-	// comparable across hosts. Pre-fix and post-fix this reads 0 MB; with the
-	// ownership check dropped it reads ~128 MB.
 	run(t, `function fill(own buf: i32[], n: i32): i32[] {
     let i: i32 = 0;
     while (i < n) { buf = buf.with(i, i); i = i + 1; }
@@ -143,9 +104,6 @@ function main(): i32 {
     return 7;
 }`, "own-param-with-loop-allocates-nothing", 7)
 
-	// #6170: the bare-ident REBIND of a borrowed array param. The mutated name,
-	// `heap`, is neither a param nor a field read, but its buffer is the
-	// caller's. Pre-fix: 77.
 	run(t, `function run(heap_in: i32[], at: i32, v: i32): i32[] {
     let heap: i32[] = heap_in;
     heap = heap.with(at, v);
@@ -157,9 +115,6 @@ function main(): i32 {
     return h[1] * 10 + r[1];
 }`, "rebind-of-borrowed-param", 7)
 
-	// The same rebind over a plain LOCAL that is still live afterwards. No param
-	// and no field read is involved, so this one is invisible to both prior gates;
-	// it is the shape the liveness arm of the rule exists for. Pre-fix: 77.
 	run(t, `function main(): i32 {
     let a: i32[] = [0, 0, 0, 0];
     let b: i32[] = a;
@@ -167,15 +122,6 @@ function main(): i32 {
     return a[1] * 10 + b[1];
 }`, "rebind-of-live-local", 7)
 
-	// MUST NOT REGRESS, and the case that keeps the rule from being written as
-	// "any rebind clones": the source is an `own` param and is dead after the
-	// rebind, so `heap` is the buffer's only remaining name and the stores stay
-	// in place. A const-eval VM that rebinds its heap from an `own` param and
-	// writes it many times per op has exactly this shape.
-	//
-	// Asserted by ALLOCATION, not by answer: getting this wrong is silent
-	// quadratic copying that every correctness case above still passes. With the
-	// rebind credited unconditionally this read ~128 MB instead of 0.
 	run(t, `function fill(own heap_in: i32[], n: i32): i32[] {
     let heap: i32[] = heap_in;
     let i: i32 = 0;
@@ -194,9 +140,6 @@ function main(): i32 {
     return 7;
 }`, "own-param-rebind-loop-allocates-nothing", 7)
 
-	// #6185: the DIRECT borrowed-param self-reassign. No rebind and no field
-	// read, so both prior gates are blind to it and only the param membership
-	// added with the `$cell$` marker catches it. Pre-fix: 77.
 	run(t, `function run(heap: i32[], at: i32, v: i32): i32[] {
     heap = heap.with(at, v);
     return heap;
@@ -207,11 +150,6 @@ function main(): i32 {
     return h[1] * 10 + r[1];
 }`, "direct-borrowed-param", 7)
 
-	// The same direct form on a LIFTED lambda's own DECLARED array param. This
-	// is why the fix distinguishes capture params from declared ones instead of
-	// exempting `__lam_*` bodies wholesale: `a` here is a borrow from the
-	// closure's caller and must clone, while `k` in the same body is a capture.
-	// Pre-fix: 104.
 	run(t, `function main(): i32 {
     let k: i32 = 5;
     let g: (i32[]) => i32 = (a: i32[]): i32 => { a = a.with(0, 9); return a[0] + k; };
@@ -220,11 +158,6 @@ function main(): i32 {
     return b[0] * 10 + r;
 }`, "lifted-lambda-declared-array-param", 24)
 
-	// MUST NOT REGRESS, and the case the whole design turns on: the capture
-	// cell reaches the lifted body as a non-`own` array param exactly like
-	// `direct-borrowed-param` above, and must write THROUGH rather than clone.
-	// A fix that credits every array param without the `$cell$` exemption
-	// returns 38 here.
 	run(t, `function main(): i32 {
     let x: i32 = 0;
     let f: () => i32 = (): i32 => { x = x + 4; return 0; };

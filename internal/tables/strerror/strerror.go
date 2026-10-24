@@ -1,34 +1,7 @@
-// Package strerror is the one errno table every Fern runtime reports
-// `IoError.Other(path, message, errno)` from: the message is glibc's
-// strerror text for the errno, on every target, because matching what
-// C programs print is the whole reason the field exists (#8265), and the
-// errno is the Linux number (Carried) on every target, so one constant
-// in std/errno means the same thing everywhere (#11296).
-//
-// Each entry carries the errno's number on each OS the runtime issues
-// syscalls to. Linux and Darwin number their errnos differently and
-// WASI preview 1 differently again, so the table is keyed by name and
-// resolved per target.
-//
-// The WORDING is resolved per target too. Text is glibc's; darwinText
-// overrides the sixteen errnos whose Darwin libc message differs. A C
-// program prints strerror(3) verbatim, so a Darwin build that said
-// "Invalid cross-device link" where the platform says "Cross-device
-// link" would diverge from every other binary on the machine.
-//
-// The three asm backends emit the table as a compare ladder over
-// `.rodata` literals, wasm as a ladder over data-segment literals, the
-// interpreter reads it directly, and the self-host compiler carries a
-// copy in compiler/asmcore.fern that selfhost_parity_test.go
-// pins to this one entry for entry.
 package strerror
 
 import "strconv"
 
-// Entry is one errno: its C name, glibc's strerror text, and its number
-// on each OS. A zero number means the OS has no separate errno of that
-// name (EOPNOTSUPP is ENOTSUP's alias on Linux and WASI). Text is the
-// wording everywhere except the Darwin errnos darwinText overrides.
 type Entry struct {
 	Name   string
 	Text   string
@@ -37,15 +10,12 @@ type Entry struct {
 	Wasi   int
 }
 
-// The target OS names Number / Text / Dense resolve by. Linux and
-// Darwin are runtime.GOOS spellings; Wasi is preview-1 numbering.
 const (
 	Linux  = "linux"
 	Darwin = "darwin"
 	Wasi   = "wasi"
 )
 
-// Number is the errno's number on os, or 0 when os has none.
 func (e Entry) Number(os string) int {
 	switch os {
 	case Linux:
@@ -58,10 +28,6 @@ func (e Entry) Number(os string) int {
 	return 0
 }
 
-// darwinText is the Darwin libc's wording for the errnos whose message
-// is not glibc's, checked against the host by TestTextMatchesHostLibc:
-// an entry missing here whose wording differs fails that test, so the
-// list cannot silently fall behind a platform.
 var darwinText = map[string]string{
 	"ENXIO":         "Device not configured",
 	"EBUSY":         "Resource busy",
@@ -82,7 +48,6 @@ var darwinText = map[string]string{
 	"EOWNERDEAD":    "Previous owner died",
 }
 
-// TextFor is the errno's strerror text on os.
 func (e Entry) TextFor(os string) string {
 	if os == Darwin {
 		if t, ok := darwinText[e.Name]; ok {
@@ -92,10 +57,6 @@ func (e Entry) TextFor(os string) string {
 	return e.Text
 }
 
-// Table lists every errno the runtime's syscalls (open / read / write /
-// close / stat / unlink / mkdir / getdents / socket family / spawn) can
-// return, in Linux numbering order. An errno outside it is reported as
-// Unknown(errno), which is also what glibc prints.
 var Table = []Entry{
 	{"EPERM", "Operation not permitted", 1, 1, 63},
 	{"ENOENT", "No such file or directory", 2, 2, 44},
@@ -135,8 +96,6 @@ var Table = []Entry{
 	{"ENOSYS", "Function not implemented", 38, 78, 52},
 	{"ENOTEMPTY", "Directory not empty", 39, 66, 55},
 	{"ELOOP", "Too many levels of symbolic links", 40, 62, 32},
-	// An extended attribute that is not there: ENODATA on Linux, ENOATTR
-	// on Darwin, whose ENODATA is a STREAMS errno.
 	{"ENODATA", "No data available", 61, 96, 0},
 	{"ENOATTR", "Attribute not found", 0, 93, 0},
 	{"EOVERFLOW", "Value too large for defined data type", 75, 84, 61},
@@ -171,17 +130,11 @@ var Table = []Entry{
 	{"EOPNOTSUPP", "Operation not supported", 0, 102, 0},
 }
 
-// UnknownPrefix precedes the number in the text for an errno outside
-// Table; the runtimes build that text from it at run time. This is
-// glibc's spelling — Darwin's is DarwinUnknownPrefix, which carries a
-// colon (Apple's Libc builds it in string/FreeBSD/strerror.c's
-// __errstr, as UPREFIX then ": " then the digits).
 const (
 	UnknownPrefix       = "Unknown error "
 	DarwinUnknownPrefix = "Unknown error: "
 )
 
-// UnknownPrefixFor is the prefix on os.
 func UnknownPrefixFor(os string) string {
 	if os == Darwin {
 		return DarwinUnknownPrefix
@@ -189,12 +142,10 @@ func UnknownPrefixFor(os string) string {
 	return UnknownPrefix
 }
 
-// Unknown is the text os gives for an errno outside Table.
 func Unknown(os string, errno int) string {
 	return UnknownPrefixFor(os) + strconv.Itoa(errno)
 }
 
-// Text is strerror(errno) on os.
 func Text(os string, errno int) string {
 	for _, e := range Table {
 		if n := e.Number(os); n != 0 && n == errno {
@@ -204,16 +155,11 @@ func Text(os string, errno int) string {
 	return Unknown(os, errno)
 }
 
-// linuxAlias names, for an errno Linux has no separate number for, the
-// errno glibc defines it as.
 var linuxAlias = map[string]string{
 	"ENOATTR":    "ENODATA",
 	"EOPNOTSUPP": "ENOTSUP",
 }
 
-// Carried is the number `IoError.Other` carries for the errno: its Linux
-// number on every target, an alias resolved to the errno glibc defines it
-// as.
 func (e Entry) Carried() int {
 	if alias, ok := linuxAlias[e.Name]; ok {
 		return Number(Linux, alias)
@@ -221,8 +167,6 @@ func (e Entry) Carried() int {
 	return e.Linux
 }
 
-// Carried is the number `IoError.Other` carries for os's errno n, or 0 for
-// an errno outside Table.
 func Carried(os string, errno int) int {
 	for _, e := range Table {
 		if n := e.Number(os); n != 0 && n == errno {
@@ -232,7 +176,6 @@ func Carried(os string, errno int) int {
 	return 0
 }
 
-// Number is the errno named name on os, or 0 when os has none.
 func Number(os, name string) int {
 	for _, e := range Table {
 		if e.Name == name {
@@ -242,10 +185,6 @@ func Number(os, name string) int {
 	return 0
 }
 
-// Dense is the table as an errno-indexed slice for os: Dense(os)[n] is
-// the text for errno n, "" where n has no entry. Its length is one past
-// the largest errno os numbers, so a backend can emit it as a ladder or
-// a lookup table without knowing the numbering.
 func Dense(os string) []string {
 	max := 0
 	for _, e := range Table {
@@ -262,18 +201,11 @@ func Dense(os string) []string {
 	return out
 }
 
-// WasiErrorCode pairs a `wasi:filesystem/types.error-code` case with
-// the preview-1 errno it stands for.
 type WasiErrorCode struct {
 	Code  string
 	Errno string
 }
 
-// WasiErrorCodes is the error-code enum in discriminant order
-// (component.WasiFilesystemErrorCodeNames, from the vendored WIT). A
-// preview-2 host reports a failure as one of these bytes, and the
-// runtime translates it back to the errno the preview-1 classifier
-// understands.
 var WasiErrorCodes = []WasiErrorCode{
 	{"access", "EACCES"},
 	{"would-block", "EAGAIN"},
@@ -314,10 +246,6 @@ var WasiErrorCodes = []WasiErrorCode{
 	{"cross-device", "EXDEV"},
 }
 
-// WasiErrnoOfCode is the preview-1 errno for a preview-2 error-code
-// discriminant. A discriminant outside the enum — a host newer than the
-// vendored WIT — reads as ENOENT, the same default the translation has
-// always had.
 func WasiErrnoOfCode(code int) int {
 	if code < 0 || code >= len(WasiErrorCodes) {
 		return Number(Wasi, "ENOENT")

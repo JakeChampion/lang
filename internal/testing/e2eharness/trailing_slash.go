@@ -7,11 +7,6 @@ import (
 	"testing"
 )
 
-// TrailingSlashSource exercises the rule that a path ending in '/' names a
-// directory or nothing (POSIX). Linux's kernel refuses `link-to-file/`; XNU
-// opens the file, so the Darwin runtime refuses it itself, as gnulib's open
-// does for GNU: ENOTDIR for a read, EISDIR for a write or create, before
-// anything is truncated (#11430).
 const TrailingSlashSource = `function why(e: IoError): string {
     match (e) { Other(_, m, _) => { return m; }, NotFound(_) => { return "NotFound"; }, _ => { return "other"; } }
 }
@@ -36,8 +31,6 @@ dir ok
 f hello
 `
 
-// TrailingSlashTree is a file f holding "hello", a symlink lf to it and a
-// directory d.
 func TrailingSlashTree(t testing.TB) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -53,8 +46,6 @@ func TrailingSlashTree(t testing.TB) string {
 	return dir
 }
 
-// CheckTrailingSlash runs `run` in the tree `dir` and holds it to the Linux
-// kernel's answers, with the file left untouched by the refused writes.
 func CheckTrailingSlash(t testing.TB, run *exec.Cmd, dir string) {
 	t.Helper()
 	run.Dir = dir

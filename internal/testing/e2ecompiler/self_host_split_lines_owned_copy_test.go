@@ -8,18 +8,6 @@ import (
 	"testing"
 )
 
-// --- split/lines segments are owned copies (#7230) ---------------------------
-//
-// rt_src_str_split and rt_src_str_lines append an OWNED COPY of each segment
-// (`slice + ""`, the #7393 idiom), not a view whose backing buffer is the
-// receiver's. A view result that crossed its frame would dangle exactly like
-// #7393's trim — both probes below would answer 36 against the oracles' 29,
-// reading the recycler's bytes, with underflow 0 and no diagnostic. Owned
-// elements take the ordinary rc-aware full free.
-//
-// The escaping rows return the result across a frame; the exits are the part
-// that must hold. Every row balances.
-
 type splitOwnedCase struct {
 	name   string
 	src    string
@@ -31,9 +19,6 @@ type splitOwnedCase struct {
 func splitOwnedCases() []splitOwnedCase {
 	return []splitOwnedCase{
 		{
-			// THE #7230 SHAPE: a split result returned across its frame, an
-			// element byte read under recycling pressure. Pre-fix: 36, the
-			// recycler's bytes.
 			name: "split_returned_across_frame",
 			src: `import "std/string";
 function mk(a: string): string { return a + "abcdefghijklmnopqrstuvwxyz0123456789"; }
@@ -47,7 +32,6 @@ function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc =
 			want: 29, allocs: 600, frees: 600,
 		},
 		{
-			// The lines sibling — same mechanism, same pre-fix wrong answer.
 			name: "lines_returned_across_frame",
 			src: `import "std/string";
 function mk(a: string): string { return a + "abcdefghijklmnopqrstuvwxyz0123456789"; }
@@ -61,9 +45,6 @@ function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc =
 			want: 29, allocs: 600, frees: 600,
 		},
 		{
-			// Same-frame split, receiver read after — correct under the views
-			// (the receiver outlived them); must stay correct AND swept under
-			// the owned copies through the collapsed (full-free) routing.
 			name: "split_same_frame_swept",
 			src: `import "std/string";
 function mk(a: string): string { return a + "abcdefghijklmnopqrstuvwxyz0123456789"; }
@@ -78,9 +59,6 @@ function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc =
 	}
 }
 
-// TestSelfHostSplitLinesOwnedCopyX86_64 — escaped split/lines results carry
-// owned segments: right answers under recycling pressure, underflow 0, and the
-// same-frame case fully swept through the collapsed release routing.
 func TestSelfHostSplitLinesOwnedCopyX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -111,8 +89,6 @@ func TestSelfHostSplitLinesOwnedCopyX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostSplitLinesOwnedCopyWasmIR — wasm's slice op already copied, so
-// this leg pins the answers stayed identical through the routing collapse.
 func TestSelfHostSplitLinesOwnedCopyWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping split/lines owned-copy wasm IR e2e")
@@ -151,8 +127,6 @@ func TestSelfHostSplitLinesOwnedCopyWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostSplitLinesOwnedCopyIRArm64 — the other register backend shared
-// the dangling segments, so its exits carry the crash-class signal too.
 func TestSelfHostSplitLinesOwnedCopyIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

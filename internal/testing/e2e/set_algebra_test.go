@@ -2,11 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for the std/set algebra completions across
-// backends: is_superset (mirror of is_subset, incl. empty), is_disjoint
-// (empty intersection), and symmetric_difference (elements in exactly
-// one set, with union's ordering convention). Returns 42 iff every check
-// holds. Each leg skips itself when its toolchain is absent.
 const setAlgebraProg = `
 import "std/set" as set;
 function main(): i32 {

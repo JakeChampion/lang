@@ -1,13 +1,13 @@
-// Pins E036. The program is the example from that code's entry
-// in the diagnostic catalogue (`fern -explain E036`), so this case
-// also checks the catalogue's example really does produce the error
-// it documents.
+
+
+
+
 enum Color { Red, Green, Blue }
 enum Shape { Circle(f64), Square }
 
 function main(): i32 {
-    let s = Circle();                 // error[E036]: variant Circle takes 1 argument but was given 0
-    let t = Circle(1.0, 2.0);         // error[E036]: variant Circle takes 1 argument but was given 2
-    let bad = Color.Purple;           // error[E036]: enum Color has no variant "Purple"
+    let s = Circle();
+    let t = Circle(1.0, 2.0);
+    let bad = Color.Purple;
     return 0;
 }

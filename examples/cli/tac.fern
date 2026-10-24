@@ -1,17 +1,3 @@
-// tac.fern — concatenate and print files in reverse, like `tac(1)`.
-//
-// `tac` is `cat` spelled backwards: it prints the lines of each input
-// in reverse order (last line first). With multiple inputs the files
-// are still processed in argv order, but every line ever read is
-// emitted in one reversed stream — matching GNU tac's default.
-//
-//   $ printf 'one\ntwo\nthree\n' | ./tac
-//   three
-//   two
-//   one
-//
-// Showcases: reading all input up front, accumulating into a
-// `string[]`, and walking an array backwards.
 import "std/string";
 import "std/io";
 

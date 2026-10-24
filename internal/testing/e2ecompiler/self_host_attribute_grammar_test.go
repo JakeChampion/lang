@@ -9,13 +9,8 @@ import (
 	"testing"
 )
 
-// firstP001 is the position and words of a check's first P001. The self-host's
-// "at top level:" / "in fn '…':" label (#12762) is not part of the words.
 var firstP001 = regexp.MustCompile(`:(\d+:\d+): error\[P001\]: (?:at top level: |in fn '[^']*': )?(.*)`)
 
-// A malformed or misplaced attribute is a P001 from both front ends, at the
-// same position in the same words (#12742); a well-placed one parses and
-// checks on both.
 func TestSelfHostAttributeGrammar(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	const main = "\nfunction main(): void {}\n"
@@ -35,13 +30,11 @@ func TestSelfHostAttributeGrammar(t *testing.T) {
 		"@export(\"a:b/c\", \"d\")\nfunction f(): void {}" + main,
 	}
 	rejected := []string{
-		// The issue's cases.
 		"@@@",
 		"@\nstruct S { a: i32 }",
 		"function main(): void {}\n@",
 		"@derive(Eq)\nfunction f(): void {}",
 		"@(Eq)\nstruct S { a: i32 }",
-		// A malformed attribute.
 		"@derive Eq\nstruct S { a: i32 }",
 		"@derive()\nstruct S { a: i32 }",
 		"@derive(Eq\nstruct S { a: i32 }",
@@ -57,7 +50,6 @@ func TestSelfHostAttributeGrammar(t *testing.T) {
 		"@import(1, \"d\")\nfunction f(): void;",
 		"@import(\"a:b/c\", \"d\"\nfunction f(): void;",
 		"@export\nfunction f(): void {}",
-		// A misplaced attribute.
 		"@derive(Eq)",
 		"@derive(Eq)\nconst X: i32 = 1;",
 		"@derive(Eq)\ntrait T {}",
@@ -85,11 +77,9 @@ func TestSelfHostAttributeGrammar(t *testing.T) {
 		"@export(\"a:b/c\", \"d\")\nstruct S { a: i32 }",
 		"@export(\"a:b/c\", \"d\")\nresource R;",
 		"pub @derive(Eq) struct S { a: i32 }",
-		// A `pub` that does not continue into a declaration.
 		"pub let x: i32 = 1;",
 		"pub(foo) function f(): void {}",
 		"pub(package function f(): void {}",
-		// In a function body.
 		"function main(): void {\n  @derive(Eq)\n  let x: i32 = 1;\n}",
 	}
 	dir := t.TempDir()
@@ -128,8 +118,6 @@ func TestSelfHostAttributeGrammar(t *testing.T) {
 	}
 }
 
-// `-fmt -w` refuses a file whose only content is a malformed attribute, rather
-// than writing back the empty program the dropped tokens left (#12742).
 func TestSelfHostFmtWriteRefusesMalformedAttribute(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	src := filepath.Join(t.TempDir(), "attr.fern")

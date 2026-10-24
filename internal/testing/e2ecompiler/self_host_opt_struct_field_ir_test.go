@@ -7,12 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostOptStructFieldIRX86_64 verifies that a struct with Option[T] /
-// Result[T,E] fields (leak-safe scalar payloads) is admitted to the IR path and
-// that `match (b.opt)` / `match (b.res)` recover the Option/Result type from the
-// field. use_box builds Box{opt: Some(7), res: Ok(3), n: 5}, matches both fields,
-// and returns 5 + 7 + 3 = 15. Without Option/Result-field support Box is not
-// leaf-safe and the driver refuses the module; the exit code proves the matches.
 func TestSelfHostOptStructFieldIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

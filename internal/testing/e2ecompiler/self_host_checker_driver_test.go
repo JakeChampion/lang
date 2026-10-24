@@ -10,56 +10,29 @@ import (
 	"testing"
 )
 
-// TestSelfHostCheckerDriverX86_64 proves the self-hosted compiler can
-// compile the self-hosted TYPE CHECKER: it bundles lexer + parser +
-// checker + the real std/io + checker_run (the stdin driver), compiles
-// that with the Go-built bundle_run, and runs the resulting binary —
-// a self-hosted type checker — over well-typed and ill-typed programs,
-// asserting it exits 0 / 1 respectively.
 func TestSelfHostCheckerDriverX86_64(t *testing.T) {
-	// Compile the self-hosted checker binary (checker_run, importing
-	// std/io + ./lexer + ./parser + ./checker) with the file-based asm
-	// driver via buildCheckerDriverBin, so no ///MODULE bundle / import
-	// rewrite is needed.
 	checkerBin, runner, _ := buildCheckerDriverBin(t, "drivers/checker_run.fern", false)
 
 	cases := []struct {
 		name     string
 		src      string
 		wantExit int
-		// wantDiag, when non-empty, must appear on the driver's stderr — the
-		// formatted diagnostic (bootstrap error-reporting via format_diags).
 		wantDiag string
 	}{
 		{"well-typed-arith", "function main(): i32 { return 1 + 2; }\n", 0, ""},
 		{"well-typed-vars", "function main(): i32 { let a: i32 = 5; let b: i32 = a + 1; return b; }\n", 0, ""},
 		{"return-type-mismatch", "function main(): i32 { let s: string = \"x\"; return s; }\n", 1, "error[E002]"},
 		{"arith-type-mismatch", "function main(): i32 { let s: string = \"x\"; return 1 + s; }\n", 1, "error["},
-		// Immutability rejections surface a formatted diagnostic on stderr.
 		{"field-assign-e048", "struct P { x: i32 }\nfunction main(): i32 { let p: P = P { x: 1 }; p.x = 5; return p.x; }\n", 1, "error[E048]"},
 		{"subscript-assign-e056", "function main(): i32 { let a: i32[] = [1, 2, 3]; a[0] = 9; return a[0]; }\n", 1, "error[E056]"},
-		// A struct destructure carries its bindings comma-joined, exactly as
-		// the tuple form does, and the marker channel is the only thing that
-		// tells them apart. Reading the comma alone made E024 demand a tuple
-		// of every struct destructure — a valid program native accepts,
-		// rejected here.
 		{"struct-destructure", "struct P { x: i32, y: i32 }\nfunction main(): i32 { let p: P = P { x: 1, y: 2 }; let P { x, y } = p; return x + y; }\n", 0, ""},
 		{"struct-destructure-single-field", "struct P { x: i32, y: i32 }\nfunction main(): i32 { let p: P = P { x: 1, y: 2 }; let P { x, .. } = p; return x; }\n", 0, ""},
-		// #5356: an `@` binding is carried on the destructure's marker channel, so
-		// its `@at:` component reaches the checker in the slot a `: Type`
-		// annotation uses. It must not be read as one — a spurious diagnostic
-		// here would reject a program native accepts.
 		{"at-binding-tuple", "function main(): i32 { let w @ (a, b) = (1, 2); return w.0 + a + b; }\n", 0, ""},
 		{"at-binding-struct", "struct P { x: i32, y: i32 }\nfunction main(): i32 { let p: P = P { x: 1, y: 2 }; let w @ P { x, y } = p; return w.x + x + y; }\n", 0, ""},
 		{"for-struct-pattern", "struct P { x: i32, y: i32 }\nfunction main(): i32 { let ps: P[] = [P { x: 1, y: 2 }]; let acc: i32 = 0; for P { x, y } in ps { acc = acc + x + y; } return acc; }\n", 0, ""},
 		{"nested-tuple-destructure", "function main(): i32 { let (a, (b, c)) = (1, (2, 3)); return a + b + c; }\n", 0, ""},
-		// The bindings carry their ELEMENT types now, so a misuse of one is a
-		// coded diagnostic rather than the uncoded whole-function rejection
-		// every destructure used to draw.
 		{"destructure-arity-e024", "function main(): i32 { let (a, b, c) = (1, 2); return a; }\n", 1, "error[E024]"},
 		{"destructure-non-tuple-e024", "function main(): i32 { let (a, b) = 5; return a; }\n", 1, "error[E024]"},
-		// A loop over a value no loop iterates is reported AT the loop, not
-		// later as an uninferable statement in its body.
 		{"for-over-struct-e083", "struct Box { k: i32 }\nfunction main(): i32 {\n  let b: Box = Box { k: 1 };\n  let n: i32 = 0;\n  for it in b {\n    n = n + it.k;\n  }\n  return n;\n}\n", 1, "error[E083]: cannot iterate over a value of type Box: `for` walks an array, a string, a Map, a range, an iter.Iterator, or a value whose iter() returns one (5:13)"},
 		{"destructure-field-type-e002", "struct P { x: string }\nfunction main(): i32 { let p: P = P { x: \"s\" }; let P { x } = p; return x; }\n", 1, "error[E002]"},
 		{"value-match-settled-local", valueMatchSettledLocal, 0, ""},
@@ -89,22 +62,14 @@ func TestSelfHostCheckerDriverX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostCheckerDriverArm64 is the ARM64 counterpart (CI-gated,
-// qemu-aarch64): the self-hosted aarch64 compiler compiles the type
-// checker and the resulting binary type-checks programs under qemu.
 func TestSelfHostCheckerDriverArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	_, x86runner, driverBin := buildModloadArm64DriverX86(t)
 
-	// Compile checker_run (importing std/io + ./lexer + ./parser +
-	// ./checker) with the arm64 file-based driver, which is given the stdlib
-	// tree, so the source is unmodified.
-	// Derived from the driver's own imports, not listed — see the note in
-	// buildCheckerDriverBin (#6993).
 	files := map[string]string{}
 	for _, p := range selfHostImportClosureFiles(t, "drivers/checker_run.fern") {
 		if filepath.Base(p) == filepath.Base("drivers/checker_run.fern") {
-			continue // staged below as main.fern
+			continue
 		}
 		src, err := os.ReadFile(p)
 		if err != nil {

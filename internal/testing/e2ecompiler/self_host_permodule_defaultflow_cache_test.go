@@ -10,18 +10,6 @@ import (
 	"testing"
 )
 
-// The per-module object cache used to be reachable only through the explicit
-// single-unit mode (`-per-module-emit N -cache-dir DIR`), which no ordinary
-// build runs: a program over the single-process ceiling goes through
-// emit_per_module_spawned, which execs `-per-module-emit-all` children, and
-// neither of those consulted a cache. So the mechanism was complete and the
-// default build was still a full re-emit every time (#5330, remainder 1 of
-// #3458). The tests here drive the two default-flow modes.
-
-// pmCacheTree writes the leaf → mid → main chain the cache tests share and
-// returns the project dir and entry path. `leaf` is the module edits are made
-// to; mid calls into it, main calls mid. The tests' leaves are `@noinline`, so
-// mid's lowering reads leaf's signature and not its body.
 func pmCacheTree(t *testing.T, leaf string) (string, string) {
 	t.Helper()
 	proj := t.TempDir()
@@ -41,8 +29,6 @@ func pmCacheTree(t *testing.T, leaf string) (string, string) {
 	return proj, filepath.Join(proj, "main.fern")
 }
 
-// pmCacheLines splits a driver's stderr into the sorted sets of namespaces it
-// reported as served from cache and as re-emitted.
 func pmCacheLines(stderr string) ([]string, []string) {
 	hits, misses := []string{}, []string{}
 	for _, ln := range strings.Split(stderr, "\n") {
@@ -68,13 +54,6 @@ func pmWantSets(t *testing.T, phase string, gotHits, gotMisses, wantHits, wantMi
 	}
 }
 
-// TestSelfHostPerModuleEmitAllObjectCacheX86_64 drives the object cache through
-// `-per-module-emit-all`, the mode every batch child of the default build flow
-// runs in. It asserts the whole invalidation contract on the unit FILES that
-// mode writes: cold misses everything, a warm rebuild serves everything, a
-// body-only edit re-emits just that module, and a signature edit re-emits it and
-// its dependents — with every phase byte-identical to a clean no-cache build, so
-// a served unit is never merely plausible.
 func TestSelfHostPerModuleEmitAllObjectCacheX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	shDir := writeSelfHostModloadProject(t)
@@ -109,9 +88,6 @@ func TestSelfHostPerModuleEmitAllObjectCacheX86_64(t *testing.T) {
 		return string(out), errb.String()
 	}
 
-	// emitAll runs one emit-all into a fresh output dir and returns the unit
-	// files by name plus the cache hit / miss sets. With cacheDir empty it is the
-	// clean reference build.
 	emitAll := func(tag string, useCache bool) (map[string]string, []string, []string) {
 		outDir := filepath.Join(proj, "out_"+tag)
 		if err := os.MkdirAll(outDir, 0o755); err != nil {
@@ -141,9 +117,6 @@ func TestSelfHostPerModuleEmitAllObjectCacheX86_64(t *testing.T) {
 		return units, hits, misses
 	}
 
-	// assertClean re-emits the same sources with no cache at all and requires the
-	// cached build to match it byte-for-byte. This is what separates "the cache
-	// served something" from "the cache served the right thing".
 	assertClean := func(tag string, cached map[string]string) {
 		t.Helper()
 		clean, _, _ := emitAll(tag+"_clean", false)
@@ -158,9 +131,6 @@ func TestSelfHostPerModuleEmitAllObjectCacheX86_64(t *testing.T) {
 		}
 	}
 
-	// linkRun assembles + links the emitted units and returns the exit code. The
-	// entry unit carries the full runtime-need roots in emit-all mode, so no
-	// -extra-need threading is needed here.
 	linkRun := func(tag string, units map[string]string) int {
 		var names []string
 		for n := range units {
@@ -195,7 +165,6 @@ func TestSelfHostPerModuleEmitAllObjectCacheX86_64(t *testing.T) {
 		return 0
 	}
 
-	// Phase 1 — cold: nothing is cached, so every unit is emitted.
 	cold, hits, misses := emitAll("cold", true)
 	pmWantSets(t, "cold", hits, misses, []string{}, []string{"__entry", "leaf", "mid"})
 	assertClean("cold", cold)
@@ -203,7 +172,6 @@ func TestSelfHostPerModuleEmitAllObjectCacheX86_64(t *testing.T) {
 		t.Fatalf("cold build exit %d, want 42", code)
 	}
 
-	// Phase 2 — warm: no source moved, so codegen runs for nothing at all.
 	warm, hits, misses := emitAll("warm", true)
 	pmWantSets(t, "warm", hits, misses, []string{"__entry", "leaf", "mid"}, []string{})
 	for name, want := range cold {
@@ -212,8 +180,6 @@ func TestSelfHostPerModuleEmitAllObjectCacheX86_64(t *testing.T) {
 		}
 	}
 
-	// Phase 3 — body-only edit: leaf's signature is untouched, so nothing that
-	// merely calls into it can have changed. Only leaf re-emits.
 	writeLeaf("@noinline pub function leaf_val(): i32 { return 41; }\n")
 	body, hits, misses := emitAll("body", true)
 	pmWantSets(t, "body", hits, misses, []string{"__entry", "mid"}, []string{"leaf"})
@@ -222,12 +188,6 @@ func TestSelfHostPerModuleEmitAllObjectCacheX86_64(t *testing.T) {
 		t.Fatalf("body-edit build exit %d, want 42", code)
 	}
 
-	// Phase 4 — signature edit: leaf's return type moves. mid calls it directly;
-	// main reaches it transitively, and the key folds the whole import closure
-	// because a unit lowers under the whole-program view (see
-	// TestSelfHostPerModuleTransitiveInvalidationX86_64 for the shape that makes
-	// direct-edge keying unsound). So the closure over leaf re-emits, which here
-	// is everything.
 	writeLeaf("@noinline pub function leaf_val(): i64 { return 40i64; }\n")
 	sig, hits, misses := emitAll("sig", true)
 	pmWantSets(t, "sig", hits, misses, []string{}, []string{"__entry", "leaf", "mid"})
@@ -237,10 +197,6 @@ func TestSelfHostPerModuleEmitAllObjectCacheX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostPerModuleCacheFollowsInlinedBodyX86_64: the typed lowering
-// splices a tiny leaf into its callers, so mid's lowering reads leaf's BODY,
-// which no signature covers. A body-only edit to leaf must re-emit mid too: a
-// served mid would still return the old constant.
 func TestSelfHostPerModuleCacheFollowsInlinedBodyX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	shDir := writeSelfHostModloadProject(t)
@@ -298,15 +254,6 @@ func TestSelfHostPerModuleCacheFollowsInlinedBodyX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostPerModuleSpawnedCacheX86_64 drives the DEFAULT build route end to
-// end: `-spawned` forces emit_per_module_spawned, which forks a child per batch.
-// The cache only reaches those children if the driver forwards -cache-dir into
-// the exec argv, so this is the test that would fail if the flag stopped being
-// threaded — the emit-all test above drives a child's mode directly and cannot
-// see that.
-//
-// Skipped when the host needs an emulator to run the driver: the driver execs
-// ITSELF by path, and a forked child would not be re-wrapped in the runner.
 func TestSelfHostPerModuleSpawnedCacheX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -355,29 +302,12 @@ func TestSelfHostPerModuleSpawnedCacheX86_64(t *testing.T) {
 		t.Fatalf("spawned stream differs between cold and warm builds (%d vs %d bytes)", len(cold), len(warm))
 	}
 
-	// And the cached stream must equal what the same route produces with no
-	// cache at all.
 	clean, _ := spawn(false)
 	if clean != warm {
 		t.Fatalf("cache-served spawned stream differs from a clean spawned build (%d vs %d bytes)", len(warm), len(clean))
 	}
 }
 
-// TestSelfHostPerModuleTransitiveInvalidationX86_64 pins the dependency rule the
-// cache key folds signatures over.
-//
-// The key used to fold the signatures of a module's DIRECT imports only. That is
-// unsound, because a unit is lowered under the whole-program struct and function
-// view: `main` here imports `mid` and nothing else, yet reads a field of a
-// struct `leaf` declares, so main's codegen embeds a field OFFSET that leaf owns.
-// Inserting a field into that struct leaves mid's own signature untouched
-// (`get(): Thing` is unchanged), so under the direct-edge rule main's key did not
-// move and the build served main's PREVIOUS unit — reading the field at its old
-// offset.
-//
-// The test is written so it cannot pass vacuously: it asserts the freshly
-// emitted entry unit actually DIFFERS across the edit, which is what makes
-// serving the cached one a miscompile rather than a harmless reuse.
 func TestSelfHostPerModuleTransitiveInvalidationX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	shDir := writeSelfHostModloadProject(t)
@@ -393,7 +323,6 @@ func TestSelfHostPerModuleTransitiveInvalidationX86_64(t *testing.T) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	// main imports mid only; the struct it reads a field of is declared in leaf.
 	write("mid.fern", "import \"./leaf\";\n"+
 		"@noinline pub function get(): leaf.Thing { return leaf.make_thing(); }\n")
 	write("main.fern", "import \"./mid\";\n"+
@@ -403,7 +332,6 @@ func TestSelfHostPerModuleTransitiveInvalidationX86_64(t *testing.T) {
 		"}\n")
 	const leafBefore = "pub struct Thing { a: i32, b: i32 }\n" +
 		"pub function make_thing(): Thing { return Thing { a: 1, b: 41 }; }\n"
-	// A field inserted BEFORE b, so every reader of `.b` must be re-emitted.
 	const leafAfter = "pub struct Thing { a: i32, z: i32, b: i32 }\n" +
 		"pub function make_thing(): Thing { return Thing { a: 1, z: 0, b: 41 }; }\n"
 	write("leaf.fern", leafBefore)
@@ -463,8 +391,6 @@ func TestSelfHostPerModuleTransitiveInvalidationX86_64(t *testing.T) {
 		return hits, misses
 	}
 
-	// Cold build populates the cache, and records what the entry unit looks like
-	// under leaf's ORIGINAL field layout.
 	buildAll()
 	entryBefore := mustStdout(drive(append([]string{"-per-module-emit", strconv.Itoa(entryIdx)}, needArgs...)...))
 

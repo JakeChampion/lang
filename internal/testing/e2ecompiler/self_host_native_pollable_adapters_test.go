@@ -8,9 +8,6 @@ import (
 	"testing"
 )
 
-// Native readiness uses descriptors and poll timeouts. These five adapters
-// must evaluate their arguments while returning their native identity/constant
-// without emitting runtime helper bodies. WASI keeps its host operations.
 func TestSelfHostNativePollableAdapters(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()

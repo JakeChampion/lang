@@ -7,17 +7,9 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// A destructuring pattern renders through one function at every binding site
-// (#5356). Rendering it site-locally is how a struct pattern came to reprint
-// as the positional tuple form, silently rebinding by field position (#6374) —
-// so the `for` header and the `let` destructure, which only reached
-// the shared grammar once the pattern-head lookahead was unified, are pinned
-// here in the same shape a parameter already was.
 func TestFormatPatternBindingSites(t *testing.T) {
 	for _, tc := range []struct{ name, src, want string }{
 		{
-			// The struct name and the fields must survive: as a tuple this
-			// reads as bind-by-position over a different set of names.
 			name: "for_struct_shorthand",
 			src: `struct Point { x: i32, y: i32 }
 function f(ps: Point[]): i32 { let acc = 0; for Point { x, y } in ps { acc = acc + x + y; } return acc; }`,
@@ -30,8 +22,6 @@ function f(ps: Point[]): i32 { let acc = 0; for Point { x: a, y: b } in ps { acc
 			want: "for Point { x: a, y: b } in ps {",
 		},
 		{
-			// The `@` binding is a real local the body reads, so dropping it
-			// makes the formatted program stop compiling.
 			name: "for_at_struct",
 			src: `struct Point { x: i32, y: i32 }
 function f(ps: Point[]): i32 { let acc = 0; for w @ Point { x, y } in ps { acc = acc + w.x + x + y; } return acc; }`,
@@ -54,10 +44,6 @@ function f(p: Point): i32 { let w @ Point { x, y } = p; return w.x + x + y; }`,
 			want: "let w @ Point { x, y } = p;",
 		},
 		{
-			// The trailing `..` binds nothing — a named-field pattern binds
-			// only the fields it lists — so it survives only by being carried
-			// to the printer. Dropping it made `-fmt -w` delete what the
-			// author wrote, at every site that takes a struct pattern.
 			name: "for_struct_rest",
 			src: `struct Point { x: i32, y: i32, z: i32 }
 function f(ps: Point[]): i32 { let acc = 0; for Point { x, .. } in ps { acc = acc + x; } return acc; }`,
@@ -94,8 +80,6 @@ function f(p: Point): i32 { let w @ Point { x, .. } = p; return w.y + x; }`,
 			want: "let w @ Point { x, .. } = p;",
 		},
 		{
-			// A pattern that lists every field wrote no `..`, and must not
-			// grow one.
 			name: "no_rest_stays_absent",
 			src: `struct Point { x: i32, y: i32 }
 function f(p: Point): i32 { let Point { x, y } = p; return x + y; }`,
@@ -112,11 +96,6 @@ function f(p: Point): i32 { let Point { x, y } = p; return x + y; }`,
 			if !strings.Contains(got, tc.want) {
 				t.Errorf("formatted output missing %q:\n%s", tc.want, got)
 			}
-			// Formatting is a fixed point, and the formatted text parses —
-			// the two properties a silently-rewritten pattern breaks. (The
-			// AST-equality roundTrip helper is not usable here: a foreach
-			// carries a synthetic loop ID that re-parsing renumbers, so it
-			// fails for a plain `for a in xs` too.)
 			if again := formatSrc(t, got); again != got {
 				t.Errorf("not idempotent:\nfirst:\n%s\nsecond:\n%s", got, again)
 			}

@@ -8,11 +8,6 @@ import (
 	"testing"
 )
 
-// __sem_drop_<T> released an enum's self-typed payload by calling itself, so
-// the last reference to a 300k-node list overflowed the stack (#9046). A
-// variant's last payload of the enum's own type is now the next turn of a
-// loop in the helper. The shared tail checks the loop stops at a node another
-// list still holds, and the tree that a non-tail child still recurses.
 const recursiveDropSrc = `enum L { Nil, Cons(i32, L) }
 enum T { Leaf, Node(T, i32, T) }
 @noinline
@@ -40,7 +35,6 @@ function main(): i32 {
 }
 `
 
-// 7 + 9 + 999 % 101 + 299999 % 7 + 2.
 const recursiveDropWant = 7 + 9 + 999%101 + 299999%7 + 2
 
 func writeRecursiveDropSrc(t *testing.T) string {

@@ -5,13 +5,6 @@ import "std/string";
 import "std/crypto/rsa";
 import "std/crypto/sha2";
 
-// tests/stdlib/rsa_test.fern — std/crypto/rsa against signatures Python's
-// cryptography package made: PKCS#1 v1.5 and PSS over SHA-256, SHA-384 and
-// SHA-512 under a 2048-bit key, and under a 2049-bit key, where PSS's
-// encoded message is one byte shorter than the modulus. Tampering, a
-// signature checked under the other scheme or digest, and a malformed key
-// are refused.
-
 function k2048_n(): string {
   return "acf3f006452ba9304082dc0519bb3997486e5d1b57997a5bc74c97b84eaaf9d2718c3852bb47a55d530430227fd68fe44fec286b1df26d3d908b012524005ef2f91563df00e2b97316a210e4f3c17d6d435f372ff77afd24debdc67cca069d04178ea40922849fde1db98b4008d91e7f95d86ff44c0221be4206bf5a40dd9f5e384ef2728c82a2205b14437c55d7e26f9df93d36df0f263580e2f3c79ec950a407ba62e9d0a642a046351c1192ec19ce2f6ef9418b38f51074a6e3b4a4628dad7824739052063373ab2dc53fbf37bd8713d643a9ca2c1f2254851dce4c9157ed45ad56d168f54f3e5a1da8b3c863f6671511e7ca6828545e4d67fd92a0e23cff";
 }
@@ -128,8 +121,6 @@ function test_pss_2049_sha512(): test.TestOutcome {
   return test.assert_true(pss(k2049_n(), sha2.Sha512, message(), k2049_pss_sha512()));
 }
 
-// A signature over another message, a flipped bit, the other scheme, the
-// other digest, or the wrong length does not verify.
 function test_refusals(): test.TestOutcome {
   let other: u8[] = "fern rsa verification!".bytes();
   if (pkcs1(k2048_n(), sha2.Sha256, other, k2048_pkcs1_sha256()) || pss(k2048_n(), sha2.Sha256, other, k2048_pss_sha256())) {
@@ -211,7 +202,6 @@ function main(): i32 {
   return r.finish();
 }
 
-// Decode a valid fixture. Report a malformed fixture before the test exits.
 function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
   match (value) {
     Ok(bytes) => {

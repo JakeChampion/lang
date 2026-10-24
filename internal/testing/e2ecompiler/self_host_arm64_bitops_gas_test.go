@@ -7,12 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostArm64BitOpsGas byte-checks arm64_gas/arm64_encode's bit-
-// manipulation surface: neg, ubfx, tbz/tbnz (with an imm14 label fixup),
-// the extended condition codes (cc/cs/hi/ls/...), and the bit-counting trio
-// rbit / cnt / addv that the popcount and ctz lowerings emit, against the
-// llvm-mc-pinned encodings, through the self-host wasm pipeline. Exit 0 =
-// all pass, else the failing check id.
 func TestSelfHostArm64BitOpsGas(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host arm64 bitops gas e2e")
@@ -40,16 +34,10 @@ func TestSelfHostArm64BitOpsGas(t *testing.T) {
 	}
 }
 
-// TestSelfHostArm64DarwinMachOBitOpsRuns exercises the bit ops end-to-end:
-// a Fern program assembles `ubfx`/`neg`/`tbz` into a value computation
-// (extract -> negate twice -> add -> test-bit branch) that exits 42, wraps
-// it with macho.fern, and the signed Mach-O runs: no external tool.
 func TestSelfHostArm64DarwinMachOBitOpsRuns(t *testing.T) {
 	assertMachORuns(t, machoRun{name: "bitops42", main: arm64MachOBitOpsDriverMain, wantExit: 42})
 }
 
-// arm64BitOpsGasSelfTestMain asserts the new encoders against their
-// llvm-mc-pinned bytes. Each `return N` is a distinct failing-check id.
 const arm64BitOpsGasSelfTestMain = `
 function badvec(mnem: string, text: string): string {
     let ops: string[] = arm64_gas_operands(text);
@@ -118,9 +106,6 @@ function main(): i32 {
 }
 `
 
-// arm64MachOBitOpsDriverMain computes 42 via ubfx + neg + a tbz branch:
-// ubfx extracts (42>>1)&31 = 21, negate twice = 21, +21 = 42, then tbz on
-// bit 0 (42 is even) branches over the poison `mov x0, #99`.
 const arm64MachOBitOpsDriverMain = "\n" +
 	"function main(): i32 {\n" +
 	"    let asm: string = \"\";\n" +

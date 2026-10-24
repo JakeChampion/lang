@@ -8,26 +8,6 @@ import (
 	"testing"
 )
 
-// --- A string local reassigned from an alias is reclaimed --------------------
-//
-// `let s: string = "ab" + "cd"; let keep: string = "zz"; keep = s;` must free
-// both boxes, exactly as the BIND form (`let keep: string = s;`, #7282) does.
-// Unreclaimed it reads 40 allocs / 0 frees over 20 rounds, so the case table
-// pins both forms.
-//
-// The reassign retains the shared box right after the RHS is lowered, on every
-// return path, and both names then release it. Releasing without that retain
-// gives exact count parity with exit 99, so the underflow guard is what
-// separates a correct release from an over-release.
-//
-// The string accumulator (`s = s + part`) is a different shape: a
-// consume-rebind replaces the slot's value with a fresh box rather than
-// sharing one, so it takes no retain. It is pinned below as a control.
-//
-// Exit 99 is reserved for __rc_underflow_count(). A heap string is ONE block
-// (#7351); a count quoted in a row note below as written before that is twice
-// its pin.
-
 type strAliasReassignCase struct {
 	name   string
 	src    string
@@ -47,7 +27,6 @@ const strarMain = `function main(): i32 {
 func strAliasReassignCases() []strAliasReassignCase {
 	return []strAliasReassignCase{
 		{
-			// THE REPRO. Base: 40 allocs / 0 frees.
 			name: "string_alias_reassign",
 			src: `function round(i: i32): i32 {
     let s: string = "ab" + "cd";
@@ -59,10 +38,6 @@ func strAliasReassignCases() []strAliasReassignCase {
 			want: 24, allocs: 20, frees: 20,
 		},
 		{
-			// The same shape read back as a VALUE with fresh strings allocated after
-			// the reassign, so a box freed too early would be reused before the
-			// read. Counts alone read 120/120 whether the release is correct or an
-			// over-release; this row and the underflow guard are what separate them.
 			name: "reassign_read_back_after_churn",
 			src: `function round(i: i32): i32 {
     let s: string = "ab" + "cd";
@@ -76,8 +51,6 @@ func strAliasReassignCases() []strAliasReassignCase {
 			want: 24, allocs: 60, frees: 60,
 		},
 		{
-			// The BIND form, at parity since #7282. The control that says the
-			// difference was the reassign and not the alias.
 			name: "string_alias_bind_unchanged",
 			src: `function round(i: i32): i32 {
     let s: string = "ab" + "cd";
@@ -88,11 +61,6 @@ func strAliasReassignCases() []strAliasReassignCase {
 			want: 24, allocs: 20, frees: 20,
 		},
 		{
-			// THE CONTROL THAT MUST NOT MOVE. The string-builder consume-rebind's
-			// RHS is a FRESH box, so it takes no retain: a retain here would
-			// leak, since nothing shares the box. One box per
-			// round: the first append onto the empty literal allocates it and the
-			// other three grow it in place (#10960).
 			name: "string_accumulator_unchanged",
 			src: `function round(i: i32): i32 {
     let s: string = "";
@@ -104,9 +72,6 @@ func strAliasReassignCases() []strAliasReassignCase {
 			want: 63, allocs: 20, frees: 20,
 		},
 		{
-			// A reassign whose RHS is a FRESH producer rather than an alias. It is
-			// the accumulator's shape without the self-reference, and it must keep
-			// taking the consume-rebind path rather than the new one.
 			name: "fresh_rhs_reassign_unchanged",
 			src: `function round(i: i32): i32 {
     let s: string = "ab" + "cd";
@@ -117,27 +82,6 @@ func strAliasReassignCases() []strAliasReassignCase {
 			want: 7, allocs: 40, frees: 40,
 		},
 		{
-			// BORROWED PARAMS, and the gap this row pinned is now closed. `let q:
-			// string = p; q = o;` where p and o are both params used to leave the
-			// CALLER refusing its own release — 80/0, a sound leak — because
-			// aliasing a param marked that param non-borrowable. The param verdict
-			// now takes the same alias forgiveness the local credit does, so both
-			// callers' strings are reclaimed.
-			//
-			// wantFrees moved 0 -> 80 and the row still guards the same thing, from
-			// the other side: releasing a borrowed param's value is a use-after-free
-			// only the CALLER can see, so it shows here as frees running AHEAD of
-			// what the caller owns, not as a leak.
-			//
-			// Checked rather than assumed, because 0 -> 80 is also the direction an
-			// over-release moves in. The answer is unchanged at 63,
-			// __rc_underflow_count() is 0, -sanitize reports neither a
-			// use-after-free nor a double free, and the settling form has `round`
-			// read BOTH a and b back after the call with three fresh strings
-			// allocated in between: 400/320 -> 400/400, answer 17 either way and
-			// matching native. Native's counts are no oracle for this shape — it
-			// const-folds and SSOs these literals to 0 allocs here, and on the
-			// churn form it leaks 40 boxes of its own where the self-host is clean.
 			name: "borrowed_param_reassign_borrowed",
 			src: `function consume(p: string, o: string): i32 {
     let q: string = p;
@@ -155,7 +99,6 @@ function round(i: i32): i32 {
 	}
 }
 
-// TestSelfHostStrAliasReassignX86_64 is the leak-accounting leg.
 func TestSelfHostStrAliasReassignX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -192,8 +135,6 @@ func TestSelfHostStrAliasReassignX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrAliasReassignWasmIR — exit codes only, so what this leg catches
-// is a release that frees a LIVE box on wasm, the 99 included.
 func TestSelfHostStrAliasReassignWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping string alias-reassign wasm IR e2e")
@@ -232,7 +173,6 @@ func TestSelfHostStrAliasReassignWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrAliasReassignIRArm64 — the arm64 sibling under qemu.
 func TestSelfHostStrAliasReassignIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

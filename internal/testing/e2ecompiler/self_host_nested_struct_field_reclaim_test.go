@@ -5,20 +5,6 @@ import (
 	"testing"
 )
 
-// --- Nested-struct / nested-enum field reclaim (#6127 nested_struct) ---------
-//
-// A struct local whose field is itself a struct must release that field's box on
-// every REBIND, not only at scope exit (rebinds leaked 900/600/12000 over 100
-// rounds while a single bind balanced).
-//
-// The release must not reach a field box something else still holds. #6148 was
-// that use-after-free: `items.append(p.node)` keeps the field box, and the next
-// rebind's release freed a Node the container still pointed at. A nested field
-// merely read through (`o.f.v`) is a borrow and is still released; a
-// struct-literal field value (including a functional-update base, which copies
-// every field pointer into the new box) and a tuple element are pinned as
-// hazards below.
-
 const nestedStructFieldSrc = `struct Inner { v: i32 }
 struct Outer { f: Inner, n: i32 }
 
@@ -36,10 +22,6 @@ function main(): i32 {
     return t % 7;
 }`
 
-// TestSelfHostNestedStructFieldReclaimX86_64 — a rebound struct local releases
-// the nested-struct field box each rebind orphans. allocs == frees is
-// essential: frees short of allocs is the leak this closes; frees ABOVE
-// allocs is #6148's use-after-free reappearing as a double free.
 func TestSelfHostNestedStructFieldReclaimX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
@@ -50,8 +32,6 @@ func TestSelfHostNestedStructFieldReclaimX86_64(t *testing.T) {
 	asm := hevCompile(t, runner, driverBin, nestedStructFieldSrc, []string{"FERN_LEAKCHECK=1"})
 	progBin := buildBin(t, gcc, dir, "nested_struct_field", asm)
 	stderr, exit := hevRun(t, runner, progBin)
-	// 300 % 7 = 6, confirmed against both oracles (bin/fern -interp and native
-	// -target x86-64-linux), not read off the self-host run this test exists to check.
 	if exit != 6 {
 		t.Fatalf("exited %d, want 6", exit)
 	}
@@ -81,14 +61,6 @@ func TestSelfHostNestedStructFieldReclaimX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostNestedStructFieldHazardsX86_64 — the shapes the scan must REFUSE,
-// plus the borrow shapes it must keep admitting. A wrongly-granted release frees
-// a nested box something else still points at, so the failure is a wrong answer
-// or a crash, not a leak. Every `want` came from the interpreter and native
-// x86-64 agreeing.
-//
-// The refused cases were each confirmed genuinely denied by checking they still
-// leak, not by assuming a passing exit means the gate fired.
 func TestSelfHostNestedStructFieldHazardsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -101,14 +73,6 @@ func TestSelfHostNestedStructFieldHazardsX86_64(t *testing.T) {
 		want int
 	}{
 		{
-			// #6148's use-after-free, reconstructed. `parse_one` returns a fresh
-			// PS whose `node` field is a sole-owned literal, so the construction
-			// retain correctly does not inc it; `items.append(p.node)` then takes
-			// an uncounted alias. Adding the field arms WITHOUT the scan made the
-			// next iteration's rebind free a Node the tree still pointed at —
-			// exit 134 on wasm and 139 on x86-64 in that attempt. The scan
-			// excludes PS twice over: a struct-literal field value and a call
-			// argument.
 			name: "fresh_field_aliased_into_container",
 			src: `struct Node { kind: i32, items: i32[] }
 struct PS { node: Node, pos: i32 }
@@ -126,9 +90,6 @@ function main(): i32 { let t: i32 = 0; let r: i32 = 0; while (r < 100) { t = t +
 			want: 27,
 		},
 		{
-			// The field is re-homed into ANOTHER struct literal, which the new
-			// owner outlives. strfld's walker never visits ExprStructLit at all,
-			// so this position had to be added for this scan.
 			name: "field_rehomed_into_struct_literal",
 			src: `struct Inner { v: i32 }
 struct Outer { f: Inner, n: i32 }
@@ -147,9 +108,6 @@ function main(): i32 { let t: i32 = 0; let r: i32 = 0; while (r < 100) { t = t +
 			want: 27,
 		},
 		{
-			// A functional-update BASE copies every field pointer into the new
-			// box, so `Outer { ...o, n: j }` gives o's Inner a second owner. The
-			// has_base arm of the struct-literal walk is what catches this.
 			name: "functional_update_base_copies_field",
 			src: `struct Inner { v: i32 }
 struct Outer { f: Inner, n: i32 }
@@ -167,9 +125,6 @@ function main(): i32 { let t: i32 = 0; let r: i32 = 0; while (r < 100) { t = t +
 			want: 21,
 		},
 		{
-			// A borrow CHAIN (`o.f.v`) must stay admitted: reading through `f`
-			// is not an escape of `f`, so Outer is not excluded. Granted, and
-			// the answer must be right.
 			name: "borrow_chain_still_granted",
 			src: `struct Inner { v: i32 }
 struct Outer { f: Inner, n: i32 }
@@ -183,9 +138,6 @@ function main(): i32 { let t: i32 = 0; let r: i32 = 0; while (r < 100) { t = t +
 			want: 21,
 		},
 		{
-			// The field passed as a call argument — the callee may retain it, so
-			// the type is excluded. Single-bind here, which already reclaimed
-			// before this change; pinned so the exclusion cannot silently flip.
 			name: "field_passed_to_call",
 			src: `struct Inner { v: i32 }
 struct Outer { f: Inner, n: i32 }

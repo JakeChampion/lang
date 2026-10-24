@@ -2,16 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// TestSelfHostVariantTestReadsShapeAsImmediateX86_64 pins the variant test's
-// operand: the shape address a match arm compares the scrutinee's tag against
-// is a sign-extended imm32 of the compare, never loaded with a rip-relative
-// lea first. The executable loads at a fixed address under 2^31, which is
-// what makes the address an immediate; the test runs the program as well, so
-// the assembler's absolute relocation is exercised, not only the text.
-//
-// A shape whose address is read for something other than a compare keeps the
-// lea: construction stores it into the new box. The payload comes from the
-// parameter so the construction is one, not a constant aggregate.
 func TestSelfHostVariantTestReadsShapeAsImmediateX86_64(t *testing.T) {
 	runX86ShapeCases(t, []shapeCase{
 		{

@@ -1,4 +1,4 @@
-// A struct destructure whose pattern names a different struct from the value's.
+
 struct Point { x: i32, y: i32 }
 struct Size { x: i32, y: i32 }
 

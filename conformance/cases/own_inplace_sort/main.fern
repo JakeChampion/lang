@@ -1,12 +1,12 @@
-// Dogfood core/cmp's `own` in-place sorts: the array is consumed (a fresh
-// literal -> owned), permuted in place, and the SAME buffer returned. The own
-// transfer (no copy, no freed-then-reused output buffer) is differentially
-// pinned: free-on == free-off and reuse-on == reuse-off byte-identical.
+
+
+
+
 import "core/cmp";
 
 function main(): i32 {
     let a: i32[] = cmp.sort_in_place([5, 3, 8, 1, 9, 2, 7]);
-    // sorted ascending: [1,2,3,5,7,8,9]
+
     if (a[0] != 1) { return 1; }
     if (a[6] != 9) { return 2; }
     if (a[3] != 5) { return 3; }

@@ -1,9 +1,5 @@
 import "std/ordmap";
 
-// ordmap_insert — the persistent ordered map's unique path, the same rounds
-// as pmap_insert over the weight-balanced tree: 4000 inserts, then every key
-// re-inserted 20 times with no snapshot held, so each round is a path rebuild
-// the rc reuse pass performs in place.
 function main(): i32 {
   let m: ordmap.OrdMap[i32, i32] = ordmap.ordmap_new();
   let i: i32 = 0;

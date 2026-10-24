@@ -2,13 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/u32.midpoint / std/u64.midpoint — the
-// overflow-safe unsigned average via (a & b) + ((a ^ b) >> 1) (logical shift).
-// The naive (a+b)/2 wraps for large unsigned operands (the classic
-// binary-search bug); this form never does, so the near-MAX cases are the crux.
-// Scalar bit-ops, no wrap-around dependency, so this lowers on all four
-// backends. Returns 42 iff every check holds across interp / x86-64 / wasm /
-// arm64; each leg skips itself when its toolchain is absent.
 const uintMidpointProg = `
 import "std/u32" as u32m;
 import "std/u64" as u64m;

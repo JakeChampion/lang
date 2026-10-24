@@ -1,13 +1,3 @@
-// coreutils/lib/fstype.fern — the name `stat -f` prints for a Linux
-// filesystem type (`%T`): GNU coreutils 9.12's `human_fstype` table, which
-// maps each `f_type` magic the kernel reports to GNU's own spelling of it.
-//
-// The names are GNU's, not the kernel's (`ef53` is "ext2/ext3" however the
-// volume was made), which is why the table lives here and not in the
-// `statfs` primitive. Darwin has no such table: its `f_type` is an index
-// into the running kernel's VFS list, and GNU prints `f_fstypename` there.
-
-// The magics and names, in GNU's order, index for index.
 function magics(): i64[] {
   return [
     0x5a3c69f0 as i64,
@@ -292,8 +282,6 @@ function names(): string[] {
   ];
 }
 
-// `name(magic)` is GNU's name for a Linux `f_type`, or None for one GNU does
-// not know, which it prints as `UNKNOWN (0x…)`.
 pub function name(magic: i64): Option[string] {
   let ms: i64[] = magics();
   let i: i32 = 0;

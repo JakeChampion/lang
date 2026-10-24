@@ -8,11 +8,6 @@ import (
 	"testing"
 )
 
-// The bash completion std/cli generates has to be a script bash accepts, not
-// just text that mentions the right words: a quoting slip in a help string
-// would still pass the Fern-side substring checks and break the user's shell
-// on `source`. `bash -n` parses without executing, so it is the one shell
-// syntax check available on every runner (zsh and fish are not).
 func TestCliBashCompletionParses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := filepath.Join(t.TempDir(), "comp.fern")

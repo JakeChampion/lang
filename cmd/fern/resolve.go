@@ -10,14 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/pkg/pkgcache"
 )
 
-// runResolve implements `fern -resolve [DIR]`: read the manifest
-// governing DIR (default `.`), run Minimum Version Selection over its
-// [package] index for every versioned dependency, and write the chosen
-// versions to fern.lock. url-sourced versions are fetched + verified
-// into the content-addressed store along the way, so the immediately
-// following build is offline. This is the version-resolution step; the
-// compiler reads the lock, never the index (the no-build-time-network
-// constraint).
 func runResolve(start string) error {
 	st, err := os.Stat(start)
 	dir := start
@@ -50,10 +42,6 @@ func runResolve(start string) error {
 		return err
 	}
 
-	// depsOf materializes each candidate version (a local dir, or a url
-	// archive fetched + verified into the store) and reads ITS versioned
-	// deps — this is what makes MVS transitive and what pre-fetches every
-	// selected url version.
 	depsOf := func(pkg string, v mvs.Version, src mvs.Source) (map[string]string, error) {
 		d, err := materialize(pkg, v, src)
 		if err != nil {
@@ -69,8 +57,6 @@ func runResolve(start string) error {
 		return m.VersionDeps(), nil
 	}
 
-	// Only the root manifest's [exclude] table applies (top-level-only,
-	// Go's exclude semantics) — a dependency's excludes never reach MVS.
 	sel, err := mvs.Resolve(rootDeps, root.Excludes, ix, depsOf)
 	if err != nil {
 		return err
@@ -85,9 +71,6 @@ func runResolve(start string) error {
 	return nil
 }
 
-// materialize returns the on-disk directory for a resolved version: a
-// local `path` source directly, or a url source fetched + verified into
-// the content-addressed store.
 func materialize(pkg string, v mvs.Version, src mvs.Source) (string, error) {
 	if src.Path != "" {
 		return src.Path, nil

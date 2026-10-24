@@ -8,14 +8,6 @@ import (
 	"testing"
 )
 
-// An unannotated `let x = E?` binding takes the type of the unwrapped payload,
-// which the binding owns and must release, for every spelling:
-// `r.read_chunk(n)?` (#8803), a user Option producer, and
-// a `@try` enum, generic or not.
-//
-// Each program runs its shape in a loop and exits with a value derived from
-// every payload, so the census must balance and the answer must be the
-// interpreter's.
 var tryBindingReclaimCases = []struct {
 	name, src string
 	stdin     []byte
@@ -97,7 +89,7 @@ func TestSelfHostTryBindingReclaimWasm(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range tryBindingReclaimCases {
 		if tc.stdin != nil {
-			continue // runWasmCensus gives the module no stdin
+			continue
 		}
 		t.Run(tc.name, func(t *testing.T) {
 			wat := cli.emit(t, writeTryBindingCase(t, tc.name, tc.src), "wasm32-wasi", "FERN_LEAKCHECK=1")

@@ -4,25 +4,6 @@ import (
 	"testing"
 )
 
-// String-concat loop-var bounded-growth guard (RC-Perceus). The shipped
-// string-reclaim tests (rc_freelist_test) only assert 0 over-release —
-// they never checked that a string-concat build-and-discard loop holds a
-// BOUNDED bump high-water. This pins that: a `let s = a + b` re-declared
-// in a loop reclaims each iteration's buffer (emitVarReinitDropOld's
-// str_dec → __fern_box_free at rc==1, freeing the `len`-byte payload back
-// to the freelist), so N=5000 and N=50000 report the SAME bump growth.
-//
-// Backend note: native single-word strings (x86_64 / arm64) keep a short
-// concat result INLINE (SSO), so no heap buffer is allocated and the
-// probe reads 0 — trivially bounded. wasm's two-word strings always
-// heap-allocate, so the probe plateaus at a non-zero bounded high-water
-// once the freelist warms up. Both satisfy small == large.
-//
-// (The companion fix in this slice corrects __fern_str_dec's rc==1 free
-// to release the actual `len`-byte payload instead of an uninitialised
-// header word read from `data-4` — __fern_alloc_rc1 writes only rc at
-// base+0, so `data-4` held garbage that misrouted the freelist class.)
-
 func stringConcatBumpSrc(n string) string {
 	return `function main(): i32 {
     let before: i32 = (__heap_bump_bytes() as i32);
@@ -37,7 +18,6 @@ func stringConcatBumpSrc(n string) string {
 }`
 }
 
-// Value-correct + no over-release across many concat iterations.
 const stringConcatUnderflowSrc = `function main(): i32 {
     let a: string = "ab";
     let b: string = "cd";
@@ -52,12 +32,6 @@ const stringConcatUnderflowSrc = `function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// longStringReinitBumpSrc builds a HEAP string (>15 B, so no SSO on any
-// backend) into a loop-body `let s` each iteration. This pins the slice-5g
-// follow-up: arm64 two-word heap strings now reclaim on loop-var REINIT
-// (emitOwnedSlotDrop's str_dec, mirroring the exit sweep). A safe-leak here
-// makes N=5000 and N=50000 diverge; all three backends must report the SAME
-// bump high-water.
 func longStringReinitBumpSrc(n string) string {
 	return `function tag(i: i32): string {
     if (i % 2 == 0) { return "even"; }
@@ -74,7 +48,6 @@ function main(): i32 {
 }`
 }
 
-// Value-correct + no over-release for the long-heap-string reinit loop.
 const longStringReinitUnderflowSrc = `function tag(i: i32): string {
     if (i % 2 == 0) { return "even"; }
     return "odd";
@@ -94,10 +67,6 @@ function main(): i32 {
 }`
 
 func TestX86_64LongStringReinitBounded(t *testing.T) {
-	// x86_64's small heap allocations come from the segregated freelist arena,
-	// which __heap_bump_bytes() does NOT measure (same caveat as closure[]), so
-	// the bump probe is unreliable here — assert only value + no over-release.
-	// The bump-bound win is pinned on arm64 (where my fix landed) and wasm.
 	if _, code := compileAndRunX86_64FreeOn(t, longStringReinitUnderflowSrc); code != 0 {
 		t.Errorf("long-string reinit reclaim: code=%d", code)
 	}

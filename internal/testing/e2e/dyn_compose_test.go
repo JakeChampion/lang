@@ -4,19 +4,6 @@ import (
 	"testing"
 )
 
-// Composition of the dyn-trait features (#2691 spine: generic dyn objects
-// #3284, downcast #3285, associated-type pinning #3346) at their combinatorial
-// corners — the most regression-prone surface, since they share the
-// DynTraitType canonicalisation (sorted/deduped (trait, args, assoc) triples)
-// and the per-trait signature resolution.
-//
-//  1. `as?` downcast THROUGH an associated-type-pinned object recovers the
-//     concrete type (the runtime tag is the concrete type; the pin is erased).
-//     B.v = 41, +1 = 42.
-//  2. A multi-trait object mixing a GENERIC-arg trait and an ASSOC-pinned trait
-//     (`dyn Get[i32] + P[Item = i32]`): the concrete impls both, method
-//     resolution spans the union, and `get(): T` / `pi(): Self::Item` both read
-//     as i32. 41 + 1 = 42.
 const dynComposeDowncastSrc = `trait P { type Item; function get(self: Self): Self::Item; }
 struct B { v: i32 }
 impl P for B { type Item = i32; function get(self: Self): i32 { return self.v; } }

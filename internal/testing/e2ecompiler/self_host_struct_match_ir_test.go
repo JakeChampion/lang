@@ -5,15 +5,6 @@ import (
 	"testing"
 )
 
-// Struct-pattern match arms on the self-host IR path (#5354). An `Ident {` at an
-// arm is also how a record-form ENUM variant is destructured, so the parser
-// takes the struct path only when the head names a struct declared in the same
-// file (is_struct_pattern_arm, #6676): it desugars `match (p) { Point { x,
-// y } => … }` at parse time (build_struct_match) into the `done`-flag chain
-// with per-field `let bind = tmp.field;` binds — the field reads + ifs lower
-// through the ordinary IR paths, no checker/lowering changes. These build the
-// self-host x86-64 + arm64 IR drivers and check each program against the
-// native interpreter oracle.
 var selfHostStructMatchCases = []struct {
 	name string
 	src  string

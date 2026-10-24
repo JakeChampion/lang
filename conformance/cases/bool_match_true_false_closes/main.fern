@@ -1,5 +1,5 @@
-// Unguarded `true` and `false` arms close a boolean's domain, so neither the
-// statement nor the expression form needs a `_` arm (#6685).
+
+
 import "core/int";
 
 function pick(b: boolean): i32 {

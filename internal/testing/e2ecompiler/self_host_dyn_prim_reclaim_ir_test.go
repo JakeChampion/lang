@@ -8,12 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostDynPrimReclaimIRX86_64 pins reclaim of a dyn-Trait local holding
-// a PRIMITIVE/STRING literal payload (`let d: dyn T = 41` / `= "lit"`, #4351).
-// The payload is heap-boxed into an rc-headered op_dyn_box cell
-// (__fern_arr_box, cap=2), released per call — the inner string box first for a
-// string payload — so a second churn stays flat. Escaping, reassigned and
-// aliased dyn locals are pinned on their values and the underflow detector.
 func TestSelfHostDynPrimReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -45,9 +39,6 @@ func TestSelfHostDynPrimReclaimIRX86_64(t *testing.T) {
 		}
 	}
 
-	// PRIM i32 payload, RECLAIM, BOUNDED HIGH-WATER: the rc-headered
-	// op_dyn_box cell frees per call — a second 3000-iteration churn stays
-	// flat. Pre-slice the headerless cell leaked 16 bytes per call.
 	run(t, `trait Show { function show(self: Self): i32; }
 impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
 function go(k: i32): i32 { let d: dyn Show = 41; return d.show() + k; }
@@ -55,9 +46,6 @@ function churn(m: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < m) { 
 function main(): i32 { let w: i32 = churn(3000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(3000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"dyn-prim-i32-reclaim-flat", 0)
 
-	// STRING literal payload: the sweep frees the inner string box
-	// (value@8) then decs the cell — both per-iteration allocations
-	// reclaim, flat churn, no underflow.
 	run(t, `trait Show { function show(self: Self): i32; }
 impl Show for string { function show(self: Self): i32 { return self.len(); } }
 function go(k: i32): i32 { let d: dyn Show = "hello"; return d.show() + k; }
@@ -65,8 +53,6 @@ function churn(m: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < m) { 
 function main(): i32 { let w: i32 = churn(3000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(3000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"dyn-prim-str-reclaim-flat", 0)
 
-	// ESCAPING dyn: `return d` hands the cell to the caller, whose dispatch
-	// through it must stay valid. Detector 0.
 	run(t, `trait Show { function show(self: Self): i32; }
 impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
 function mk(k: i32): dyn Show { let d: dyn Show = 41; return d; }
@@ -75,9 +61,6 @@ function churn(m: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < m) { 
 function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"dyn-prim-escaping-excluded", 0)
 
-	// REASSIGNED dyn excluded: `d = 41` rebind — the reassigned-names gate
-	// rejects the candidate (both cells leak, sound). Values + detector
-	// checked.
 	run(t, `trait Show { function show(self: Self): i32; }
 impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
 function go(k: i32): i32 { let d: dyn Show = 10; d = 41; return d.show(); }
@@ -85,13 +68,6 @@ function churn(m: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < m) { 
 function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"dyn-prim-reassigned-excluded", 0)
 
-	// ENUM payload (#4351 slice 4): `let d: dyn T = V(<args>)` — the variant
-	// construction is a fresh rc-headered enum box, credited with the ENUM
-	// name as its tag; the sweep's shallow dec frees it (pointer payloads
-	// would leak with it — safe). Flat churn, no underflow. (An enum LOCAL
-	// coerced to dyn — `let e: Op = Add(k); let d: dyn Show = e;` — currently
-	// mis-dispatches on the IR path, a pre-existing gap tracked separately,
-	// so only the direct-construction shape is pinned here.)
 	run(t, `trait Show { function show(self: Self): i32; }
 enum Op { Add(i32), Neg }
 impl Show for Op { function show(self: Self): i32 { match (self) { Add(v) => { return v + 1; }, Neg => { return 0; } } } }
@@ -100,9 +76,6 @@ function churn(m: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < m) { 
 function main(): i32 { let w: i32 = churn(3000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(3000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"dyn-enum-payload-reclaim-flat", 0)
 
-	// ALIASED STRING payload excluded: `let d: dyn Show = s` where s is a
-	// string local — a non-literal init is never credited, so the inner
-	// free can't fire on a box someone else owns. Values + detector.
 	run(t, `trait Show { function show(self: Self): i32; }
 impl Show for string { function show(self: Self): i32 { return self.len(); } }
 function go(k: i32): i32 { let s: string = "world"; let d: dyn Show = s; return d.show() + s.len(); }
@@ -111,9 +84,6 @@ function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0
 		"dyn-prim-aliased-str-excluded", 0)
 }
 
-// TestSelfHostDynPrimReclaimWasmIR: the wasm sibling through the wasm_ir_run
-// driver. The wasm op_dyn_box cell was already rc-headered
-// ($__fern_str_box), so this pins the crediting + sweep on that backend.
 func TestSelfHostDynPrimReclaimWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping dyn prim reclaim wasm IR e2e")
@@ -180,9 +150,6 @@ function main(): i32 { let v: i32 = churn(1000); if (__rc_underflow_count() != 0
 	}
 }
 
-// TestSelfHostDynPrimReclaimIRArm64: the arm64 sibling under qemu — the
-// i32 and string payloads through the arm64 IR backend's rc-headered
-// __fern_arr_box dyn cell.
 func TestSelfHostDynPrimReclaimIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

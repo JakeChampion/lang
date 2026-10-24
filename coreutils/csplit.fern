@@ -1,53 +1,9 @@
-// csplit.fern — GNU-compatible `csplit`.
-//
-//   csplit [OPTION]... FILE PATTERN...
-//
-// FILE cut into pieces at the points the PATTERNs name, written to
-// `xx00`, `xx01`, … with each piece's byte count on stdout. A PATTERN is
-// a line number, `/REGEXP/[OFFSET]` (end the piece before the matching
-// line), `%REGEXP%[OFFSET]` (the same, but throw the piece away), or a
-// `{N}` / `{*}` repeat of the pattern before it.
-//
-// Four things here are stranger than the synopsis suggests, and all four
-// are GNU behaviours reproduced rather than invented:
-//
-//   - A pattern leaves TWO cursors behind, not one. The piece ends at
-//     `break = match + offset`, but the next pattern's search resumes at
-//     `max(match, break) + 1` — so `/x/+2` never re-reads the two lines
-//     its offset consumed, while `/x/-2` never re-reads the matched line
-//     it rolled back past. One cursor cannot express that, and a single
-//     one loops forever on `/x/ {*}` (offset 0 would rematch its own
-//     line every repetition).
-//   - A repeated LINE NUMBER is a multiple, not an increment: repetition
-//     R of `3` breaks at 3*(R+1), counted from the START of the file, so
-//     `/x/ 3` after a match on line 5 writes an EMPTY piece rather than
-//     failing. `{*}` on a line number therefore always ends in `line
-//     number out of range`, where `{*}` on a regexp ends quietly.
-//   - Which error path a failure takes decides what the piece holds.
-//     A match that is never found, and a line number past the end, both
-//     flush the REST of the input into the open piece before removing
-//     it; an offset that points before the piece's own first line closes
-//     the piece where it stands, so `csplit f /5/-9` reports a 0-byte
-//     piece over a file with ten lines in it.
-//   - `-b`'s format is a real printf conversion, checked the way GNU
-//     checks it: one conversion of type d/i/u/o/x/X, `#` accepted only
-//     by the three unsigned bases and `'` only by the three decimal
-//     ones, and a width or precision past INT_MAX reported as `memory
-//     exhausted` because that is where GNU's allocation gives out.
-//
-// The regexps are glibc's POSIX basic dialect from `lib/bre.fern` —
-// expr(1)'s — searched anywhere in the line rather than anchored, with
-// the line's own terminator excluded so `$` means end of line.
 import "std/string";
 import "std/array";
 import "std/io_buffered";
 import "./lib/gnu";
 import "./lib/bre";
 
-// ---- options ---------------------------------------------------------------
-// Ids in GNU's DECLARATION order, which is visible: the ambiguity list
-// prints candidates in it, so `--s` names '--silent' before
-// '--suffix-format' and '--suppress-matched'.
 function opt_digits(): i32 {
   return 1;
 }
@@ -105,22 +61,12 @@ function help_text(): string {
   return out;
 }
 
-// ---- the suffix format -----------------------------------------------------
-//
-// `Fmt` — `-b`'s format taken apart: the text either side of the
-// conversion, its flags, width and precision, and the base its
-// conversion character selects. The default is `%0*d` with `-n`'s digit
-// count as the width.
 struct Fmt { pre: string, post: string, minus: boolean, zero: boolean, alt: boolean, width: i32, prec: i32, conv: i32 }
 
 function default_fmt(digits: i32): Fmt {
   return Fmt { pre: "", post: "", minus: false, zero: true, alt: false, width: digits, prec: 0 - 1, conv: 100 };
 }
 
-// The largest width or precision a conversion may carry. GNU sizes the
-// name buffer from it and reports the allocation it cannot make, so
-// anything past INT_MAX is `memory exhausted` rather than a format
-// error.
 function fmt_limit(): i64 {
   return 2147483647 as i64;
 }
@@ -135,7 +81,6 @@ function is_conv(c: i32): boolean {
   return c == 100 || c == 105 || c == 117 || c == 111 || c == 120 || c == 88;
 }
 
-// Base 10 for d/i/u, 8 for o, 16 for x and X.
 function conv_base(c: i32): i32 {
   if (c == 111) {
     return 8;
@@ -146,9 +91,6 @@ function conv_base(c: i32): i32 {
   return 10;
 }
 
-// `#` is the alternate form of the unsigned bases and nothing else;
-// `'` groups the decimal ones and nothing else. GNU rejects the other
-// pairing rather than ignoring it.
 function alt_ok(c: i32): boolean {
   return c == 111 || c == 120 || c == 88;
 }
@@ -175,8 +117,6 @@ function bad_flags(flag: i32, conv: i32): void {
   exit(1);
 }
 
-// One run of digits as an i64, saturating past the format limit so the
-// caller reports `memory exhausted` rather than wrapping.
 function digits_at(s: string, from: i32): (i64, i32) {
   let v: i64 = 0 as i64;
   let i: i32 = from;
@@ -189,9 +129,6 @@ function digits_at(s: string, from: i32): (i64, i32) {
   return (v, i);
 }
 
-// `parse_fmt(s)` — `-b`'s format, or the diagnostic GNU gives it. `%%`
-// stands for a literal `%` and is not the conversion, so `%%d` has none
-// at all.
 function parse_fmt(s: string): Fmt {
   let pre: string = "";
   let i: i32 = 0;
@@ -238,8 +175,6 @@ function parse_fmt(s: string): Fmt {
   return Fmt { ...f, pre: pre };
 }
 
-// The body of one conversion, from just after its `%`: flags, width,
-// precision, conversion character.
 function parse_conv(s: string, from: i32): (Fmt, i32) {
   let minus: boolean = false;
   let zero: boolean = false;
@@ -301,10 +236,6 @@ function pad(b: i32, n: i32): string {
   return string_from_bytes_unchecked(out);
 }
 
-// `fmt_apply(f, n)` — the piece number through the conversion, as C
-// would print it: precision is a minimum digit count and turns the `0`
-// flag off, `#` prefixes an octal 0 or a hexadecimal 0x, and `-`
-// left-justifies within the width.
 function fmt_apply(f: Fmt, n: i32): string {
   let base: i32 = conv_base(f.conv);
   let upper: boolean = f.conv == 88;
@@ -351,17 +282,8 @@ function fmt_apply(f: Fmt, n: i32): string {
   return f.pre + pad(32, f.width - used) + prefix + body + f.post;
 }
 
-// ---- patterns --------------------------------------------------------------
-//
-// `Pat` — one PATTERN. A line-number pattern carries `num` and leaves
-// `re` unused; a regexp carries the compiled `re`, its `offset`, and
-// `ignore` for the `%…%` spelling that throws its piece away. `arg` is
-// the operand as typed, because every regexp diagnostic quotes it.
 struct Pat { line: boolean, re: bre.Bre, arg: string, num: i64, offset: i64, repeat: i64, forever: boolean, ignore: boolean }
 
-// A signed line offset: blanks, an optional sign, digits, and nothing
-// else. `ok` is false for anything glibc's strtoimax would refuse,
-// including a value too big to hold.
 function parse_offset(s: string): (i64, boolean) {
   let i: i32 = 0;
   while (i < s.len() && gnu.is_blank(s[i] as i32)) {
@@ -395,10 +317,6 @@ function parse_offset(s: string): (i64, boolean) {
   return (v, true);
 }
 
-// `extract_regexp(a)` — a `/…/` or `%…%` operand. The CLOSING delimiter
-// is the last one in the operand, so `/a/b/` is the pattern `a/b`, and
-// the pattern is compiled before the offset is read: `/[/x` reports the
-// bad regexp, not the bad offset.
 function extract_regexp(a: string): Pat {
   let delim: i32 = a[0] as i32;
   let close: i32 = 0 - 1;
@@ -431,10 +349,6 @@ function extract_regexp(a: string): Pat {
   return Pat { line: false, re: re, arg: a, num: 0 as i64, offset: offset, repeat: 0 as i64, forever: false, ignore: delim == 37 };
 }
 
-// `parse_repeat(tok, p)` — a `{N}` or `{*}` token applied to the pattern
-// before it. The odd quoting of the second diagnostic is GNU's: it
-// truncates the `}` before quoting and puts a bare one back, so `{x}`
-// reports `'{x'}`.
 function parse_repeat(tok: string, p: Pat): Pat {
   if (tok.len() == 0 || tok[tok.len() - 1] as i32 != 125) {
     gnu.error(gnu.quote(tok) + ": '}' is required in repeat count");
@@ -453,9 +367,6 @@ function parse_repeat(tok: string, p: Pat): Pat {
   return Pat { ...p, repeat: r.0 as i64 };
 }
 
-// `parse_patterns(ops)` — every operand after FILE. The ordering rules
-// are checked here, as GNU checks them: a line number below the last one
-// is fatal, one equal to it only warns.
 function parse_patterns(ops: string[]): Pat[] {
   let pats: Pat[] = [];
   let last: i64 = 0 as i64;
@@ -496,14 +407,8 @@ function parse_patterns(ops: string[]): Pat[] {
   return pats;
 }
 
-// ---- settings --------------------------------------------------------------
 struct Settings { prefix: string, fmt: Fmt, keep: boolean, elide: boolean, suppress: boolean, quiet: boolean }
 
-// `-n`'s value, worded the two ways GNU words it: a malformed number
-// carries no strerror text, and one outside [0, INT_MAX] on either side
-// carries EOVERFLOW's — gnulib's xdectoint reserves ERANGE for a caller
-// that passes XTOINT_MIN_RANGE or XTOINT_MAX_RANGE, and csplit passes
-// no flags.
 function digits_value(s: string): i32 {
   let i: i32 = 0;
   while (i < s.len() && gnu.is_blank(s[i] as i32)) {
@@ -551,16 +456,6 @@ function digits_value(s: string): i32 {
   return v as i32;
 }
 
-// ---- the split -------------------------------------------------------------
-//
-// `St` — the whole run. The input is a byte buffer holding everything
-// from the current piece's first line onwards, with two cursors into it:
-// `wpos` / `wline` where the piece begins, and `soff` / `sline` where the
-// next pattern looks. They are separate because a pattern's offset moves
-// them by different amounts (see the header).
-//
-// `created` is how many pieces exist, which is also the next piece's
-// number — an elided empty piece gives its number back.
 struct St { r: Reader, buf: u8[], wpos: i32, soff: i32, wline: i64, sline: i64, eof: boolean, back: i64, out: io_buffered.BufWriter, open: boolean, name: string, written: i64, created: i32, so: io_buffered.BufWriter, s: Settings }
 
 function empty_bytes(): u8[] {
@@ -572,9 +467,6 @@ function read_size(): i32 {
   return 65536;
 }
 
-// How far the piece may run ahead of the write cursor before it is
-// drained to the output file. It bounds both the buffer and the number
-// of write(2)-sized blocks the copy is cut into.
 function drain_bytes(): i32 {
   return 65536;
 }
@@ -599,8 +491,6 @@ function append_input(bytes: u8[], chunk: u8[]): u8[] {
   return result;
 }
 
-// Line scans collect a spanning line in one amortized builder. Plain
-// copying still returns after one chunk, so an unbroken tail can stream.
 function fill(st: St, complete_line: boolean): St {
   match (st.r.read_chunk_bytes(read_size())) {
     Ok(chunk) => {
@@ -637,8 +527,6 @@ function fill(st: St, complete_line: boolean): St {
   return st;
 }
 
-// The offset just past the line at `soff`, or -1 once the input is
-// spent. A last line without a terminator is still a line.
 function line_end(st: St): (i32, St) {
   let s: St = st;
   let from: i32 = s.soff;
@@ -661,9 +549,6 @@ function line_end(st: St): (i32, St) {
   return (0 - 1, s);
 }
 
-// Give the buffer back the bytes the piece has already claimed. Only the
-// `back` lines before the scan cursor can still be rolled back to, so
-// everything before them is written now and dropped.
 function drain(st: St): St {
   if (st.soff - st.wpos < drain_bytes()) {
     return st;
@@ -676,8 +561,6 @@ function drain(st: St): St {
   return compact(s);
 }
 
-// Where line `n` begins, walking back from the scan cursor. `n` is never
-// below `wline`, so the newline it looks for is always in the buffer.
 function line_start(st: St, n: i64): i32 {
   if (n >= st.sline) {
     return st.soff;
@@ -694,8 +577,6 @@ function line_start(st: St, n: i64): i32 {
   return pos + 1;
 }
 
-// Hand lines [wline, n) to the open piece and move the write cursor to
-// `cut`, the offset line `n` begins at.
 function release(st: St, n: i64, cut: i32): St {
   if (cut <= st.wpos) {
     return St { ...st, wline: n };
@@ -707,8 +588,6 @@ function release(st: St, n: i64, cut: i32): St {
   return St { ...s, wpos: cut, wline: n };
 }
 
-// Drop what has been written from the front of the buffer, once enough
-// of it is dead weight to be worth the copy.
 function compact(st: St): St {
   if (st.wpos < drain_bytes() || st.wpos * 2 < st.buf.len()) {
     return st;
@@ -716,13 +595,6 @@ function compact(st: St): St {
   return St { ...st, buf: copy_range(st.buf, st.wpos, st.buf.len()), soff: st.soff - st.wpos, wpos: 0 };
 }
 
-// Move the scan cursor forward to line `n`, reading as it goes. False
-// when the input ends first.
-//
-// The cursor walks whole buffers at a time with the two counters in
-// locals, and the state is rebuilt once per read rather than once per
-// line: a struct update per line over eight million of them is what the
-// first draft spent a third of this workload on.
 function scan_to(st: St, n: i64): (boolean, St) {
   let s: St = st;
   while (s.sline < n) {
@@ -741,7 +613,6 @@ function scan_to(st: St, n: i64): (boolean, St) {
       return (true, s);
     }
     if (s.eof) {
-      // A last line with no terminator is still a line.
       if (s.soff < s.buf.len()) {
         s = St { ...s, soff: s.buf.len(), sline: s.sline + 1 as i64 };
         if (s.sline >= n) {
@@ -755,14 +626,11 @@ function scan_to(st: St, n: i64): (boolean, St) {
   return (true, s);
 }
 
-// One line past the scan cursor, or nothing when the input has ended —
-// how both cursor rules spell "resume after this line".
 function skip_line(st: St): St {
   let r: (boolean, St) = scan_to(st, st.sline + 1 as i64);
   return r.1;
 }
 
-// ---- output pieces ---------------------------------------------------------
 function piece_name(st: St): string {
   return st.s.prefix + fmt_apply(st.s.fmt, st.created);
 }
@@ -793,8 +661,6 @@ function out_put(st: St, lo: i32, hi: i32): St {
   return St { ...st, out: w, written: st.written + (hi - lo) as i64 };
 }
 
-// gnulib's close_output_file: an empty piece under -z gives its number
-// back instead of being reported, and every other piece reports its size.
 function out_close(st: St): St {
   if (!st.open) {
     return st;
@@ -831,7 +697,6 @@ function delete_all(st: St): void {
   }
 }
 
-// Everything left of the input into the open piece.
 function dump_rest(st: St): St {
   let s: St = st;
   while (true) {
@@ -849,8 +714,6 @@ function dump_rest(st: St): St {
   return s;
 }
 
-// gnulib's cleanup_fatal: close the piece in hand, remove every piece
-// this run made unless -k, and exit 1 with the counts flushed.
 function cleanup_exit(st: St): void {
   let s: St = out_close(st);
   delete_all(s);
@@ -863,8 +726,6 @@ function fatal(st: St, msg: string): void {
   cleanup_exit(st);
 }
 
-// The two error paths that flush the rest of the input into the piece
-// before removing it: a match that never came, and a line past the end.
 function fatal_dump(st: St, msg: string): void {
   gnu.error(msg);
   cleanup_exit(dump_rest(st));
@@ -877,12 +738,6 @@ function repetition_suffix(rep: i64): string {
   return " on repetition " + rep.to_string();
 }
 
-// ---- running one pattern ---------------------------------------------------
-//
-// A line-number pattern breaks at `num * (repetition + 1)`, counted from
-// the start of the FILE. A break already behind the write cursor writes
-// an empty piece rather than failing, which is how `csplit f /5/ 3`
-// answers.
 function run_line(st: St, p: Pat, rep: i64): St {
   let s: St = out_open(st);
   let out_of_range: string = gnu.quote(p.num.to_string()) + ": line number out of range" + repetition_suffix(rep);
@@ -890,10 +745,6 @@ function run_line(st: St, p: Pat, rep: i64): St {
   if (target / (rep + 1 as i64) != p.num) {
     fatal_dump(s, out_of_range);
   }
-  // Nothing left at all before the piece begins is out of range too:
-  // 9.5 made get_first_line_in_buffer answer 0 instead of dying with
-  // `input disappeared`, so the caller reports the break line and cleans
-  // up — the empty piece's count reaches stdout and the pieces go.
   let h: (boolean, St) = head_empty(s);
   s = h.1;
   if (h.0) {
@@ -918,10 +769,6 @@ function run_line(st: St, p: Pat, rep: i64): St {
   return suppress_line(compact(s));
 }
 
-// Whether the input has run out at the write cursor, reading to find
-// out. It is `find_line` clamped to the buffer head: a break line the
-// scan has already passed is still there, because the piece that begins
-// at it has not been written yet.
 function head_empty(st: St): (boolean, St) {
   let s: St = st;
   while (s.wpos >= s.buf.len()) {
@@ -933,11 +780,6 @@ function head_empty(st: St): (boolean, St) {
   return (false, s);
 }
 
-// `--suppress-matched` drops the line the break landed on: the first
-// line of the piece about to start, which is where the write cursor now
-// sits, rather than the line a regexp matched. The scan cursor moves too
-// only when it is on that same line — a pattern that already read past
-// it is not made to read it again.
 function suppress_line(st: St): St {
   if (!st.s.suppress) {
     return st;
@@ -958,9 +800,6 @@ function suppress_line(st: St): St {
   return compact(St { ...s, soff: r.0, sline: s.sline + 1 as i64, wpos: r.0, wline: s.wline + 1 as i64 });
 }
 
-// A regexp pattern. `found` is false when the input ran out first, which
-// `{*}` treats as the end of the job and every other spelling as an
-// error.
 function run_regexp(st: St, p: Pat, rep: i64): St {
   let s: St = st;
   if (!p.ignore) {
@@ -987,10 +826,6 @@ function run_regexp(st: St, p: Pat, rep: i64): St {
     fatal(s, gnu.quote(p.arg) + ": line number out of range");
   }
   if (target > matched) {
-    // Reaching FORWARD for the break line reads the lines it passes, so
-    // they are already the piece's when the input gives out; reaching
-    // BACK past the piece's own first line above never read anything,
-    // and closes the piece where it stands.
     let f: (boolean, St) = scan_to(s, target);
     s = f.1;
     if (!f.0) {
@@ -1002,9 +837,6 @@ function run_regexp(st: St, p: Pat, rep: i64): St {
   return suppress_line(skip_line(compact(s)));
 }
 
-// The first line at or after the scan cursor that the pattern matches.
-// The line's terminator is not part of what is searched, so `$` means
-// the end of the line rather than the end of the buffer.
 function find_match(st: St, p: Pat): (boolean, St) {
   let s: St = st;
   while (true) {
@@ -1043,7 +875,6 @@ function run_pattern(st: St, p: Pat, rep: i64): St {
   return run_regexp(st, p, rep);
 }
 
-// ---- main ------------------------------------------------------------------
 function open_input(path: string): Reader {
   if (path == "-") {
     return stdin();
@@ -1060,8 +891,6 @@ function open_input(path: string): Reader {
   return stdin();
 }
 
-// The deepest a negative offset reaches back from a match, which is how
-// many lines the buffer has to hold on to while it scans.
 function max_back(pats: Pat[]): i64 {
   let back: i64 = 0 as i64;
   let i: i32 = 0;
@@ -1136,15 +965,10 @@ pub function main(): i32 {
   if (has_format) {
     fmt = parse_fmt(format);
   }
-  // The input is opened BEFORE the patterns are read, as GNU opens it:
-  // `csplit nosuch zzz` reports the file it cannot read, not the pattern
-  // it cannot parse.
   let r0: Reader = open_input(ops[0]);
   let pats: Pat[] = parse_patterns(ops);
   let settings: Settings = Settings { prefix: prefix, fmt: fmt, keep: keep, elide: elide, suppress: suppress, quiet: quiet };
 
-  // Until a piece is open, share stdout's buffer as the inactive writer.
-  // out_open replaces it before any piece write; out_close checks open.
   let so: io_buffered.BufWriter = gnu.out_new();
   let st: St = St { r: r0, buf: empty_bytes(), wpos: 0, soff: 0, wline: 1 as i64, sline: 1 as i64, eof: false, back: max_back(pats), out: so, open: false, name: "", written: 0 as i64, created: 0, so: so, s: settings };
 

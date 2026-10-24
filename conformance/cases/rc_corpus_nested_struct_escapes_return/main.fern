@@ -1,12 +1,12 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Transitive reclamation Stage A — escape guard: a nested
-// struct (Inner) inside a RETURNED Outer must NOT be freed at
-// the constructor's exit. The deep recursive drop is
-// is_unique-gated, and the return-inc keeps Outer (and hence
-// Inner) live, so the churn loop's same-size reuse must not
-// corrupt the surviving Inner.vals.
+
+
+
+
+
+
+
+
+
 import "core/int";
 struct Inner { vals: i32[] }
 struct Outer { inner: Inner }

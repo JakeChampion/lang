@@ -7,29 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostEnumPayloadBorrowIRX86_64 pins two rc shapes around an enum value
-// that lives inside another value. Getting either wrong is a use-after-free the
-// moment the freed block is recycled:
-//
-//  1. A DIRECT ENUM struct field read stored into a CONTAINER (`[p.node]`,
-//     `xs.append(p.node)`) must take a dup: the struct's drop releases that
-//     field when the struct dies, which would free the container's element
-//     under it.
-//  2. A match arm's PAYLOAD ARRAY binding (`Seq(xs) => …`, and the same for an
-//     Option/Result payload) borrows a buffer the box owns, so it must not be
-//     released at function exit — once per call, that kills the payload on the
-//     second entry.
-//
-// In std/regex both shapes occur in the same parse tree: `__rx_alt` builds its
-// branches array out of `RParse.node` field reads and `__rx_match` re-binds
-// `RSeq(xs)` / `RAlt(xs)` once per scan position. A freed RSeq box coming back
-// from the freelist as the enclosing RGroup makes the tree self-referential, and
-// `__rx_match` recurses until the stack runs out.
-//
-// Every program below allocates BETWEEN the reads so a freed block is actually
-// recycled — without that churn the stale pointer still reads plausible data and
-// the bug is invisible. Values are checked in Fern and the over-release detector
-// is asserted, so a wrong exit code is unambiguous.
 func TestSelfHostEnumPayloadBorrowIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -61,9 +38,6 @@ func TestSelfHostEnumPayloadBorrowIRX86_64(t *testing.T) {
 		}
 	}
 
-	// (1) array-LITERAL element: `[first.node]` over a struct whose enum field
-	// the exit sweep deep-drops. The churn array below is the recycler — the
-	// freed Seq box comes straight back and the element reads as a Leaf.
 	run(t, `enum N { Leaf(i32), Seq(N[]) }
 struct P { node: N, pos: i32 }
 function mkp(): P { let kids: N[] = [Leaf(7), Leaf(8)]; return P { node: Seq(kids), pos: 1 }; }
@@ -79,9 +53,6 @@ function main(): i32 {
     return 0;
 }`, "enum-field-into-array-literal", 0)
 
-	// (1) the .append sibling: `out = out.append(first.node)` takes the in-place
-	// arr_push_owned path, which stored the borrowed pointer with no counted
-	// reference exactly like the literal above.
 	run(t, `enum N { Leaf(i32), Seq(N[]) }
 struct P { node: N, pos: i32 }
 function mkp(): P { let kids: N[] = [Leaf(7), Leaf(8)]; return P { node: Seq(kids), pos: 1 }; }
@@ -97,10 +68,6 @@ function main(): i32 {
     return 0;
 }`, "enum-field-into-append", 0)
 
-	// (2) the arm-binding borrow: `total` is re-entered 8 times over the SAME
-	// tree with a fresh array allocated between calls. One sweep dec per entry
-	// took the payload buffer's count to 0 on the second call, and `churn`
-	// recycled the block, so the third call summed whatever landed there.
 	run(t, `enum N { Leaf(i32), Seq(N[]) }
 function total(n: N): i32 {
     match (n) {
@@ -127,8 +94,6 @@ function main(): i32 {
     return 0;
 }`, "enum-array-payload-arm-borrow", 0)
 
-	// (2) the same borrow through a `string[]` payload — the other spelling the
-	// arm binding marks is_arr, so it took the identical sweep dec.
 	run(t, `enum Doc { Empty, Lines(string[]) }
 function width(d: Doc): i32 {
     match (d) {
@@ -154,10 +119,6 @@ function main(): i32 {
     return 0;
 }`, "enum-strarr-payload-arm-borrow", 0)
 
-	// (2) the Option/Result arm binding had the identical defect — its own
-	// lowering already calls the array payload "BORROWED … leak-only", but
-	// is_arr alone put it in the sweep, so the box's buffer was released once
-	// per entry with nothing balancing it. Same opt-out.
 	run(t, `function width(d: Option[i32[]]): i32 {
     match (d) {
         Some(xs) => {
@@ -184,26 +145,11 @@ function main(): i32 {
 }`, "option-array-payload-arm-borrow", 0)
 }
 
-// #6121: the same enum field read routed through a LOCAL must keep #6049's
-// retain. `let tmp: N = first.node` binds an alias of the source struct's enum
-// box; the container store that follows is then a bare ident, and it must
-// still retain the box. Without that, the struct's drop frees the box the
-// array still points at — the use-after-free #6049 pins for the direct
-// spelling, one indirection away, on all three backends.
-//
-// The container holds its own count exactly as with the direct read. The
-// bind's own dup and release are #10310's
-// (self_host_enum_field_alias_count_test.go).
-//
-// Every case churns after the struct dies so a freed block is really recycled;
-// without that the stale pointer still reads plausible data (97 = value read
-// back wrong, 96 = wrong length, 99 = over-release detector).
 var selfHostEnumFieldAliasCases = []struct {
 	name string
 	src  string
 	exit int
 }{
-	// The issue's repro: the array LITERAL element is a bare ident.
 	{"alias-into-array-literal", `enum N { Leaf(i32), Seq(N[]) }
 struct P { node: N, pos: i32 }
 function mkp(): P { let kids: N[] = [Leaf(7), Leaf(8)]; return P { node: Seq(kids), pos: 1 }; }
@@ -218,8 +164,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// The .append sibling — the in-place arr_push path, where the retain is an
-	// inc bracket over the loaded slot rather than an inline inc.
 	{"alias-into-append", `enum N { Leaf(i32), Seq(N[]) }
 struct P { node: N, pos: i32 }
 function mkp(): P { let kids: N[] = [Leaf(7), Leaf(8)]; return P { node: Seq(kids), pos: 1 }; }
@@ -234,8 +178,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// TWO containers off one alias: the retain is per-store, not per-bind, so
-	// both references are counted and the struct's dec still leaves one live.
 	{"alias-into-two-containers", `enum N { Leaf(i32), Seq(N[]) }
 struct P { node: N, pos: i32 }
 function mkp(): P { let kids: N[] = [Leaf(7), Leaf(8)]; return P { node: Seq(kids), pos: 1 }; }
@@ -254,8 +196,6 @@ function main(): i32 {
 }`, 0},
 }
 
-// TestSelfHostEnumFieldAliasIRX86_64 — the #6121 cases through the production
-// x86-64 IR path. All three exit 97 on the parent commit.
 func TestSelfHostEnumFieldAliasIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -283,10 +223,6 @@ func TestSelfHostEnumFieldAliasIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostEnumFieldAliasIRArm64 — the same cases on arm64, which the shared
-// lowering analysis makes a real second backend rather than a formality: the
-// retain sites emit through a different instruction selector, and the parent
-// commit fails all three here too.
 func TestSelfHostEnumFieldAliasIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

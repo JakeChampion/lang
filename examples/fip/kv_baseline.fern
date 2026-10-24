@@ -1,60 +1,9 @@
-// examples/fip/kv_baseline.fern — the idiomatic, allocating variant of the
-// bounded key/value core (#9585).
-//
-// A request is a record of three fields, a key and a value are strings, the
-// database is the built-in `Map[string, string]`, and a batch is answered
-// with an array of response records. Nothing here is written for allocation:
-// it is the shape a first draft of a key/value service takes, and it is the
-// control the other variants are measured against.
-//
-// Three things about its shape are deliberate, and each is a finding of the
-// experiment rather than a style choice; `docs/FIP-KV-CORE.md` has the
-// numbers. The database parameters are `own`, which is how Fern says a value
-// is handed on rather than shared: borrowed, the first measurement copied the
-// whole map on every write and exhausted the arena. The map is threaded as a
-// value of its own beside the counters rather than as a field of one struct,
-// because a map mutator on a field of an owned struct copies the map today
-// (#11119). And every operation is written as a read-only classification
-// followed by an update that returns the map and nothing else, because a map
-// mutator whose result sits inside a tuple literal is miscompiled today
-// (#11121) and the bound spelling that avoids the miscompile copies the map.
-//
-// # The protocol every variant shares
-//
-// A request is `op` + a `key_size()`-byte key + a `value_size()`-byte value;
-// GET and DELETE carry a value and ignore it. The operations:
-//
-//   PUT       store the value under the key; `full` when the key is new and
-//             the table holds `max_entries()` already
-//   GET       answer the stored value, or `missing`
-//   DELETE    remove the key, or `missing`
-//   INCREMENT add the request value's first eight bytes, little-endian, to
-//             the stored value's first eight bytes and answer the new value,
-//             or `missing`
-//
-// A response is a status byte — ok, missing, full, or value — followed by
-// `value_size()` bytes when the status is `value`. Every variant folds every
-// response byte, in order, into one running digest; three implementations
-// answering the same 640,000 requests to the same digest is the experiment's
-// differential test, and `internal/testing/e2e/fip_kv_test.go` holds them to it.
-//
-// # The workload
-//
-// Request n draws a key index from a mixing hash over a universe of
-// `max_entries() * load / 100` keys, so the load factor is the one knob a run
-// turns, and an operation from `n % 100` against a mix: read-heavy (80% GET,
-// 10% PUT, 5% INCREMENT, 5% DELETE), write-heavy (20 / 45 / 20 / 15), or mixed
-// (50 / 25 / 15 / 10). Half the universe is PUT before the measured region so
-// reads have something to hit. Arguments: `mix load_pct rounds`, defaulting to
-// `mixed 50 10000`; a load above 100 is how the full-table path is reached.
 import "core/cmp";
 import "core/map";
 import "std/bench";
 import "std/i32";
 import "std/i64";
 import "std/string";
-
-// ===================== CAPACITIES =====================
 
 function max_entries(): i32 {
   return 4096;
@@ -71,8 +20,6 @@ function value_size(): i32 {
 function batch_size(): i32 {
   return 64;
 }
-
-// ===================== PROTOCOL =====================
 
 function op_put(): i32 {
   return 1;
@@ -129,8 +76,6 @@ struct Response {
   value: string,
 }
 
-// The counters and the digest. The map travels beside this rather than
-// inside it — see the header.
 struct Counters {
   m_ok: i64,
   m_miss: i64,
@@ -138,8 +83,6 @@ struct Counters {
   m_val: i64,
   digest: i64,
 }
-
-// ===================== BYTE HELPERS =====================
 
 function pow256(k: i32): i64 {
   let v: i64 = 1 as i64;
@@ -165,9 +108,6 @@ function read_i64(s: string, at: i32): i64 {
   return v;
 }
 
-// ===================== OPERATIONS =====================
-
-// The status a request will get, read without touching the map.
 function classify(entries: Map[string, string], req: Request): i32 {
   let present: boolean = entries.contains(req.key);
   if (req.op == op_put()) {
@@ -196,11 +136,6 @@ function incremented(current: string, delta: i64): string {
   return string_from_bytes_unchecked(bytes);
 }
 
-// The map after each request classify did not refuse. One mutator per
-// function, returned directly: the analysis that lets a mutator write in
-// place reads the receiver's last use in source order over the whole
-// function, so a second mutator later in the same body — even on another
-// path — makes the first one copy the map (#11119 records the shape).
 function put(own entries: Map[string, string], req: Request): Map[string, string] {
   return entries.insert(req.key, req.value);
 }
@@ -261,9 +196,6 @@ function digest_responses(own c: Counters, rsps: Response[]): Counters {
   return Counters { ...c, digest: d };
 }
 
-// Answers the batch into an array of records, then folds those records into
-// the digest: the responses exist as values, which is the shape a caller that
-// serialises them would want and the allocation a bounded design avoids.
 function process_batch(own entries: Map[string, string], own c: Counters, reqs: Request[]): (Map[string, string], Counters) {
   let out: Response[] = [];
   let i: i32 = 0;
@@ -287,8 +219,6 @@ function process_batch(own entries: Map[string, string], own c: Counters, reqs: 
 function fresh_counters(): Counters {
   return Counters { m_ok: 0 as i64, m_miss: 0 as i64, m_full: 0 as i64, m_val: 0 as i64, digest: 0 as i64 };
 }
-
-// ===================== THE WORKLOAD =====================
 
 function mix64(n: i64): i64 {
   let x: i64 = n * (2654435761 as i64);
@@ -389,8 +319,6 @@ function gen_prefill(first_key: i64): Request[] {
   return reqs;
 }
 
-// ===================== DRIVER =====================
-
 function mix_of(name: string): i32 {
   if (name == "read") {
     return mix_read();
@@ -401,8 +329,6 @@ function mix_of(name: string): i32 {
   return mix_mixed();
 }
 
-// `mix load_pct rounds` from the command line, each defaulting when absent
-// or unreadable.
 function options(argv: string[]): (string, i32, i32) {
   let mix_name: string = "mixed";
   let load_pct: i32 = 50;

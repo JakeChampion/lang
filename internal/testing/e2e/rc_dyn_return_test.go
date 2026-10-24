@@ -1,15 +1,3 @@
-// A dyn value returned by a function that holds it only as a borrow
-// (docs/DYN-TRAITS.md §4.4, #10072). `return l` on a dyn parameter handed the
-// caller back the very `{data, vtable}` cell it had built for the argument,
-// with no retain: two holders then shared one cell nothing counted, and the
-// second release freed the concrete out from under the first
-// (use-after-free on x86-64, a segfault unsanitized). The return now gives
-// the caller a cell and a unit of the concrete of its own.
-//
-// The primitive half: every concrete behind a dyn must be retainable for
-// that retain to exist, and a primitive's value box had no rc header. It
-// has one now, and its drop releases a unit rather than freeing the box
-// outright.
 package e2e
 
 import "testing"
@@ -25,10 +13,6 @@ function other(l: dyn Label): dyn Label { return Box { name: "zz" + "z" }; }
 function show(l: dyn Label): i32 { return l.a(); }
 `
 
-// dynReturnSrc returns a borrowed dyn value three ways — a parameter, a local
-// viewing one, and a callee that returns something else — over a local
-// record, a fresh record and a primitive. Each trip contributes
-// 2 + 6 + 2 + 3 + i + 3 + 2 = 18 + i.
 func dynReturnSrc(n string) string {
 	return dynReturnPrelude + `function main(): i32 {
     let t: i32 = 0;
@@ -48,8 +32,6 @@ func dynReturnSrc(n string) string {
 }`
 }
 
-// dynReturnBumpSrc churns the same returns, so a leaked cell or box shows as
-// high-water that grows with the churn length.
 func dynReturnBumpSrc(n, wider string) string {
 	churn := func(bound string) string {
 		return `    while (i < ` + bound + `) {
@@ -128,13 +110,6 @@ func TestDynReturnedBorrowBounded(t *testing.T) {
 	})
 }
 
-// A borrow returned through a branch is returned as surely as a bare one:
-// an `if` or `match` whose arm yields a parameter, returned directly or
-// through a local it initialises. Each arm's yield takes its own unit
-// (emitCountedYield), which the caller then owns. On wasm the branch yields
-// the two-word `[data, vtable]` pair, and a variant match still frees its
-// fresh scrutinee. Each name goes through ids so it is built on the heap
-// rather than placed as a constant.
 func TestDynReturnedBorrowThroughABranch(t *testing.T) {
 	const head = `trait Label { function a(self: Self): i32; }
 struct Box { name: string }
@@ -161,8 +136,6 @@ function main(): i32 {
 		{"variant_match_returned", `enum Pick { First, Second(i32) }
 function tag(c: i32): Pick { if (c == 0) { return Pick.First; } return Pick.Second(c); }
 function pick(c: i32, l: dyn Label, m: dyn Label): dyn Label { return match (tag(c)) { First => l, Second(_) => m }; }`},
-		// The scrutinee's own dyn payload, bound and yielded: the yield retains
-		// it before the scrutinee's deep drop releases the box's reference.
 		{"variant_payload_yielded", `enum Holder { Has(dyn Label), Empty }
 function mk(c: i32): Holder { if (c == 0) { return Holder.Has(Box { name: ids("ab") + "c" }); } return Holder.Empty; }
 function pick(c: i32, l: dyn Label, m: dyn Label): dyn Label { return match (mk(c)) { Has(d) => d, Empty => m }; }`},

@@ -8,22 +8,12 @@ import (
 	"testing"
 )
 
-// The receiver-method wrappers for `chunks` / `windows` (added to std/array
-// alongside this test) lower on the self-host IR path. Both fold through the
-// array-method monomorphisation (receiver-only type var `T`, slice 3) into an
-// `__arrm_` clone that delegates to the free `chunks` / `windows` — which
-// already lower on IR and return a fresh `T[][]`. The stdlib is resolved off
-// disk by asm_load_run (the `root` arg), so the real wrappers are exercised
-// end-to-end rather than inlined. Each case is oracle-checked against the
-// interpreter and routing-pinned to "ir".
 var arrayChunksWindowsIRCases = []struct {
 	name string
 	src  string
 }{
-	// chunks: non-overlapping groups, last one shorter.
 	{"chunks", `import "std/array";
 function main(): i32 { let xs: i32[] = [1, 2, 3, 4, 5]; let cs: i32[][] = xs.chunks(2); return cs.len() * 10 + cs[0][1] + cs[2][0]; }`},
-	// windows: overlapping sliding sub-slices.
 	{"windows", `import "std/array";
 function main(): i32 { let xs: i32[] = [1, 2, 3, 4, 5]; let ws: i32[][] = xs.windows(2); return ws.len() * 10 + ws[3][0] + ws[0][1]; }`},
 }

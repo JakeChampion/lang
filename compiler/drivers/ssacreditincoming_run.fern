@@ -206,7 +206,6 @@ function target_checks(target: string): void {
     }
   }
   require(producers.len() == 1 && consumers.len() == 1 && callers.len() == 1, 3);
-  // These explicit fixture ABI facts are not a selected typed-adapter proof.
   controls(callers[0], producers[0], consumers[0]);
 }
 

@@ -1,6 +1,3 @@
-// call_overhead — a small non-inlinable-today helper called in a hot loop,
-// plus a recursive one. Isolates the call sequence and the absence of
-// function inlining on the native backends.
 function step(acc: i64, i: i64): i64 {
   return acc + i * 3i64 - 1i64;
 }

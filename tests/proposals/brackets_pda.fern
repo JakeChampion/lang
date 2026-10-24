@@ -1,13 +1,3 @@
-// tests/proposals/brackets_pda.fern — proposal turn, drawn line 246:
-// "A pushdown automaton that checks balanced multi-kind brackets."
-//
-// A genuine PDA: one left-to-right pass, a stack of open frames, and a
-// three-state lexer so brackets inside string literals and line comments
-// count as text rather than as tokens.
-//
-// The app writes its report to stderr; stdout carries TAP-13 from
-// std/test, so the file is its own test suite.
-
 import "std/test";
 import "std/array";
 import "std/i32";
@@ -18,15 +8,14 @@ struct Frame { kind: Kind, pos: i32 }
 
 enum Verdict {
   Balanced,
-  Unexpected(i32),  // closer at pos, nothing open
-  Mismatched(i32, i32),  // closer at pos, against opener at pos
-  Unclosed(i32),  // opener at pos never closed
-  Unterminated(i32),  // string literal opened at pos, never closed
+  Unexpected(i32),
+  Mismatched(i32, i32),
+  Unclosed(i32),
+  Unterminated(i32),
 }
 
 struct Report { verdict: Verdict, max_depth: i32, opens: i32 }
 
-// Lexer states.
 function st_text(): i32 {
   return 0;
 }
@@ -125,7 +114,6 @@ function verdict_code(v: Verdict): i32 {
   }
 }
 
-// The byte offset the verdict points at, or -1 for Balanced.
 function verdict_pos(v: Verdict): i32 {
   match (v) {
     Balanced => {
@@ -167,8 +155,6 @@ function verdict_text(v: Verdict): string {
   }
 }
 
-// The automaton. Pushes a Frame per opener, pops on a matching closer,
-// and refuses on the first transition it has no rule for.
 function analyze(src: string): Report {
   let stack: Frame[] = [];
   let mode: i32 = st_text();
@@ -190,7 +176,7 @@ function analyze(src: string): Report {
     }
 
     if (mode == st_string()) {
-      if (b == 92) {  // backslash escape
+      if (b == 92) {
         i = i + 2;
         continue;
       }
@@ -277,8 +263,6 @@ function is_balanced(src: string): boolean {
   return verdict_code(check(src)) == 0;
 }
 
-// ---------------------------------------------------------------- tests
-
 function balanced_corpus(): string[] {
   return [
     "",
@@ -305,9 +289,6 @@ function broken_corpus(): string[] {
   ];
 }
 
-// Every input the corpus calls balanced must read as balanced, and must
-// leave no residue: a balanced string closes exactly as many frames as
-// it opens.
 function test_corpus_is_balanced(): test.TestOutcome {
   let xs: string[] = balanced_corpus();
   for i in 0..xs.len() {
@@ -320,15 +301,10 @@ function test_corpus_is_balanced(): test.TestOutcome {
   return test.pass();
 }
 
-// Concatenation closure: balanced + balanced is balanced. This is the
-// property that makes the stack discipline a monoid, and it fails loudly
-// if a pop leaks state across the join.
 function test_concatenation_is_closed(): test.TestOutcome {
   let xs: string[] = balanced_corpus();
   for i in 0..xs.len() {
     for j in 0..xs.len() {
-      // Comment-carrying members only compose when the comment is
-      // terminated, which it is — every member ends outside a comment.
       let joined: string = xs[i] + "\n" + xs[j];
       if (!is_balanced(joined)) {
         return test.fail("concat of " + i.to_string() + " and "
@@ -340,15 +316,11 @@ function test_concatenation_is_closed(): test.TestOutcome {
   return test.pass();
 }
 
-// Wrapping a balanced string in any one kind stays balanced and lifts the
-// maximum depth by exactly one.
 function test_wrapping_lifts_depth(): test.TestOutcome {
   let xs: string[] = balanced_corpus();
   let opens: string[] = ["(", "[", "{", "<"];
   let closes: string[] = [")", "]", "}", ">"];
   for i in 0..xs.len() {
-    // A member ending inside a line comment would swallow the closer,
-    // so wrap on its own line.
     let inner: Report = analyze(xs[i]);
     for k in 0..opens.len() {
       let wrapped: string = opens[k] + "\n" + xs[i] + "\n" + closes[k];
@@ -368,7 +340,6 @@ function test_wrapping_lifts_depth(): test.TestOutcome {
   return test.pass();
 }
 
-// Each broken input must be refused, at the byte the PDA actually stopped on.
 function test_broken_inputs_are_refused(): test.TestOutcome {
   let xs: string[] = broken_corpus();
   let want_code: i32[] = [1, 2, 3, 2, 4];
@@ -389,8 +360,6 @@ function test_broken_inputs_are_refused(): test.TestOutcome {
   return test.pass();
 }
 
-// Brackets inside a string literal or a line comment are text. Deleting the
-// quoting must change the verdict — otherwise the lexer state is dead code.
 function test_quoting_suppresses_brackets(): test.TestOutcome {
   if (!is_balanced("\"([{\"")) {
     return test.fail("brackets inside a string literal should be inert");
@@ -407,7 +376,6 @@ function test_quoting_suppresses_brackets(): test.TestOutcome {
   return test.pass();
 }
 
-// The stack has to be a real stack: n nested openers reach depth n.
 function test_deep_nesting_reaches_depth(): test.TestOutcome {
   let depth: i32 = 200;
   let s: string = "";
@@ -432,8 +400,6 @@ function test_deep_nesting_reaches_depth(): test.TestOutcome {
   return test.pass();
 }
 
-// Interleaving is what separates a PDA from a counter: "([)]" has equal
-// counts of every kind and is still not a valid nesting.
 function test_counting_is_not_enough(): test.TestOutcome {
   if (is_balanced("([)]")) {
     return test.fail("interleaved brackets must be refused");
@@ -444,15 +410,11 @@ function test_counting_is_not_enough(): test.TestOutcome {
   if (!is_balanced("([])")) {
     return test.fail("properly nested brackets must be accepted");
   }
-  // <> is a bracket kind here, so a bare comparison is NOT balanced
-  // input. That is the documented cost of treating angles as brackets.
   if (is_balanced("a < b")) {
     return test.fail("a bare < must count as an unclosed opener");
   }
   return test.pass();
 }
-
-// ----------------------------------------------------------------- app
 
 function report_line(src: string, label: string): string {
   let r: Report = analyze(src);

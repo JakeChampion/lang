@@ -7,25 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostMachO exercises the self-hosted static, ad-hoc-signed arm64
-// Mach-O executable writer (compiler/macho.fern) — the Darwin
-// counterpart of TestSelfHostELF and the container half of the native
-// binary backend (the part that aims to remove the external clang/ld64
-// link step).
-//
-// macho.fern is intentionally import-free, so this test reads it from disk
-// and concatenates it with a self-test main() that (a) builds Mach-O
-// images and asserts the fixed-layout header + load-command bytes (magic,
-// cputype, filetype, ncmds, sizeofcmds, MH_PIE, the __PAGEZERO/__TEXT/__DATA
-// segments, the dyld command set + LC_MAIN entryoff, and the
-// embedded-signature / CodeDirectory magics), and (b) checks the
-// self-contained SHA-256 against
-// the FIPS 180-4 "abc" and "" test vectors (the page-hash primitive the
-// ad-hoc signature relies on). It then runs the combined program through
-// the existing self-host wasm pipeline (wasm_run -> WAT -> wasmtime). The
-// program returns 0 when every check passes, or the (1-based) number of
-// the failing check — surfaced in the error message so a regression points
-// straight at the bad field.
 func TestSelfHostMachO(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host macho e2e")
@@ -53,23 +34,6 @@ func TestSelfHostMachO(t *testing.T) {
 	}
 }
 
-// machoSelfTestMain asserts the fixed-layout fields of the produced arm64
-// Mach-O plus the SHA-256 test vectors that back the ad-hoc code signature.
-// Each `return N` is a distinct failing-check id (0 = all pass).
-//
-// For the no-data case, text_off = 32 + 648 + 392 + 80 = 1152. The 392 bytes
-// reserve the optional DWARF commands and the 80 the optional __const
-// section header; sizeofcmds remains 600, excluding those reservations and
-// the 48-byte layout slack. text_vmsize rounds 1156 up to one 16 KiB page
-// = 16384 = code_limit; ident "fern" (len 4) gives sig_len = 20 + (88+5) +
-// 4*32 = 241, so total = 16625.
-//
-// Load-command offsets, no-data image:
-//
-//	32 __PAGEZERO(72)  104 __TEXT(72+80)  256 __LINKEDIT(72)
-//	328 LC_DYLD_INFO_ONLY(48)  376 LC_SYMTAB(24)  400 LC_DYSYMTAB(80)
-//	480 LC_BUILD_VERSION(24)  504 LC_LOAD_DYLINKER(32)
-//	536 LC_LOAD_DYLIB(56)  592 LC_MAIN(24)  616 LC_CODE_SIGNATURE(16)
 const machoSelfTestMain = `
 function main(): i32 {
     let text: u8[] = [1, 2, 3, 4];

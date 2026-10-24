@@ -8,12 +8,6 @@ import (
 	"testing"
 )
 
-// __fern_arr_inc_elems retains every element of a pointer-element array ahead
-// of a copy of it, with rc_inc's guards inline rather than a call per element.
-// The program pushes onto a string array another binding still holds, so the
-// push copies it; its elements are heap strings and literals, whose static
-// boxes keep a negative count. Both arrays are read back and dropped, and no
-// count may underflow.
 const arrIncElemsProg = `import "std/i32";
 
 @noinline function mk(i: i32): string {

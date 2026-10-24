@@ -3,17 +3,6 @@ import "std/async";
 import "std/sim";
 import "std/time";
 
-// tests/stdlib/sim_net_test.fern — SimNet (docs/DST-PLATFORM-BRIEF.md
-// slice 2): scripted request/response endpoints driven through the
-// std/async combinators, the sim sibling of `fetch.fetch_future`. Every
-// latency here is virtual ns, so every assertion — winners, losers,
-// deadlines, chunk arrival — is EXACT, on every backend including the
-// interpreter (where the real fetch's fd-backed futures never resolve).
-//
-// Run:  fern -interp tests/stdlib/sim_net_test.fern
-
-// __three_upstreams — a net with three endpoints whose latencies are
-// deliberately out of input order (30ms / 10ms / 20ms).
 function __three_upstreams(d: sim.Sim): sim.Net {
   let n: sim.Net = sim.net(d);
   n = n.serve(1, 80, "/k", "primary", time.duration_nanos(30000000 as i64));
@@ -22,9 +11,6 @@ function __three_upstreams(d: sim.Sim): sim.Net {
   return n;
 }
 
-// gather over 3 endpoints with different latencies returns bodies in
-// INPUT order (not readiness order), and the fan-out ends at the
-// slowest endpoint's time.
 function test_gather_input_order(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim.Net = __three_upstreams(d);
@@ -40,9 +26,6 @@ function test_gather_input_order(): test.TestOutcome {
   return test.assert_eq(d.now_ns(), 30000000 as i64);
 }
 
-// race over fast + slow endpoints picks the fast one, at the fast one's
-// virtual time — and abandoning the loser leaves the net fully usable
-// (its endpoint still answers a later fetch).
 function test_race_picks_fast(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim.Net = sim.net(d);
@@ -70,8 +53,6 @@ function test_race_picks_fast(): test.TestOutcome {
   return test.pass();
 }
 
-// with_deadline drops ONLY the endpoint slower than the deadline, and
-// the clock lands exactly on the deadline.
 function test_deadline_drops_only_slow(): test.TestOutcome {
   let d: sim.Sim = sim.new(7);
   let n: sim.Net = sim.net(d);
@@ -101,9 +82,6 @@ function test_deadline_drops_only_slow(): test.TestOutcome {
   return test.assert_eq(d.now_ns(), 25000000 as i64);
 }
 
-// A chunked body accumulates completely and resolves at the LAST chunk's
-// virtual time: 10 bytes as [4,4,2] via chunks_of, first byte at 5ms,
-// then 5ms per chunk => done at 15ms.
 function test_chunked_accumulates(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim.Net = sim.net(d);
@@ -116,9 +94,6 @@ function test_chunked_accumulates(): test.TestOutcome {
   return test.assert_eq(d.now_ns(), 15000000 as i64);
 }
 
-// The chunked future's suspension structure, drained by hand: one
-// Pending per chunk (the __fetch_drain shape), tokens on the scheduled
-// ready-at times, partial accumulation between wakes.
 function test_chunked_resuspends_per_chunk(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim.Net = sim.net(d);
@@ -150,8 +125,6 @@ function test_chunked_resuspends_per_chunk(): test.TestOutcome {
   return test.fail("chunked future never resolved");
 }
 
-// An unregistered endpoint is a dead upstream: Ready("") immediately, no
-// suspension, and the clock does not move.
 function test_unregistered_is_ready_empty(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim.Net = sim.net(d);
@@ -170,8 +143,6 @@ function test_unregistered_is_ready_empty(): test.TestOutcome {
   return test.assert_eq(d.now_ns(), 0 as i64);
 }
 
-// Per-endpoint hits: each fetch bumps the matched endpoint's counter,
-// misses count nowhere, and a "" registration is a host:port wildcard.
 function test_hits_and_wildcard(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim.Net = sim.net(d);

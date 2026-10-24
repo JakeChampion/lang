@@ -4,13 +4,6 @@ import (
 	"testing"
 )
 
-// Slice 1 of docs/OWNERSHIP-INFERENCE-PLAN.md: a string/array-free struct/tuple
-// local whose last use sits inside an if/while/for/match now takes a precise
-// deep-drop right after that statement (control-flow placement) instead of the
-// function-exit sweep. Correctness is the bar in this sound-critical path — the
-// fixture differential gate (free-on == free-off) is the corpus-wide net; these
-// pin value + zero over-release on the exact shape across all backends.
-
 const preciseCfSrc = `struct P { x: i32, y: i32 }
 struct Pair { a: P, b: P }
 function add(p: P): i32 { return p.x + p.y; }

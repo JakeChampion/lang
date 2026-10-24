@@ -7,11 +7,6 @@ import (
 	"testing"
 )
 
-// auditPlatformCases isolate environment / clock / randomness / sleep
-// built-ins and run them through the SELF-HOSTED compiler, asserting the
-// exit code. Self-host arm of the §B audit (docs/FEATURE-AUDIT.md); the
-// conformance fixtures `audit_env_time_random` and `audit_monotonic_sleep`
-// cover the same built-ins.
 var auditPlatformCases = []struct {
 	name string
 	src  string
@@ -25,8 +20,6 @@ var auditPlatformCases = []struct {
 	{"random-i32-usable", `function main(): i32 { let x: i32 = random_i32(); if (x == x) { return 7; } return 1; }`, 7},
 }
 
-// TestSelfHostAuditPlatformX86_64 runs each platform builtin through the
-// self-hosted x86-64 driver and asserts the exit code.
 func TestSelfHostAuditPlatformX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

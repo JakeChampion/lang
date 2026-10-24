@@ -12,29 +12,8 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// checker.fern's `bind_stmt` is `check_stmt`'s SCOPE half without the
-// inference (#8181): twelve diagnostic walkers thread a Scope through a body
-// and discard the type, and running the whole type checker to obtain that
-// Scope was 14.41% of a `checker.fern` compile. The saving rests on one fact —
-// only `ast.StmtVar` (and `ast.StmtDefer`, which delegates to the statement it
-// wraps) can hand back a scope other than the one it was given. Every other
-// statement form runs full type inference to conclude that the scope is
-// unchanged.
-//
-// The failure mode that fact invites is drift: a scope-binding form added to
-// check_stmt and not to bind_stmt breaks name resolution in all twelve passes,
-// and the symptom is a spurious or missing diagnostic somewhere else entirely.
-// The behavioural gate on that is TestSelfHostBindStmtScopeParity
-// (internal/testing/e2ecompiler), which runs both steppers over the same statements
-// and compares the bindings. It can only compare forms its corpus contains,
-// which a NEW binding form by definition does not — so this lint reads the
-// two functions instead and pins the set of arms that may rebind at all, in
-// both, from the source.
 const bindStmtArmsPath = "../../../compiler/checker.fern"
 
-// scopeBindingForms is the pinned set. A change here is not a lint bug: it
-// means the checker learned a new way for a statement to bind a name, and
-// both steppers plus the parity corpus have to learn it too.
 var scopeBindingForms = []string{"StmtDefer", "StmtVar"}
 
 func parseSelfHostChecker(t *testing.T) *ast.Program {
@@ -54,7 +33,6 @@ func parseSelfHostChecker(t *testing.T) *ast.Program {
 	return prog
 }
 
-// stmtDispatch returns the `match (st) { … }` a stepper dispatches on.
 func stmtDispatch(t *testing.T, prog *ast.Program, fn string) *ast.Match {
 	t.Helper()
 	for _, fd := range prog.Funcs {
@@ -74,17 +52,11 @@ func stmtDispatch(t *testing.T, prog *ast.Program, fn string) *ast.Match {
 	return nil
 }
 
-// isScopeParam reports whether e is the bare `s` a stepper was handed — the
-// one shape that means "this arm did not touch the scope".
 func isScopeParam(e ast.Expr) bool {
 	id, ok := e.(*ast.Ident)
 	return ok && id.Name == "s"
 }
 
-// checkStmtBindingArms reads check_stmt: an arm rebinds when a CheckResult it
-// returns carries a `scope:` that is not the bare `s`, or when it delegates to
-// check_stmt itself (the StmtDefer arm, which hands back whatever the wrapped
-// statement binds).
 func checkStmtBindingArms(t *testing.T, m *ast.Match) []string {
 	t.Helper()
 	var out []string
@@ -136,8 +108,6 @@ func checkStmtBindingArms(t *testing.T, m *ast.Match) []string {
 	return out
 }
 
-// bindStmtBindingArms reads bind_stmt: an arm rebinds when it returns anything
-// other than the bare `s`.
 func bindStmtBindingArms(t *testing.T, m *ast.Match) []string {
 	t.Helper()
 	var out []string
@@ -195,10 +165,6 @@ func TestCheckStmtAndBindStmtBindTheSameStatementForms(t *testing.T) {
 	}
 }
 
-// The scope-only re-walks this replaced were 14.41% of a `checker.fern`
-// compile. `check_stmt(st, cur).scope` is what they all spelled, and it is
-// the shape a new walker reaches for first, so it stays gone by lint rather
-// than by memory.
 func TestNoScopeOnlyCheckStmtCalls(t *testing.T) {
 	prog := parseSelfHostChecker(t)
 	var found []string

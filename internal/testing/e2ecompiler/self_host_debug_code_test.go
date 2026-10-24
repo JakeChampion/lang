@@ -95,8 +95,6 @@ func nativeProgramText(t *testing.T, path, target string) []byte {
 		t.Fatal(err)
 	}
 	defer f.Close()
-	// Plain ELF images have no section table. Compare the executable load's
-	// payload after its headers, including its unwind information.
 	header, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)

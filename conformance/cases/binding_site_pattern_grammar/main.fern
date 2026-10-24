@@ -1,11 +1,11 @@
-// One pattern grammar, shared by every binding site (#2698).
-//
-// `if let` and `let … else` consume the same production the match arms do, so
-// a tuple, struct, literal or range head works at all of them rather than only
-// at `match`. The heads below are the ones that used to be variant-only: each
-// lowers through the same builder its `match` spelling does — the tuple / struct
-// flag chain, or the literal if/else chain — with the then-block as the pattern
-// arm's body and the else-block as the wildcard arm's.
+
+
+
+
+
+
+
+
 
 import "std/i32";
 
@@ -17,7 +17,7 @@ enum Outer { A(Inner), B }
 
 enum E { A(i32), B(i32) }
 
-// --- `if let` ---------------------------------------------------------------
+
 
 function il_tuple(t: (i32, i32)): i32 {
     if let (a, b) = t {
@@ -26,7 +26,7 @@ function il_tuple(t: (i32, i32)): i32 {
     return 0;
 }
 
-// An `@` names the whole tuple beside its elements.
+
 function il_tuple_at(t: (i32, i32)): i32 {
     if let w @ (a, b) = t {
         return a + b + w.0;
@@ -34,7 +34,7 @@ function il_tuple_at(t: (i32, i32)): i32 {
     return 0;
 }
 
-// Or-alternatives expand one arm each, sharing the then-block.
+
 function il_tuple_or(t: (i32, i32)): i32 {
     if let (1, 2) | (3, 4) = t {
         return 1;
@@ -43,7 +43,7 @@ function il_tuple_or(t: (i32, i32)): i32 {
     }
 }
 
-// A tuple element may itself be a variant sub-pattern.
+
 function il_tuple_variant(t: (Inner, i32)): i32 {
     if let (Ok2(v), b) = t {
         return v + b;
@@ -101,7 +101,7 @@ function il_string(s: string): i32 {
     return 0;
 }
 
-// --- `let … else` -----------------------------------------------------------
+
 
 function le_literal(n: i32): i32 {
     let 3 = n else {
@@ -124,8 +124,8 @@ function le_range(n: i32): i32 {
     return 7;
 }
 
-// The bindings of a let-else stay live for the rest of the enclosing block,
-// which is the success arm — including through a nested payload pattern.
+
+
 function le_nested(o: Outer): i32 {
     let A(Ok2(n)) = o else {
         return 0;

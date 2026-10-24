@@ -18,8 +18,6 @@ func TestScanSetBytes(t *testing.T) {
 	runOnEveryNativeTarget(t, e2eharness.ScanSetBytesSource(true))
 }
 
-// runOnEveryNativeTarget compiles src with the native compiler for every
-// target this host can run, and the interpreter, and requires each to exit 0.
 func runOnEveryNativeTarget(t *testing.T, program string) {
 	t.Helper()
 	fern := buildLangBinForInterp(t)

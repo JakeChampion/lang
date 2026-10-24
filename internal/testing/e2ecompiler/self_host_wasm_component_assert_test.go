@@ -9,8 +9,6 @@ import (
 	"testing"
 )
 
-// Assertions need stderr and exit in the same component, even on the
-// successful branch. Exercise the assembled component and its failure path.
 func TestSelfHostWasmComponentAssert(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {

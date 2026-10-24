@@ -11,10 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// TestSelfHostCheckPlaceAssignPosition holds the code and position `-check`
-// prints for an assignment to an array element (E056, at the `[`) or a field
-// (E048, at the dot), alone and as a link of a chained assignment, to the Go
-// checker's.
 func TestSelfHostCheckPlaceAssignPosition(t *testing.T) {
 	cli := e2eharness.SelfHostCLI(t)
 	root := e2eharness.SelfHostStdlibRoot(t)

@@ -1,48 +1,13 @@
-// std/f64 — f32 / f64 to-string formatting.
-//
-// `to_string()` is SHORTEST ROUND-TRIP: the fewest digits that parse back to
-// exactly the same float, correctly rounded, computed by Dragonbox (see
-// below). `to_string_prec(prec)` is the fixed-precision sibling. Trailing
-// zeros are trimmed and the decimal point is dropped if the fraction is
-// zero. NaN gets the canonical "NaN"; ±Inf get "Inf" / "-Inf". Detection
-// of Inf is approximate — the threshold check (`n * 2.0 == n`)
-// covers every practically-encountered case but isn't bit-
-// exact against `f64.const inf`.
-//
-// No prelude: these are in scope only after a program
-// declares `import "std/f64";` (docs/PRELUDE-TO-MODULES.md,
-// Phase 5).
+// This module provides floating-point methods and conversions to strings.
 
-// The formatters dispatch (i64) `.to_string()` (e.g. __float_int_part's
-// digit chunks, __float_to_string_prec) and (i32) `.to_string()` (the
-// shortest formatter's decimal-exponent rendering). Declare std/i64 and
-// std/i32 so those receiver methods register under no-prelude.
 import "std/i32";
 import "std/i64";
 
-// __float_int_part renders a non-negative, integer-valued f64 that
-// is too large for the i64 range (>= 2^63) as decimal digits,
-// working entirely in floating point so no value ever crosses the
-// trapping/non-portable `as i64` boundary. Digits are peeled off
-// least-significant-first via `floor(n / 10)`; the per-step
-// remainder is nominally 0..9 but `n / 10` and `* 10` each round,
-// so for very large magnitudes it can land just outside that range
-// — clamp before indexing the digit table. The printed digits
-// reflect the f64's stored (rounded) value — exact for round
-// magnitudes like 1e20, approximate where the double itself can't
-// represent the integer exactly, which is inherent to f64 and not
-// something this formatter can recover.
 function __float_int_part(n: f64): string {
   if (n < 1.0) {
     return "0";
   }
   let digits: string = "0123456789";
-  // Two-pass exact-size buffer (#4379). Digits peel off least-significant
-  // first, so the old `out = digits[d] + out` prepended each one — recopying
-  // the whole growing string every step, O(digits²) (up to ~309 digits for
-  // the largest f64 magnitudes). Instead: a counting pass sizes the result,
-  // then a fill pass writes each digit straight into its final slot from the
-  // right. Byte-for-byte identical output.
   let count: i32 = 0;
   let m: f64 = n;
   while (m >= 1.0) {
@@ -67,28 +32,9 @@ function __float_int_part(n: f64): string {
   return string_from_bytes_unchecked(buf);
 }
 
-// Shortest round-trip float formatting via DRAGONBOX (Junekey Jeon's
-// refinement of Schubfach). For a finite non-zero float it produces the
-// unique shortest decimal that parses back to exactly that float, with
-// correct round-to-nearest-even rounding and no fallback path.
-//
-// Shape: decode the IEEE-754 fields, look up a 128-bit (f64) / 64-bit (f32)
-// normalised power of ten from a static table, and take one wide multiply.
-// That replaces the exact-bignum digit generation this module used to run,
-// which multiplied a growing bignum once per binary exponent — 1074 limb
-// passes for a subnormal, plus up to 34 bignum comparisons to pick the digit
-// count, allocating an array at every step. Dragonbox is a fixed amount of
-// work per call and allocates nothing.
-//
-// Structure follows the reference implementation (jk-jeon/dragonbox) with the
-// "shortest, nearest-to-even" policy, which is the same contract Go's strconv
-// shortest formatting has. Names mirror the reference so the two can be read
-// side by side. The cache tables below are generated and checked against the
-// upstream table by cmd/floattablegen.
-
 // BEGIN GENERATED DRAGONBOX TABLES (cmd/floattablegen) — do not edit by hand.
-// Dragonbox 128-bit power-of-ten cache for f64: k = -292..326 (619 entries),
-// the high 64 bits of each, then the low.
+// The f64 cache covers powers of ten from -292 through 326 with 619 entries.
+// Each entry stores the high 64 bits before the low 64 bits.
 const DB_CACHE64: u64[] = [
   0xff77b1fcbebcdc4fu64, 0x25e8e89c13bb0f7bu64,
   0x9faacf3df73609b1u64, 0x77b191618c54e9adu64,
@@ -711,7 +657,7 @@ const DB_CACHE64: u64[] = [
   0xf70867153aa2db38u64, 0xb8cbee4fc66d1ea8u64,
 ];
 
-// Dragonbox 64-bit power-of-ten cache for f32: k = -31..46 (78 entries).
+// The f32 cache covers powers of ten from -31 through 46 with 78 entries.
 const DB_CACHE32: u64[] = [
   0x81ceb32c4b43fcf5u64, 0xa2425ff75e14fc32u64,
   0xcad2f7f5359a3b3fu64, 0xfd87b5f28300ca0eu64,
@@ -756,10 +702,6 @@ const DB_CACHE32: u64[] = [
 
 // END GENERATED DRAGONBOX TABLES
 
-// floor(log10(2^e)), floor(log2(10^e)) and floor(log10(2^e * 3/4)) — the
-// magic-multiply approximations from the reference, exact over the exponent
-// ranges Dragonbox uses. `>>` on a negative i32 floors, which is what these
-// need. Every product stays well inside i32.
 function _db_log10_pow2(e: i32): i32 {
   return e * 315653 >> 20;
 }
@@ -772,31 +714,22 @@ function _db_log10_pow2_m43(e: i32): i32 {
   return e * 631305 - 261663 >> 21;
 }
 
-// _db_mul_hi is the high half of the 64x64 -> 128 widening multiply; the low
-// half is the machine's wrapping product. Scalar results throughout this file
-// rather than pairs, because a returned tuple is a heap cell.
 function _db_mul_hi(x: u64, y: u64): u64 {
   return __mulhi_u64(x, y);
 }
 
-// _db_mul192_hi / _db_mul192_lo are the upper 128 bits of (64-bit x) *
-// (128-bit cache), a word each. `lo == 0` is Dragonbox's integer check.
 function _db_mul192_lo(x: u64, chi: u64, clo: u64): u64 {
   return x * chi + _db_mul_hi(x, clo);
 }
 
 function _db_mul192_hi(x: u64, chi: u64, clo: u64): u64 {
   let hi: u64 = _db_mul_hi(x, chi);
-  if (_db_mul192_lo(x, chi, clo) < x * chi) {  // carry out of the low half
+  if (_db_mul192_lo(x, chi, clo) < x * chi) {
     hi = hi + 1 as u64;
   }
   return hi;
 }
 
-// _db_parity64 answers bit 0 set for parity and bit 1 set for is_integer,
-// of the lower 128 bits of two_f * cache: the tie-break probe Dragonbox
-// uses at the interval endpoints. beta is in [6, 9] here, so both shifts
-// stay in range.
 function _db_parity64(two_f: u64, chi: u64, clo: u64, beta: i32): i32 {
   let hi: u64 = two_f * chi + _db_mul_hi(two_f, clo);
   let lo: u64 = two_f * clo;
@@ -808,9 +741,6 @@ function _db_parity64(two_f: u64, chi: u64, clo: u64, beta: i32): i32 {
   return flags;
 }
 
-// _db_rtz strips trailing zeros from the significand, folding each into the
-// decimal exponent. The zero guard is unreachable for a finite non-zero
-// input; it is there so a broken invariant can never hang the formatter.
 function _db_rtz(sig: u64, exp: i32): (i64, i32) {
   while (sig != 0 as u64 && sig % (10 as u64) == 0 as u64) {
     sig = sig / (10 as u64);
@@ -819,25 +749,18 @@ function _db_rtz(sig: u64, exp: i32): (i64, i32) {
   return (sig as i64, exp);
 }
 
-// __db_shortest64 returns (significand, decimal exponent) for a POSITIVE
-// finite f64, with value == significand * 10^exponent and the significand as
-// short as round-tripping allows. kappa is 2 for binary64, so the divisors
-// below are 10^3 and 10^2.
 function __db_shortest64(n: f64): (i64, i32) {
   let bits: u64 = f64_bits(n) as u64;
   let ebits: i32 = (bits >> 52 as u64 & 2047 as u64) as i32;
   let two_fc: u64 = (bits & 4503599627370495 as u64) << 1 as u64;
-  // A closed interval means both endpoints round back to n, which is the
-  // case exactly when the significand is even (round-half-to-even).
   let closed: boolean = (bits & 1 as u64) == 0 as u64;
   let be: i32 = 0 - 1074;
   if (ebits != 0) {
     be = ebits - 1075;
-    // A power of two has a shorter interval on its left side.
     if (two_fc == 0 as u64) {
       return __db_shorter64(be);
     }
-    two_fc = two_fc | 9007199254740992 as u64;  // implicit bit, << 1
+    two_fc = two_fc | 9007199254740992 as u64;
   }
 
   let mk: i32 = _db_log10_pow2(be) - 2;
@@ -855,8 +778,6 @@ function __db_shortest64(n: f64): (i64, i32) {
   let sig: u64 = zi / (1000 as u64);
   let r: u64 = zi - 1000 as u64 * sig;
 
-  // Step 2: try the larger divisor. Falling through to the return means the
-  // shorter significand is in the interval; every other path drops to step 3.
   let smaller: boolean = false;
   if (r < deltai) {
     if (r == 0 as u64 && z_int && !closed) {
@@ -876,12 +797,8 @@ function __db_shortest64(n: f64): (i64, i32) {
     return _db_rtz(sig, mk + 3);
   }
 
-  // Step 3: find the significand with the smaller divisor. r >= deltai here
-  // (or r was reset to 1000), and deltai < 1000, so `dist` cannot underflow.
   sig = sig * (10 as u64);
   let dist: u64 = r - deltai / (2 as u64) + 50 as u64;
-  // The reference computes ((dist ^ (small_divisor / 2)) & 1) != 0; here
-  // small_divisor / 2 is 50, which is even, so this is just dist's parity.
   let approx: boolean = (dist & 1 as u64) != 0 as u64;
   let divisible: boolean = dist % (100 as u64) == 0 as u64;
   sig = sig + dist / (100 as u64);
@@ -896,10 +813,6 @@ function __db_shortest64(n: f64): (i64, i32) {
   return (sig as i64, mk + 2);
 }
 
-// __db_shorter64 handles the asymmetric interval at a power of two, where the
-// gap below n is half the gap above it. The interval is closed under
-// nearest-to-even, so the right endpoint is never pulled in; the left one is
-// nudged up unless it lands on an integer.
 function __db_shorter64(be: i32): (i64, i32) {
   let mk: i32 = _db_log10_pow2_m43(be);
   let k: i32 = 0 - mk;
@@ -919,7 +832,6 @@ function __db_shorter64(be: i32): (i64, i32) {
   }
 
   sig = ((chi >> (10 - beta) as u64) + 1 as u64) / (2 as u64);
-  // be == -77 is the only binary exponent where the rounded-up y can tie.
   if (sig % (2 as u64) != 0 as u64 && be == 0 - 77) {
     sig = sig - 1 as u64;
   } else if (sig < xi) {
@@ -928,8 +840,6 @@ function __db_shorter64(be: i32): (i64, i32) {
   return (sig as i64, mk);
 }
 
-// __db_shortest32 is the binary32 sibling: 23-bit fraction, 8-bit exponent,
-// a 64-bit cache instead of 128-bit, and kappa 1 (divisors 10^2 and 10^1).
 function __db_shortest32(n: f32): (i64, i32) {
   let bits: u64 = (f32_bits(n) as i64) as u64;
   let ebits: i32 = (bits >> 23 as u64 & 255 as u64) as i32;
@@ -941,7 +851,7 @@ function __db_shortest32(n: f32): (i64, i32) {
     if (two_fc == 0 as u64) {
       return __db_shorter32(be);
     }
-    two_fc = two_fc | 16777216 as u64;  // implicit bit, << 1
+    two_fc = two_fc | 16777216 as u64;
   }
 
   let mk: i32 = _db_log10_pow2(be) - 1;
@@ -950,8 +860,6 @@ function __db_shortest32(n: f32): (i64, i32) {
   let c: u64 = DB_CACHE32[k + 31];
 
   let deltai: u64 = c >> (63 - beta) as u64;
-  // The binary32 product is 96-bit: widen the 32-bit operand into the high
-  // half and keep the upper 64 bits.
   let prod: u64 = _db_mul_hi((two_fc | 1 as u64) << beta as u64 << 32 as u64, c);
   let zi: u64 = prod >> 32 as u64;
   let z_int: boolean = (prod & 4294967295 as u64) == 0 as u64;
@@ -980,8 +888,6 @@ function __db_shortest32(n: f32): (i64, i32) {
 
   sig = sig * (10 as u64);
   let dist: u64 = r - deltai / (2 as u64) + 5 as u64;
-  // Here small_divisor / 2 is 5, which is ODD, so ((dist ^ 5) & 1) != 0
-  // inverts dist's parity.
   let approx: boolean = (dist & 1 as u64) == 0 as u64;
   let divisible: boolean = dist % (10 as u64) == 0 as u64;
   sig = sig + dist / (10 as u64);
@@ -996,8 +902,6 @@ function __db_shortest32(n: f32): (i64, i32) {
   return (sig as i64, mk + 1);
 }
 
-// _db_parity32 is _db_parity64's 96-bit counterpart: the low 64 bits of the
-// product carry everything it needs. beta is in [3, 6] here.
 function _db_parity32(two_f: u64, c: u64, beta: i32): i32 {
   let r: u64 = two_f * c;
   let flags: i32 = (r >> (64 - beta) as u64 & 1 as u64) as i32;
@@ -1034,14 +938,9 @@ function __db_shorter32(be: i32): (i64, i32) {
   return (sig as i64, mk);
 }
 
-// Format shortest significand `sig` with most-significant-digit decimal
-// exponent `msd`: scientific when msd < -4 or msd >= 21, else fixed-point.
-// The low threshold is Go / C 'g'; the high one and the unpadded `e+`/`e-`
-// spelling are JavaScript's, so 1e20 prints in full where Go %v gives 1e+20.
 function __float_fmt_sci(sig: string, msd: i32): string {
   let nd: i32 = sig.len();
   if (msd < 0 - 4 || msd >= 21) {
-    // scientific: d[.ddd]e±XX
     let out: string = "" + slice_unchecked(sig, 0, 1);
     if (nd > 1) {
       out = out + "." + slice_unchecked(sig, 1, nd);
@@ -1052,7 +951,6 @@ function __float_fmt_sci(sig: string, msd: i32): string {
     return out + "e+" + msd.to_string();
   }
   if (msd < 0) {
-    // 0.000sig
     let z: string = "";
     let i: i32 = 0;
     while (i < 0 - msd - 1) {
@@ -1062,7 +960,6 @@ function __float_fmt_sci(sig: string, msd: i32): string {
     return "0." + z + sig;
   }
   if (msd + 1 >= nd) {
-    // integer, pad trailing zeros
     let z2: string = "";
     let i2: i32 = 0;
     while (i2 < msd + 1 - nd) {
@@ -1071,13 +968,9 @@ function __float_fmt_sci(sig: string, msd: i32): string {
     }
     return sig + z2;
   }
-  // point in the middle
   return "" + slice_unchecked(sig, 0, msd + 1) + "." + slice_unchecked(sig, msd + 1, nd);
 }
 
-// Render a Dragonbox result — significand `sig` with decimal exponent `exp`,
-// value == sig * 10^exp — in Go %v / strconv 'g' style, prefixed by `out`
-// (the already-extracted sign). Shared by the f32 and f64 formatters.
 function __float_render(out: string, sig: i64, exp: i32): string {
   let digits: string = sig.to_string();
   return out + __float_fmt_sci(digits, digits.len() - 1 + exp);
@@ -1102,10 +995,6 @@ function __float_shortest(n: f64): string {
   return __float_render(out, d.0, d.1);
 }
 
-// f32 shortest-round-trip formatter. Same shape as the f64 path — sign / NaN
-// / Inf / 0 handling, then Dragonbox over the binary32 fields — so an f32
-// renders with the fewest digits that still parse back to it (e.g. 0.1f32 ->
-// "0.1", not "0.099999994").
 function __float_shortest_f32(n: f32): string {
   if (n != n) {
     return "NaN";
@@ -1133,11 +1022,6 @@ pub function (n: f32) to_string(): string {
   return __float_shortest_f32(n);
 }
 
-// `shortest_digits()` — the shortest decimal that reads back as `n`, as
-// (significand, exponent) with |n| == significand × 10^exponent and no
-// trailing zero on the significand, so its digit count is the fewest any
-// decimal of `n` that round-trips can have. Zero, an infinity and NaN
-// answer (0, 0). The sign is not part of the answer.
 pub function (n: f64) shortest_digits(): (i64, i32) {
   if (n != n || n == 0.0 || n * 2.0 == n) {
     return (0 as i64, 0);
@@ -1158,10 +1042,6 @@ pub function (n: f32) shortest_digits(): (i64, i32) {
   return __db_trim(__db_shortest32(n));
 }
 
-// `pow10_hi(k)` / `pow10_lo(k)` — the 128-bit significand of 10^k the
-// shortest search runs on, for a caller doing its own scaled arithmetic:
-// with c the two words, 10^k == (c − θ) × 2^(pow10_log2(k) − 127) for some
-// 0 ≤ θ < 1 (c is 10^k rounded up), for k in -292..326.
 pub function pow10_hi(k: i32): u64 {
   return DB_CACHE64[(k + 292) * 2];
 }
@@ -1170,7 +1050,6 @@ pub function pow10_lo(k: i32): u64 {
   return DB_CACHE64[(k + 292) * 2 + 1];
 }
 
-// `pow10_log2(k)` — floor(log2(10^k)), the exponent `pow10_hi` is stated against.
 pub function pow10_log2(k: i32): i32 {
   return _db_log2_pow10(k);
 }
@@ -1188,14 +1067,6 @@ function __db_trim(d: (i64, i32)): (i64, i32) {
   return (sig, exp);
 }
 
-// __float_to_string_prec renders `n` with EXACTLY `prec` fractional
-// digits — no trailing-zero trimming — rounding half away from zero.
-// Unlike the default shortest formatter (which emits the fewest digits
-// that round-trip), this gives the fixed-width output that table /
-// currency formatting wants: `3.14159 @ prec 2` -> "3.14", `2.5 @ prec 0` ->
-// "3", `1.0 @ prec 3` -> "1.000". The whole computation stays in the
-// float domain via __float_int_part, so no value crosses the
-// trapping/non-portable `f64 -> i64` boundary regardless of magnitude.
 function __float_to_string_prec(n: f64, prec: i32): string {
   if (n != n) {
     return "NaN";
@@ -1208,15 +1079,12 @@ function __float_to_string_prec(n: f64, prec: i32): string {
   if (n != 0.0 && n * 2.0 == n) {
     return out + "Inf";
   }
-  // mult = 10^prec.
   let mult: f64 = 1.0;
   let i: i32 = 0;
   while (i < prec) {
     mult = mult * 10.0;
     i = i + 1;
   }
-  // Scale, round half away from zero, and split into integer + fraction
-  // halves — both integer-valued f64s now.
   let scaled: f64 = __floor_f64(n * mult + 0.5);
   let intf: f64 = __floor_f64(scaled / mult);
   let fracf: f64 = scaled - intf * mult;
@@ -1224,7 +1092,6 @@ function __float_to_string_prec(n: f64, prec: i32): string {
   if (prec == 0) {
     return out;
   }
-  // Zero-pad the fractional digits out to `prec` places.
   let fracStr: string = __float_int_part(fracf);
   while (fracStr.len() < prec) {
     fracStr = "0" + fracStr;
@@ -1232,10 +1099,6 @@ function __float_to_string_prec(n: f64, prec: i32): string {
   return out + "." + fracStr;
 }
 
-// `to_string_prec(prec)` — fixed-precision rendering with exactly
-// `prec` fractional digits (rounded half away from zero). The
-// precision-controlled counterpart to `to_string()`, for the
-// width/precision table output (issue #2684).
 pub function (n: f32) to_string_prec(prec: i32): string {
   return __float_to_string_prec(n as f64, prec);
 }
@@ -1243,22 +1106,6 @@ pub function (n: f32) to_string_prec(prec: i32): string {
 pub function (n: f64) to_string_prec(prec: i32): string {
   return __float_to_string_prec(n, prec);
 }
-
-// f64 math methods — receiver-syntax wrappers around the
-// checker-injected builtins. Each method's body is a single
-// call into the matching `__<op>_f64` primitive, so codegen
-// can inline them away entirely on every backend that
-// supports float ops natively (every backend except the
-// interp, which goes through the builtin's Go-side
-// implementation).
-//
-// All methods follow IEEE-754 semantics: NaN / ±Inf
-// propagate, division-by-zero yields ±Inf or NaN per the
-// usual rules, no integer-style traps. Callers building
-// numerically-sensitive code (`x.sqrt()` on x close to 0,
-// `x.log()` on negative x) should compare results against
-// the textbook formula for the edge cases — std/f64
-// doesn't guard.
 
 pub function (x: f64) abs(): f64 {
   return __abs_f64(x);
@@ -1272,26 +1119,15 @@ pub function (x: f64) ceil(): f64 {
   return __ceil_f64(x);
 }
 
-// `round(x)` follows the "round half away from zero"
-// convention (matches Go's `math.Round`). Tests that need
-// banker's rounding (round half to even) should reach
-// into the bit-pattern themselves.
 pub function (x: f64) round(): f64 {
   return __round_f64(x);
 }
 
-// `round_to(digits)` — round `x` to `digits` decimal places, half away from
-// zero (like `round`): `(3.14159).round_to(2)` is `3.14`, `(2.5).round_to(0)`
-// is `3.0`. Negative `digits` round to tens / hundreds
-// (`(1234.0).round_to(-2)` is `1200.0`). Scales by `10^digits`, rounds, and
-// unscales; the usual float-representation caveat applies (the result is the
-// nearest f64 to the rounded decimal, which for most display / money use is
-// exact enough). NaN / ±Inf pass through unchanged.
 pub function (x: f64) round_to(digits: i32): f64 {
-  if (x != x) {  // NaN
+  if (x != x) {
     return x;
   }
-  if (x != 0.0 && x * 2.0 == x) {  // ±Inf
+  if (x != 0.0 && x * 2.0 == x) {
     return x;
   }
   let scale: f64 = 1.0;
@@ -1310,10 +1146,6 @@ pub function (x: f64) round_to(digits: i32): f64 {
   return __round_f64(x / scale) * scale;
 }
 
-// `trunc(x)` is round-toward-zero, equivalent to
-// `(x as i64) as f64` for values that fit in the i64 range.
-// The primitive form handles ±Inf / NaN that the cast
-// version would reject.
 pub function (x: f64) trunc(): f64 {
   return __trunc_f64(x);
 }
@@ -1322,10 +1154,6 @@ pub function (x: f64) sqrt(): f64 {
   return __sqrt_f64(x);
 }
 
-// `log2(x)` / `log10(x)` — logarithms in base 2 and base 10, derived from
-// the natural log by dividing by `ln(2)` / `ln(10)` (change-of-base).
-// `log2(8)` is `3`, `log10(1000)` is `3`; `log2` of a power of two and
-// `log10` of a power of ten come out exact up to rounding.
 pub function (x: f64) log2(): f64 {
   return x.log() / 0.6931471805599453;
 }
@@ -1334,11 +1162,6 @@ pub function (x: f64) log10(): f64 {
   return x.log() / 2.302585092994046;
 }
 
-// `exp2(x)` / `exp10(x)` — base-2 and base-10 exponentials, the inverses of
-// `log2` / `log10`, via `2^x == e^(x*ln2)` and `10^x == e^(x*ln10)`.
-// `exp2(3)` is `8`, `exp2(10)` is `1024`, `exp10(3)` is `1000`; `exp2` of a
-// whole number and `exp10` of a whole number land on the exact power up to
-// rounding, and both round-trip with their logs (`exp2(x).log2() == x`).
 pub function (x: f64) exp2(): f64 {
   return (x * 0.6931471805599453).exp();
 }
@@ -1355,33 +1178,14 @@ pub function (x: f64) cos(): f64 {
   return _fd_trig(x, 1);
 }
 
-// `tan(x)` — tangent, as `sin(x) / cos(x)`. Blows up to ±Inf near the odd
-// multiples of π/2 where `cos` crosses zero, as expected.
 pub function (x: f64) tan(): f64 {
   return _fd_trig(x, 0) / _fd_trig(x, 1);
 }
 
-// ---- exp, log, sin, cos and pow ---------------------------------------------
-//
-// The one definition of these five: every backend compiles these kernels and
-// -interp runs them, so each target computes the same separately rounded
-// operations in the same order and they agree bit for bit. exp, sin and cos
-// are fdlibm's, reduced Cody-Waite (and Payne-Hanek for a trig argument at or
-// past 2^20); log is the table-driven no-FMA algorithm glibc and ARM's
-// optimized-routines use, its data generated below; pow is theirs too, log|x|
-// and y log|x| carried as hi + lo into an exp that takes lo as a correction.
-
-// _fd_rint is v rounded to an integer, ties to even, for |v| < 2^51: at
-// 1.5 * 2^52 a double has no fraction bits left, so the add rounds and the
-// subtraction is exact.
 function _fd_rint(v: f64): f64 {
   return v + 6755399441055744.0 - 6755399441055744.0;
 }
 
-// e^x = 2^k e^r: k = rint(x / ln2), and r = x - k ln2 against ln2 split so
-// that k * ln2_hi is exact. 2^k is two half-scales, since one exponent field
-// cannot hold a k below -1022 and a multiply by a power of two is exact until
-// the result is itself subnormal.
 pub function (x: f64) exp(): f64 {
   if (x != x) {
     return x;
@@ -1405,16 +1209,16 @@ pub function (x: f64) exp(): f64 {
 }
 
 // >>> generated by scripts/gen_log_table.py — do not edit by hand
-// _log_poly is the main path's coefficients of r^3 .. r^6, minimax on absolute
-// error over |r| <= 0.00389105. Max error after rounding: 2^-64.1.
+// _log_poly holds coefficients through degree 6.
+// The maximum error for |r| <= 0.00389105 is 2^-64.1.
 function _log_poly(): f64[] {
   return [
     0.3333333333164825, -0.24999999997762484, 0.20000321945931823, -0.16667003716456866,
   ];
 }
 
-// _log_near1_poly is the near-1 path's coefficients of r^3 .. r^12, minimax on
-// error relative to log1p(r). Max relative error after rounding: 2^-61.9.
+// _log_near1_poly holds coefficients through degree 12.
+// The maximum relative error is 2^-61.9.
 function _log_near1_poly(): f64[] {
   return [
     0.3333333333333352, -0.24999999999998365, 0.19999999999321497, -0.1666666667002245,
@@ -1423,10 +1227,9 @@ function _log_near1_poly(): f64[] {
   ];
 }
 
-// _log_invc, _log_logc_hi and _log_logc_lo are the 128 rows of the table, each
-// a column: row i covers the z whose bits(z) - bits(0x1.6p-1) has i in its
-// top 7 mantissa bits, c is the midpoint of the row's subinterval, invc =
-// RN(1/c), and logc_hi + logc_lo is log(c) with logc_hi on the 2^-43 grid.
+// These columns contain 128 rows.
+// The index uses 7 bits from the adjusted mantissa.
+// logc_hi uses a 2^-43 grid. logc_hi + logc_lo approximates log(c).
 function _log_invc(): f64[] {
   return [
     1.4504249291784703, 1.4422535211267606, 1.4341736694677871, 1.426183844011142,
@@ -1540,9 +1343,6 @@ function _log_logc_lo(): f64[] {
 
 // <<< generated by scripts/gen_log_table.py
 
-// log x = k ln2 + log c + log1p(r) for x = 2^k z, with c the midpoint of the
-// table row z falls in and r = (z - c) / c; near 1, where those terms cancel,
-// log1p(x - 1) directly.
 pub function (x: f64) log(): f64 {
   let ix: i64 = f64_bits(x);
   if (ix >= 0x3fee000000000000 && ix < 0x3ff1090000000000) {
@@ -1555,10 +1355,6 @@ pub function (x: f64) log(): f64 {
   return _fd_log_main(ix);
 }
 
-// _fd_log_special is log of ±0, a subnormal, a negative, ±Inf or a NaN. A
-// subnormal stores its magnitude in leading zeros: scaling by 2^52 moves it
-// into the exponent, and taking 52 back off the field hands the reduction a k
-// no exponent field could hold.
 @noinline
 function _fd_log_special(x: f64): f64 {
   let ix: i64 = f64_bits(x);
@@ -1574,8 +1370,6 @@ function _fd_log_special(x: f64): f64 {
   return _fd_log_main(f64_bits(x * 4503599627370496.0) - 0x0340000000000000);
 }
 
-// _fd_log_main is log x for the bits of a normal positive x away from 1. z - c
-// is exact, and k * ln2_hi + logc_hi is too, both being on the 2^-43 grid.
 function _fd_log_main(ix: i64): f64 {
   let tmp: i64 = ix - 0x3fe6000000000000;
   let i: i32 = (tmp >> 45) as i32 & 127;
@@ -1593,9 +1387,6 @@ function _fd_log_main(ix: i64): f64 {
   return lo - r2 * 0.5 + r * r2 * p + hi;
 }
 
-// _fd_log_near1 is log1p(r) for the exact r = x - 1 of an x in
-// [1 - 2^-4, 1 + 0x1.09p-4], with r - r^2/2 carried as hi + lo: rhi keeps r's
-// top 26 bits, so rhi * rhi is exact.
 function _fd_log_near1(r: f64): f64 {
   let r2: f64 = r * r;
   let r3: f64 = r * r2;
@@ -1613,13 +1404,6 @@ function _fd_log_near1(r: f64): f64 {
   return y + lo + hi;
 }
 
-// _fd_trig is sin x for shift 0 and cos x for shift 1: cos's quadrant table is
-// sin's one quadrant on. NaN returns itself and ±Inf becomes NaN, there being
-// no reduction of an infinity; sin returns a tiny x itself, which is what it
-// rounds to and keeps the sign of a -0. Below 2^20 the reduction is
-// Cody-Waite, with pi/2 in three 33-bit chunks: k * pio2_h is exact while k
-// fits pio2_h's 22 trailing zero bits, and near a zero of sin the reduced
-// argument is the answer, so two chunks are not enough.
 function _fd_trig(x: f64, shift: i64): f64 {
   if (x != x) {
     return x;
@@ -1634,7 +1418,6 @@ function _fd_trig(x: f64, shift: i64): f64 {
   if (ab >= 0x4130000000000000) {
     return _fd_trig_large(x, shift);
   }
-  // The two rounded subtractions are two-sums, so their errors become y1.
   let kf: f64 = _fd_rint(x * 6.36619772367581382433e-01);
   let t: f64 = x - kf * 1.57079632673412561417e+00;
   let w2: f64 = -(kf * 6.07710050630396597660e-11);
@@ -1648,8 +1431,6 @@ function _fd_trig(x: f64, shift: i64): f64 {
   let y0: f64 = b + eb;
   let b0: f64 = y0 - b;
   let y1: f64 = b - (y0 - b0) + (eb - b0);
-  // Quadrant n of y0 + y1 takes sin, cos, -sin, -cos, here and in
-  // _fd_trig_large; the select is spelled in both so neither path calls it.
   let n: i64 = kf as i64 + shift;
   let y: f64 = 0.0;
   if ((n & 1) == 0) {
@@ -1663,9 +1444,6 @@ function _fd_trig(x: f64, shift: i64): f64 {
   return y;
 }
 
-// _fd_ksin and _fd_kcos are fdlibm's __kernel_sin(x, y, 1) and
-// __kernel_cos(x, y): sin and cos of the reduced argument x + y, |y| below
-// half an ulp of x, which enters as a first-order correction.
 function _fd_ksin(x: f64, y: f64): f64 {
   let z: f64 = x * x;
   let v: f64 = z * x;
@@ -1673,7 +1451,6 @@ function _fd_ksin(x: f64, y: f64): f64 {
   return x - (z * (0.5 * y - v * r) - y - v * -1.66666666666666324348e-01);
 }
 
-// The (1 - w) - hz rewrite recovers the bits 1 - hz discards.
 function _fd_kcos(x: f64, y: f64): f64 {
   let z: f64 = x * x;
   let p: f64 = 4.16666666666666019037e-02 + z * (-1.38888888888741095749e-03 + z * (2.48015872894767294178e-05 + z * (-2.75573143513906633035e-07 + z * (2.08757232129817482790e-09 + z * -1.13596475577881948265e-11))));
@@ -1682,8 +1459,6 @@ function _fd_kcos(x: f64, y: f64): f64 {
   return w + (1.0 - w - hz + (z * p * z - x * y));
 }
 
-// _two_over_pi is 2/pi in binary, one limb per 64 fraction bits from 2^-1 in
-// limb 1; the leading zero limb lets the window start above 2^-1.
 function _two_over_pi(): u64[] {
   return [
     0x0000000000000000, 0xa2f9836e4e441529, 0xfc2757d1f534ddc0,
@@ -1696,12 +1471,6 @@ function _two_over_pi(): u64[] {
   ];
 }
 
-// _fd_trig_large is _fd_trig for |x| >= 2^20, reduced Payne-Hanek: the
-// significand times the window of 2/pi the exponent selects is a Q126 whose
-// top two bits are the quadrant and the rest the fraction of x / (pi/2),
-// neither of which loses accuracy with the magnitude. A fraction at or past a
-// half belongs to the next quadrant, as the negative remainder below it. It
-// stays a call, so that the common case keeps no register for it.
 @noinline
 function _fd_trig_large(x: f64, shift: i64): f64 {
   let b: i64 = f64_bits(x);
@@ -1732,8 +1501,6 @@ function _fd_trig_large(x: f64, shift: i64): f64 {
     }
     lo = 0 as u64 - lo;
   }
-  // The fraction as fh + fl: fh is hi rounded, and fl gathers hi's rounding
-  // error with lo, each piece converted exactly.
   let ih: i64 = hi as i64;
   let a: f64 = ih as f64;
   let fh: f64 = a * 2.168404344971009e-19;
@@ -1741,9 +1508,6 @@ function _fd_trig_large(x: f64, shift: i64): f64 {
   let s: f64 = fh + fl;
   fl = fl - (s - fh);
   fh = s;
-  // (fh + fl) * pi/2, pi/2 = 1.5707963267948966 + 6.123233995736766e-17:
-  // the leading product is exact as p + e by Dekker's split, the 27-bit
-  // halves of fh and of pi/2's leading double multiplying exactly.
   let c: f64 = fh * 134217729.0;
   let fhh: f64 = c - (c - fh);
   let fhl: f64 = fh - fhh;
@@ -1773,9 +1537,8 @@ function _fd_trig_large(x: f64, shift: i64): f64 {
 }
 
 // >>> generated by scripts/gen_pow_table.py — do not edit by hand
-// _pow_log_poly is log1p(r) - r + r^2/2 over r^3, coefficients of r^0 .. r^5,
-// minimax on error relative to log1p(r) over |r| <= 0.00573714. Max relative
-// error after rounding: 2^-68.8.
+// _pow_log_poly holds coefficients through degree 5.
+// The maximum relative error for |r| <= 0.00573714 is 2^-68.8.
 function _pow_log_poly(): f64[] {
   return [
     0.33333333333333404, -0.250000000000001, 0.1999999998659618,
@@ -1783,10 +1546,10 @@ function _pow_log_poly(): f64[] {
   ];
 }
 
-// _pow_invc, _pow_logc and _pow_logctail are the 128 rows of the log table:
-// row i covers the z whose bits(z) - bits(0x1.69555p-1) has i in its top 7
-// mantissa bits, invc is a multiple of 1/128 (1/256 above 1) near 1/c, and
-// logc + logctail is log(c) with logc on the 2^-43 grid.
+// These columns contain 128 rows.
+// The index uses 7 bits from the adjusted mantissa.
+// invc uses multiples of 1/128, or 1/256 for values greater than 1.
+// logc uses a 2^-43 grid. logc + logctail approximates log(c).
 function _pow_invc(): f64[] {
   return [
     1.4140625, 1.40625, 1.3984375, 1.390625,
@@ -1898,7 +1661,7 @@ function _pow_logctail(): f64[] {
   ];
 }
 
-// ln2 as a head on the 2^-42 grid and a tail.
+// The head of ln2 uses a 2^-42 grid. The tail stores the remainder.
 function _pow_ln2hi(): f64 {
   return 0.6931471805598903;
 }
@@ -1907,16 +1670,15 @@ function _pow_ln2lo(): f64 {
   return 5.497923018708371e-14;
 }
 
-// _pow_exp_poly is (exp(r) - 1 - r) / r^2, coefficients of r^0 .. r^3, minimax
-// on absolute error of exp(r) over |r| <= 0.00276864. Max error after
-// rounding: 2^-65.2.
+// _pow_exp_poly holds coefficients through degree 3.
+// The maximum error for |r| <= 0.00276864 is 2^-65.2.
 function _pow_exp_poly(): f64[] {
   return [
     0.49999999999996486, 0.16666666666665814, 0.04166668148900606, 0.00833333596736332,
   ];
 }
 
-// 128 / ln2, and ln2 / 128 as a 35-bit head and a tail.
+// The constants store `128 / ln2` and `ln2 / 128` with a 35-bit head and a tail.
 function _pow_invln2n(): f64 {
   return 184.6649652337873;
 }
@@ -1929,7 +1691,7 @@ function _pow_ln2n_lo(): f64 {
   return -1.0082281460997769e-13;
 }
 
-// _pow_exp2 and _pow_exp2tail are 2^(i/128) as a double and the relative tail
+// _pow_exp2 stores `2^(i/128)` as a double. _pow_exp2tail stores the relative error:
 // 2^(i/128) / exp2 - 1.
 function _pow_exp2(): f64[] {
   return [
@@ -2007,10 +1769,6 @@ function _pow_exp2tail(): f64[] {
 
 // <<< generated by scripts/gen_pow_table.py
 
-// A negative base has a real power only for an integral y, whose parity is
-// the sign; every |y| >= 2^53 is an even integer, which leaves pow(-x, ±Inf)
-// a magnitude. |x| == 1 is 1 for every y, the NaN and ±Inf that y * log|x|
-// would turn into NaN included.
 function _fd_pow_general(x: f64, y: f64): f64 {
   let sign: f64 = 1.0;
   let ax: f64 = x;
@@ -2036,10 +1794,6 @@ function _fd_pow_general(x: f64, y: f64): f64 {
   return _fd_pow_pos(ax, y) * sign;
 }
 
-// _fd_pow_pos is x^y for x >= 0 other than 1. A zero, infinite or NaN x, and
-// a y that is NaN, infinite or past 2^63, give 0, ±Inf or NaN, which the
-// plain exp(y * log x) already does; a subnormal x is scaled into the normal
-// range with its exponent taken back off the bits.
 function _fd_pow_pos(x: f64, y: f64): f64 {
   let ix: i64 = f64_bits(x);
   if (ix == 0 || ix >= 0x7ff0000000000000 || (f64_bits(y) & 0x7fffffffffffffff) >= 0x43e0000000000000) {
@@ -2048,8 +1802,6 @@ function _fd_pow_pos(x: f64, y: f64): f64 {
   if (ix < 0x0010000000000000) {
     ix = f64_bits(x * 4503599627370496.0) - 0x0340000000000000;
   }
-  // log x = k ln2 + log c + log1p(r), with r = z invc - 1 exact as rhi + rlo:
-  // zhi keeps z's top 21 bits, so zhi * invc is exact, and so is zlo * invc.
   let tmp: i64 = ix - 0x3fe6955500000000;
   let i: i32 = (tmp >> 45) as i32 & 127;
   let iz: i64 = ix - (tmp >> 52 << 52);
@@ -2076,17 +1828,12 @@ function _fd_pow_pos(x: f64, y: f64): f64 {
   let lo: f64 = lo1 + lo2 + lo3 + lo4 + p;
   let lhi: f64 = hi + lo;
   let ltail: f64 = hi - lhi + lo;
-  // y * (lhi + ltail) as ehi + elo: the 26-bit heads of y and lhi multiply
-  // exactly, and elo is what that leaves out.
   let yhi: f64 = f64_from_bits(f64_bits(y) >> 27 << 27);
   let lh: f64 = f64_from_bits(f64_bits(lhi) >> 27 << 27);
   let ll: f64 = lhi - lh + ltail;
   return _fd_exp_dd(yhi * lh, (y - yhi) * lh + y * ll);
 }
 
-// _fd_exp_dd is e^(x + xtail): x = k ln2/128 + r, and 2^(k/128) is
-// 2^(k >> 7) times a table row and its relative tail. Below 2^-54 the result
-// rounds to 1 + x, and at or past 1024 it overflows or underflows outright.
 function _fd_exp_dd(x: f64, xtail: f64): f64 {
   let abstop: i64 = f64_bits(x) >> 52 & 0x7ff;
   if (abstop < 0x3c9) {
@@ -2114,10 +1861,6 @@ function _fd_exp_dd(x: f64, xtail: f64): f64 {
   return scale + scale * t;
 }
 
-// _fd_exp_dd_far finishes _fd_exp_dd for |x| in [512, 1024), where the scale
-// may not fit an exponent field: it is built 2^1009 or 2^-1022 off and
-// multiplied back. A subnormal result is rounded to its own precision against
-// 1 first, so that scaling it down does not round it a second time.
 @noinline
 function _fd_exp_dd_far(t: f64, sbits: i64, ki: i64): f64 {
   if (ki > 0) {
@@ -2135,14 +1878,6 @@ function _fd_exp_dd_far(t: f64, sbits: i64, ki: i64): f64 {
   return 2.2250738585072014e-308 * y;
 }
 
-// ---- inverse trig, expm1 and log1p ------------------------------------------
-//
-// Ports of fdlibm (FreeBSD msun's e_asin.c, e_acos.c, s_atan.c, e_atan2.c,
-// s_expm1.c, s_log1p.c), so each is a real kernel rather than a composition
-// that inherits its parts' error. The high and low 32-bit words fdlibm reads
-// are `_fd_hi` / `_fd_lo`, kept as i64 so the signed high word compares the way
-// C's int32_t does.
-
 function _fd_hi(x: f64): i64 {
   return f64_bits(x) >> 32;
 }
@@ -2155,15 +1890,12 @@ function _fd_words(hi: i64, lo: i64): f64 {
   return f64_from_bits(hi << 32 | lo & 0xffffffff);
 }
 
-// R(t) for asin / acos: (pS0..pS5) / (1 + qS1..qS4), the rational
-// approximation of (asin(x) - x) / x^3 in t = x^2.
 function _fd_asin_r(t: f64): f64 {
   let p: f64 = t * (1.66666666666666657415e-01 + t * (-3.25565818622400915405e-01 + t * (2.01212532134862925881e-01 + t * (-4.00555345006794114027e-02 + t * (7.91534994289814532176e-04 + t * 3.47933107596021167570e-05)))));
   let q: f64 = 1.0 + t * (-2.40339491173441421878e+00 + t * (2.02094576023350569471e+00 + t * (-6.88283971605453293030e-01 + t * 7.70381505559019352791e-02)));
   return p / q;
 }
 
-// `asin(x)` — arcsine in [-π/2, π/2]; NaN outside [-1, 1].
 pub function (x: f64) asin(): f64 {
   let pio2_hi: f64 = 1.57079632679489655800e+00;
   let pio2_lo: f64 = 6.12323399573676603587e-17;
@@ -2202,7 +1934,6 @@ pub function (x: f64) asin(): f64 {
   return -res;
 }
 
-// `acos(x)` — arccosine in [0, π]; NaN outside [-1, 1].
 pub function (x: f64) acos(): f64 {
   let pi: f64 = 3.14159265358979311600e+00;
   let pio2_hi: f64 = 1.57079632679489655800e+00;
@@ -2239,8 +1970,6 @@ pub function (x: f64) acos(): f64 {
   return 2.0 * (df + w);
 }
 
-// `atan(x)` — arctangent in (-π/2, π/2).
-// Branches mirror the msun source so the port can be read against it.
 // fern-lint: allow cyclomatic-complexity
 pub function (x: f64) atan(): f64 {
   let hx: i64 = _fd_hi(x);
@@ -2304,9 +2033,6 @@ pub function (x: f64) atan(): f64 {
   return r;
 }
 
-// `atan2(x)` on receiver `y` — the angle of the point (x, y) in [-π, π],
-// with C's signed-zero and infinity cases.
-// Branches mirror the msun source so the port can be read against it.
 // fern-lint: allow cyclomatic-complexity
 pub function (y: f64) atan2(x: f64): f64 {
   let pi_o_4: f64 = 7.8539816339744827900e-01;
@@ -2325,7 +2051,6 @@ pub function (y: f64) atan2(x: f64): f64 {
   if (hx == 0x3ff00000 && lx == 0) {
     return y.atan();
   }
-  // 2 * sign(x) + sign(y)
   let m: i32 = 0;
   if (hy < 0) {
     m = m + 1;
@@ -2400,8 +2125,6 @@ pub function (y: f64) atan2(x: f64): f64 {
   return z - pi_lo - pi;
 }
 
-// `expm1(x)` — eˣ − 1, exact near zero where `exp(x) - 1.0` cancels away.
-// Branches mirror the msun source so the port can be read against it.
 // fern-lint: allow cyclomatic-complexity
 pub function (x: f64) expm1(): f64 {
   let ln2_hi: f64 = 6.93147180369123816490e-01;
@@ -2497,9 +2220,6 @@ pub function (x: f64) expm1(): f64 {
   return (v - (e + tk) + 1.0) * twopk;
 }
 
-// `log1p(x)` — ln(1 + x), exact near zero where `(1.0 + x).log()` loses x.
-// -1 is -Inf and anything below it NaN.
-// Branches mirror the msun source so the port can be read against it.
 // fern-lint: allow cyclomatic-complexity
 pub function (x: f64) log1p(): f64 {
   let ln2_hi: f64 = 6.93147180369123816490e-01;
@@ -2584,13 +2304,6 @@ pub function (x: f64) log1p(): f64 {
   return dk * ln2_hi - (hfsq - (s * (hfsq + r) + (dk * ln2_lo + c)) - f);
 }
 
-// `sinh(x)` / `cosh(x)` / `tanh(x)` — the hyperbolic trig functions, built on
-// the natural `exp` (`sinh = (eˣ - e⁻ˣ)/2`, `cosh = (eˣ + e⁻ˣ)/2`).
-// `sinh(0)` is `0`, `cosh(0)` is `1`,
-// `tanh(0)` is `0`, and the identity `cosh² - sinh² == 1` holds. `tanh` uses
-// the stable `(e²ˣ - 1)/(e²ˣ + 1)` form and saturates to `±1` past `|x| = 20`
-// (where it already equals `±1` to f64 precision), avoiding the `Inf/Inf` NaN
-// that `sinh/cosh` would give for large magnitudes.
 pub function (x: f64) sinh(): f64 {
   return (x.exp() - (0.0 - x).exp()) * 0.5;
 }
@@ -2610,8 +2323,6 @@ pub function (x: f64) tanh(): f64 {
   return (e2 - 1.0) / (e2 + 1.0);
 }
 
-// `pow(x, y)` — two-argument form; method receiver is the
-// base. Use `(b).pow(e)` for `b ^ e`.
 pub function (x: f64) pow(y: f64): f64 {
   if (y == 0.0) {
     return 1.0;
@@ -2619,10 +2330,6 @@ pub function (x: f64) pow(y: f64): f64 {
   return _fd_pow_general(x, y);
 }
 
-// `cbrt(x)` — the real cube root, the companion to `sqrt` but defined for
-// negative inputs too (`cbrt(-8)` is `-2`). Since `pow` of a negative base with
-// a fractional exponent is NaN, the sign is peeled off and reapplied around
-// `pow(|x|, 1/3)`. `cbrt(0)` is `0` (sign preserved), NaN passes through.
 pub function (x: f64) cbrt(): f64 {
   if (x != x) {
     return x;
@@ -2636,10 +2343,6 @@ pub function (x: f64) cbrt(): f64 {
   return x.pow(1.0 / 3.0);
 }
 
-// `hypot(x, y)` — the Euclidean length `sqrt(x*x + y*y)`, computed via the
-// scaled form `hi * sqrt(1 + (lo/hi)^2)` (hi/lo the larger/smaller magnitude)
-// so it does NOT overflow when a naive `x*x + y*y` would, and stays accurate
-// for very lopsided inputs. `hypot(0, 0)` is `0`.
 pub function (x: f64) hypot(y: f64): f64 {
   let ax: f64 = x.abs();
   let ay: f64 = y.abs();
@@ -2652,10 +2355,6 @@ pub function (x: f64) hypot(y: f64): f64 {
   return hi * (1.0 + r * r).sqrt();
 }
 
-// `hypot3(x, y, z)` — the 3-D Euclidean length `sqrt(x*x + y*y + z*z)`, the
-// three-argument sibling of `hypot`. Same overflow-safe scaling: divide through
-// by the largest magnitude before squaring, so a component near the f64 max
-// doesn't overflow the sum. `hypot3(0, 0, 0)` is `0`; `hypot3(2, 3, 6)` is `7`.
 pub function (x: f64) hypot3(y: f64, z: f64): f64 {
   let ax: f64 = x.abs();
   let ay: f64 = y.abs();
@@ -2670,18 +2369,10 @@ pub function (x: f64) hypot3(y: f64, z: f64): f64 {
   return hi * (rx * rx + ry * ry + rz * rz).sqrt();
 }
 
-// `fract(x)` — the fractional part, `x - trunc(x)`; keeps `x`'s sign, so
-// `fract(-3.75)` is `-0.75`. The companion to `trunc` / `floor` / `ceil`.
 pub function (x: f64) fract(): f64 {
   return x - __trunc_f64(x);
 }
 
-// `is_nan(x)` / `is_inf(x)` / `is_finite(x)` — IEEE-754
-// classification. The NaN predicate uses the textbook
-// "x != x" pattern; `is_inf` checks both ±Inf by squaring
-// (Inf * 2 == Inf, finite * 2 grows), `is_finite` is the
-// negation. Helpers so test code doesn't have to spell out
-// the textbook patterns every time.
 pub function (x: f64) is_nan(): boolean {
   return x != x;
 }
@@ -2696,11 +2387,6 @@ pub function (x: f64) is_finite(): boolean {
   return true;
 }
 
-// `(x: f64) is_sign_negative()` / `is_sign_positive()` — test the IEEE-754
-// sign BIT, so they classify `-0.0` as negative and `+0.0` as positive
-// (unlike `x < 0.0`, which is false for both zeros and for any NaN). A
-// NaN's sign is whatever bit it carries. Read via `f64_bits` (bit 63),
-// so no comparison-with-zero rounding is involved.
 pub function (x: f64) is_sign_negative(): boolean {
   return f64_bits(x) < 0;
 }
@@ -2719,11 +2405,6 @@ pub function (x: f64) is_inf(): boolean {
   return x * 2.0 == x;
 }
 
-// `min(x, y)` / `max(x, y)` — return the smaller / larger
-// value. NaN inputs are infectious (any NaN in → NaN out),
-// matching Go's `math.Min` / `math.Max` semantics. Float
-// comparisons with NaN are well-defined as "always false",
-// which is what the inline check below relies on.
 pub function (x: f64) min(y: f64): f64 {
   if (x != x) {
     return x;
@@ -2750,22 +2431,14 @@ pub function (x: f64) max(y: f64): f64 {
   return y;
 }
 
-// `clamp(x, lo, hi)` — restrict to `[lo, hi]`. Implemented
-// as `max(lo, min(hi, x))`; preserves NaN if any input is
-// NaN.
 pub function (x: f64) clamp(lo: f64, hi: f64): f64 {
   return lo.max(x.min(hi));
 }
 
-// `clamp01(x)` — restrict to the unit interval `[0, 1]`, the common case for
-// colour channels, probabilities, and interpolation weights. Shorthand for
-// `clamp(0, 1)`; NaN propagates like `clamp`.
 pub function (x: f64) clamp01(): f64 {
   return 0.0.max(x.min(1.0));
 }
 
-// `abs_diff(a, b)` — the absolute difference `|a - b|`, the float sibling of the
-// i32 / i64 helpers. NaN in either operand propagates.
 pub function (a: f64) abs_diff(b: f64): f64 {
   let d: f64 = a - b;
   if (d < 0.0) {
@@ -2774,18 +2447,10 @@ pub function (a: f64) abs_diff(b: f64): f64 {
   return d;
 }
 
-// `mul_add(a, b, c)` — `a * b + c`. A convenience for the common
-// multiply-accumulate step; note this is NOT a hardware-fused FMA — the
-// intermediate `a * b` rounds before the add, so it is exactly `a * b + c` in
-// f64 arithmetic, not the single-rounding `fma`.
 pub function (a: f64) mul_add(b: f64, c: f64): f64 {
   return a * b + c;
 }
 
-// `signum(x)` — `1.0` if positive, `-1.0` if negative, the value itself
-// (`0.0` / `-0.0`) at zero, and `NaN` for `NaN`. Matches Rust's `f64::signum`
-// EXCEPT at zero, where Rust returns `±1.0` on signed zeros; here signed zero
-// returns zero, which is the more common "sign of a magnitude" expectation.
 pub function (x: f64) signum(): f64 {
   if (x != x) {
     return x;
@@ -2799,25 +2464,14 @@ pub function (x: f64) signum(): f64 {
   return x;
 }
 
-// `lerp(a, b, t)` — linear interpolation from `a` (at `t == 0`) to `b`
-// (at `t == 1`). Uses the precise `a + (b - a) * t` form; `t` outside
-// `[0, 1]` extrapolates. NaN in any operand propagates.
 pub function (a: f64) lerp(b: f64, t: f64): f64 {
   return a + (b - a) * t;
 }
 
-// `recip(x)` — the reciprocal `1 / x`. `recip(4)` is `0.25`; `recip(0)` is
-// `+Inf` (and `recip(-0)` is `-Inf`, since the division carries the sign).
-// Purely arithmetic — no libm primitive — so it lowers on every backend.
 pub function (x: f64) recip(): f64 {
   return 1.0 / x;
 }
 
-// `copysign(x, sign)` — the magnitude of `x` carrying the sign of `sign`:
-// `copysign(3, -1)` is `-3`, `copysign(-3, 2)` is `3`. The sign test is
-// `sign < 0`, so a signed negative zero (`-0.0`, which compares equal to
-// `+0.0`) reads as positive here — the one case where this differs from a
-// bit-level copysign. NaN magnitude passes through with the chosen sign.
 pub function (x: f64) copysign(sign: f64): f64 {
   let m: f64 = x.abs();
   if (sign < 0.0) {
@@ -2826,18 +2480,10 @@ pub function (x: f64) copysign(sign: f64): f64 {
   return m;
 }
 
-// `midpoint(a, b)` — the point halfway between `a` and `b`, computed as
-// `a*0.5 + b*0.5` so it never overflows the way `(a + b) / 2` would when both
-// operands are near the f64 max. `midpoint(2, 4)` is `3`, `midpoint(1, 2)` is
-// `1.5`.
 pub function (a: f64) midpoint(b: f64): f64 {
   return a * 0.5 + b * 0.5;
 }
 
-// `to_radians()` / `to_degrees()` — convert between degrees and radians,
-// the natural companions to `sin` / `cos` (which take radians). Uses a
-// high-precision π; the round-trip `d.to_radians().to_degrees()` recovers
-// `d` to f64 accuracy.
 pub function (deg: f64) to_radians(): f64 {
   return deg * (3.141592653589793 / 180.0);
 }
@@ -2845,14 +2491,6 @@ pub function (deg: f64) to_radians(): f64 {
 pub function (rad: f64) to_degrees(): f64 {
   return rad * (180.0 / 3.141592653589793);
 }
-
-// f32 mirror methods for explicitly-f32 values (a bare `3.14`
-// is f64 — the language's default float, #5363 — and takes the
-// f64 receiver methods above). Each wraps the f64 primitive —
-// promote to f64, apply, demote back. Float precision in the
-// final answer is bounded by the f32 input + the operation's
-// f64-domain accuracy; the demotion-to-f32 rounds the result
-// to the nearest f32.
 
 pub function (x: f32) abs(): f32 {
   return __abs_f64(x as f64) as f32;
@@ -2996,8 +2634,6 @@ pub function (x: f32) is_finite(): boolean {
   return true;
 }
 
-// `(x: f32) is_sign_negative()` / `is_sign_positive()` — the f32 siblings;
-// the sign is bit 31 of `f32_bits`. See the f64 forms above.
 pub function (x: f32) is_sign_negative(): boolean {
   return f32_bits(x) < 0;
 }

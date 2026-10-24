@@ -16,8 +16,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// hasLoadCommand reports whether a Mach-O image contains a load command
-// with the given cmd id (walking the raw header, little-endian arm64).
 func hasLoadCommand(bin []byte, cmd uint32) bool {
 	if len(bin) < 20 {
 		return false
@@ -38,17 +36,6 @@ func hasLoadCommand(bin []byte, cmd uint32) bool {
 	return false
 }
 
-// TestArm64DarwinNativeMachO builds an integer program through the
-// in-process Mach-O backend (`-target arm64-darwin -native`, no clang/
-// ld64) and validates it. Off Apple Silicon it only checks the file is a
-// well-formed signed Mach-O. On the macOS arm64 CI runner it also EXECUTES
-// the binary — the decisive test of whether a static, dyld-free,
-// LC_UNIXTHREAD + ad-hoc-signed executable launches on current macOS.
-//
-// Launch failure (the binary is rejected by the kernel) is reported as a
-// skip with diagnostics rather than a hard failure: it's an open question
-// answered by this very run, not a regression. A wrong exit code — the
-// binary ran but misbehaved — is a hard failure.
 func TestArm64DarwinNativeMachO(t *testing.T) {
 	bin := buildFernCLI(t)
 	cases := []struct {
@@ -56,29 +43,18 @@ func TestArm64DarwinNativeMachO(t *testing.T) {
 		src      string
 		wantExit int
 	}{
-		// Integer only — exercises just the code path (no __DATA).
 		{"exit", `function main(): i32 { return 42; }`, 42},
 		{"callback_snapshot", callbackSnapshotProg, 42},
-		// String constant — exercises __DATA, adrp @PAGE / @PAGEOFF to a
-		// read-only string, and the write(2) syscall.
 		{"print", `
 function main(): i32 { print("hi"); return 0; }`, 0},
-		// Heap allocation — exercises the writable globals in __DATA
-		// (__fern_heap_ptr etc.) and mmap via svc.
 		{"concat", `
 import "std/string";
 function main(): i32 { let a: string = "foo"; return (a + "bar").len(); }`, 6},
-		// now_unix_ms — exercises the Darwin gettimeofday port (vs Linux
-		// clock_gettime). A plausible wall-clock value (post-2023) → 7.
 		{"now_unix_ms", `function main(): i32 {
   let t: i64 = now_unix_ms();
   if (t > 1700000000000) { return 7; }
   return 1;
 }`, 7},
-		// random_bytes — exercises the Darwin getentropy port (vs Linux
-		// getrandom). Asserts length AND that the bytes are actually
-		// filled by the syscall: OR-of-8-bytes==0 would mean the buffer
-		// is still the zero-mapped alloc memory (syscall failed silently).
 		{"random_bytes", `
 function main(): i32 {
   let b: u8[] = random_bytes(8);
@@ -88,17 +64,6 @@ function main(): i32 {
   if (v != 0) { return 7; }
   return 2;
 }`, 7},
-		// lstat's AT_SYMLINK_NOFOLLOW. The flag is per-kernel — 0x100 on
-		// Linux, 0x20 on XNU — and the emitter hardcoded Linux's, which
-		// XNU rejects outright: EVERY lstat on this target answered
-		// EINVAL, on a plain file as much as on a symlink. Nothing caught
-		// it because the only lstat coverage is on the Linux backends,
-		// where the constant was right.
-		//
-		// The shape fails in both directions: a wrong flag is an Err (5),
-		// and a flag DROPPED to zero makes the symlink read back as the
-		// regular file it points at (6). stat is the control — it passes
-		// zero and must follow.
 		{"lstat_nofollow_flag", `
 function main(): i32 {
   let d: string = "";
@@ -115,15 +80,6 @@ function main(): i32 {
   match (stat(l)) { Ok(s) => { if (!s.is_file) { return 9; } }, Err(_) => { return 10; } }
   return 42;
 }`, 42},
-		// Map with HEAP-allocated string values — the arm64-darwin
-		// >4 GiB pointer-truncation regression guard (docs/BACKEND-PARITY.md
-		// "Known limitations"). The keys/values are built by concat (`"a" +
-		// "b"`), so they live on the heap, which macOS-14+ maps above 4 GiB —
-		// where a 32-bit Map value slot truncated the pointer and the lookup
-		// read garbage. The core/map runtime is now usize-pointered
-		// throughout, so the values round-trip; exit 42 proves it. (On
-		// Linux/x86 the heap is low so this passes trivially — it only
-		// exercises the truncation on a real Apple Silicon runner.)
 		{"map_heap_string_values", `
 import "core/map";
 function main(): i32 {
@@ -135,27 +91,6 @@ function main(): i32 {
   if (m.len() != 2) { return 3; }
   return 42;
 }`, 42},
-		// poll(2) readiness — the kqueue port. Until it landed, __fern_poll
-		// on Darwin was `mov x0, #-1; ret`, and -1 is a LEGAL poll answer
-		// ("nothing ready"), so nothing failed: every std/async wait and
-		// the serve loop's read deadline just reported an instant timeout. Nothing in
-		// this lane exercised poll at all, so the stub survived for as long
-		// as the Darwin target has existed.
-		//
-		// The shape is chosen so the stub gives the WRONG answer rather than
-		// a slow one: connecting to our own listener leaves a pending
-		// connection, so the listener fd is deterministically read-ready and
-		// the only correct answer is its index. A stub returns -1 → exit 99.
-		//
-		// The leading -1 in the fd set is essential, not padding. poll(2)
-		// ignores a negative fd by contract and std/async relies on that —
-		// it puts wasm_timer_pollable(...), which is -1 on native, straight
-		// into the set. kevent(2) does NOT ignore one; it fails that
-		// registration with EBADF. Without the skip this returns 99 too.
-		//
-		// Validated on both Linux backends before being pointed at Darwin
-		// (x86-64 native and arm64 under qemu both exit 42 via ppoll), so a
-		// failure here is the kqueue port, not the test.
 		{"poll_kqueue_readiness", `
 function main(): i32 {
   let port: i32 = 18475;
@@ -176,12 +111,10 @@ function main(): i32 {
 				t.Fatalf("write src: %v", err)
 			}
 			out := filepath.Join(dir, "prog")
-			// No -native: arm64-darwin defaults to the in-process backend.
 			if o, err := exec.Command(bin, "-target", "arm64-darwin", "-o", out, src).CombinedOutput(); err != nil {
 				t.Fatalf("default arm64-darwin build failed: %v\n%s", err, o)
 			}
 
-			// Structural validation (runs on every host).
 			raw, err := os.ReadFile(out)
 			if err != nil {
 				t.Fatalf("read out: %v", err)
@@ -193,12 +126,6 @@ function main(): i32 {
 			if f.Type != macho.TypeExec || f.Cpu != macho.CpuArm64 {
 				t.Fatalf("got type=%v cpu=%v, want EXECUTE/arm64", f.Type, f.Cpu)
 			}
-			// The in-process backend's marker is an ad-hoc LC_CODE_SIGNATURE
-			// (0x1D) with no LC_DYLD_EXPORTS_TRIE: clang/ld64 emits the trie
-			// and a UUID, and this writer emits neither. Its presence proves
-			// the DEFAULT is native, with no external toolchain. (The old
-			// marker was LC_UNIXTHREAD, which this image no longer has — it
-			// is dyld-loaded now, because nothing else launches.)
 			if !hasLoadCommand(raw, 0x1D) {
 				t.Errorf("default build is missing LC_CODE_SIGNATURE — expected the native backend, not clang")
 			}
@@ -214,10 +141,6 @@ function main(): i32 {
 			runErr := cmd.Run()
 			ps := cmd.ProcessState
 			if ps == nil || !ps.Exited() {
-				// Was a skip while it was an open question whether Apple
-				// Silicon would launch this image at all. It does — the image
-				// is dyld-loaded, PIE and ad-hoc signed — so a launch failure
-				// is now a regression in the container, not a platform limit.
 				t.Fatalf("native Mach-O did not run to a normal exit (err=%v, state=%v)", runErr, ps)
 			}
 			if code := ps.ExitCode(); code != c.wantExit {
@@ -227,21 +150,10 @@ function main(): i32 {
 	}
 }
 
-// TestArm64DarwinNativeReadFile validates the Darwin read_file port — the
-// fstat64 syscall (339) and st_size at struct-stat offset 96 — by reading
-// a known file and checking its length. Builds everywhere; executes only
-// on Apple Silicon.
-// TestArm64DarwinNativeReadFileRelative reads a RELATIVE path, resolved against
-// the process cwd. Its absolute-path sibling below passed throughout the period
-// this was broken, which is the whole point of having both: AT_FDCWD is -100 on
-// Linux and -2 on XNU, the generator emitted the Linux value on both, and
-// openat IGNORES dirfd when the path is absolute. So every existing test — and
-// the `fern` driver itself, which builds absolute paths — missed a bug that
-// made `read_file("data.txt")` fail unconditionally on arm64-darwin.
 func TestArm64DarwinNativeReadFileRelative(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
-	const content = "hello, fern!" // 12 bytes
+	const content = "hello, fern!"
 	if err := os.WriteFile(filepath.Join(dir, "data.txt"), []byte(content), 0o644); err != nil {
 		t.Fatalf("write data: %v", err)
 	}
@@ -258,7 +170,7 @@ func TestArm64DarwinNativeReadFileRelative(t *testing.T) {
 		t.Skip("execution check only runs on Apple Silicon")
 	}
 	cmd := exec.Command(out)
-	cmd.Dir = dir // the relative path resolves against THIS
+	cmd.Dir = dir
 	_ = cmd.Run()
 	ps := cmd.ProcessState
 	if ps == nil || !ps.Exited() {
@@ -273,7 +185,7 @@ func TestArm64DarwinNativeReadFile(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
 	dataPath := filepath.Join(dir, "data.txt")
-	const content = "hello, fern!" // 12 bytes
+	const content = "hello, fern!"
 	if err := os.WriteFile(dataPath, []byte(content), 0o644); err != nil {
 		t.Fatalf("write data: %v", err)
 	}
@@ -307,15 +219,6 @@ func TestArm64DarwinNativeReadFile(t *testing.T) {
 	}
 }
 
-// TestArm64DarwinMonotonicNs covers `monotonic_ns()` on arm64-darwin, which
-// has no clock_gettime syscall and so reads CNTVCT_EL0 / CNTFRQ_EL0 with `mrs`
-// — an instruction the in-process assembler could not encode at all, making
-// every program that touched the builtin unbuildable for the target (#6800).
-//
-// Building is the gate on the encoding existing; running is the gate on it
-// being the RIGHT encoding. A sysreg is five bit fields naming a different
-// register when one is off, so the elapsed-time bound is what separates a real
-// counter read from a plausible-looking wrong one.
 func TestArm64DarwinMonotonicNs(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
@@ -357,21 +260,10 @@ func TestArm64DarwinMonotonicNs(t *testing.T) {
 	}
 }
 
-// TestArm64DarwinSleepNsCarry covers the last microsecond of every second on
-// arm64-darwin, where `sleep_ns` has to build `select`'s timeval by rounding
-// its nanosecond remainder up. A remainder above 999_999_000 ns rounds to
-// 1_000_000 µs, which is out of range for a timeval: select returns EINVAL
-// without pausing, so the sleep is skipped entirely rather than overshooting.
-// The carry into tv_sec is what keeps the primitive's only promise.
-//
-// Building gates nothing here — this interval compiles either way — so the
-// measurement on Apple Silicon is the whole test.
 func TestArm64DarwinSleepNsCarry(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "prog.fern")
-	// 999_999_500 ns: under a second, and in the window where ceil(rem/1000)
-	// reaches 1_000_000.
 	prog := "function main(): i32 {\n" +
 		"    let t0: i64 = monotonic_ns();\n" +
 		"    sleep_ns(999999500 as i64);\n" +
@@ -403,25 +295,16 @@ func TestArm64DarwinSleepNsCarry(t *testing.T) {
 	}
 }
 
-// TestArm64DarwinDwarfSymtab guards the -g static symbol table for the
-// arm64-darwin native path (#5537 slice 1, Mach-O): a `-g` build carries an
-// LC_SYMTAB whose entries resolve every function name, while the default build
-// has none (keeping default binaries small). Structural check — builds and
-// parses on every host; no execution needed.
 func TestArm64DarwinDwarfSymtab(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "prog.fern")
-	// @noinline keeps the probe a real function: this case is about what the
-	// symbol table NAMES, and ir.Inline would otherwise substitute helper into
-	// its sole call site and the dead-function cull remove it.
 	prog := "@noinline function helper(x: i32): i32 { return x * 2; }\n" +
 		"function main(): i32 { return helper(21); }\n"
 	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
 
-	// Default build: no symbol table.
 	plain := filepath.Join(dir, "plain")
 	if o, err := exec.Command(bin, "-target", "arm64-darwin", "-o", plain, src).CombinedOutput(); err != nil {
 		t.Fatalf("default build: %v\n%s", err, o)
@@ -434,7 +317,6 @@ func TestArm64DarwinDwarfSymtab(t *testing.T) {
 		t.Errorf("default build should have no symbols, got %d", len(pf.Symtab.Syms))
 	}
 
-	// -g build: LC_SYMTAB naming the functions.
 	g := filepath.Join(dir, "g")
 	if o, err := exec.Command(bin, "-g", "-target", "arm64-darwin", "-o", g, src).CombinedOutput(); err != nil {
 		t.Fatalf("-g build: %v\n%s", err, o)
@@ -450,15 +332,11 @@ func TestArm64DarwinDwarfSymtab(t *testing.T) {
 	for _, s := range gf.Symtab.Syms {
 		got[s.Name] = s.Value
 	}
-	// Mangled: the symbol table names what was emitted, which is what a
-	// disassembler and `nm` see at those addresses. `_main` is the Mach-O
-	// entry wrapper, a separate symbol from the Fern function it calls.
 	for _, fn := range []string{"main", "helper"} {
 		if _, ok := got[symname.Fn(fn)]; !ok {
 			t.Errorf("missing symbol %q in -g build (have %v)", symname.Fn(fn), got)
 		}
 	}
-	// Every function symbol lands inside the __text section's address range.
 	if ts := gf.Section("__text"); ts != nil {
 		lo, hi := ts.Addr, ts.Addr+ts.Size
 		for name, v := range got {
@@ -469,14 +347,6 @@ func TestArm64DarwinDwarfSymtab(t *testing.T) {
 	}
 }
 
-// TestArm64DarwinEhFrame is the darwin end of #7901: a `fern -target
-// arm64-darwin` build carries a __TEXT,__eh_frame whose FDEs describe the
-// program — one per user function, starting exactly at the function's symbol
-// and ending no later than the next symbol. Mach-O symbols carry no size, so
-// the next symbol's start is the only oracle for the end; the literal pool
-// `.ltorg` puts after each `.cfi_endproc` is what keeps the two from being
-// equal. Structural on every host; the consumer check runs where
-// llvm-dwarfdump is on PATH.
 func TestArm64DarwinEhFrame(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
@@ -488,7 +358,6 @@ func TestArm64DarwinEhFrame(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := filepath.Join(dir, "prog")
-	// -g, so the symbol table is there to check the FDEs against.
 	if o, err := exec.Command(bin, "-g", "-target", "arm64-darwin", "-o", out, src).CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, o)
 	}
@@ -508,7 +377,6 @@ func TestArm64DarwinEhFrame(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// FDE ranges: 8-byte pcrel initial_location, 8-byte address_range.
 	var fdes [][2]uint64
 	for off := 0; off+4 <= len(eh); {
 		n := int(binary.LittleEndian.Uint32(eh[off:]))
@@ -597,12 +465,6 @@ func TestArm64DarwinEhFrame(t *testing.T) {
 	}
 }
 
-// TestArm64DarwinNativeOpenWith runs the open_reader_with /
-// open_writer_with probe (open_with_test.go) through the in-process
-// Mach-O backend on Apple Silicon. It is the one leg where the flags
-// word's words are XNU's and where the direct and noatime bits must come
-// back Unsupported: a Linux word ORed in here is a legal, different mode,
-// so only running the binary tells the two apart.
 func TestArm64DarwinNativeOpenWith(t *testing.T) {
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 		t.Skip("runs the binary; Apple Silicon only")
@@ -629,12 +491,6 @@ func TestArm64DarwinNativeOpenWith(t *testing.T) {
 	openWithCheckTree(t, dir)
 }
 
-// TestArm64DarwinNativePriority runs the priority() / set_priority() probe
-// (priority_test.go) as an arm64-darwin binary on Apple Silicon. The
-// syscall numbers are the target's and only running the binary checks
-// them: a Linux number ORed into XNU's table is SIGSYS, which is how
-// `nice` died on every Darwin invocation with 101 in the setpriority row
-// where XNU has 96 (#11334).
 func TestArm64DarwinNativePriority(t *testing.T) {
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 		t.Skip("runs the binary; Apple Silicon only")
@@ -660,9 +516,6 @@ func TestArm64DarwinNativePriority(t *testing.T) {
 	}
 }
 
-// The native Darwin runtime refuses a trailing-slash path to a non-directory
-// as Linux's kernel does (#11430): every open goes through
-// __fern_darwin_openat.
 func TestArm64DarwinNativeTrailingSlash(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()

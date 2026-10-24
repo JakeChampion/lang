@@ -5,17 +5,6 @@ import (
 	"testing"
 )
 
-// --- Append-built ARRAY-OF-STRUCTS (deep class) element reclaim (#6535) ------
-//
-// A `(<struct-with-an-rc-array-field>)[]` local built by self-append
-// (`vals = vals.append(Val { .. })`) is reclaimed as deeply as the
-// literal-built form of the same value: each element's rc fields, the struct
-// box, then the outer buffer. #6127 is the shallow (no rc field) sibling.
-//
-// Any other reassignment of the array, and a BOUND element
-// (`let v = Val { .. }; vals.append(v)`) that a live local still holds, must
-// keep its field buffers alive.
-
 const arrStructAppendChurnSrc = `struct Val { kind: i32, kids: i32[] }
 
 function build(n: i32): i32 {
@@ -32,10 +21,6 @@ function main(): i32 {
     return t / 100;
 }`
 
-// TestSelfHostArrStructAppendReclaimX86_64 — an append-built array-of-structs
-// whose element carries an rc-array field reclaims its whole structure. The
-// leak scales with the round count, so any nonzero live_bytes here is
-// unbounded in a loop.
 func TestSelfHostArrStructAppendReclaimX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -72,10 +57,6 @@ func TestSelfHostArrStructAppendReclaimX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostArrStructAppendHazardsX86_64 — the shapes the widened credit must
-// still REFUSE, asserted through BEHAVIOUR. A wrongly-granted credit here frees
-// a field buffer something else still points at, so the failure mode is a wrong
-// answer or a crash, not a leak; a leak-based assertion would not see it.
 func TestSelfHostArrStructAppendHazardsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -88,8 +69,6 @@ func TestSelfHostArrStructAppendHazardsX86_64(t *testing.T) {
 		want int
 	}{
 		{
-			// A bound ELEMENT aliases a struct box whose `kids` buffer the
-			// deep walk would free.
 			name: "element_alias",
 			src: `struct Val { kind: i32, kids: i32[] }
 function main(): i32 {
@@ -101,8 +80,6 @@ function main(): i32 {
 			want: 5,
 		},
 		{
-			// An IDENT element: the array does not solely own the box, so the
-			// deep walk would free `shared`'s own `kids`.
 			name: "ident_element",
 			src: `struct Val { kind: i32, kids: i32[] }
 function main(): i32 {
@@ -114,9 +91,6 @@ function main(): i32 {
 			want: 8,
 		},
 		{
-			// A bare element-field PAYLOAD extraction binds the inner buffer —
-			// arrstruct_elem_payload_escapes must still catch it now that the
-			// append receiver no longer trips it.
 			name: "payload_extract",
 			src: `struct Val { kind: i32, kids: i32[] }
 function main(): i32 {
@@ -128,7 +102,6 @@ function main(): i32 {
 			want: 7,
 		},
 		{
-			// The array ESCAPES by return, so the callee must not free it.
 			name: "escaping_return",
 			src: `struct Val { kind: i32, kids: i32[] }
 function build(n: i32): Val[] {
@@ -140,8 +113,6 @@ function main(): i32 { let r: Val[] = build(3); return r[0].kind + r[0].kids.len
 			want: 5,
 		},
 		{
-			// A non-append reassignment must sink the credit outright — the
-			// sanctioned rebind is the self-append and nothing else.
 			name: "rebound_to_other",
 			src: `struct Val { kind: i32, kids: i32[] }
 function main(): i32 {
@@ -154,9 +125,6 @@ function main(): i32 {
 			want: 11,
 		},
 		{
-			// The appended element is a `...base` copy, which shares the base's
-			// field pointers — not a fresh sole owner, so the credit must be
-			// refused and `base.kids` must survive.
 			name: "base_copy_element",
 			src: `struct Val { kind: i32, kids: i32[] }
 function main(): i32 {
@@ -168,8 +136,6 @@ function main(): i32 {
 			want: 5,
 		},
 		{
-			// The appended element's field is read OUT OF the array being built
-			// — the arg walk must still see it, so the credit is refused.
 			name: "self_sourced_element",
 			src: `struct Val { kind: i32, kids: i32[] }
 function main(): i32 {

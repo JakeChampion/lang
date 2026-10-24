@@ -1,28 +1,11 @@
 import "std/test";
 import "std/string";
 
-// tests/stdlib/string_slice_extract_test.fern — pure-Fern coverage of the
-// std/string substring-extraction and manipulation surface left out by both
-// strings_test and string_classify_transform_test:
-//   before / after / between / split_once   (delimiter extraction)
-//   remove_prefix / remove_suffix           (affix stripping)
-//   strip_quotes                            (quote unwrapping → Option)
-//   common_prefix / common_suffix           (shared run)
-//   repeat / reverse_words / wrap / indent  (construction)
-//   chunks                                  (fixed-width slicing → string[])
-// These mix `string -> string`, `-> Option[string]`, `-> Option[(string,
-// string)]`, and `-> string[]` shapes, so they exercise Option/tuple match and
-// array assertions through the self-host IR path on real stdlib bodies. The
-// Go-side suite unit-tests these; this is the migration-shaped companion.
-
-// ---- delimiter extraction ----
-
 function test_before(): test.TestOutcome {
   return test.assert_eq("key=value".before("=").to_owned(), "key");
 }
 
 function test_before_missing(): test.TestOutcome {
-  // sep absent → whole string unchanged.
   return test.assert_eq("noeq".before("=").to_owned(), "noeq");
 }
 
@@ -31,7 +14,6 @@ function test_after(): test.TestOutcome {
 }
 
 function test_after_missing(): test.TestOutcome {
-  // sep absent → empty string.
   return test.assert_eq("noeq".after("=").to_owned(), "");
 }
 
@@ -58,7 +40,6 @@ function test_between_missing(): test.TestOutcome {
 }
 
 function test_split_once(): test.TestOutcome {
-  // splits at FIRST sep; the tail keeps later separators.
   match ("a=b=c".split_once("=")) {
     Some(p) => {
       return test.assert_true(p.0 == "a" && p.1 == "b=c");
@@ -79,8 +60,6 @@ function test_split_once_missing(): test.TestOutcome {
     }
   }
 }
-
-// ---- affix stripping ----
 
 function test_remove_prefix(): test.TestOutcome {
   let hit: boolean = "unhappy".remove_prefix("un") == "happy";
@@ -116,8 +95,6 @@ function test_strip_quotes_none(): test.TestOutcome {
   }
 }
 
-// ---- shared run ----
-
 function test_common_prefix(): test.TestOutcome {
   let ok: boolean = "foobar".common_prefix("foobaz") == "fooba";
   let none: boolean = "abc".common_prefix("xyz") == "";
@@ -129,8 +106,6 @@ function test_common_suffix(): test.TestOutcome {
   let none: boolean = "abc".common_suffix("xyz") == "";
   return test.assert_true(ok && none);
 }
-
-// ---- construction ----
 
 function test_repeat(): test.TestOutcome {
   return test.assert_true("ab".repeat(3) == "ababab" && "x".repeat(0) == "");
@@ -148,9 +123,6 @@ function test_indent(): test.TestOutcome {
   return test.assert_eq("a\nb".indent("  "), "  a\n  b");
 }
 
-// A trailing newline is NOT followed by a prefix (it ends no further line);
-// consecutive newlines each get one. These stress the two-pass buffer's exact
-// size — a miscount would truncate or over-pad.
 function test_indent_trailing_newline(): test.TestOutcome {
   return test.assert_eq("x\n".indent("+"), "+x\n");
 }
@@ -159,27 +131,19 @@ function test_indent_consecutive_newlines(): test.TestOutcome {
   return test.assert_eq("\n\ny".indent("-"), "-\n-\n-y");
 }
 
-// dedent is the inverse of indent: strip the common leading-whitespace
-// prefix shared by every non-blank line.
 function test_dedent(): test.TestOutcome {
-  // Common 4-space prefix removed; the deeper line keeps its extra 2.
   if ("    hello\n      world".dedent() != "hello\n  world") {
     return test.fail("common prefix");
   }
-  // A whitespace-only line normalizes to "" and doesn't defeat the prefix.
   return test.assert_eq("    a\n  \n    b".dedent(), "a\n\nb");
 }
 
 function test_dedent_edges(): test.TestOutcome {
-  // A column-0 line means no common prefix — unchanged.
   if ("a\n    b".dedent() != "a\n    b") {
     return test.fail("no prefix");
   }
-  // indent then dedent round-trips a flush-left block.
   return test.assert_eq("x\ny".indent("    ").dedent(), "x\ny");
 }
-
-// ---- fixed-width slicing ----
 
 function test_chunks(): test.TestOutcome {
   return test.assert_eq_array("abcdefg".chunks(3), ["abc", "def", "g"]);

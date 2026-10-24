@@ -6,21 +6,6 @@ import (
 	"testing"
 )
 
-// #8774: a struct literal whose array field is set from a tuple ELEMENT —
-// `Holder { bytes: m.0 }` over `m: (u8[], boolean)` — bailed the self-host,
-// while the same value bound to a local first lowered. The element is an
-// alias of a buffer the tuple box still owns, so it takes the alias-inc the
-// ident and field-read sources take, and the field's drop and the tuple's
-// reclaim then balance on the one inc.
-//
-// Each case is written twice, the direct spelling and the local-first one it
-// replaces, and the two must leave the SAME number of blocks unreclaimed at
-// both round counts: the admission may add nothing to what the shape already
-// costs. (A tuple-returning call's result box is itself still leak-mode
-// under the self-host, so the census is not flat on its own — that residue
-// belongs to the call, and both spellings pay it alike.) The sanitizer leg
-// keeps the over-release trap silent. Exits are the interpreter's.
-
 const tupleElemFieldCommon = `struct Holder { bytes: u8[], flag: boolean }
 struct P { x: i32 }
 struct Bag { ps: P[], n: i32 }
@@ -42,7 +27,6 @@ function nest(): (i32, (u8[], boolean)) {
 var tupleElemFieldCases = []struct {
 	name, direct, local string
 }{
-	// The issue's reproducer: a scalar-element array out of a tuple local.
 	{"u8_elem_direct",
 		`let m: (u8[], boolean) = make();
     let h: Holder = Holder { bytes: m.0, flag: m.1 };
@@ -53,7 +37,6 @@ var tupleElemFieldCases = []struct {
     let h: Holder = Holder { bytes: b, flag: m.1 };
     if (!h.flag) { return 2; }
     acc = acc + h.bytes.len();`},
-	// An array-of-struct element, whose field drop walks the elements.
 	{"struct_arr_elem",
 		`let m: (P[], i32) = mk_bag();
     let b: Bag = Bag { ps: m.0, n: m.1 };
@@ -64,7 +47,6 @@ var tupleElemFieldCases = []struct {
     let b: Bag = Bag { ps: ps, n: m.1 };
     if (b.n != 9) { return 3; }
     acc = acc + b.ps[2].x;`},
-	// A nested element, `n.1.0`, read through the outer element's tuple tag.
 	{"nested_tuple_elem",
 		`let n: (i32, (u8[], boolean)) = nest();
     let h: Holder = Holder { bytes: n.1.0, flag: n.1.1 };

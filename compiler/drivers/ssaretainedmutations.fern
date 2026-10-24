@@ -69,7 +69,6 @@ pub function renamed(rows: ssaprepare.Emitted[], names: string[]): ssaprepare.Em
       blocks = blocks.append(ssa.SBlock { ...b, insts: insts });
     }
     let renamed = ssa.SFunc { ...f, name: name_of(f.name, names), blocks: blocks };
-    // Synthetic binding control: selected symbols retain their original names.
     out = out.append(ssaprepare.Emitted { ...row, label_name: name_of(row.label_name, names), body: ssaprepare.Body { ...row.body, formed: ssa.Formed { ...row.body.formed, f: renamed } } });
   }
   return out;

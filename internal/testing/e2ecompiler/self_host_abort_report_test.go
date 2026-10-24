@@ -15,16 +15,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// A fatal abort names its cause on stderr and walks the frame-pointer chain
-// under it (#11405): the cause line, exit 134, `backtrace:` and one
-// `0x<16 hex>` line per frame. FERN_BACKTRACE=0 on the compiler, or its
-// -backtrace=false flag, keeps the cause line and the exit code and drops the
-// walk at compile time.
-//
-// Both interpreters stop at the same places with the same cause line and exit
-// 134, and print their own detail line under it where a compiled program
-// prints its backtrace (#12691).
-
 var abortReportCases = []struct{ name, src, cause string }{
 	{"array_oob", `function main(): i32 { let xs: i32[] = [10, 20, 30]; return xs[7]; }`, "fern: array index out of range"},
 	{"string_slice_oob", `function main(): i32 { let s: string = "hi"; let t: str = slice_unchecked(s, 1, 9); return t.len(); }`, "fern: string index out of range"},
@@ -32,34 +22,26 @@ var abortReportCases = []struct{ name, src, cause string }{
 	{"string_index_oob_runtime", `function main(): i32 { let s: string = "abc"; return s[args().len() + 6] as i32; }`, "fern: string index out of range"},
 	{"alloc_size_negative", `function main(): i32 { let b: u8[] = __alloc_u8(args().len() - 6); return b.len(); }`, "fern: allocation size out of range"},
 	{"slice_range_oob", `function main(): i32 { let xs: i32[] = [1, 2, 3]; let ys: [i32] = xs[1:9]; return ys.len(); }`, "fern: slice range out of bounds"},
-	// A byte view's read is one unsigned compare, so both ends must still trap.
 	{"byte_view_negative_oob", byteViewReadSrc("args().len() - 2"), "fern: array index out of range"},
 	{"byte_view_past_end_oob", byteViewReadSrc("args().len() + 2"), "fern: array index out of range"},
-	// buf_push_range checks its range against the string as a slice does (#12962).
 	{"buf_push_range_past_end", bufPushRangeSrc("1", "args().len() + 8"), "fern: slice range out of bounds"},
 	{"buf_push_range_negative", bufPushRangeSrc("args().len() - 3", "2"), "fern: slice range out of bounds"},
 	{"buf_push_range_inverted", bufPushRangeSrc("args().len() + 2", "1"), "fern: slice range out of bounds"},
-	// A map cursor past its last entry has no key or value to read (#12962).
 	{"map_cursor_key_past_end", mapCursorPastEndSrc("key"), "fern: array index out of range"},
 	{"map_cursor_value_past_end", mapCursorPastEndSrc("value"), "fern: array index out of range"},
 }
 
-// mapCursorPastEndSrc reads `read` from a cursor advanced past a one-entry map.
 func mapCursorPastEndSrc(read string) string {
 	return `import "core/map";
 function main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 5); let it = m.iter(); it.advance(); return it.` + read + `(); }`
 }
 
-// bufPushRangeSrc appends "abc"[lo:hi] to a buffer; args() keeps the bounds
-// from folding.
 func bufPushRangeSrc(lo, hi string) string {
 	return `function main(): i32 { let b: usize = buf_new(8); buf_push_range(b, "abc", ` + lo + `, ` + hi + `); return buf_take(b).len(); }`
 }
 
 const abortInBoundsSrc = `function main(): i32 { let xs: i32[] = [10, 20, 30]; return xs[1]; }`
 
-// byteViewReadSrc reads a three-byte view at `index`; args() keeps the index
-// from folding.
 func byteViewReadSrc(index string) string {
 	return `function at(bs: [u8], i: i32): u8 { return bs[i]; }
 function main(): i32 { let xs: u8[] = [10, 20, 30]; return at(xs, ` + index + `) as i32; }`
@@ -103,7 +85,6 @@ func TestSelfHostAbortReportsX86_64(t *testing.T) {
 	checkAbortReports(t, buildSelfHostCLI(t), "x86-64-linux")
 }
 
-// wasm prints no cause line yet (#12956), but every case still traps.
 func TestSelfHostAbortsTrapWasm(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range abortReportCases {
@@ -120,11 +101,6 @@ func TestSelfHostAbortReportsArm64(t *testing.T) {
 	checkAbortReports(t, buildSelfHostCLI(t), "arm64-linux")
 }
 
-// deepAbortSrc traps three frames deep. @noinline and arithmetic after calls
-// keep the chain. Thirteen live values crossing calls force spill frames in
-// mid and main, independently of debug information.
-// inner is a leaf the x86-64 emitter runs without a frame, which is the case
-// the walk has to recover the immediate caller for.
 const deepAbortSrc = `@noinline function step(n: i64): i64 { return n + 1; }
 @noinline function inner(xs: i32[]): i32 { return xs[7]; }
 @noinline function mid(xs: i32[]): i32 {
@@ -162,9 +138,6 @@ function main(): i32 {
 }
 `
 
-// abortFrames runs bin (through runner, if any) and returns the functions its
-// backtrace's return addresses fall in, in the order printed, resolved against
-// the ELF symbol table, plus the whole of stderr.
 func abortFrames(t *testing.T, bin string, run *exec.Cmd) ([]string, string) {
 	t.Helper()
 	var stderr bytes.Buffer
@@ -233,15 +206,11 @@ func checkAbortBacktrace(t *testing.T, frames []string, stderr string) {
 	}
 }
 
-// compileDeep builds deepAbortSrc for target through the CLI's own
-// assembler and linker, with extra flags, and env added to the compiler's
-// environment, returning the binary.
 func compileDeep(t *testing.T, cli *selfHostCLI, target string, flags []string, env ...string) string {
 	t.Helper()
 	return compileAbortSrc(t, cli, deepAbortSrc, target, flags, env...)
 }
 
-// compileAbortSrc is compileDeep for any source.
 func compileAbortSrc(t *testing.T, cli *selfHostCLI, text, target string, flags []string, env ...string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -277,8 +246,6 @@ func TestSelfHostAbortBacktraceArm64(t *testing.T) {
 	checkAbortBacktrace(t, frames, stderr)
 }
 
-// helperTrapSrcs each make a request a runtime helper refuses before it
-// builds a frame of its own, from mk; args() keeps the operands from folding.
 var helperTrapSrcs = []struct{ name, src, cause string }{
 	{"alloc_u8", `@noinline function mk(n: i32): i32 { let b: u8[] = __alloc_u8(n); return b.len() + 1; }
 function main(): i32 { return mk(args().len() - 6) + 1; }
@@ -288,10 +255,6 @@ function main(): i32 { return mk(args().len() + 8) + 1; }
 `, "fern: slice range out of bounds"},
 }
 
-// A helper's abort lists the function that made the request first, on both
-// targets (#12981). mk and main keep no frame pointer on x86-64, so its walk
-// ends at mk; on arm64 a function that calls keeps a frame record, so main
-// follows.
 func TestSelfHostAbortHelperFrameAgrees(t *testing.T) {
 	_, qemu := arm64Tooling(t)
 	cli := buildSelfHostCLI(t)
@@ -319,18 +282,11 @@ func TestSelfHostAbortHelperFrameAgrees(t *testing.T) {
 	}
 }
 
-// bareTrapSrc traps in cut, which keeps no frame pointer outside -g: it
-// calls __fern_alloc for the view it returns and has no slot. Its jump to the
-// string trap goes through the stub that builds the frame cut lacks, so the
-// walk still lists mid, the function cut returns to. mid and main keep no
-// frame either, so the walk ends there.
 const bareTrapSrc = `@noinline function cut(s: string, n: i32): str { return slice_unchecked(s, 1, n); }
 @noinline function mid(s: string, n: i32): i32 { let t: str = cut(s, n); return t.len() + 1; }
 function main(): i32 { return mid("hi", args().len() + 8); }
 `
 
-// The CLI strips the symbols outside -g, so the test links the emitted
-// assembly itself to resolve the frames.
 func TestSelfHostAbortBareFrameX86_64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	gcc, _ := x86_64Tooling(t)
@@ -353,7 +309,6 @@ func TestSelfHostAbortBareFrameX86_64(t *testing.T) {
 	if body := asmFuncBody(t, string(asm), "__fn_cut"); strings.Contains(body, "%rbp") {
 		t.Fatalf("cut keeps a frame pointer, so it no longer tests the frameless trap:\n%s", body)
 	}
-	// Only the stub cut reaches is emitted.
 	if stubs := trapStubRe.FindAllString(string(asm), -1); len(stubs) != 1 || stubs[0] != "__fern_str_oob_abort.l1:" {
 		t.Errorf("trap stubs %v, want only __fern_str_oob_abort.l1", stubs)
 	}
@@ -367,8 +322,6 @@ func TestSelfHostAbortBareFrameX86_64(t *testing.T) {
 	}
 }
 
-// The opt-out, by both routes: the cause line and the status stay, the header
-// and every address go.
 func checkAbortBacktraceOff(t *testing.T, cli *selfHostCLI, target string, run func(bin string) *exec.Cmd) {
 	t.Helper()
 	for _, tc := range []struct {

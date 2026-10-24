@@ -9,26 +9,11 @@ import (
 	"testing"
 )
 
-// optaarrForInCases pin the #7414 widening: an `Option[<scalar-arr>][]` local
-// iterated with `for o in xs` is deep-reclaimed — option boxes and payload
-// buffers — when the loop variable stays confined to the loop (read only as the
-// bare scrutinee of a `match (o)` whose bindings do not escape the arm), and
-// keeps every box alive when anything reachable from the loop body could
-// outlive it.
-//
-// SOUNDNESS: an over-eager free here is a use-after-free that reads plausible
-// bytes — `box-escapes-loop-uaf` below reads back the recycling allocation's
-// 7777 and exits 100 — with __rc_underflow_count() at ZERO, and `-sanitize`
-// misses it too, because its quarantine keeps the freed block out of the
-// recycling path. The value each row reads back after churn is therefore the
-// guard; every row must also balance.
 var optaarrForInCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// The issue's repro, at two round counts. The leak was flat per round, so a
-	// single count cannot tell "reclaimed" from "reclaimed less often".
 	{"forin-repro-50", optaarrProg(50, `
 function round(i: i32): i32 {
     let keep: Option[i32[]][] = [Some([i, i + 1]), Some([i + 2, i + 3])];
@@ -43,8 +28,6 @@ function round(i: i32): i32 {
     for e in keep { match (e) { Some(p) => { t = t + p[0]; }, None => {} } }
     return t + keep.len();
 }`), 10},
-	// A None element alongside the Some ones, and a `.len()` borrow of the
-	// payload: the walk must handle the tag-1 box and the borrow alike.
 	{"forin-none-mixed", optaarrProg(150, `
 function round(i: i32): i32 {
     let keep: Option[i32[]][] = [Some([i, i + 1]), None, Some([i + 2, i + 3])];
@@ -52,8 +35,6 @@ function round(i: i32): i32 {
     for e in keep { match (e) { Some(p) => { t = t + p[0] + p.len(); }, None => { t = t + 1; } } }
     return t + keep.len();
 }`), 16},
-	// A second payload type from the same leak-safe-array family, so the class
-	// is not pinned on i32[] alone.
 	{"forin-f64-payload", optaarrProg(150, `
 function round(i: i32): i32 {
     let keep: Option[f64[]][] = [Some([1.0, 2.0]), Some([3.0, 4.0])];
@@ -61,15 +42,11 @@ function round(i: i32): i32 {
     for e in keep { match (e) { Some(p) => { t = t + p.len(); }, None => {} } }
     return t + keep.len() + i - i;
 }`), 6},
-	// CONTROL: the `.len()`-only form the class already admitted. It must not
-	// move — the widening touches the iteration, nothing else.
 	{"len-only-control", optaarrProg(150, `
 function round(i: i32): i32 {
     let keep: Option[i32[]][] = [Some([i, i + 1]), Some([i + 2, i + 3])];
     return keep.len();
 }`), 2},
-	// CONTROL: `match (xs[i])` borrows the element's payload transiently and
-	// balanced before the widening, and still must.
 	{"index-match-control", optaarrProg(150, `
 function round(i: i32): i32 {
     let keep: Option[i32[]][] = [Some([i, i + 1]), Some([i + 2, i + 3])];
@@ -78,9 +55,6 @@ function round(i: i32): i32 {
     return t + keep.len();
 }`), 5},
 
-	// ── refusals ────────────────────────────────────────────────────────────
-	// A GUARDED arm: under a guard which arm ran is not syntactic. The value
-	// must stay correct.
 	{"guarded-arm-refused", optaarrProg(150, `
 function round(i: i32): i32 {
     let keep: Option[i32[]][] = [Some([i, i + 1]), Some([i + 2, i + 3])];
@@ -88,8 +62,6 @@ function round(i: i32): i32 {
     for e in keep { match (e) { Some(p) when p[0] > 100000 => { t = t + 7; }, Some(q) => { t = t + q[0]; }, None => {} } }
     return t + keep.len();
 }`), 10},
-	// The arm's payload binding STORED to an outer local — it outlives the arm,
-	// so nothing may free the buffer it names.
 	{"payload-escapes-arm-refused", optaarrProg(150, `
 function round(i: i32): i32 {
     let keep: Option[i32[]][] = [Some([i, i + 1]), Some([i + 2, i + 3])];
@@ -97,9 +69,6 @@ function round(i: i32): i32 {
     for e in keep { match (e) { Some(p) => { held = p; }, None => {} } }
     return held[0] + keep.len();
 }`), 7},
-	// The same binding handed to a CALL. Every inner proof runs under an empty
-	// borrowability registry, so a call argument is conservatively a retain and
-	// the verdict stays registry-independent.
 	{"payload-to-call-refused", optaarrProg(150, `
 function sink(xs: i32[]): i32 { return xs.len(); }
 function round(i: i32): i32 {
@@ -108,9 +77,6 @@ function round(i: i32): i32 {
     for e in keep { match (e) { Some(p) => { t = t + sink(p); }, None => {} } }
     return t + keep.len();
 }`), 6},
-	// The LOOP VARIABLE itself stored out. This is the row the soundness note
-	// above measures: admit it and the returned option box names a payload the
-	// sweep already freed, which the recycling allocations then overwrite.
 	{"box-escapes-loop-uaf", `
 function pick(i: i32): Option[i32[]] {
     let keep: Option[i32[]][] = [Some([i, i + 1]), Some([i + 2, i + 3])];
@@ -137,9 +103,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// A bare element BIND. Unchanged by the widening, which separates the
-	// iteration from the index bind: this class takes no dup at the bind, so the
-	// bound box is a borrow the sweep would dangle.
 	{"elem-bind-refused", optaarrProg(150, `
 function round(i: i32): i32 {
     let keep: Option[i32[]][] = [Some([i, i + 1]), Some([i + 2, i + 3])];
@@ -148,10 +111,6 @@ function round(i: i32): i32 {
     match (o) { Some(p) => { t = t + p[0]; }, None => {} }
     return t + keep.len();
 }`), 5},
-	// OUT OF CLASS, both directions. A `string[]` payload is not a leak-safe
-	// scalar array (is_leaksafe_array_field), and a nested `Option[Option[T[]]]`
-	// element is not an option of an array at all. They are here so a widening
-	// cannot land silently on shapes this suite never covered.
 	{"string-payload-out-of-class", optaarrProg(150, `
 function round(i: i32): i32 {
     let pre: string = "abcdefgh";
@@ -169,10 +128,6 @@ function round(i: i32): i32 {
 }`), 6},
 }
 
-// optaarrProg wraps a `round(i)` definition in the shared driver: `rounds`
-// iterations to churn the structure, the underflow counter folded into the exit,
-// then one more round as the answer so a miscompiled payload read shows up as a
-// wrong exit code rather than only as a leak.
 func optaarrProg(rounds int, round string) string {
 	n := strconv.Itoa(rounds)
 	return round + `
@@ -186,9 +141,6 @@ function main(): i32 {
 }`
 }
 
-// TestSelfHostOptaarrForInIterX86_64 is the PRIMARY leg: it is the only one with
-// a leak detector. The other two legs check that the widened credit emits
-// something that still computes the right answer on their backends.
 func TestSelfHostOptaarrForInIterX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -222,10 +174,6 @@ func TestSelfHostOptaarrForInIterX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostOptaarrForInIterArm64 — the credit and its release helper are
-// shared lowering / Fern-source IR, so this leg exists to catch a backend
-// that lowers the widened element walk into something that computes differently,
-// not to re-measure the leak (no detector here).
 func TestSelfHostOptaarrForInIterArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -250,10 +198,6 @@ func TestSelfHostOptaarrForInIterArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostOptaarrForInIterWasm — the wasm twin of the arm64 leg. The class
-// resolves through the same shared Fern-source release helper on this backend, so
-// what this checks is that the widened element walk lowers to something wasmtime
-// runs to the same answer.
 func TestSelfHostOptaarrForInIterWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping optaarr for-in wasm e2e")

@@ -6,21 +6,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostMapKeyAnnotationDifferentialX86_64 pins that both checkers
-// answer a WRITTEN `Map[K, V]` the same way, in every position one can be
-// written.
-//
-// Neither did. Each validated a map key only where a value SETTLED into a map
-// destination — and only for a struct or enum key at that — so the annotated
-// spelling of a program the literal form rejects walked straight past both
-// (#10009). That is the spelling that reached codegen: a float key took the
-// self-host's string column and segfaulted (#9973).
-//
-// What is compared is the whole DIAGNOSTIC, not the code set. The two sides
-// agreeing that a program draws E045 says nothing about whether they agree on
-// WHICH key they refused or what they would accept instead, and a checker
-// that accepts what native rejects is the direction
-// docs/NATIVE-CONVERGENCE.md calls dangerous.
 func TestSelfHostMapKeyAnnotationDifferentialX86_64(t *testing.T) {
 	checkerBin, runner, dir := buildCheckerCodesBin(t)
 
@@ -51,10 +36,6 @@ func TestSelfHostMapKeyAnnotationDifferentialX86_64(t *testing.T) {
 	}
 }
 
-// mapKeyAnnotationRows covers each position a `Map[K, V]` annotation can
-// appear in. The rejecting rows come first and the ACCEPTING ones last, which
-// is the half that matters as much: refusing a key the language supports is
-// the same bug pointed the other way.
 var mapKeyAnnotationRows = []struct {
 	name     string
 	src      string
@@ -119,8 +100,6 @@ function main(): i32 { return 0; }
 function take(m: Map[f64[], i32]): i32 { return 0; }
 function main(): i32 { return 0; }
 `, true},
-	// A tuple or array of scalar keys is compared element by element, in a
-	// literal and an annotation alike (#10020).
 	{"tuple-key-literal", `import "core/map";
 function main(): i32 { let m: Map[(i32, i32), i32] = Map { (1, 2): 5 }; return 0; }
 `, false},
@@ -139,8 +118,6 @@ function main(): i32 { return 0; }
 function take(m: Map[(boolean, string[], (u8, char)), i32]): i32 { return 0; }
 function main(): i32 { return 0; }
 `, false},
-	// Not carve-outs: boolean and str keys WORK, interpreted and compiled
-	// alike, and both rules refused them until that was measured.
 	{"boolean-key", `import "core/map";
 function main(): i32 {
     let m: Map[boolean, i32] = map_new(8);

@@ -1,19 +1,3 @@
-// examples/array_pipeline/filter_map_reduce.fern — pipeline 2 of #9728.
-//
-// `xs.filter(p).map(g).reduce(h)` against the hand-written `while` loop. The
-// difference from pipeline 1 is variable cardinality: the first stage's output
-// length is not known before the traversal runs, and there is a branch per
-// element. A fusion scheme that assumes a fixed trip count breaks here, which
-// is why this shape is measured separately rather than assumed to behave like
-// the same-cardinality one.
-//
-// The predicate keeps one element in three, so the `map` stage sees a third of
-// the input and the intermediate that a fusion pass would remove is a third of
-// the size pipeline 1's is. If the pipeline cost tracked the input length
-// rather than the intermediate's, that would show up here as the same slowdown
-// as pipeline 1 instead of a smaller one.
-//
-// Variants and checksum agreement work exactly as in map_map_reduce.fern.
 import "core/cmp";
 import "std/bench";
 import "std/string";
@@ -34,9 +18,6 @@ function combine(a: i64, b: i64): i64 {
   return (a + b) % modulus();
 }
 
-// `i * 3` rather than a mixing function: the predicate has to keep a
-// predictable fraction, and a hashed input would make the surviving count a
-// property of the hash rather than of `n`.
 function build_input(n: i32): i64[] {
   let xs: i64[] = [];
   let i: i32 = 0;
@@ -59,18 +40,6 @@ function run_pipeline(xs: i64[]): i64 {
   }
 }
 
-// The seedless `reduce` takes its accumulator from the first SURVIVING
-// element, so both loops have to find that element before they can start
-// combining — the `seeded` flag, not an index of 1.
-// The element functions have to reach the loop as values the compiler cannot
-// see through. Assigning a lambda straight to a local lets it be inlined into
-// the loop — verified in the emitted code, where that form contains no call at
-// all — and the variant then measures the same thing `loop` does. `map` and
-// `reduce` reach their `f` through a parameter, across a generic boundary
-// nothing devirtualizes, so the control has to pay that call too.
-//
-// Both arms of each picker compute the same value, so a run with `sel` set the
-// other way still checksums identically; what it cannot do is be folded.
 function pick_p(sel: i32): (i64) => boolean {
   if (sel == 1) {
     return (x: i64): boolean => keep(x + 0 as i64);
@@ -115,8 +84,6 @@ function run_closure_loop(sel: i32, xs: i64[]): i64 {
   return acc;
 }
 
-// The `i < xs.len()` spelling, for the reason given in map_map_reduce.fern's
-// run_loop.
 function run_loop(xs: i64[]): i64 {
   let m: i64 = modulus();
   let acc: i64 = 0 as i64;
@@ -138,8 +105,6 @@ function run_loop(xs: i64[]): i64 {
   return acc;
 }
 
-// How many elements survive the predicate, so the report can say what the
-// intermediate array the pipeline builds actually holds.
 function kept_count(xs: i64[]): i32 {
   let c: i32 = 0;
   let i: i32 = 0;
@@ -152,15 +117,6 @@ function kept_count(xs: i64[]): i32 {
   return c;
 }
 
-// A hand-written loop that CALLS the element functions instead of spelling
-// their arithmetic out. This is the control the parity claim actually needs.
-//
-// `loop` below writes the arithmetic inline and hoists `modulus()` out of the
-// loop by hand, so comparing the pipeline against it measures INLINING as much
-// as fusion — and no fusion pass inlines a callee body. `closure_loop` does
-// call them, but through function values, which is the indirect dispatch
-// fusion removes. Neither is "the same work, written as a loop"; this is, and
-// it is what a fused chain should reach.
 function run_call_loop(xs: i64[]): i64 {
   let acc: i64 = 0 as i64;
   let seeded: boolean = false;
@@ -220,9 +176,6 @@ function main(): i32 {
     rounds = argv[3].parse_int_or(200);
   }
 
-  // `sel` is 0 in every run this harness makes — the runner passes three
-  // arguments — but nothing at compile time can know that, which is exactly
-  // its job: it keeps the pickers above from folding to one known lambda.
   let sel: i32 = 0;
   if (argv.len() > 4) {
     sel = 1;
@@ -238,12 +191,6 @@ function main(): i32 {
     p = p + 1;
   }
 
-  // The COLD mark: the first pass over the data, before the freelist holds
-  // anything to hand back. The steady-state counters below cannot see what
-  // an intermediate array costs in BYTES — by then the allocator is
-  // recycling the same blocks and the bump cursor never moves
-  // (docs/ALLOCATION-OBSERVABLE.md: a reclaiming loop is flat in bytes and
-  // linear in calls). This is the reading that answers "by how much".
   let cold_a0: i64 = bench.alloc_count();
   let cold_b0: i64 = bench.bump_bytes();
   let checksum: i64 = dispatch(variant, sel, xs);
@@ -256,9 +203,6 @@ function main(): i32 {
   let r: i32 = 0;
   while (r < rounds) {
     let t0: i64 = monotonic_ns();
-    // Mixed in, not XORed: `c ^ c` collapses to zero on an even number of
-    // rounds, and a checksum that is zero half the time cannot catch a
-    // variant that skipped the work (bench/README.md).
     checksum = (checksum * (31 as i64) + dispatch(variant, sel, xs)) % modulus();
     samples = samples.with(r, monotonic_ns() - t0);
     r = r + 1;

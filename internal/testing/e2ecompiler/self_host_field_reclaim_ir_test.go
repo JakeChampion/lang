@@ -7,14 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostFieldReclaimIRX86_64 pins the release of a superseded builder's
-// array fields. `S { ops: s.ops.append(op), … }` builds a fresh buffer each
-// time, so every rebind leaves the old box and its old ops buffer dead; unless
-// both are released, the dead buffers grow O(K^2) per function.
-//
-// The rebind is exercised on a struct PARAM, whose caller still holds the
-// original, and on a local (`c = step(c)`): the old value is released, while a
-// buffer still reachable from the new value or from the caller survives.
 func TestSelfHostFieldReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -46,14 +38,6 @@ func TestSelfHostFieldReclaimIRX86_64(t *testing.T) {
 		}
 	}
 
-	// CHURN (local consume-rebind, clone-form array field): a fresh struct LOCAL
-	// `b` with an i32[] field is threaded via the immutable-update method
-	// `b = b.emit(f)` (each builds `B { ops: b.ops.append(f), n: b.n+1 }`, a fresh
-	// growing clone of the ops buffer), bounded by `b = b.clear()` once it reaches
-	// 100 elements, for 200M iterations. Each rebind must release the replaced ops
-	// buffer (and every cleared builder's buffer) so the freed blocks recycle
-	// through the size-class freelist; a leak there exhausts the heap (exit 137)
-	// instead of exiting 0.
 	run(t, `struct B { ops: i32[], n: i32 }
 function (b: B) emit(v: i32): B { return B { ops: b.ops.append(v), n: b.n + 1 }; }
 function (b: B) clear(): B { return B { ops: [], n: 0 }; }
@@ -69,12 +53,6 @@ function churn(): i32 {
 }
 function main(): i32 { return churn(); }`, "field_reclaim_churn", 0)
 
-	// CHURN (snapshot-param): the same bounded clone-form threading, but on a
-	// struct PARAM (snapshot-reclaim path) — intermediate dead clones free against
-	// the != new AND != caller-snapshot guards. Without it the per-call dead clones
-	// leak across 3M calls → 137; with it → bounded → 0. The final box is cleared
-	// to [] before return so the (un-swept) snapshot-param final box leaks only a
-	// tiny empty buffer, isolating the intermediate-clone reclaim under test.
 	run(t, `struct B { ops: i32[], n: i32 }
 function (b: B) emit(v: i32): B { return B { ops: b.ops.append(v), n: b.n + 1 }; }
 function (b: B) clear(): B { return B { ops: [], n: 0 }; }
@@ -94,9 +72,6 @@ function main(): i32 {
     return 0;
 }`, "field_reclaim_snap_churn", 0)
 
-	// VALUE-CORRECTNESS: the builder is read back after threading — a wrong free of
-	// a LIVE (shared / cow) field buffer would corrupt the array. The param's final
-	// value is moved out (`return b`) and summed. ops = [10,20,30] (sum 60) + n 3 = 63.
 	run(t, `struct B { ops: i32[], n: i32 }
 function (b: B) emit(v: i32): B { return B { ops: b.ops.append(v), n: b.n + 1 }; }
 function build(b: B): B { b = b.emit(10); b = b.emit(20); b = b.emit(30); return b; }
@@ -108,10 +83,6 @@ function main(): i32 {
     return sum + b.n;
 }`, "field_reclaim_value", 63)
 
-	// CALLER-ORIGINAL-INTACT: thread() rebinds its param `b` (replacing the ops
-	// field) and returns an i32; main reads `seed.ops` AFTER the call. If the
-	// field reclaim wrongly freed the caller's original ops buffer (the snapshot),
-	// seed.ops would be corrupted / reused. seed.ops = [7] (sum 7) + thread's 2 = 9.
 	run(t, `struct B { ops: i32[], n: i32 }
 function (b: B) emit(v: i32): B { return B { ops: b.ops.append(v), n: b.n + 1 }; }
 function thread(b: B): i32 { b = b.emit(1); b = b.emit(2); return b.n; }
@@ -123,9 +94,6 @@ function main(): i32 {
     return sum + t;
 }`, "field_reclaim_caller_intact", 9)
 
-	// LOCAL consume-rebind (no snapshot — the != new guard only): a fresh,
-	// non-escaping struct LOCAL with an array field is threaded via `c = step(c)`
-	// in a churn loop. Each rebind's old box + its replaced ops buffer reclaim.
 	run(t, `struct B { ops: i32[], n: i32 }
 function step(c: B): B { return B { ops: c.ops.append(c.n), n: c.n + 1 }; }
 function main(): i32 {

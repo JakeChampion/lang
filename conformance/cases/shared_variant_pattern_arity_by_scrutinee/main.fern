@@ -1,5 +1,5 @@
-// Two enums declare `Other` with different payload counts. A bare pattern is
-// checked against the variant of the enum being matched.
+
+
 enum Mine { Other(i32), Plain }
 enum Yours { Other(i32, i32) }
 

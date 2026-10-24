@@ -2,30 +2,11 @@ package e2ecompiler
 
 import "testing"
 
-// strSliceBorrowCases pin which positions read a string SLICE as a borrow of its
-// source and which read it as an alias.
-//
-// A slice is a zero-copy view over the source's buffer. Where the view is
-// consumed inside the expression that built it — `base[4:base.len()].len()`,
-// no binding, no method chain, nothing carried anywhere — the source is READ,
-// not aliased out, so `base` is still released. Read as an alias, that shape
-// leaked 47 B/round on x86-64 and arm64, 71 on wasm.
-//
-// The flat cases return 98 when the source is stranded: 400 rounds of a 170-byte
-// producer is 68 KB leaked against a 32 KB ceiling, and the widest legitimate
-// residual (wasm, where the view is a copy rather than a frame box, on the
-// nested-slice case) is 19 KB. The trim case is value-exact under
-// same-size-class allocation pressure, so a wrongly released buffer is recycled
-// with different bytes rather than merely freed and left readable.
 var strSliceBorrowCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// The shape that led here: a `.len()` read of an inline slice. The view box is
-	// frame-allocated and costs nothing; what leaked was `base` itself, 47 B/round,
-	// because the escape scan read the slice as an alias and struck the binding's
-	// reclaim credit.
 	{"str-slice-len-recv-borrow-flat", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-view-box-so-the-source-string-dominates-the-measurement-when-it-is-stranded-by-a-slice-read-0123456789"; }
 function round(pre: string): i32 { let base: string = w(pre); return slice_unchecked(base, 4, 12).len(); }
 function churn(pre: string, n: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
@@ -40,8 +21,6 @@ function main(): i32 {
     if (b2 - b1 >= 32768) { return 98; }
     return 0;
 }`, 0},
-	// A comparison operand: `==` / `!=` lower to str_eq, which reads bytes and moves
-	// nothing.
 	{"str-slice-compare-operand-borrow-flat", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-view-box-so-the-source-string-dominates-the-measurement-when-it-is-stranded-by-a-slice-read-0123456789"; }
 function round(pre: string): i32 { let base: string = w(pre); if (slice_unchecked(base, 0, 8) == pre) { return 3; } return 5; }
 function churn(pre: string, n: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
@@ -56,7 +35,6 @@ function main(): i32 {
     if (b2 - b1 >= 32768) { return 98; }
     return 0;
 }`, 0},
-	// A concat operand: `+` copies both operands' bytes into a new box.
 	{"str-slice-concat-operand-borrow-flat", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-view-box-so-the-source-string-dominates-the-measurement-when-it-is-stranded-by-a-slice-read-0123456789"; }
 function round(pre: string): i32 { let base: string = w(pre); return (slice_unchecked(base, 0, 8) + "!").len(); }
 function churn(pre: string, n: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
@@ -71,8 +49,6 @@ function main(): i32 {
     if (b2 - b1 >= 32768) { return 98; }
     return 0;
 }`, 0},
-	// A byte read off the view: `base[4:12][1]` indexes the view and copies out one
-	// byte.
 	{"str-slice-index-base-borrow-flat", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-view-box-so-the-source-string-dominates-the-measurement-when-it-is-stranded-by-a-slice-read-0123456789"; }
 function round(pre: string): i32 { let base: string = w(pre); return (slice_unchecked(base, 4, 12)[1] as i32); }
 function churn(pre: string, n: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
@@ -87,8 +63,6 @@ function main(): i32 {
     if (b2 - b1 >= 32768) { return 98; }
     return 0;
 }`, 0},
-	// A slice OF a slice, both in borrow position — the recursion has to carry the
-	// verdict through the inner view as well as the outer.
 	{"str-slice-nested-borrow-flat", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-view-box-so-the-source-string-dominates-the-measurement-when-it-is-stranded-by-a-slice-read-0123456789"; }
 function round(pre: string): i32 { let base: string = w(pre); return slice_unchecked(slice_unchecked(base, 4, 20), 2, 6).len(); }
 function churn(pre: string, n: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
@@ -103,9 +77,6 @@ function main(): i32 {
     if (b2 - b1 >= 32768) { return 98; }
     return 0;
 }`, 0},
-	// `.trim()` returns an owned string, so trimming a slice reads `base` rather
-	// than aliasing it. The padding is the same length as `base`, so a wrongly
-	// released buffer is recycled with different bytes and the value check sees it.
 	{"str-slice-trim-receiver-owned", `import "std/string";
 function w(pre: string): string { return "  " + pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-view-box-so-the-source-string-dominates-the-measurement-when-it-is-stranded-by-a-slice-read-0123456789  "; }
 function view(pre: string): str { let base: string = w(pre); return slice_unchecked(base, 0, 14).trim(); }
@@ -134,8 +105,6 @@ func TestSelfHostStrSliceBorrowIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrSliceBorrowIRArm64 is the arm64 leg. The scan is shared
-// lowering analysis; the frame-view form it licenses is a per-backend transcription.
 func TestSelfHostStrSliceBorrowIRArm64(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
 	cli := newStrictCLI(t)
@@ -148,9 +117,6 @@ func TestSelfHostStrSliceBorrowIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrSliceBorrowWasmIR is the wasm leg, where a slice COPIES rather
-// than viewing, so the residual per round is the view's own bytes and the source
-// reclaim is all these cases move.
 func TestSelfHostStrSliceBorrowWasmIR(t *testing.T) {
 	cli := newStrictCLI(t)
 	for _, tc := range strSliceBorrowCases {

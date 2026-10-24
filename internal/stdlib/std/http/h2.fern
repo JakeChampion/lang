@@ -1,34 +1,4 @@
-// std/http/h2 — an HTTP/2 connection (RFC 9113), the server's side, as a
-// sans-IO state machine: bytes in, bytes out, requests as events, and a
-// response given back for each stream.
-//
-//   let step: h2.Step = h2.server(h2.config());        // step.output: the server's SETTINGS
-//   step = step.conn.read(received);                    // step.events: Request(stream, req), ...
-//   step = step.conn.respond(stream, resp);             // step.output: HEADERS, DATA, ...
-//
-// A connection holds the streams the client opened, each with its request
-// as it is assembled from HEADERS, CONTINUATION and DATA frames, both
-// flow-control windows at both levels, the settings each side sent, and
-// one HPACK decoder and encoder. A request is handed over whole once its
-// stream's END_STREAM arrives, with its trailers; a response is written as
-// HEADERS (and CONTINUATION, past the peer's frame size), DATA as the
-// windows allow, the rest held until a WINDOW_UPDATE, and trailers last.
-//
-// The bounds RFC 9113 §10 and the attack record ask for are held here:
-//   - a handler runs for a stream only while the stream counts against
-//     max_concurrent_streams, and a stream the client resets keeps counting
-//     until the handler answers (`respond` or `reset`), so a reset does not
-//     free a slot (Rapid Reset); a stream past the limit is refused;
-//   - a header block is bounded in frames and bytes as it is assembled,
-//     and the HPACK decoder bounds what it decodes to, so a CONTINUATION
-//     flood or a header bomb closes the connection before the memory goes;
-//   - every RST_STREAM, the client's and the server's own, counts against
-//     one reset budget per span of frames (MadeYouReset), and empty DATA
-//     frames against another; past either the connection is closed with
-//     ENHANCE_YOUR_CALM.
-// A connection error is answered with GOAWAY and reported as `Closed`; a
-// stream error with RST_STREAM. Priorities are read and ignored (§5.3).
-// Push is not offered, and a PUSH_PROMISE from the client is an error.
+// This module implements an HTTP/2 connection as a state machine without I/O.
 
 import "core/int";
 import "std/array";
@@ -38,32 +8,17 @@ import "std/headers";
 import "std/http/hpack";
 import "std/http/h2/frame";
 
-// Config — what the server allows and advertises.
 pub struct Config {
-  // Streams whose handler may run at once; the rest are refused.
   max_concurrent_streams: i32,
-  // The receive window each stream starts with, and the connection's.
   initial_window: i32,
-  // The largest frame the server reads.
   max_frame_size: i32,
-  // The most a header block may decode to, name, value and 32 per field.
   max_header_list: i32,
-  // The dynamic table the client's encoder may use.
   header_table_size: i32,
-  // The most body bytes one request may carry.
   max_body: i32,
-  // Resets either side sends, and empty DATA frames, allowed per
-  // `budget_frames` frames received.
   reset_budget: i32,
   empty_data_budget: i32,
   budget_frames: i32,
-  // The most frames one header block may span.
   header_frames_max: i32,
-  // Whether a request is handed over as soon as its header block is
-  // complete (`Streamed`), its body following as `StreamData` events and
-  // its end as `StreamEnd`, with the windows replenished as the handler
-  // consumes (`consumed`); off, a request is handed over whole at its
-  // END_STREAM.
   stream_bodies: boolean,
 }
 
@@ -71,45 +26,25 @@ pub function config(): Config {
   return Config { max_concurrent_streams: 100, initial_window: 65535, max_frame_size: frame.MIN_FRAME_SIZE, max_header_list: 65536, header_table_size: 4096, max_body: http.http_limits().body, reset_budget: 1000, empty_data_budget: 1000, budget_frames: 10000, header_frames_max: 32, stream_bodies: false };
 }
 
-// Event — what a step reports.
 pub enum Event {
-  // A whole request on a stream: answer it with `respond(stream, resp)`.
   Request(i32, HttpRequest),
-  // A request handed over at its header block (`Config.stream_bodies`),
-  // its body still to come as `StreamData` and `StreamEnd`; answer it
-  // with `respond`, or with `respond_head`, `write` and `end`.
   Streamed(i32, HttpRequest),
-  // Body bytes of a streamed request; `consumed(stream, n)` once taken,
-  // so the client's windows are replenished.
   StreamData(i32, u8[]),
-  // The end of a streamed request's body, with its trailers.
   StreamEnd(i32, HeaderMap),
-  // The client reset a stream with this code. Its handler, if one runs,
-  // still answers with `respond` or `reset`, which frees its slot.
   Reset(i32, i32),
-  // The client's GOAWAY: no new streams will come; the open ones finish.
   GoAway(i32),
-  // The server closed the connection with this error code, after GOAWAY;
-  // the reason is for the log.
   Closed(i32, string),
-  // On a client connection: the response to the request this client sent
-  // on the stream, whole, its trailers in `resp.trailers`.
   Answered(i32, HttpResponse),
 }
 
-// Step — the connection after a call, the bytes to send and what happened.
 pub struct Step { conn: Conn, output: u8[], events: Event[] }
 
 const OPEN: i32 = 0;
 
-// The client has sent END_STREAM; the response is owed.
 const HALF_REMOTE: i32 = 1;
 
-// The response is sent; the client's END_STREAM is awaited.
 const HALF_LOCAL: i32 = 2;
 
-// __Stream — one stream and its request as it is assembled, its windows,
-// and the response bytes still owed to it.
 struct __Stream {
   id: i32,
   state: i32,
@@ -122,24 +57,15 @@ struct __Stream {
   fields: HeaderMap,
   body: u8[],
   length: i32,
-  // Whether the request has been handed over and its handler counts.
   handling: boolean,
-  // Whether the client reset it while its handler ran.
   reset: boolean,
   pending: u8[],
   trailers: HeaderMap,
   owes_end: boolean,
-  // Whether the request was handed over at its header block, its body
-  // reported as it comes (`received` counts it against content-length),
-  // and whether the response's body is being written in parts.
   streaming: boolean,
-  // What the header block carried, by bit: 1 :method, 2 :scheme, 4 :path,
-  // 8 :authority, REGULAR a regular field, MALFORMED a field the block
-  // may not carry.
   seen: i32,
   received: i32,
   producing: boolean,
-  // On a client connection: the response's status once its head has come.
   status: i32,
 }
 
@@ -155,15 +81,9 @@ const RUNNING: i32 = 2;
 
 const CLOSED: i32 = 3;
 
-// Conn — the connection.
 pub struct Conn {
   config: Config,
   phase: i32,
-  // Bytes read and not yet framed, the next frame at `inbox_at`. Within one
-  // `read` the frames are taken by moving inbox_at; a frame that ends the
-  // inbox empties it, and what is left over is copied out once at the
-  // read's end, so it is 0 between calls and the caller has its buffer
-  // back.
   inbox: u8[],
   inbox_at: i32,
   decoder: hpack.Decoder,
@@ -176,42 +96,28 @@ pub struct Conn {
   streams: __Stream[],
   last_stream: i32,
   handling: i32,
-  // A header block being assembled: its stream (0 for none), the bytes so
-  // far, whether END_STREAM came with it, and the frames it has spanned.
   block_stream: i32,
   block: u8[],
   block_end: boolean,
   block_frames: i32,
-  // The budgets' counters and the frames since they were last reset.
   resets: i32,
   empty_data: i32,
   frames: i32,
   peer_going_away: boolean,
-  // Whether this side opened the connection (`client`), and the stream it
-  // opens next, odd for a client (§5.1.1).
   client: boolean,
   next_stream: i32,
-  // The Date a response carries when it names none (`with_date`); "" for
-  // none.
   date: string,
 }
 
-// server is a new connection and the SETTINGS it opens with (§3.4).
 pub function server(cfg: Config): Step {
   return __opened(cfg, false);
 }
 
-// client is a new connection from the client's side: the connection
-// preface and the SETTINGS it opens with (§3.4), the server's SETTINGS
-// expected first. `request` opens a stream on it; the response comes back
-// as `Answered`. The connection sets ENABLE_PUSH to 0, so a PUSH_PROMISE
-// closes it.
 pub function client(cfg: Config): Step {
   let start: Step = __opened(cfg, true);
   return Step { ...start, output: frame.preface().concat(start.output) };
 }
 
-// __opened is a new connection for either side and the SETTINGS it sends.
 function __opened(cfg: Config, client: boolean): Step {
   let phase: i32 = AWAITING_PREFACE;
   if (client) {
@@ -227,23 +133,12 @@ function __opened(cfg: Config, client: boolean): Step {
   return Step { conn: c, output: out, events: [] };
 }
 
-// with_date is the connection with the Date (RFC 9110 §6.6.1) its
-// responses carry when they name none, as the serve loop keeps it; ""
-// for none.
 pub function (c: Conn) with_date(date: string): Conn {
   return Conn { ...c, date: date };
 }
 
-// Outgoing — a request a client sends: the method, scheme, authority and
-// path that become the pseudo-header fields, the fields (`host` and the
-// connection-specific ones left out, the rest lowered), the whole body
-// and the trailers sent after it.
 pub struct Outgoing { method: string, scheme: string, authority: string, path: string, headers: HeaderMap, body: u8[], trailers: HeaderMap }
 
-// request opens a stream for `out` on a client connection: HEADERS with
-// the pseudo-header fields first, the body as DATA under the windows and
-// the trailers after it; the stream's id is answered beside the step,
-// -1 when the connection is closed or going away and takes no more.
 pub function (c: Conn) request(out: Outgoing): (Step, i32) {
   if (c.phase == CLOSED || c.peer_going_away || !c.client) {
     return (Step { conn: c, output: [], events: [] }, 0 - 1);
@@ -264,9 +159,6 @@ pub function (c: Conn) request(out: Outgoing): (Step, i32) {
   return (__step(r), stream);
 }
 
-// __request_block is a request's header block: the pseudo-header fields,
-// then the fields with `host` and the connection-specific ones left out,
-// and a content-length for a body that has none.
 function __request_block(e: hpack.Encoder, out: Outgoing): hpack.Encoded {
   let en: hpack.Encoding = e.begin().put(":method", out.method, false).put(":scheme", out.scheme, false).put(":authority", out.authority, false).put(":path", out.path, false);
   let has_length: boolean = false;
@@ -287,14 +179,10 @@ function __request_block(e: hpack.Encoder, out: Outgoing): hpack.Encoded {
   return en.finish();
 }
 
-// going_away is whether the peer sent GOAWAY: the open streams finish,
-// no new one may be opened.
 pub function (c: Conn) going_away(): boolean {
   return c.peer_going_away;
 }
 
-// preface is what a client sends first (§3.4), by which a loop knows a
-// connection is HTTP/2's.
 pub function preface(): u8[] {
   return frame.preface();
 }
@@ -303,7 +191,6 @@ pub function (c: Conn) closed(): boolean {
   return c.phase == CLOSED;
 }
 
-// handling is how many streams' handlers count against the limit.
 pub function (c: Conn) handling(): i32 {
   return c.handling;
 }
@@ -312,15 +199,10 @@ pub function (c: Conn) streams_open(): i32 {
   return c.streams.len();
 }
 
-// settings_acked is whether the peer acknowledged this side's SETTINGS.
-// Nothing times the acknowledgement out (RFC 9113 §6.5.3 leaves that
-// optional); the suites read it to see a handshake through.
 pub function (c: Conn) settings_acked(): boolean {
   return c.settings_acked;
 }
 
-// __Run — a read in progress: the connection, the bytes gathered to send
-// and the events so far.
 struct __Run { conn: Conn, out: u8[], events: Event[] }
 
 function __run(c: Conn): __Run {
@@ -335,13 +217,10 @@ function __send(r: __Run, f: frame.Frame): __Run {
   return __send_bytes(r, frame.encode(f));
 }
 
-// __send_bytes queues a frame already on the wire.
 function __send_bytes(r: __Run, bytes: u8[]): __Run {
   return __Run { ...r, out: __joined(r.out, bytes) };
 }
 
-// __joined(a, b) — the bytes of `a` then `b`, either one as it is when the
-// other is empty.
 function __joined(a: u8[], b: u8[]): u8[] {
   if (a.len() == 0) {
     return b;
@@ -352,12 +231,6 @@ function __joined(a: u8[], b: u8[]): u8[] {
   return a.concat(b);
 }
 
-// === reading ===============================================================
-
-// read takes bytes from the client: the frames they complete are acted
-// on, and what is left is kept for the next call in bytes of the
-// connection's own, so `bytes` is the caller's to reuse once the call
-// returns. Nothing is read after a close.
 pub function (c: Conn) read(bytes: u8[]): Step {
   if (c.phase == CLOSED) {
     return Step { conn: c, output: [], events: [] };
@@ -374,16 +247,12 @@ pub function (c: Conn) read(bytes: u8[]): Step {
       break;
     }
   }
-  // Joined onto bytes already held, the inbox is the connection's own;
-  // otherwise it is `bytes` itself, and what is left of it is copied out.
   if (r.conn.inbox_at > 0 || !held && r.conn.inbox.len() > 0) {
     r = __Run { ...r, conn: Conn { ...r.conn, inbox: __rest(r.conn.inbox, r.conn.inbox_at), inbox_at: 0 } };
   }
   return __step(r);
 }
 
-// __preface checks the 24 bytes a client opens with (§3.4), once they
-// are all here.
 function __preface(r: __Run): __Run {
   let want: u8[] = frame.preface();
   let have: u8[] = r.conn.inbox;
@@ -404,10 +273,6 @@ function __preface(r: __Run): __Run {
   return __Run { ...r, conn: Conn { ...r.conn, phase: AWAITING_SETTINGS, inbox_at: want.len() } };
 }
 
-// __next_frame takes one frame off the inbox and acts on it; with no
-// whole frame there, the inbox is left as it is. The frame a request
-// starts with, a whole HEADERS frame with END_HEADERS and no padding or
-// priority, is read off the inbox without the record `frame.read` builds.
 function __next_frame(r: __Run): __Run {
   if let Some(plain) = frame.plain_headers_at(r.conn.inbox, r.conn.inbox_at, r.conn.config.max_frame_size) {
     if (r.conn.block_stream == 0 && r.conn.phase == RUNNING) {
@@ -433,7 +298,6 @@ function __next_frame(r: __Run): __Run {
       if (e.stream == 0) {
         return __fail(r, e.code, e.reason);
       }
-      // A stream error in a frame's shape: the frame is dropped whole.
       let dropped: __Run = __Run { ...r, conn: Conn { ...r.conn, inbox_at: __past_frame(r.conn.inbox, r.conn.inbox_at) } };
       return __reset_stream(dropped, e.stream, e.code);
     }
@@ -441,11 +305,6 @@ function __next_frame(r: __Run): __Run {
   return r;
 }
 
-// __plain_headers takes the HEADERS frame of `len` payload bytes at the
-// inbox's head (`frame.plain_headers_at`) as `__headers` takes one from
-// the record `frame.read` builds: the frame taken off and counted, its
-// block read whole where it lies in the inbox, since END_HEADERS came
-// with it.
 function __plain_headers(r: __Run, len: i32): __Run {
   let at: i32 = r.conn.inbox_at;
   let stream: i32 = frame.stream_at(r.conn.inbox, at);
@@ -454,10 +313,6 @@ function __plain_headers(r: __Run, len: i32): __Run {
   return __block_done(__Run { ...r, conn: __frame_taken(r.conn, frame.HEADER_LEN + len) }, stream, true, from, from + len, end_stream);
 }
 
-// __frame_taken is c with the n bytes of the frame at inbox_at taken and
-// the frame counted against the budgets' span, the counters reset when
-// the span is over. The inbox stays as it is, a header block read out of
-// it included; `read` cuts what is left at its end.
 function __frame_taken(c: Conn, n: i32): Conn {
   let frames: i32 = c.frames + 1;
   let resets: i32 = c.resets;
@@ -470,14 +325,11 @@ function __frame_taken(c: Conn, n: i32): Conn {
   return Conn { ...c, inbox_at: c.inbox_at + n, frames: frames, resets: resets, empty_data: empty_data };
 }
 
-// __past_frame is where the frame at `at` in the inbox ends, by its header.
 function __past_frame(inbox: u8[], at: i32): i32 {
   let len: i32 = inbox[at] as i32 << 16 | inbox[at + 1] as i32 << 8 | inbox[at + 2] as i32;
   return at + frame.HEADER_LEN + len;
 }
 
-// __frame acts on one frame. A header block in progress takes only its
-// CONTINUATION frames (§6.2); the first frame must be SETTINGS (§3.4).
 function __frame(r: __Run, f: frame.Frame): __Run {
   if (r.conn.block_stream != 0) {
     return __in_block(r, f);
@@ -526,23 +378,18 @@ function __frame_rest(r: __Run, f: frame.Frame): __Run {
       return __fail(r, frame.PROTOCOL_ERROR, "CONTINUATION with no header block open");
     },
     frame.PriorityFrame(stream, p) => {
-      // Read and ignored (§5.3.2), except a stream depending on itself
-      // (§5.3.1), which is a stream error.
       if (p.dependency == stream) {
         return __reset_stream(__Run { ...r, conn: Conn { ...r.conn, last_stream: __max(r.conn.last_stream, stream) } }, stream, frame.PROTOCOL_ERROR);
       }
       return r;
     },
     _ => {
-      // A frame of an unknown type (§4.1).
       return r;
     }
   }
   return r;
 }
 
-// __self_dependent is whether a HEADERS frame's priority names its own
-// stream as the one it depends on (§5.3.1).
 function __self_dependent(priority: Option[frame.Priority], stream: i32): boolean {
   match (priority) {
     Some(p) => {
@@ -570,8 +417,6 @@ function __first_frame(r: __Run, f: frame.Frame): __Run {
   return r;
 }
 
-// __in_block takes the next frame of a header block: a CONTINUATION on
-// the block's stream, within the frame and byte budgets.
 function __in_block(r: __Run, f: frame.Frame): __Run {
   match (f) {
     frame.Continuation(stream, end_headers, block) => {
@@ -587,10 +432,6 @@ function __in_block(r: __Run, f: frame.Frame): __Run {
   return r;
 }
 
-// __block_part adds a fragment to the block in progress and, at
-// END_HEADERS, decodes it. The block may span header_frames_max frames
-// and, raw, the list cap plus a frame (a Huffman-coded block decodes to
-// more, never less than four-fifths): past either the connection closes.
 function __block_part(r: __Run, part: u8[], end_headers: boolean): __Run {
   let block: u8[] = __joined(r.conn.block, part);
   if (r.conn.block_frames + 1 > r.conn.config.header_frames_max || block.len() > r.conn.config.max_header_list + r.conn.config.max_frame_size) {
@@ -611,7 +452,6 @@ function __block_part(r: __Run, part: u8[], end_headers: boolean): __Run {
   return __Run { ...done, conn: Conn { ...done.conn, block: [] } };
 }
 
-// __headers starts a request, or its trailers, on a stream.
 function __headers(r: __Run, h: frame.HeadersFrame): __Run {
   let out: u8[] = r.out;
   let events: Event[] = r.events;
@@ -624,13 +464,6 @@ function __headers(r: __Run, h: frame.HeadersFrame): __Run {
   return __block_part(__Run { conn: c, out: out, events: events }, h.block, h.end_headers);
 }
 
-// __block_done reads the whole header block at [from, end) of the inbox
-// (`in_inbox`) or of the block assembled from CONTINUATION frames, as the
-// stream it is on takes it, one field at a time with none kept: a
-// response's head or trailers on a client connection, trailers on a
-// stream whose body is arriving, or a request on a new stream. A block is
-// read whole whatever the stream does with it, since the peer's table
-// moves with it, and an HPACK error closes the connection.
 function __block_done(r: __Run, stream: i32, in_inbox: boolean, from: i32, end: i32, end_stream: boolean): __Run {
   let at: i32 = __stream_at(r.conn, stream);
   if (r.conn.client) {
@@ -642,8 +475,6 @@ function __block_done(r: __Run, stream: i32, in_inbox: boolean, from: i32, end: 
   return __request(r, stream, in_inbox, from, end, end_stream);
 }
 
-// __skipped is `r` with its decoder past `block` and the fields dropped:
-// a block on a stream that takes none still moves the table.
 function __skipped(r: __Run, in_inbox: boolean, from: i32, end: i32): __Run {
   let c: Conn = r.conn;
   let block: u8[] = __block_bytes(c, in_inbox);
@@ -654,9 +485,6 @@ function __skipped(r: __Run, in_inbox: boolean, from: i32, end: i32): __Run {
   return __decoded(__Run { ...r, conn: Conn { ...c, decoder: st } });
 }
 
-// __block_bytes is where a header block's bytes lie: the inbox, when it
-// came whole in one HEADERS frame, else the block assembled from
-// CONTINUATION frames.
 function __block_bytes(c: Conn, in_inbox: boolean): u8[] {
   if (in_inbox) {
     return c.inbox;
@@ -664,12 +492,6 @@ function __block_bytes(c: Conn, in_inbox: boolean): u8[] {
   return c.block;
 }
 
-// __decoded is `r`, whose connection has its decoder back from a block,
-// closed with COMPRESSION_ERROR when the block failed. A block's reader
-// takes the decoder out of the connection and puts it back in one
-// construction of the run, which it names nowhere else after the take:
-// that is what lets the reads update the decoder in place rather than
-// copy it.
 function __decoded(r: __Run): __Run {
   if (!r.conn.decoder.failed) {
     return r;
@@ -678,9 +500,6 @@ function __decoded(r: __Run): __Run {
   return __fail(r, frame.COMPRESSION_ERROR, why);
 }
 
-// __last_seen is the connection's last stream once a block opening
-// `stream` was read: unchanged when the block failed, since the
-// connection closes at it.
 function __last_seen(last: i32, stream: i32, failed: boolean): i32 {
   if (failed) {
     return last;
@@ -700,8 +519,6 @@ function __hpack_reason(error: Option[hpack.HpackError]): string {
   return "";
 }
 
-// __reset_past is a stream error on a block the stream takes nothing
-// from: the block read for the table, then RST_STREAM.
 function __reset_past(r: __Run, in_inbox: boolean, from: i32, end: i32, stream: i32, code: i32): __Run {
   let past: __Run = __skipped(r, in_inbox, from, end);
   if (past.conn.phase == CLOSED) {
@@ -710,11 +527,6 @@ function __reset_past(r: __Run, in_inbox: boolean, from: i32, end: i32, stream: 
   return __reset_stream(past, stream, code);
 }
 
-// __client_block takes a header block on a client connection: the
-// response's head on a stream this client opened and has no status for
-// yet (an informational one stepped over), else its trailers; a block on
-// a stream the server would open is a protocol error, push being
-// disabled, and one on a stream that has closed a stream error.
 function __client_block(r: __Run, stream: i32, at: i32, in_inbox: boolean, from: i32, end: i32, end_stream: boolean): __Run {
   if (at < 0) {
     if (stream % 2 == 0) {
@@ -731,9 +543,6 @@ function __client_block(r: __Run, stream: i32, at: i32, in_inbox: boolean, from:
   return __response_head(r, at, in_inbox, from, end, end_stream);
 }
 
-// __response_head reads a response's header block (§8.3.2): `:status`
-// first and alone among the pseudo-header fields, the rest regular. A 1xx
-// other than 101 is stepped over, the final response still to come.
 function __response_head(r: __Run, at: i32, in_inbox: boolean, from: i32, end: i32, end_stream: boolean): __Run {
   let s: __Stream = r.conn.streams[at];
   let c: Conn = r.conn;
@@ -752,9 +561,6 @@ function __response_head(r: __Run, at: i32, in_inbox: boolean, from: i32, end: i
   return __response_headed(read, at, s, end_stream);
 }
 
-// __response_headed keeps the response head `s` read off a block on the
-// stream at `at`, or resets the stream for a block malformed or without
-// a status, or steps over an informational response.
 function __response_headed(r: __Run, at: i32, s: __Stream, end_stream: boolean): __Run {
   if ((s.seen & MALFORMED) != 0 || s.status == 0) {
     return __reset_stream(r, s.id, frame.PROTOCOL_ERROR);
@@ -775,10 +581,6 @@ function __response_headed(r: __Run, at: i32, s: __Stream, end_stream: boolean):
   return __Run { conn: c, out: out, events: events };
 }
 
-// __response_field is `s` with one field of a response's header block
-// read: `:status`, the one pseudo-header a response has, first and once,
-// then regular fields, content-length remembered to check the body
-// against; MALFORMED for a field the block may not carry.
 function __response_field(s: __Stream, name: string, value: string): __Stream {
   if (name.len() == 0) {
     return __malformed(s);
@@ -802,8 +604,6 @@ function __malformed(s: __Stream): __Stream {
   return __Stream { ...s, seen: s.seen | MALFORMED };
 }
 
-// __status_of is the status a `:status` field's value carries, 0 for one
-// that is not a status.
 function __status_of(value: string): i32 {
   if (value.len() == 3) {
     match (int.parse_int_radix(value, 10)) {
@@ -818,7 +618,6 @@ function __status_of(value: string): i32 {
   return 0;
 }
 
-// __answered hands a client's response over whole, the stream done with.
 function __answered(r: __Run, at: i32, trailers: HeaderMap): __Run {
   let s: __Stream = r.conn.streams[at];
   if (s.length >= 0 && s.length != s.body.len()) {
@@ -832,9 +631,6 @@ function __answered(r: __Run, at: i32, trailers: HeaderMap): __Run {
   return __Run { conn: c, out: out, events: events.append(Answered(s.id, resp)) };
 }
 
-// __trailers ends a request with its trailers (§8.1): they must carry
-// END_STREAM and no pseudo-header, on a stream whose request has not
-// already ended, which is a STREAM_CLOSED error (§5.1).
 function __trailers(r: __Run, at: i32, in_inbox: boolean, from: i32, end: i32, end_stream: boolean): __Run {
   let id: i32 = r.conn.streams[at].id;
   let state: i32 = r.conn.streams[at].state;
@@ -866,8 +662,6 @@ function __trailers(r: __Run, at: i32, in_inbox: boolean, from: i32, end: i32, e
   return __trailed(read, at, trailers, pseudo);
 }
 
-// __trailed ends the request on the stream at `at` with `trailers`, or
-// resets the stream when the block carried a pseudo-header.
 function __trailed(r: __Run, at: i32, trailers: HeaderMap, pseudo: boolean): __Run {
   let s: __Stream = r.conn.streams[at];
   if (pseudo) {
@@ -879,9 +673,6 @@ function __trailed(r: __Run, at: i32, trailers: HeaderMap, pseudo: boolean): __R
   return __finished(r, at, trailers);
 }
 
-// __request opens a stream for a request's headers (§5.1.1, §8.3.1): an
-// odd id above every one before it, under the concurrency limit, with
-// the pseudo-headers a request needs and none it may not have.
 function __request(r: __Run, stream: i32, in_inbox: boolean, from: i32, end: i32, end_stream: boolean): __Run {
   if (stream % 2 == 0 || stream <= r.conn.last_stream) {
     return __fail(r, frame.PROTOCOL_ERROR, "stream " + int.int_to_string(stream) + " is not a new client stream");
@@ -907,10 +698,6 @@ function __request(r: __Run, stream: i32, in_inbox: boolean, from: i32, end: i32
   return __requested(read, s, end_stream);
 }
 
-// __declined takes a new stream's header block on a connection that opens
-// no stream for it: the peer is going away, or the concurrency limit is
-// reached, which refuses the stream. The block still moves the table, and
-// the stream still counts as seen.
 function __declined(r: __Run, stream: i32, in_inbox: boolean, from: i32, end: i32): __Run {
   let going_away: boolean = r.conn.peer_going_away;
   let past: __Run = __skipped(r, in_inbox, from, end);
@@ -927,11 +714,6 @@ function __declined(r: __Run, stream: i32, in_inbox: boolean, from: i32, end: i3
   return __reset_stream(__Run { conn: c, out: out, events: events }, stream, frame.REFUSED_STREAM);
 }
 
-// __requested opens the stream `s` read off a request's header block,
-// reset when the block was malformed or incomplete: a `host` field from
-// `:authority` when the block carried none, its target normalised, the
-// request handed over at once when END_STREAM came with the block, or
-// the stream kept for its body.
 function __requested(r: __Run, s: __Stream, end_stream: boolean): __Run {
   if ((s.seen & MALFORMED) != 0 || __incomplete(s)) {
     return __reset_stream(r, s.id, frame.PROTOCOL_ERROR);
@@ -961,8 +743,6 @@ function __requested(r: __Run, s: __Stream, end_stream: boolean): __Run {
   return opened;
 }
 
-// __rejected answers a request whose target is refused with `status` and
-// no body, the stream reset as well when its body is still to come.
 function __rejected(r: __Run, stream: i32, status: i32, end_stream: boolean): __Run {
   let encoded: hpack.Encoded = r.conn.encoder.encode([hpack.field(":status", int.int_to_string(status))]);
   let rejected: __Run = __header_frames(__Run { ...r, conn: Conn { ...r.conn, encoder: encoded.encoder } }, stream, encoded.bytes, true);
@@ -972,9 +752,6 @@ function __rejected(r: __Run, stream: i32, status: i32, end_stream: boolean): __
   return rejected;
 }
 
-// __waiting is how many streams have a request still arriving: they take
-// a slot before their handler runs, so a client cannot hold a thousand
-// half-sent requests.
 function __waiting(c: Conn): i32 {
   let n: i32 = 0;
   for s in c.streams {
@@ -985,11 +762,6 @@ function __waiting(c: Conn): i32 {
   return n;
 }
 
-// __request_field is `s` with one field of a request's header block read
-// (§8.3): the pseudo-headers first, each once, names in lower case, no
-// connection-specific field and `te` only `trailers`; content-length is
-// remembered to check the body against; MALFORMED for a field the block
-// may not carry.
 function __request_field(s: __Stream, name: string, value: string): __Stream {
   if (name.len() == 0) {
     return __malformed(s);
@@ -1003,14 +775,10 @@ function __request_field(s: __Stream, name: string, value: string): __Stream {
   return __regular(__Stream { ...s, seen: s.seen | REGULAR }, name, value);
 }
 
-// __incomplete is whether a request's header block lacks a pseudo-header
-// it needs (§8.3.1): `:method`, and `:scheme` and `:path` unless CONNECT.
 function __incomplete(s: __Stream): boolean {
   return s.method.len() == 0 || s.method != "CONNECT" && (s.scheme.len() == 0 || s.path.len() == 0);
 }
 
-// Each pseudo-header once (§8.3.1), seen or not by `seen`'s bits, since
-// an empty first value would otherwise let a second through.
 function __pseudo(s: __Stream, name: string, value: string): __Stream {
   if (name == ":method" && (s.seen & 1) == 0) {
     return __Stream { ...s, method: value, seen: s.seen | 1 };
@@ -1040,8 +808,6 @@ function __regular(s: __Stream, name: string, value: string): __Stream {
   return __Stream { ...s, fields: s.fields.append(name, value) };
 }
 
-// __connection_specific names the fields HTTP/2 has no place for (§8.2.2),
-// told apart by length first.
 function __connection_specific(name: string): boolean {
   let n: i32 = name.len();
   if (n == 10) {
@@ -1053,8 +819,6 @@ function __connection_specific(name: string): boolean {
   return n == 7 && name == "upgrade";
 }
 
-// __with_length remembers a content-length, which must be a number and
-// agree with any other.
 function __with_length(s: __Stream, value: string): __Stream {
   match (int.parse_int_radix(value, 10)) {
     Some(n) => {
@@ -1070,9 +834,6 @@ function __with_length(s: __Stream, value: string): __Stream {
   return __malformed(s);
 }
 
-// __data takes a DATA frame on an open stream: within both receive
-// windows, within the body cap, counted when empty, and the request
-// finished at END_STREAM.
 function __data(r: __Run, d: frame.DataFrame): __Run {
   let c: Conn = r.conn;
   let at: i32 = __stream_at(c, d.stream);
@@ -1102,8 +863,6 @@ function __data(r: __Run, d: frame.DataFrame): __Run {
   return __body_grown(__Run { ...r, conn: c }, at, d, took);
 }
 
-// __body_grown takes a DATA frame's bytes into the body, under the cap,
-// and finishes the request at END_STREAM.
 function __body_grown(r: __Run, at: i32, d: frame.DataFrame, took: i32): __Run {
   let c: Conn = r.conn;
   let s: __Stream = c.streams[at];
@@ -1121,10 +880,6 @@ function __body_grown(r: __Run, at: i32, d: frame.DataFrame, took: i32): __Run {
   return next;
 }
 
-// __body_reported hands a streamed request's DATA on as it comes: the
-// windows are charged and left for `consumed` to replenish, so a handler
-// that reads slowly holds the client to what it has not taken yet. The
-// padding, which no handler can take, is credited back at once.
 function __body_reported(r: __Run, at: i32, d: frame.DataFrame, took: i32): __Run {
   let c: Conn = r.conn;
   let s: __Stream = c.streams[at];
@@ -1142,8 +897,6 @@ function __body_reported(r: __Run, at: i32, d: frame.DataFrame, took: i32): __Ru
   return next;
 }
 
-// __streamed hands a request over at its header block
-// (`Config.stream_bodies`): the handler runs while the body arrives.
 function __streamed(r: __Run, at: i32): __Run {
   let c: Conn = r.conn;
   let s: __Stream = c.streams[at];
@@ -1158,9 +911,6 @@ function __streamed(r: __Run, at: i32): __Run {
   return __Run { ...r, conn: next, events: r.events.append(Streamed(s.id, req)) };
 }
 
-// __stream_ended ends a streamed request's body: what came must be what
-// content-length said; the stream closes when the response has already
-// gone, and awaits it otherwise.
 function __stream_ended(r: __Run, at: i32, trailers: HeaderMap): __Run {
   let c: Conn = r.conn;
   let s: __Stream = c.streams[at];
@@ -1174,9 +924,6 @@ function __stream_ended(r: __Run, at: i32, trailers: HeaderMap): __Run {
   return __Run { ...ended, conn: Conn { ...c, streams: c.streams.with(at, __Stream { ...s, state: HALF_REMOTE }) } };
 }
 
-// __replenished sends WINDOW_UPDATE for the connection and the stream
-// once either window has fallen to half, since the body is held here and
-// the client may keep sending.
 function __replenished(r: __Run, at: i32): __Run {
   let c: Conn = r.conn;
   let out: __Run = r;
@@ -1192,8 +939,6 @@ function __replenished(r: __Run, at: i32): __Run {
   return out;
 }
 
-// __finished hands a stream's request over once the client's END_STREAM
-// has come: the body must be what content-length said.
 function __finished(r: __Run, at: i32, trailers: HeaderMap): __Run {
   if (r.conn.client) {
     return __answered(r, at, trailers);
@@ -1207,9 +952,6 @@ function __finished(r: __Run, at: i32, trailers: HeaderMap): __Run {
   return __Run { ...r, conn: Conn { ...r.conn, streams: r.conn.streams.with(at, handed), handling: r.conn.handling + 1 }, events: r.events.append(Request(s.id, req)) };
 }
 
-// __finished_at_headers is `__finished` for a request whose END_STREAM
-// came with its header block: the stream, not yet among the connection's,
-// joins them handed over.
 function __finished_at_headers(r: __Run, s: __Stream): __Run {
   if (s.length > 0) {
     return __reset_stream(r, s.id, frame.PROTOCOL_ERROR);
@@ -1220,12 +962,10 @@ function __finished_at_headers(r: __Run, s: __Stream): __Run {
   return __Run { ...r, conn: Conn { ...r.conn, streams: r.conn.streams.append(handed), handling: r.conn.handling + 1 }, events: r.events.append(Request(id, req)) };
 }
 
-// __request_of is the request a stream's header block and body make.
 function __request_of(s: __Stream, trailers: HeaderMap): HttpRequest {
   return HttpRequest { method: s.method, path: s.path, body: Stream { data: s.body, pos: 0, source: None }, headers: s.fields, trailers: trailers };
 }
 
-// __settings applies the client's settings and acknowledges them (§6.5).
 function __settings(r: __Run, ack: boolean, settings: frame.Setting[]): __Run {
   if (ack) {
     return __Run { ...r, conn: Conn { ...r.conn, settings_acked: true } };
@@ -1248,8 +988,6 @@ function __settings(r: __Run, ack: boolean, settings: frame.Setting[]): __Run {
   return __send(out, frame.Settings(true, []));
 }
 
-// __windows_moved moves every stream's send window by the change in the
-// client's initial window (§6.9.2); past 2^31-1 is a connection error.
 function __windows_moved(r: __Run, initial: i32): __Run {
   let c: Conn = r.conn;
   let delta: i32 = initial - c.peer_initial_window;
@@ -1264,8 +1002,6 @@ function __windows_moved(r: __Run, initial: i32): __Run {
   return __flushed(__Run { ...r, conn: Conn { ...c, peer_initial_window: initial, streams: streams } });
 }
 
-// __window_update widens the connection's or a stream's send window
-// (§6.9), then sends what the width allows.
 function __window_update(r: __Run, stream: i32, increment: i32): __Run {
   let c: Conn = r.conn;
   if (stream == 0) {
@@ -1288,9 +1024,6 @@ function __window_update(r: __Run, stream: i32, increment: i32): __Run {
   return __flushed(__Run { ...r, conn: Conn { ...c, streams: c.streams.with(at, __Stream { ...s, send_window: s.send_window + increment }) } });
 }
 
-// __rst_stream takes the client's RST_STREAM: the stream goes, its
-// handler (if one runs) is told and keeps its slot until it answers, and
-// the reset counts.
 function __rst_stream(r: __Run, stream: i32, code: i32): __Run {
   let c: Conn = r.conn;
   if (stream > c.last_stream) {
@@ -1314,7 +1047,6 @@ function __rst_stream(r: __Run, stream: i32, code: i32): __Run {
   return __Run { ...budgeted, conn: next, events: budgeted.events.append(Reset(stream, code)) };
 }
 
-// __reset_counted counts one reset, either side's, against the budget.
 function __reset_counted(r: __Run): __Run {
   let c: Conn = r.conn;
   if (c.resets + 1 > c.config.reset_budget) {
@@ -1323,8 +1055,6 @@ function __reset_counted(r: __Run): __Run {
   return __Run { ...r, conn: Conn { ...c, resets: c.resets + 1 } };
 }
 
-// __reset_stream is a stream error (§5.4.2): RST_STREAM sent, the stream
-// dropped, the reset counted.
 function __reset_stream(r: __Run, stream: i32, code: i32): __Run {
   let budgeted: __Run = __reset_counted(r);
   if (budgeted.conn.phase == CLOSED) {
@@ -1343,21 +1073,12 @@ function __reset_stream(r: __Run, stream: i32, code: i32): __Run {
   return __send(__Run { ...budgeted, conn: c }, frame.RstStream(stream, code));
 }
 
-// __fail is a connection error (§5.4.1): GOAWAY with the last stream
-// taken, the connection closed, and the reason reported.
 function __fail(r: __Run, code: i32, reason: string): __Run {
   let c: Conn = r.conn;
   let out: __Run = __send(r, frame.GoAway(frame.GoAwayFrame { last_stream: c.last_stream, code: code, debug: reason.bytes() }));
   return __Run { ...out, conn: Conn { ...c, phase: CLOSED, streams: [], handling: 0, inbox: [], inbox_at: 0 }, events: out.events.append(Closed(code, reason)) };
 }
 
-// === responding ============================================================
-
-// respond answers the request on `stream`: its handler's slot is freed,
-// the headers go now, the body as the windows allow, and the trailers
-// last. A stream the client reset, or one the server never opened,
-// takes no response. A response to HEAD sends no body, under the length
-// the body would have.
 pub function (c: Conn) respond(stream: i32, resp: HttpResponse): Step {
   let at: i32 = __stream_at(c, stream);
   if (at < 0 || c.phase == CLOSED) {
@@ -1370,13 +1091,8 @@ pub function (c: Conn) respond(stream: i32, resp: HttpResponse): Step {
   if (s.reset) {
     return Step { conn: Conn { ...c, handling: c.handling - 1, streams: __without(c.streams, at) }, output: [], events: [] };
   }
-  // What the stream decides is read before the connection is rebuilt, so
-  // the rebuild reuses its box rather than copying it under the read.
   let headless: boolean = __headless(s, resp);
   let stream_window: i32 = s.send_window;
-  // A text or bytes body both windows and the frame size take goes out
-  // now, HEADERS and DATA in one buffer written from the body's own
-  // bytes, and the stream is done with.
   let allowed: i32 = __min(c.peer_max_frame, __min(stream_window, c.send_window));
   let whole: boolean = resp.trailers.len() == 0;
   match (resp.body) {
@@ -1395,11 +1111,6 @@ pub function (c: Conn) respond(stream: i32, resp: HttpResponse): Step {
   return __respond_owed(c, at, stream, resp, headless, stream_window);
 }
 
-// __respond_now answers the request on `stream` with `body`, which both
-// windows and the frame size take: the header block written into a buffer
-// with the HEADERS frame's header reserved and the DATA frame appended
-// (`frame.headers_data`); a block past the peer's frame size goes as
-// HEADERS and CONTINUATION frames instead.
 function __respond_now(c: Conn, at: i32, stream: i32, resp: HttpResponse, body: [u8], headless: boolean): Step {
   let n: i32 = body.len();
   if (headless) {
@@ -1418,11 +1129,6 @@ function __respond_now(c: Conn, at: i32, stream: i32, resp: HttpResponse, body: 
   return __step(__ended(__send_bytes(__run(c), frame.headers_data(bytes, stream, body, n)), at));
 }
 
-// __respond_owed answers the request on `stream` with a response the
-// windows do not take whole, or one with trailers or a body read from a
-// stream: the headers go now, what the windows allow of the body after
-// them, and the rest is owed to the stream and sent as they open, the
-// trailers last.
 function __respond_owed(c: Conn, at: i32, stream: i32, resp: HttpResponse, headless: boolean, stream_window: i32): Step {
   let body: u8[] = resp.body_bytes();
   let length: i32 = body.len();
@@ -1451,11 +1157,6 @@ function __respond_owed(c: Conn, at: i32, stream: i32, resp: HttpResponse, headl
   return __step(__flushed(__header_frames(__run(c), stream, enc.bytes, false)));
 }
 
-// respond_head begins answering the request on `stream` with the
-// response's status and headers, its body to follow through `write` and
-// `end`: for a body produced in parts, under the windows as they open.
-// `resp.body` is ignored, and the stream takes no response until `end`.
-// A response that carries no body (`producing` false after) ends here.
 pub function (c: Conn) respond_head(stream: i32, resp: HttpResponse): Step {
   let at: i32 = __stream_at(c, stream);
   if (at < 0 || c.phase == CLOSED) {
@@ -1480,22 +1181,15 @@ pub function (c: Conn) respond_head(stream: i32, resp: HttpResponse): Step {
   return __step(r);
 }
 
-// __headless is whether the response on `s` carries no body: one to HEAD,
-// or a 1xx, 204 or 304.
 function __headless(s: __Stream, resp: HttpResponse): boolean {
   return s.method == "HEAD" || http.http_bodiless(resp.status);
 }
 
-// producing is whether `stream` takes the body a `respond_head` began
-// through `write`: false once that body has ended, for a response that
-// carries none, and for a stream the client reset or that is gone.
 pub function (c: Conn) producing(stream: i32): boolean {
   let at: i32 = __stream_at(c, stream);
   return at >= 0 && c.phase != CLOSED && c.streams[at].producing;
 }
 
-// write adds `bytes` to the body a `respond_head` began, sent as the
-// windows allow; `pending(stream)` is how much waits on them.
 pub function (c: Conn) write(stream: i32, bytes: u8[]): Step {
   let at: i32 = __stream_at(c, stream);
   if (at < 0 || c.phase == CLOSED || !c.streams[at].producing) {
@@ -1506,8 +1200,6 @@ pub function (c: Conn) write(stream: i32, bytes: u8[]): Step {
   return __step(__flushed(__run(Conn { ...c, streams: c.streams.with(at, grown) })));
 }
 
-// end finishes the body a `respond_head` began: what is pending goes as
-// the windows allow, then `trailers` if any and END_STREAM.
 pub function (c: Conn) end(stream: i32, trailers: HeaderMap): Step {
   let at: i32 = __stream_at(c, stream);
   if (at < 0 || c.phase == CLOSED || !c.streams[at].producing) {
@@ -1518,9 +1210,6 @@ pub function (c: Conn) end(stream: i32, trailers: HeaderMap): Step {
   return __step(__flushed(__run(Conn { ...c, streams: c.streams.with(at, ending) })));
 }
 
-// pending is how many body bytes `write` has queued on `stream` that the
-// windows have not yet let out, for a producer to pace itself by; 0 for a
-// stream that is not being written.
 pub function (c: Conn) pending(stream: i32): i32 {
   let at: i32 = __stream_at(c, stream);
   if (at < 0) {
@@ -1529,9 +1218,6 @@ pub function (c: Conn) pending(stream: i32): i32 {
   return c.streams[at].pending.len();
 }
 
-// consumed replenishes the windows for `n` bytes of a streamed request's
-// body the handler has taken (`StreamData`): the connection's, and the
-// stream's while the client may still send on it.
 pub function (c: Conn) consumed(stream: i32, n: i32): Step {
   if (c.phase == CLOSED || n <= 0) {
     return Step { conn: c, output: [], events: [] };
@@ -1539,9 +1225,6 @@ pub function (c: Conn) consumed(stream: i32, n: i32): Step {
   return __step(__credited(__run(c), __stream_at(c, stream), n, true));
 }
 
-// __credited replenishes the windows for `n` bytes: the connection's, and
-// the stream's at `at` when asked and while the client may still send on
-// it.
 function __credited(r: __Run, at: i32, n: i32, stream_too: boolean): __Run {
   let out: __Run = __send(__Run { ...r, conn: Conn { ...r.conn, recv_window: r.conn.recv_window + n } }, frame.WindowUpdate(0, n));
   if (!stream_too || at < 0) {
@@ -1555,12 +1238,6 @@ function __credited(r: __Run, at: i32, n: i32, stream_too: boolean): __Run {
   return __send(__Run { ...out, conn: Conn { ...out.conn, streams: out.conn.streams.with(at, filled) } }, frame.WindowUpdate(s.id, n));
 }
 
-// __response_block is the response's header block, written behind the
-// bytes `out` holds: `:status` first, then each field in lower case,
-// connection-specific ones dropped (§8.2.2), cookies never indexed, the
-// body's length when it is known (`length` below 0 when it is not:
-// trailers follow, or the body comes in parts), and `date` when the
-// response names no Date and `date` is not "".
 function __response_block(own out: u8[], e: hpack.Encoder, resp: HttpResponse, length: i32, date: string): hpack.Encoded {
   let en: hpack.Encoding = e.begin_in(out).put(":status", __status_text(resp.status), false);
   let i: i32 = 0;
@@ -1588,8 +1265,6 @@ function __response_block(own out: u8[], e: hpack.Encoder, resp: HttpResponse, l
   return en.finish();
 }
 
-// __status_text is the status as the :status field carries it, the common
-// ones without a string built for each response.
 function __status_text(status: i32): string {
   if (status == 200) {
     return "200";
@@ -1612,13 +1287,10 @@ function __status_text(status: i32): string {
   return int.int_to_string(status);
 }
 
-// __sensitive says whether a field is never indexed, so the client's table
-// cannot be probed for a cookie or a credential.
 function __sensitive(name: string): boolean {
   return name == "set-cookie" || name == "authorization" || name == "proxy-authenticate";
 }
 
-// __lowered is `name` in lower case, `name` itself when it already is.
 function __lowered(name: string): string {
   let i: i32 = 0;
   while (i < name.len()) {
@@ -1630,8 +1302,6 @@ function __lowered(name: string): string {
   return name;
 }
 
-// __header_frames writes a header block as HEADERS and, past the peer's
-// frame size, CONTINUATION frames (§6.2).
 function __header_frames(r: __Run, stream: i32, block: u8[], end_stream: boolean): __Run {
   let max: i32 = r.conn.peer_max_frame;
   let first: i32 = block.len();
@@ -1655,8 +1325,6 @@ function __header_frames(r: __Run, stream: i32, block: u8[], end_stream: boolean
   return out;
 }
 
-// __flushed sends what every stream's pending body the windows allow,
-// and the trailers and END_STREAM of each body that is all sent.
 function __flushed(r: __Run): __Run {
   let out: __Run = r;
   let i: i32 = 0;
@@ -1670,9 +1338,6 @@ function __flushed(r: __Run): __Run {
   return out;
 }
 
-// __flush_stream sends the stream at `at` as much of its body as both
-// windows and the frame size allow, then its end when the body is gone
-// and no more is being written (`producing`).
 function __flush_stream(r: __Run, at: i32): __Run {
   let out: __Run = r;
   while (true) {
@@ -1704,9 +1369,6 @@ function __flush_stream(r: __Run, at: i32): __Run {
   return out;
 }
 
-// __ended closes the server's side of a stream: trailers if any are owed
-// (as a HEADERS with END_STREAM), then the stream closes, or waits for the
-// client's END_STREAM.
 function __ended(r: __Run, at: i32): __Run {
   let s: __Stream = r.conn.streams[at];
   if (s.trailers.len() > 0) {
@@ -1730,9 +1392,6 @@ function __ended(r: __Run, at: i32): __Run {
   return __Run { ...r, conn: Conn { ...r.conn, streams: r.conn.streams.with(at, done) } };
 }
 
-// reset ends a stream the server will not answer: RST_STREAM with `code`,
-// its handler's slot freed. The reset counts against the budget as the
-// client's do.
 pub function (c: Conn) reset(stream: i32, code: i32): Step {
   let at: i32 = __stream_at(c, stream);
   if (at < 0 || c.phase == CLOSED) {
@@ -1749,8 +1408,6 @@ pub function (c: Conn) reset(stream: i32, code: i32): Step {
   return __step(__reset_stream(__run(freed), stream, code));
 }
 
-// goaway tells the client no new streams will be taken (§6.8): the open
-// ones finish, and the loop closes the socket once they have.
 pub function (c: Conn) goaway(code: i32): Step {
   if (c.phase == CLOSED) {
     return Step { conn: c, output: [], events: [] };
@@ -1758,13 +1415,9 @@ pub function (c: Conn) goaway(code: i32): Step {
   return __step(__send(__run(Conn { ...c, peer_going_away: true }), frame.GoAway(frame.GoAwayFrame { last_stream: c.last_stream, code: code, debug: [] })));
 }
 
-// ping sends a PING the client answers, which the loop uses to find a
-// dead connection.
 pub function (c: Conn) ping(data: u8[]): Step {
   return __step(__send(__run(c), frame.Ping(false, data)));
 }
-
-// === helpers ===============================================================
 
 function __stream_at(c: Conn, id: i32): i32 {
   let i: i32 = 0;

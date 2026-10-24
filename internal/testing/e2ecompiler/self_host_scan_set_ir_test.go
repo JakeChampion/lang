@@ -9,22 +9,6 @@ import (
 	"testing"
 )
 
-// `__scan_set(s, from, set)` on the self-host IR path: the index of the first
-// byte at or after `from` whose entry in the u8[] `set` is nonzero, or the
-// LENGTH. The byte-set scan behind cat -A's spelling.
-//
-// What a port gets wrong here is the SET: its length lives in the array
-// header and its bytes in the backend's element slots — eight bytes on the
-// register backends, four on wasm — so a body that reads the set as a byte
-// string, or that forgets a byte past a short set's end is not a member,
-// answers the dense cases right and fails the sparse and short ones. The
-// sweep below holds both, plus the cursor at every offset and the clamp.
-
-// scanSetIRProg is SELF-CHECKING: it carries its own reference implementation
-// in Fern and compares `__scan_set` against it, so the corpus sweeps with no
-// Go-side expectation list to keep in step. A failure returns a small
-// distinct code rather than an index, so the exit status says WHICH shape
-// disagreed. 42 means every comparison matched.
 const scanSetIRProg = `function ref(s: string, from: i32, set: u8[]): i32 {
     let i: i32 = from;
     if (i < 0) { i = 0; }
@@ -87,8 +71,6 @@ function main(): i32 {
 }
 `
 
-// runScanSetIR compiles scanSetIRProg with the self-host modload driver for
-// the given register target and returns the exit code.
 func runScanSetIR(t *testing.T, target string) int {
 	t.Helper()
 	var runner, runPrefix, extra []string
@@ -133,10 +115,6 @@ func TestSelfHostScanSetIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostScanSetIRWasm runs the same program through the self-hosted
-// wasm IR driver. The helper's presence in the emitted text is asserted, so a
-// module that silently stopped needing it would fail rather than pass by
-// exercising nothing.
 func TestSelfHostScanSetIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host scan_set wasm IR e2e")

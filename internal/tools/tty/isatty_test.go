@@ -7,11 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/tools/tty"
 )
 
-// The whole reason IsTerminal asks the kernel for terminal ATTRIBUTES rather
-// than for the file's mode is /dev/null: it is a character device, so the
-// `fstat` + `S_ISCHR` test (Go's `os.ModeCharDevice`, which `cmd/fern` used to
-// colourise its diagnostics by) calls it a terminal. It is not one, and
-// `fern -check 2>/dev/null` should not paint escapes at it.
 func TestIsTerminalRejectsDevNull(t *testing.T) {
 	f, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
 	if err != nil {
@@ -28,8 +23,6 @@ func TestIsTerminalRejectsDevNull(t *testing.T) {
 	}
 }
 
-// The positive half, against a real pty — otherwise "always false" would pass
-// every other case in this file.
 func TestIsTerminalAcceptsAPty(t *testing.T) {
 	master, slave, err := tty.OpenPTY()
 	if err != nil {
@@ -44,9 +37,6 @@ func TestIsTerminalAcceptsAPty(t *testing.T) {
 	}
 }
 
-// A master opened straight from /dev/ptmx, never granted or unlocked, is
-// what the coreutils corpus hands `test -t` and `tty`. Darwin's libc calls it
-// a terminal by its device type, since it refuses TIOCGETA.
 func TestIsTerminalAcceptsABarePtmxMaster(t *testing.T) {
 	f, err := os.OpenFile("/dev/ptmx", os.O_RDWR, 0)
 	if err != nil {
@@ -58,8 +48,6 @@ func TestIsTerminalAcceptsABarePtmxMaster(t *testing.T) {
 	}
 }
 
-// A pipe is the shape a redirected CLI actually has, and the one the colour
-// gate turns on.
 func TestIsTerminalRejectsAPipeAndAClosedFd(t *testing.T) {
 	r, w, err := os.Pipe()
 	if err != nil {

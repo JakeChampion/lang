@@ -5,10 +5,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostLSPWorkspaceX86_64 pins `fern -lsp`'s workspace mode: every open
-// document stands in for its file on disk when another imports it, and a
-// check publishes what it found in each open module it loaded, at that
-// module's own positions.
 func TestSelfHostLSPWorkspaceX86_64(t *testing.T) {
 	s := buildLSPServers(t)
 	const mainSrc = "import \"./util\";\nfunction main(): i32 { return util.thing(); }\n"
@@ -38,9 +34,6 @@ func TestSelfHostLSPWorkspaceX86_64(t *testing.T) {
 		}
 	})
 
-	// An imported module is read from its open buffer, not the disk: a fix the
-	// editor has not saved clears the entry's view of it, and a break it has
-	// not saved shows up.
 	t.Run("imported-buffer-overrides-disk", func(t *testing.T) {
 		dir := t.TempDir()
 		writeTree(t, dir, map[string]string{"main.fern": mainSrc, "util.fern": utilBad})
@@ -60,7 +53,6 @@ func TestSelfHostLSPWorkspaceX86_64(t *testing.T) {
 		}
 	})
 
-	// A declaration only the unsaved buffer has is one the entry can use.
 	t.Run("entry-sees-what-only-the-buffer-declares", func(t *testing.T) {
 		dir := t.TempDir()
 		const mainNew = "import \"./util\";\nfunction main(): i32 { return util.thing() + util.added(); }\n"
@@ -72,8 +64,6 @@ func TestSelfHostLSPWorkspaceX86_64(t *testing.T) {
 		}
 	})
 
-	// A module a manifest dependency resolves to is read from its buffer too:
-	// the unsaved edit dropping helper's ungranted fs reach clears the E070.
 	t.Run("dependency-package-buffer-overrides-disk", func(t *testing.T) {
 		dir := t.TempDir()
 		const appMain = "import \"helper\";\nfunction main(): i32 {\n  let r: i32 = helper.save(\"x\");\n  return r;\n}\n"
@@ -86,7 +76,6 @@ func TestSelfHostLSPWorkspaceX86_64(t *testing.T) {
 			"helper/lib.fern":  reachesFS,
 		})
 		mainURI, libURI := fileURI(filepath.Join(dir, "app", "main.fern")), fileURI(filepath.Join(dir, "helper", "lib.fern"))
-		// The E070 sits at helper's `save`, so it is published on helper's file.
 		if ds := run(t, lspOpen(libURI, reachesFS), lspOpen(mainURI, appMain))[libURI]; len(ds) != 1 || ds[0].Code != "E070" || ds[0].Range.Start.Line != 0 {
 			t.Fatalf("helper as on disk = %+v, want its E070 at save", ds)
 		}
@@ -99,9 +88,6 @@ func TestSelfHostLSPWorkspaceX86_64(t *testing.T) {
 		}
 	})
 
-	// An edit a module's own check cannot see — to a module it imports, which
-	// only that module's check loads — reaches it at the next check that
-	// loads both.
 	t.Run("transitive-change-refreshes-an-open-module", func(t *testing.T) {
 		dir := t.TempDir()
 		const utilUses = "import \"./helper\";\npub function thing(): i32 { return helper.part(); }\n"
@@ -119,8 +105,6 @@ func TestSelfHostLSPWorkspaceX86_64(t *testing.T) {
 		}
 	})
 
-	// The same for an open module under the stdlib root, which a check names
-	// by its stdlib:// display path rather than the file it read.
 	t.Run("transitive-change-refreshes-an-open-stdlib-module", func(t *testing.T) {
 		dir := t.TempDir()
 		const aUses = "import \"std/b\";\npub function a(): i32 { return b.part(); }\n"
@@ -156,16 +140,12 @@ func TestSelfHostLSPWorkspaceX86_64(t *testing.T) {
 		if len(got[utilURI]) == 0 {
 			t.Errorf("util lost its diagnostics after main's check")
 		}
-		// Fixing util through main's check — util's buffer is what main reads —
-		// clears util's diagnostics there too.
 		got = run(t, lspOpen(utilURI, utilBad), lspOpen(mainURI, mainSrc), lspChange(utilURI, utilGood))
 		if ds, ok := got[utilURI]; !ok || len(ds) != 0 {
 			t.Errorf("util after the fix = %+v, want an empty publish", ds)
 		}
 	})
 
-	// A syntax error in an imported module lands on that module, at its line,
-	// and nowhere on the entry, which parses fine.
 	t.Run("imported-syntax-error", func(t *testing.T) {
 		dir := t.TempDir()
 		const utilSyntax = "pub function thing(): i32 {\n    return 1 +;\n}\n"
@@ -180,8 +160,6 @@ func TestSelfHostLSPWorkspaceX86_64(t *testing.T) {
 		}
 	})
 
-	// A check reassigns only the modules it loaded: an open document outside
-	// the entry's imports keeps the diagnostics its own check gave it.
 	t.Run("unrelated-document-keeps-its-diagnostics", func(t *testing.T) {
 		dir := t.TempDir()
 		const other = "function main(): i32 { return undeclared_elsewhere; }\n"
@@ -193,8 +171,6 @@ func TestSelfHostLSPWorkspaceX86_64(t *testing.T) {
 		}
 	})
 
-	// A multi-file literate document is one entry: a finding in any module it
-	// tangles to is the document's, at its document line.
 	t.Run("literate-module-findings-land-on-the-document", func(t *testing.T) {
 		dir := t.TempDir()
 		doc := "# Two modules\n\n```fern file=lib.fern\npub function tag(): i32 { return undeclared_in_lib; }\n```\n\n" +

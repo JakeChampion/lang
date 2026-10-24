@@ -9,24 +9,6 @@ import (
 	"testing"
 )
 
-// `buf_push_mapped(b, s, table)` and `buf_push_filtered(b, s, drop)` on the
-// self-host IR path: the first appends each byte c of s as table[c], or
-// unchanged when c is past the table's end (tr's SET1 -> SET2); the second
-// appends each byte whose drop[c] is zero, or that is past the table's end
-// (tr -d); `buf_push_expanded(b, s, table)` appends each byte's eight-byte
-// record (cat -v / -T / -E).
-//
-// The table's length lives in the array header and its bytes in the
-// backend's element slots, eight bytes on the register backends and four on
-// wasm, so the sweep holds a full table, a short one and an empty one, over
-// every length up to 40 and pushes that outgrow the builder. A full table
-// takes a vector loop on the native targets, so a scrambled one maps every
-// byte value, from a string and from a u8[], at every length up to 300.
-
-// bufPushKernelsIRProg is SELF-CHECKING: it maps each string through a Fern
-// reference and compares the builder's bytes against it. A failure returns a
-// small distinct code saying which shape disagreed; 42 means every
-// comparison matched.
 const bufPushKernelsIRProg = `function ref(s: string, table: u8[]): u8[] {
     let out: u8[] = [];
     let i: i32 = 0;
@@ -173,8 +155,6 @@ function main(): i32 {
 }
 `
 
-// runBufPushKernelsIR compiles bufPushKernelsIRProg with the self-host modload driver for
-// the given register target and returns the exit code.
 func runBufPushKernelsIR(t *testing.T, target string) int {
 	t.Helper()
 	var runner, runPrefix, extra []string
@@ -219,10 +199,6 @@ func TestSelfHostBufPushKernelsIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostBufPushKernelsIRWasm runs the same program through the self-hosted
-// wasm IR driver. The helper's presence in the emitted text is asserted, so a
-// module that silently stopped needing it would fail rather than pass by
-// exercising nothing.
 func TestSelfHostBufPushKernelsIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host buf_push kernels wasm IR e2e")

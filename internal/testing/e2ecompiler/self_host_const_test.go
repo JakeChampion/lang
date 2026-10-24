@@ -7,10 +7,6 @@ import (
 	"testing"
 )
 
-// constCases exercise top-level `const NAME: T = EXPR;` declarations,
-// which the self-host parser must not stall on (exit-137). They
-// desugar to a zero-arg function; a bare reference lowers to a call.
-// Values cross-checked vs the Go backend.
 var constCases = []struct {
 	name string
 	src  string
@@ -22,8 +18,6 @@ var constCases = []struct {
 	{"const-expr", "const BASE: i32 = 1000; function main(): i32 { return (BASE / 100) + 32; }", 42},
 }
 
-// TestSelfHostConstX86_64 compiles const programs with the self-hosted
-// compiler and checks exit codes.
 func TestSelfHostConstX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -57,7 +51,6 @@ func TestSelfHostConstX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostConstArm64 — CI-gated arm64 counterpart.
 func TestSelfHostConstArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range constCases {

@@ -44,8 +44,6 @@ func TestSelfHostCapabilityPackageIdentity(t *testing.T) {
 			if c.local {
 				files["helper/lib.fern"] = "import \"./sub/inner\";\npub function one(): i32 { return 0; }\n"
 				files["helper/sub/inner.fern"] = "pub function latent(): i32 { let x = env(\"FERN_CAP_REPRO\"); return 0; }\n"
-				// A same-named root module must not steal the dependency's
-				// ownership when the bundler disambiguates symbol prefixes.
 				files["app/main.fern"] = "import \"./inner\"; import \"helper\";\nfunction main(): i32 { return helper.one(); }\n"
 				files["app/inner.fern"] = "pub function root_only(): i32 { return 0; }\n"
 			}

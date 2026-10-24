@@ -11,9 +11,6 @@ import (
 	"testing"
 )
 
-// machoDwarfSrc gives helper's statements lines 2 and 3 and main's call line
-// 6; f keeps its wide local across a call for the variable DIEs, and pick's
-// bounds check a numeric local label (`1:`) in the emitted text.
 const machoDwarfSrc = `@noinline function helper(x: i32): i32 {
     let y: i32 = x * 2;
     return y + 1;
@@ -32,13 +29,6 @@ function main(): i32 {
 }
 `
 
-// TestDWARFMachO: a -g arm64-darwin image carries its DWARF in a __DWARF
-// segment that is not mapped, its sections flagged S_ATTR_DEBUG, which is
-// where lldb and dsymutil read a static executable's debug info without a
-// dSYM. The unit spans __text, each function is a subprogram inside it, the
-// line table maps helper's two statements, and f's locals have DIEs. A
-// default build has no __DWARF segment. Decoded host-side, so any host checks
-// it; on Apple Silicon the -g image also runs.
 func TestDWARFMachO(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
@@ -111,9 +101,6 @@ func TestDWARFMachO(t *testing.T) {
 	if hi, _ := cu.Val(dwarf.AttrHighpc).(uint64); hi != text.Addr+text.Size {
 		t.Errorf("CU high_pc %#x, want the end of __text %#x", hi, text.Addr+text.Size)
 	}
-	// The read-only constants follow the code in a section of their own, so
-	// __text holds only instructions. The assembler 16-aligns them from the
-	// start of the text.
 	if ro := g.Section("__const"); ro == nil || ro.Seg != "__TEXT" || ro.Addr != text.Addr+(text.Size+15)&^15 || ro.Size == 0 {
 		t.Errorf("__TEXT,__const %+v, want the constants after __text [%#x,+%#x), 16-aligned from its start", ro, text.Addr, text.Size)
 	}
@@ -139,8 +126,6 @@ func TestDWARFMachO(t *testing.T) {
 			vars[fn+"."+name] = true
 		}
 	}
-	// An inner label is no function: as a symbol or a subprogram it would end
-	// the extent of the function it sits in.
 	for name := range subs {
 		if strings.ContainsAny(name, ".#") {
 			t.Errorf("inner label %q is a subprogram", name)
@@ -194,10 +179,6 @@ func TestDWARFMachO(t *testing.T) {
 	}
 }
 
-// TestLLDBBreakpointByLine is what -g is for on arm64-darwin: lldb, reading
-// the executable's own __DWARF segment, sets a breakpoint by file:line, stops
-// there, and prints a backtrace naming each Fern function and its line, and a
-// local's value. Skips only where lldb or Apple Silicon is absent.
 func TestLLDBBreakpointByLine(t *testing.T) {
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 		t.Skip("lldb runs an arm64-darwin image only on Apple Silicon")

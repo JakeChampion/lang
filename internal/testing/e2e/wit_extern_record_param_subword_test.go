@@ -12,22 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExternRecordParamSubwordCustomProvider is the P4c record-field parameter
-// gate (docs/WIT-BRING-YOUR-OWN.md): a Fern struct passed to an `@import`
-// extern whose WIT record has matching field types. A Fern struct stores every
-// int in a 4-byte-or-wider slot, and the canonical ABI flattens each record
-// field to its own core value, so the wrapper reads each field with the
-// natural i32/i64/f32/f64 load matching externRecordFieldValtype.
-//
-// Historically this test exercised the sub-word (s8/u16) field path — a Fern
-// struct field narrower than 4 bytes, read with a width+sign-aware load
-// (i32.load8_s / i32.load16_u) to produce the correctly extended i32 the
-// canonical ABI flattens it to. i8/i16/u16 were removed from the language
-// (#4408) — a Fern struct can no longer declare a field narrower than u8/i32 —
-// so the sub-word load path is gone and this test now uses i32/u32 fields
-// instead, still exercising multi-field record-parameter marshalling end to
-// end. The provider exports `sum-mix: func(p: record { a: s32, b: u32, c: s32
-// }) -> s32` summing the flattened (a, b, c): -5 + 300 + 1000 = 1295.
 func TestExternRecordParamSubwordCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -54,8 +38,6 @@ func TestExternRecordParamSubwordCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export sink; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// sum-mix receives the record flattened to (a, b, c) — three i32 params (the
-	// canonical ABI sign-/zero-extends s8/u16 to i32) — and returns their sum.
 	provCoreWat := filepath.Join(dir, "prov_core.wat")
 	if err := os.WriteFile(provCoreWat, []byte(`(module
   (memory (export "memory") 1)

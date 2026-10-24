@@ -2,12 +2,6 @@ package parser
 
 import "testing"
 
-// `async` is a contextual modifier (`async function …` / `pub async function
-// …`) that stamps FuncDecl.Async — the WASI Preview-3 component-model-async
-// export surface (docs/WASI-PREVIEW3-ASYNC-PLAN.md). Because it is contextual
-// (consumed only directly before `function`), `async` stays usable as an
-// ordinary identifier everywhere else.
-
 func TestParseAsyncModifier(t *testing.T) {
 	prog, err := Parse(`async function compute(): i32 { return 42; }
 pub async function run(): i32 { return 1; }
@@ -35,7 +29,6 @@ function plain(): i32 { return 0; }`)
 }
 
 func TestAsyncUsableAsIdentifier(t *testing.T) {
-	// `async` is contextual: as a local / parameter name it must still parse.
 	if _, err := Parse(`function f(): i32 { let async: i32 = 3; return async + 1; }`); err != nil {
 		t.Errorf("`async` as a local name should parse: %v", err)
 	}

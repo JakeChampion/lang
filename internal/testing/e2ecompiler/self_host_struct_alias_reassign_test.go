@@ -8,40 +8,6 @@ import (
 	"testing"
 )
 
-// --- A struct local reassigned from an alias is reclaimed --------------------
-//
-// `let p: P = P { xs: [7,8] }; let keep: P = P { xs: [0] }; keep = p;` must free
-// all four of its blocks, exactly as the BIND form (`let keep: P = p;`) does.
-// Unreclaimed it reads 80 allocs / 0 frees over 20 rounds.
-//
-// The reassign retains the shared box, so `keep` and `p` each own a count.
-// Two things make that balance:
-//
-//  1. The release is the rc-gated field walk. A reassigned slot has two
-//     ownership regimes on different paths — its own fresh init OWNS its field
-//     buffers, the aliased value SHARES the source's — so the decision is made
-//     per VALUE at runtime: whichever owner finds rc 1 does the deep walk.
-//
-//  2. The retain is emitted where EVERY return path passes, right after the RHS
-//     is lowered. A release without it gives exact count parity — 80/80 — with
-//     exit 99; only __rc_underflow_count() reports it.
-//
-// The string shape lives in self_host_str_alias_reassign_test.go, with the
-// accumulator and fresh-RHS controls the string class needs.
-//
-// Exit 99 is reserved for __rc_underflow_count().
-//
-// Each P takes its constant array through `id`, which hides the constant from the static-box plan,
-// so the P is allocated rather than placed as a static box.
-//
-// Counts here are ONE block per heap string: #7351 fused the box into the
-// buffer's reserved header. A pre-fusion number quoted in a row note below is
-// twice its pin.
-//
-// Each reassigned `keep` has its first value read (`w`, its array's length)
-// before the store: a construction nothing reads is not built (semdead), and
-// the store's release of the previous value is what these rows pin.
-
 type structAliasReassignCase struct {
 	name   string
 	src    string
@@ -61,7 +27,6 @@ const sarMain = `function main(): i32 {
 func structAliasReassignCases() []structAliasReassignCase {
 	return []structAliasReassignCase{
 		{
-			// THE REPRO. Base: 80 allocs / 0 frees.
 			name: "struct_alias_reassign",
 			src: `struct P { xs: i32[] }
 @noinline function id(xs: i32[]): i32[] { return xs; }
@@ -76,10 +41,6 @@ function round(i: i32): i32 {
 			want: 9, allocs: 40, frees: 40,
 		},
 		{
-			// The same shape read back as a VALUE with fresh arrays allocated after
-			// the reassign, so a buffer freed too early would be reused before the
-			// read. This is the row that separates a correct release from an
-			// over-release: counts alone read 120/120 either way. Native returns 9.
 			name: "reassign_read_back_after_churn",
 			src: `struct P { xs: i32[] }
 @noinline function id(xs: i32[]): i32[] { return xs; }
@@ -96,8 +57,6 @@ function round(i: i32): i32 {
 			want: 9, allocs: 40, frees: 40,
 		},
 		{
-			// The BIND form, which was already at parity. The control that says the
-			// difference was the reassign and not the alias.
 			name: "struct_alias_bind_unchanged",
 			src: `struct P { xs: i32[] }
 @noinline function id(xs: i32[]): i32[] { return xs; }
@@ -110,8 +69,6 @@ function round(i: i32): i32 {
 			want: 9, allocs: 20, frees: 20,
 		},
 		{
-			// The ARRAY reassign. One element is computed so the array is
-			// heap-allocated rather than a static literal.
 			name: "array_reassign_unchanged",
 			src: `function round(i: i32): i32 {
     let xs: i32[] = [7, i - i + 8];
@@ -123,11 +80,6 @@ function round(i: i32): i32 {
 			want: 9, allocs: 20, frees: 20,
 		},
 		{
-			// A reassign from a FRESH literal rather than an alias. This is what
-			// established the diagnosis: the same slot reclaims fully here, so the
-			// reclaim machinery was never the problem — only the alias was refused.
-			// One box per round: the first value's field read is forwarded off
-			// its construction, which then has no reader and is not built.
 			name: "fresh_rhs_reassign_unchanged",
 			src: `struct P { xs: i32[] }
 @noinline function id(xs: i32[]): i32[] { return xs; }
@@ -141,10 +93,6 @@ function round(i: i32): i32 {
 			want: 9, allocs: 20, frees: 20,
 		},
 		{
-			// The string-builder CONSUME-REBIND (`s = s + part`): its RHS is a
-			// fresh box, so it takes no retain. Nothing here may disturb it. One box per
-			// round: the first append onto the empty literal allocates it and the
-			// other three grow it in place (#10960).
 			name: "string_accumulator_unchanged",
 			src: `function round(i: i32): i32 {
     let s: string = "";
@@ -158,7 +106,6 @@ function round(i: i32): i32 {
 	}
 }
 
-// TestSelfHostStructAliasReassignX86_64 is the leak-accounting leg.
 func TestSelfHostStructAliasReassignX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
@@ -193,8 +140,6 @@ func TestSelfHostStructAliasReassignX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStructAliasReassignWasmIR — exit codes only, so what this leg
-// catches is a release that frees a LIVE box on wasm, the 99 included.
 func TestSelfHostStructAliasReassignWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping struct alias-reassign wasm IR e2e")
@@ -233,7 +178,6 @@ func TestSelfHostStructAliasReassignWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostStructAliasReassignIRArm64 — the arm64 sibling under qemu.
 func TestSelfHostStructAliasReassignIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

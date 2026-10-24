@@ -5,16 +5,6 @@ import (
 	"testing"
 )
 
-// `slice_unchecked(s, a, b): str` (#5634, D9, slice 3) on the self-host IR
-// path, plus its total std/string sibling `s.slice_snap(a, b)` — which is
-// plain stdlib Fern, so it comes along for free once the builtin lowers.
-// Same modload-driver harness shape as the __ascii_run suite: the driver
-// loads the program's stdlib closure, so the `import "std/string"` resolves.
-//
-// strSliceUncheckedSelfHostProg is SELF-CHECKING: 42 means every step
-// matched; a failure returns the step's distinct small code. The multibyte
-// fixture is "héllo" built from explicit bytes so the é's [195, 169]
-// encoding is pinned rather than trusted to source encoding.
 const strSliceUncheckedSelfHostProg = `import "std/string";
 
 // h(104) é(195,169) l l o — 6 bytes, 5 code points.
@@ -64,8 +54,6 @@ function main(): i32 {
 }
 `
 
-// runStrSliceUncheckedSelfHost compiles the program with the self-host
-// modload driver for the given register target and returns the exit code.
 func runStrSliceUncheckedSelfHost(t *testing.T, target string) int {
 	t.Helper()
 	var runner, runPrefix, extra []string

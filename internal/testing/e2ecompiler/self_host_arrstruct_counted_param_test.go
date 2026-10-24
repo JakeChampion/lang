@@ -4,26 +4,6 @@ import (
 	"testing"
 )
 
-// --- A struct-array local at a COUNTED-STORE argument position ----------------
-//
-// The struct-array twin of self_host_arrenum_counted_param_test.go. A callee
-// that STORES the whole array argument in a struct field takes a counted
-// reference and touches no element, so the caller's local keeps its deep
-// element release. Losing it to the outer-only dec strands every element:
-//
-//	callee stores `src` in a struct field   104 allocs / 102 frees, 88 live
-//
-// The other three rows are callees that could let an element outlive the call
-// — returning the param, reading an element, storing an element — and must
-// keep the caller's local off the element walk.
-//
-// Every want was confirmed against `bin/fern -interp` and never read off the
-// self-host run.
-//
-// The local is built from `mkv(seed())`, never a literal: a bare-literal
-// producer argument makes the local precise-drop eligible, which was its own
-// defect (#7610) and reads exactly like this one.
-
 const arrstructCountedDecl = `struct Inner { xs: i32[], k: i32 }
 struct P { f: Inner[], n: i32 }
 struct Q { e: Inner, n: i32 }
@@ -48,37 +28,24 @@ func arrstructCountedCases() []arrenumShareCase {
 	}
 	return []arrenumShareCase{
 		{
-			// The repro: the callee stores the whole array in a struct literal
-			// whose holder dies inside it, so the store's retain and the
-			// holder's field drop net to zero and the caller's claim is the only
-			// one left. Balances at 104/104.
 			name: "counted_store",
 			src: mk(`function rd(src: Inner[], i: i32): i32 { let p: P = P { f: src, n: i }; return (p.f.len() + p.n) % 101; }`,
 				"rd(keep, r)"),
 			want: 6, balance: true,
 		},
 		{
-			// REFUSED before the tier is consulted: an array RESULT can BE the
-			// argument, and the caller's release fires immediately after the call.
 			name: "callee_returns_param",
 			src: mk(`@noinline function rd(src: Inner[], i: i32): Inner[] { return src; }`,
 				"rd(keep, r).len()"),
 			want: 3,
 		},
 		{
-			// REFUSED by the use vocabulary: `src[0]` is an element read, and an
-			// array element may BE a reference handed out uncounted.
 			name: "callee_extracts_element",
 			src: mk(`function rd(src: Inner[], i: i32): i32 { let e: Inner = src[0]; return e.xs.len() + i; }`,
 				"rd(keep, r)"),
 			want: 9,
 		},
 		{
-			// What makes the element guard essential rather than decorative:
-			// the callee stores an ELEMENT, not the array. That store IS counted
-			// for the element, so a tier asking only "is this a counted store?"
-			// would admit it and the caller's walk would free a box the holder
-			// still references. Stays refused.
 			name: "callee_stores_element",
 			src: mk(`function rd(src: Inner[], i: i32): i32 { let q: Q = Q { e: src[0], n: i }; return q.e.xs.len() + q.n; }`,
 				"rd(keep, r)"),
@@ -87,9 +54,6 @@ func arrstructCountedCases() []arrenumShareCase {
 	}
 }
 
-// TestSelfHostArrStructCountedParamX86_64 — a struct-array local handed to a
-// callee that stores it at a COUNTED position keeps its element walk, while
-// every callee that could let an element outlive the call keeps refusing it.
 func TestSelfHostArrStructCountedParamX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

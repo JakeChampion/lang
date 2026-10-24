@@ -7,11 +7,8 @@ import (
 	"unsafe"
 )
 
-// xattrBufBytes bounds a value read in one call; a longer one is ERANGE.
 const xattrBufBytes = 65536
 
-// getxattrBytes is getxattr(2), BSD 234, whose sixth argument is the
-// options word: XATTR_NOFOLLOW (1) asks about a final symlink itself.
 func getxattrBytes(path, name string, follow bool) ([]byte, error) {
 	const sysGetxattr = 234
 	p, err := syscall.BytePtrFromString(path)
@@ -35,8 +32,6 @@ func getxattrBytes(path, name string, follow bool) ([]byte, error) {
 	return buf[:r], nil
 }
 
-// setxattrBytes is setxattr(2), BSD 236: (path, name, value, size,
-// position, options), with XATTR_NOFOLLOW for the `l` form.
 func setxattrBytes(path, name string, value []byte, follow bool) error {
 	const sysSetxattr = 236
 	p, err := syscall.BytePtrFromString(path)

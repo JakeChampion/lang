@@ -1,4 +1,3 @@
-// api_sim.fern — the API under a directory that resets twice: the first lookup is a 502 (the client retried once), the next a 200.
 import "std/sim";
 import "std/sim_fetch";
 import "std/sim_platform";

@@ -7,31 +7,6 @@ import (
 	"testing"
 )
 
-// pubUseSelfHostProgram is a 3-module re-export program, the self-host
-// mirror of the native internal/testing/e2e/pub_use_test.go fixtures:
-//
-//   - helpers defines the real symbols (a struct, two functions),
-//   - facade re-exports them via `pub use "./helpers".{…}`,
-//   - main imports facade and uses the re-exported names through the
-//     facade: a re-exported TYPE in a `let` annotation (facade.Point,
-//     facade.Shape) and re-exported VALUES in qualified calls
-//     (facade.make_point / facade.area / facade.add5).
-//
-// `Shape` also pins the half a re-exported ENUM needs and `pub use` does
-// NOT carry: variants are not re-exportable (`pub use ".{Sq}"` is refused
-// with `does not export "Sq"`), so `facade.Sq(p)` cannot resolve. The
-// variant namespace is flat, so the BARE form reaches the original decl
-// instead — construction `Sq(p)` and the match arm `Sq(q) =>` both bind
-// through the facade's type. That pairing is what lets an AST-types module
-// be split out from a module that consumers already name (#6993): the type
-// keeps its old qualifier via `pub use`, the variants go bare.
-//
-// area(6,7) = 42, add5(42) = 47, so a correct compile exits 47. The
-// decisive property: `facade.add5` etc. must resolve to the original
-// `helpers__add5` (the symbol the bundled program defines), NOT
-// `facade__add5` (which has no decl) — the self-host `pub use` redirect
-// built in flatten.bundle. See compiler/flatten.fern and
-// docs/PRELUDE-TO-MODULES.md.
 var pubUseSelfHostProgram = map[string]string{
 	"helpers.fern": "" +
 		"pub struct Point { x: i32, y: i32 }\n" +
@@ -52,11 +27,6 @@ var pubUseSelfHostProgram = map[string]string{
 		"}\n",
 }
 
-// writeSelfHostCLIProject lays out every source the unified self-host CLI
-// driver (fern.fern) needs, derived from the driver's own imports rather than
-// listed here. The list this replaces went stale the moment fern.fern gained
-// an import, which is the failure CopySelfHostDriver exists to make
-// impossible.
 func writeSelfHostCLIProject(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -64,12 +34,6 @@ func writeSelfHostCLIProject(t *testing.T) string {
 	return dir
 }
 
-// TestSelfHostPubUseModloadX86_64 compiles the 3-module re-export program
-// through the import-driven self-host IR driver (asm_modload_run.fern):
-// real on-disk module loading (the loader follows `import` AND the
-// `pub use` re-export target into the graph), flatten.bundle's re-export
-// redirect, then the IR codegen path to x86-64. Asserts the program exits
-// 47 — the self-host parity gate for issue #3136 part 2 on x86-64.
 func TestSelfHostPubUseModloadX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)
@@ -100,21 +64,12 @@ func TestSelfHostPubUseModloadX86_64(t *testing.T) {
 	}
 }
 
-// TestWasmSelfHostPubUseReexport compiles the same 3-module re-export
-// program through the unified self-host CLI driver (fern.fern) targeting
-// wasm: real on-disk module loading + flatten.bundle's `pub use` redirect,
-// then wasm codegen. The emitted WAT runs under wasmtime and must exit 47 —
-// the self-host parity gate for issue #3136 part 2 on wasm. Named `TestWasm*`
-// so it lands in the wasmtime-provisioned wasm e2e workflow rather than the
-// (wasmtime-less) self-host shards, where it would only ever SKIP.
 func TestWasmSelfHostPubUseReexport(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host pub-use wasm e2e")
 	}
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
-		// fern.fern takes a host filesystem path as argv; a qemu runner
-		// wouldn't see the same path. Native-only (CI runs wasm on x86).
 		t.Skip("self-host pub-use wasm e2e runs only natively (argv path)")
 	}
 	dir := writeSelfHostCLIProject(t)

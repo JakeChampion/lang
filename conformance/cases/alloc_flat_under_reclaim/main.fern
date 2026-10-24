@@ -1,19 +1,19 @@
 // spec: AL-01
-//
-// The reclaim shape. `round` allocates a string and lets it die
-// immediately, so however many times the loop runs, the bump
-// allocator hands out a bounded number of FRESH bytes — everything
-// after the warm-up comes back off the freelist. Doubling the round
-// count must not increase what the second run consumes.
-//
-// This is the property every reclaim fix in #6127 was restoring, and
-// until now it had no expression the corpus could hold: each leak was
-// found by writing a bespoke differential harness first.
-//
-// The case prints the SHAPE, never a byte count. The absolute number
-// depends on the pointer width, the string ABI and how much the
-// freelist recycled before the measurement, all of which differ
-// legitimately between backends — see docs/ALLOCATION-OBSERVABLE.md.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import "std/i32";
 import "std/i64";
 import "std/string";
@@ -40,7 +40,7 @@ function main(): i32 {
 
     print(x.to_string());
     print(y.to_string());
-    // Twice the work must not cost more fresh memory.
+
     if ((b2 - b1) > (b1 - b0)) { print("grows"); } else { print("flat"); }
     return 0;
 }

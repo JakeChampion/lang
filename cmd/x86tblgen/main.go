@@ -1,16 +1,3 @@
-// Command x86tblgen writes the self-host x86-64 assembler's encoding tables
-// from internal/tables/x86tbl, the table the Go assembler reads directly.
-//
-// The two assemblers must agree byte for byte, and every drift found so far
-// has been vocabulary rather than encoding logic — one side reaching a
-// mnemonic or spelling the other does not. Generating the Fern side from the
-// same table removes the class: there is one list, and cmd/x86tblgen's
-// staleness test fails if the committed output stops matching it.
-//
-// Mechanism follows cmd/floattablegen and cmd/unicodegen: rewrite between
-// marker comments in place, and keep a test that regenerates and diffs.
-//
-//	go run ./cmd/x86tblgen compiler/x86_native.fern
 package main
 
 import (
@@ -22,7 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/tables/x86tbl"
 )
 
-// block is one marker-delimited region this command owns.
 type block struct {
 	begin, end string
 	generate   func() string
@@ -56,20 +42,14 @@ var blocks = []block{
 	},
 }
 
-// lintLimit is the complexity limit of compiler/lint.fern. A generated
-// table scores one more than its rows, so a long one carries an `allow`.
 const lintLimit = 10
 
 func allowLongTable(b *strings.Builder, rows int) {
 	if rows+1 > lintLimit {
-		b.WriteString("// fern-lint: allow cyclomatic-complexity\n// A generated table: one arm for each row.\n")
+		b.WriteString("// fern-lint: allow cyclomatic-complexity\n// Each table row has one match arm.\n")
 	}
 }
 
-// lookup renders a mnemonic-to-value function as a string match: one arm
-// per row and the wildcard returning -1, the shape a hand-written table
-// reads as. A string match lowers to the same str_eq chain an if-chain
-// would, so the form costs nothing at run time.
 func lookup(b *strings.Builder, fn, param string, rows []string) {
 	allowLongTable(b, len(rows))
 	fmt.Fprintf(b, "function %s(%s: string): i32 {\n    match (%s) {\n", fn, param, param)
@@ -79,14 +59,6 @@ func lookup(b *strings.Builder, fn, param string, rows []string) {
 	b.WriteString("        _ => { return 0 - 1; }\n    }\n}\n")
 }
 
-// genNamedTables renders the by-name vocabulary over the AT&T spellings the
-// self-host dispatches on: for a family whose encoder reads per-spelling data,
-// the lookup that returns it, and for the rest a predicate.
-//
-// A family marked Suffixed is matched on the suffix-stripped base, so its
-// predicate and lookup take that base. A row with no AT&T spelling (the
-// SSE movq, which AT&T spells the same as the general-register move) is
-// reached through another family's arm and contributes nothing here.
 func genNamedTables() string {
 	var b strings.Builder
 	for _, f := range x86tbl.Named {
@@ -100,7 +72,6 @@ func genNamedTables() string {
 			continue
 		}
 		if f.FernFn != "" {
-			fmt.Fprintf(&b, "// %s: %s.\n", f.FernFn, f.Doc)
 			var rows []string
 			for _, o := range f.Ops {
 				if o.ATT == "" {
@@ -111,7 +82,6 @@ func genNamedTables() string {
 			lookup(&b, f.FernFn, "mnem", rows)
 			continue
 		}
-		fmt.Fprintf(&b, "// %s: %s.\n", f.PredicateName(), f.Doc)
 		allowLongTable(&b, len(spellings))
 		fmt.Fprintf(&b, "function %s(mnem: string): boolean {\n    return ", f.PredicateName())
 		for i, t := range spellings {
@@ -129,13 +99,9 @@ func genNamedTables() string {
 	return b.String()
 }
 
-// genGPRTables renders the ModRM.reg-extension families — the base
-// mnemonic to /digit lookups the suffixed dispatch consults — and the
-// lock-prefix set derived from them.
 func genGPRTables() string {
 	var b strings.Builder
-	group := func(fn, doc string, g x86tbl.Group) {
-		b.WriteString(doc)
+	group := func(fn string, g x86tbl.Group) {
 		var rows []string
 		for _, op := range g.Ops {
 			for _, sp := range op.Spellings {
@@ -145,26 +111,15 @@ func genGPRTables() string {
 		lookup(&b, fn, "mnem", rows)
 		b.WriteString("\n")
 	}
-	group("x86_gas_alu_ext", `// x86_gas_alu_ext maps an ALU base mnemonic to its group-1 /digit; the
-// family's MR opcode row is ext*8 (add 00, or 08, adc 10, sbb 18, and 20,
-// sub 28, xor 30, cmp 38).
-`, x86tbl.ALU)
-	group("x86_gas_unary_ext", `// x86_gas_unary_ext maps an F6/F7-group base mnemonic to its /digit.
-`, x86tbl.Unary)
-	group("x86_gas_incdec_ext", `// x86_gas_incdec_ext maps inc/dec to their FE/FF-group /digit.
-`, x86tbl.IncDec)
-	group("x86_gas_shift_ext", `// x86_gas_shift_ext maps a shift/rotate base mnemonic to its C0..D3-group
-// /digit. sal is gas's alias for shl and takes shl's /4.
-`, x86tbl.Shift)
-	group("x86_gas_bt_idx", `// x86_gas_bt_idx maps the bit-test family to its index: the register-form
-// opcode is 0xA3 + idx*8 and the immediate-form /digit is 4 + idx.
-`, x86tbl.BitTest)
-	b.WriteString(`// x86_gas_lockable: the base mnemonics the F0 lock prefix may precede —
-// anything else is #UD at runtime, so it is refused at assembly.
-function x86_gas_lockable(mnem: string): boolean {
+	group("x86_gas_alu_ext", x86tbl.ALU)
+	group("x86_gas_unary_ext", x86tbl.Unary)
+	group("x86_gas_incdec_ext", x86tbl.IncDec)
+	group("x86_gas_shift_ext", x86tbl.Shift)
+	group("x86_gas_bt_idx", x86tbl.BitTest)
+	b.WriteString(`function x86_gas_lockable(mnem: string): boolean {
     let names: string[] = [
 `)
-	// One spelling per line, so the generated source diffs line by line.
+
 	for _, sp := range x86tbl.LockableSpellings() {
 		fmt.Fprintf(&b, "        %q,\n", sp)
 	}
@@ -180,19 +135,10 @@ function x86_gas_lockable(mnem: string): boolean {
 	return b.String()
 }
 
-// genFixedTable renders the no-operand vocabulary: the byte lookup the bare
-// path consults, and the rep-eligibility predicate.
-//
-// Only the AT&T spellings are emitted — the self-host assembler reads AT&T,
-// so `stosd` (Intel only) must NOT appear here even though it names the same
-// bytes as `stosl`. That distinction is the whole reason the table carries a
-// mode per spelling rather than one list.
 func genFixedTable() string {
 	var b strings.Builder
-	b.WriteString(`// x86_gas_fixed_op maps a no-operand mnemonic to its bytes, little-endian
-// with the byte count in the top byte; -1 when not fixed. gas accepts both
-// dialects' spellings of the sign-extend group (cltq and cdqe are one
-// instruction), so both are here.
+	b.WriteString(`// x86_gas_fixed_op returns instruction bytes in little-endian order.
+// The high byte stores the byte count. An unknown mnemonic returns -1.
 `)
 	var rows []string
 	for _, f := range x86tbl.FixedOps {
@@ -207,10 +153,6 @@ func genFixedTable() string {
 	lookup(&b, "x86_gas_fixed_op", "mnem", rows)
 
 	b.WriteString(`
-// x86_gas_rep_ok reports whether a rep/repne prefix may precede the mnemonic.
-// That is the string ops plus ` + "`rep ret`" + ` and ` + "`rep nop`" + `, the two idioms gas also
-// takes; anything else it rejects outright, and the prefix would otherwise be
-// emitted in front of an instruction that ignores it.
 function x86_gas_rep_ok(mnem: string): boolean {
 `)
 	for _, f := range x86tbl.FixedOps {
@@ -227,36 +169,18 @@ function x86_gas_rep_ok(mnem: string): boolean {
 	return b.String()
 }
 
-// genSSETables renders the two halves the self-host dispatch consults in
-// order, float before integer. The split comes from the table rather than
-// being recomputed: which half a mnemonic sits in decides whether an earlier
-// arm can claim it first.
-//
-// A row with no mandatory prefix is written as a bare opcode, not
-// `0 * 256 + op`, which is what the hand-written source did — matching it is
-// what let the first generated output be diffed against the file it replaced.
 func genSSETables() string {
 	var b strings.Builder
-	b.WriteString("// x86_gas_sse_fp_op: the scalar/packed FLOAT half of the two-byte-opcode\n" +
-		"// SSE table (`[pfx] 0F op /r`, xmm destination), packed as pfx*256+op;\n" +
-		"// -1 when absent.\n")
 	writeSSEHalf(&b, "x86_gas_sse_fp_op", x86tbl.SSEFloatHalf)
-	b.WriteString("\n// x86_gas_sse_int_op: the packed-INTEGER half of the SSE table (all\n" +
-		"// 66-prefixed). The psll/psrl/psra entries here are the by-%xmm-count\n" +
-		"// forms; the by-immediate forms are the 0F 71/72/73 groups\n" +
-		"// (x86_gas_vshift_op).\n")
 	writeSSEHalf(&b, "x86_gas_sse_int_op", x86tbl.SSEIntHalf)
 	var terms []string
 	for _, m := range x86tbl.SSERegOnly {
 		terms = append(terms, fmt.Sprintf("mnem == %q", m))
 	}
-	b.WriteString("\n// x86_gas_sse_reg_only: an SSE table row whose source must be an xmm\n" +
-		"// register. Its opcode with a memory source is another instruction.\n")
 	fmt.Fprintf(&b, "function x86_gas_sse_reg_only(mnem: string): boolean {\n    return %s;\n}\n", strings.Join(terms, " || "))
 	return b.String()
 }
 
-// writeSSEHalf renders one lookup function.
 func writeSSEHalf(b *strings.Builder, fn string, half x86tbl.SSEHalf) {
 	var rows []string
 	for _, o := range x86tbl.SSEHalfOps(half) {
@@ -269,15 +193,9 @@ func writeSSEHalf(b *strings.Builder, fn string, half x86tbl.SSEHalf) {
 	lookup(b, fn, "mnem", rows)
 }
 
-// genCondTable renders x86_gas_cc_code: the suffix-to-code lookup jCC, setCC
-// and cmovCC all dispatch through. Aliases share a line, as they do in the
-// table, so the generated source reads the way a hand-written one would.
 func genCondTable() string {
 	var b strings.Builder
-	b.WriteString(`// x86_gas_cc_code maps a condition-suffix spelling to its 4-bit condition
-// code, shared by jcc 0F 80+cc, setcc 0F 90+cc and cmovcc 0F 40+cc. Returns
-// -1 for a spelling that is not a condition, which is what lets the three
-// families dispatch by matching their prefix and looking the rest up here.
+	b.WriteString(`// x86_gas_cc_code returns the four-bit condition code, or -1 for an unknown suffix.
 `)
 	var rows []string
 	for _, c := range x86tbl.Conds {
@@ -289,8 +207,6 @@ func genCondTable() string {
 	return b.String()
 }
 
-// Rewrite replaces every marked block present in src. A file carrying none is
-// returned unchanged.
 func Rewrite(src string) (string, error) {
 	found := false
 	for _, b := range blocks {

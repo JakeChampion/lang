@@ -5,10 +5,6 @@ import (
 	"testing"
 )
 
-// The associated-constant rules of docs/ASSOCIATED-TYPES.md: a read resolves
-// on a concrete type, through a bound, and as `Self` inside an impl; the impl
-// binds a const with `const` and a function with `function`; a read names a
-// constant and a call a function.
 func TestAssociatedConstsAccepted(t *testing.T) {
 	src := `trait Lanes {
     const LANES: i32;
@@ -67,8 +63,6 @@ function main(): i32 { return f[V2](); }`, "T.LANES is an associated constant; r
 		{"unknown, concrete", impl + `function main(): i32 { return V2.WIDTH; }`, `V2 has no associated constant "WIDTH"`},
 		{"unknown, through a bound", impl + `function f[T: Lanes](): i32 { return T.WIDTH; }
 function main(): i32 { return f[V2](); }`, `T has no associated constant "WIDTH"`},
-		// An enum's field is a variant unless an impl gives the enum an
-		// associated function of that name.
 		{"misspelt variant stays a variant error", `enum Kind { A, B }
 function main(): i32 { let k: Kind = Kind.C; return 0; }`, `enum Kind has no variant "C"`},
 	}
@@ -84,9 +78,6 @@ function main(): i32 { let k: Kind = Kind.C; return 0; }`, `enum Kind has no var
 	}
 }
 
-// A parametric impl may bind an associated type to a projection of the same
-// name off its own type parameter (`type Elem = T::Elem;`); resolving the
-// binding by name alone recursed on it without bound.
 func TestAssocTypeBindingProjectsOwnParameter(t *testing.T) {
 	src := `trait Lanes {
     type Elem;

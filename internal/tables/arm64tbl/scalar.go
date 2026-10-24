@@ -2,47 +2,21 @@ package arm64tbl
 
 import "strings"
 
-// Family is one group of mnemonics the self-host assembler routes through a
-// single encoder arm: cmd/arm64tblgen writes the family lookup
-// (arm64_gas_family, with an `arm64_fam_<Name>` index per family) into
-// compiler/arm64_native.fern, which its dispatch compares against
-// instead of spelling the mnemonics again.
-//
-// The encoder logic stays hand-written; what the table holds is the
-// vocabulary, the operand shape a representative instruction takes, and —
-// where the encoder needs a per-mnemonic base word (the scalar FP set, the
-// carry chain, the widening multiplies, the negated logicals, the conditional
-// selects) — that word.
 type Family struct {
-	Name string
-	Doc  string
-	// Probe is a representative instruction with %s standing for the
-	// mnemonic. It is the test inventory: the self-host assembler must
-	// encode it to GNU as's word for every row. A row whose shape differs
-	// overrides it.
+	Name  string
+	Doc   string
 	Probe string
-	// Base names the Fern base-word lookup this family generates, "" when
-	// the family's encoder computes its word from the mnemonic instead.
-	Base string
-	Ops  []ScalarOp
+	Base  string
+	Ops   []ScalarOp
 }
 
-// ScalarOp is one mnemonic of a family.
 type ScalarOp struct {
 	Mnemonic string
-	// Word is the base encoding when the family has a Base lookup: the
-	// instruction with every register field zero. For the shll family it is
-	// the packed kind arm64_gas_shll_kind returns.
-	Word uint32
-	// Probe overrides the family probe for this row.
-	Probe string
-	// Layout marks a row whose encoding depends on where the image places
-	// its sections (adrp), so the self-host is checked on acceptance alone
-	// rather than on the word.
-	Layout bool
+	Word     uint32
+	Probe    string
+	Layout   bool
 }
 
-// ProbeFor is the row's probe with the mnemonic filled in.
 func (f Family) ProbeFor(o ScalarOp) string {
 	p := o.Probe
 	if p == "" {
@@ -51,13 +25,6 @@ func (f Family) ProbeFor(o ScalarOp) string {
 	return strings.Replace(p, "%s", o.Mnemonic, 1)
 }
 
-// Scalar is every mnemonic the self-host arm64 assembler dispatches by NAME.
-// The Advanced SIMD classes in VecTables are dispatched by table lookup on an
-// arranged first operand and are not repeated here; the conditional
-// branches are matched by pattern (b.<cond> and b<cond>).
-//
-// Every probe is checked against `aarch64-linux-gnu-as` by
-// internal/testing/e2ecompiler's TestSelfHostArm64TableRowsMatchGas.
 var Scalar = []Family{
 	{Name: "fixed", Doc: "no operands", Probe: "%s",
 		Ops: []ScalarOp{{Mnemonic: "ret"}, {Mnemonic: "nop"}, {Mnemonic: "yield"}, {Mnemonic: "paciasp"}, {Mnemonic: "autiasp"}, {Mnemonic: "xpaclri"}}},
@@ -249,7 +216,6 @@ var Scalar = []Family{
 		Probe: "%s x2, x0, [x1]", Ops: []ScalarOp{{Mnemonic: "ldaddal"}, {Mnemonic: "casal"}}},
 }
 
-// scalarIndex maps a mnemonic to its family and row.
 var scalarIndex = func() map[string][2]int {
 	m := make(map[string][2]int, 256)
 	for fi, f := range Scalar {

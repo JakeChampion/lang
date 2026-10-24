@@ -1,17 +1,3 @@
-// compiler/ssa_lift_admits_run.fern — the production lift's
-// admission census. It walks every registered IR op kind and prints the ones
-// ssa_lift.admits declines, with the stack effect ir.op_pops / ir.op_pushes
-// give the kind, then the registered and declined counts.
-//
-// The companion Go test (internal/testing/e2ecompiler/self_host_ssa_lift_admits_test.go)
-// pins the report: a kind added to the registry reaches the register path
-// through the stack machine's arm for it unless its stack effect is unknown,
-// so a new line here is a kind whose pop count op_pops does not model. The
-// three kinds it lists are the ones no lowering produces. A kind the lift
-// admits by name while op_pops does not model it is printed first, as
-// `unmodelled`: the passes that read stack effects (the suspension pass's
-// segments) refuse such an op, so the list stays empty.
-
 import "../ir";
 import "../ssa_lift";
 import "../util";

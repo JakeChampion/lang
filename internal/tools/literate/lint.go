@@ -2,19 +2,7 @@ package literate
 
 import "sort"
 
-// UnusedChunks returns the names of defined chunks that are never
-// reached from a tangle root — the `<<*>>` root chunk (single-file
-// documents) or any `file=PATH` file-root (multi-file documents). Such
-// a chunk contributes to no tangled output: it is dead code, usually a
-// typo in a reference (`<<helpre>>` vs `<<helper>>`) or a leftover
-// definition. The result is sorted.
-//
-// Reachability, not mere reference: a chunk referenced only from another
-// unreachable chunk is itself reported, so an entire dead subtree
-// surfaces. The root chunk is never reported (it is the entry, used
-// implicitly by Tangle).
 func (doc *Document) UnusedChunks() []string {
-	// refs[name] = the chunk names referenced by name's body.
 	refs := map[string][]string{}
 	for name, cd := range doc.chunks {
 		for _, p := range cd.pieces {
@@ -38,8 +26,6 @@ func (doc *Document) UnusedChunks() []string {
 		}
 	}
 
-	// Roots: the `<<*>>` chunk (if defined) and every chunk a file-root
-	// references directly.
 	if _, ok := doc.chunks[RootChunk]; ok {
 		visit(RootChunk)
 	}

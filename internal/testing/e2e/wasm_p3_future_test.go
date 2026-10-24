@@ -10,15 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/component"
 )
 
-// p3FutureRoundtripCore exercises the WASI Preview-3 `future<u32>` channel inside
-// one task: it imports the canon glue under "" — `tr` (task.return u32, (i32)->()),
-// `fnew` (future.new, ()->i64), `fwrite` (future.write, (writable, ptr)->status),
-// `fread` (future.read, (readable, ptr)->status) — and ("mem","m") the shared
-// memory. `run` ()->() does: h = future.new(); rd = lo(h) (readable); wr = hi(h)
-// (writable); store 42 @ mem[0]; future.write(wr, 0); future.read(rd, 4); then
-// task.return(load mem[4]). The write precedes the read in the same task, so the
-// read completes synchronously (RETURNED) — no await loop. Generated from WAT via
-// wasm-tools 1.240.
 var p3FutureRoundtripCore = []byte{
 	0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x12, 0x04, 0x60,
 	0x01, 0x7f, 0x00, 0x60, 0x00, 0x01, 0x7e, 0x60, 0x02, 0x7f, 0x7f, 0x01,
@@ -39,18 +30,8 @@ var p3FutureRoundtripCore = []byte{
 	0x77, 0x72, 0x03, 0x02, 0x73, 0x77, 0x04, 0x02, 0x73, 0x72,
 }
 
-// TestWasmP3FutureRoundtrip is the WASI Preview-3 `future<T>` gate, assembled
-// through the Go composer (component.BuildFutureRoundtripComponent): a consumer
-// creates a `future<u32>`, writes a value through its writable end, reads it back
-// through its readable end (synchronously, since the write precedes the read in
-// the same task), and re-returns it from its own async export `run`. Runs under
-// wasmtime's async features → 42. This converts the proven future write/read
-// mechanics into a permanent, CI-tested artifact and exercises the full
-// future canon-builtin set (future.new / future.write / future.read) end to end
-// — the future counterpart of TestWasmP3AsyncPendingAwait. See
-// docs/WASI-PREVIEW3-ASYNC-PLAN.md.
 func TestWasmP3FutureRoundtrip(t *testing.T) {
-	skipIfPreview2Missing(t) // ensures wasmtime on PATH
+	skipIfPreview2Missing(t)
 
 	comp := component.BuildFutureRoundtripComponent(p3FutureRoundtripCore, p3PendMemCore, component.CValtypeU32)
 	dir := t.TempDir()

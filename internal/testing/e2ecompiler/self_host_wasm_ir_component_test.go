@@ -9,23 +9,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostWasmIRComponentAdapter is the IR-path twin of
-// TestSelfHostWasmComponentAdapter (#3457 phase 1 / #4315): it proves the
-// self-host wasm *IR* path (wasm_ir_run) produces a preview1 command core
-// that composes — via `wasm-tools component new --adapt` — into a wasi:cli/run
-// component that runs under wasmtime with real I/O.
-//
-// This matters because the async/socket ops being ported to the wasm-IR path
-// (#4316 poll, #4318 tcp) lower through this IR path and will emit their
-// preview2 interface imports into the same core module; establishing that the
-// IR-emitted core is component-able is the foundation those phases attach to.
-//
-// Validated contract (see #4315):
-//   - `wasi:cli/run` collapses exit codes to result<_,_>: return 0 → component
-//     exit 0, any non-zero → exit 1 (the exact code is NOT preserved — which is
-//     why the exit-code-exact wasm-IR e2e tests keep the direct core-module run,
-//     and the component path is reserved for the preview2/server-shaped ops);
-//   - stdout (print / write) survives the adapter.
 func TestSelfHostWasmIRComponentAdapter(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -47,7 +30,6 @@ func TestSelfHostWasmIRComponentAdapter(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "wasm_ir_run")
 
-	// emitIR pipes src to the driver and returns the emitted WAT.
 	emitIR := func(t *testing.T, src string) []byte {
 		t.Helper()
 		var cmd *exec.Cmd
@@ -64,8 +46,6 @@ func TestSelfHostWasmIRComponentAdapter(t *testing.T) {
 		return wat
 	}
 
-	// compose turns IR-emitted WAT into a wasi:cli/run component via the
-	// preview1 adapter, returning the component path.
 	compose := func(t *testing.T, tag string, wat []byte) string {
 		t.Helper()
 		watPath := filepath.Join(dir, tag+".wat")
@@ -92,7 +72,6 @@ func TestSelfHostWasmIRComponentAdapter(t *testing.T) {
 		return compPath
 	}
 
-	// runComp runs the component and returns (stdout, exitCode).
 	runComp := func(t *testing.T, compPath string) (string, int) {
 		t.Helper()
 		cmd := exec.Command(wasmtime, "run", compPath)
@@ -100,11 +79,10 @@ func TestSelfHostWasmIRComponentAdapter(t *testing.T) {
 		return string(out), cmd.ProcessState.ExitCode()
 	}
 
-	// stdout survives the adapter; return 0 → exit 0.
 	t.Run("print", func(t *testing.T) {
 		comp := compose(t, "print", emitIR(t, `function main(): i32 { print("hello from a wasm-ir component"); return 0; }`))
 		out, code := runComp(t, comp)
-		if out != "hello from a wasm-ir component\n" { // print appends a newline
+		if out != "hello from a wasm-ir component\n" {
 			t.Errorf("stdout = %q, want the printed line", out)
 		}
 		if code != 0 {
@@ -112,7 +90,6 @@ func TestSelfHostWasmIRComponentAdapter(t *testing.T) {
 		}
 	})
 
-	// return 0 → component exit 0.
 	t.Run("exit-zero", func(t *testing.T) {
 		comp := compose(t, "zero", emitIR(t, `function main(): i32 { return 0; }`))
 		if _, code := runComp(t, comp); code != 0 {
@@ -120,7 +97,6 @@ func TestSelfHostWasmIRComponentAdapter(t *testing.T) {
 		}
 	})
 
-	// return non-zero → collapsed to component exit 1 (cli/run result<_,_>).
 	t.Run("exit-nonzero-collapses", func(t *testing.T) {
 		comp := compose(t, "five", emitIR(t, `function main(): i32 { return 5; }`))
 		if _, code := runComp(t, comp); code != 1 {

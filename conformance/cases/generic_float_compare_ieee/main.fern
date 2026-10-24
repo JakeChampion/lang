@@ -1,7 +1,7 @@
 import "core/cmp";
 
-// A comparison operator on a float is IEEE whether the code is generic or
-// concrete; the total order stays reachable through `eq` and `cmp` (#12697).
+
+
 @derive(cmp.Eq, cmp.Ord)
 struct P { x: i32 }
 

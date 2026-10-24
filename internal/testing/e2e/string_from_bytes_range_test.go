@@ -10,10 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// string_from_bytes_range_unchecked through the Go compiler on every target
-// and the interpreter: the copies match string_from_bytes_unchecked's, the
-// source is not shared, nothing leaks, and a backwards range exits 134. The
-// self-host twin is TestSelfHostStringFromBytesRange.
 func TestStringFromBytesRange(t *testing.T) {
 	fern := buildFernCLI(t)
 	dir := t.TempDir()

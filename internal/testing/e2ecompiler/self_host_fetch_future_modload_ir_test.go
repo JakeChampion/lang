@@ -7,21 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostFetchFutureModloadIRX86_64 is the last gate of async slice 6c: the
-// real std/fetch `fetch_future` — whose `__fetch_drain` returns
-// `Pending(tcp_pollable(c), resume)` where the nested `resume` captures the
-// connection fd (i32) AND a string accumulator — now compiles through the
-// self-host MODLOAD IR path instead of bailing to AST. It pulls together every
-// prior 6c slice: the function-typed enum payload (5/5b), value-used nested
-// fn-values (6c parts 1+2), and pointer-shaped captures in the env box (6c part
-// 3 — the string accumulator capture).
-//
-// The program is compiled via the asm_load_run modload driver and asserted to
-// route the IR path (-decide == "ir"). It is NOT run here: fetch_future performs
-// real TCP I/O (connect to a host:port), which needs a live server; the
-// routing — the goal-1 objective (never bail) — is what this
-// guards. The capture behaviour itself is run end-to-end by
-// TestSelfHostClosurePtrCaptureIRX86_64.
 func TestSelfHostFetchFutureModloadIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

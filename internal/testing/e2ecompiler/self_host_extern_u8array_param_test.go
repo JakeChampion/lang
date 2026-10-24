@@ -11,16 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestSelfHostExternU8ArrayParamCustomProvider is the self-host port of the
-// u8[] `@import` parameter (docs/WIT-BRING-YOUR-OWN.md). Unlike the wider
-// numeric arrays (whose self-host 4-byte element slot already matches the
-// canonical element size, needing only an aligned copy), a self-host u8[]
-// stores each byte widened to a full 4-byte slot while the canonical list<u8>
-// wants the bytes packed one-per-byte. So the wrapper byte-repacks: it allocs
-// `len` bytes and writes each element's low byte contiguously (alignment is
-// moot for 1-byte elements), then forwards (buf, len). Tested via the
-// custom-provider harness: a `sum-bytes: func(b: list<u8>) -> s32` provider
-// sums the bytes; the self-host program builds [10, 20, 12] and checks 42.
 func TestSelfHostExternU8ArrayParamCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -39,7 +29,6 @@ func TestSelfHostExternU8ArrayParamCustomProvider(t *testing.T) {
 		}
 	}
 
-	// --- Provider component exporting local:test/sink@0.1.0 sum-bytes. ---
 	provWit := filepath.Join(dir, "provwit")
 	if err := os.MkdirAll(provWit, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -49,8 +38,6 @@ func TestSelfHostExternU8ArrayParamCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export sink; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// The list<u8> is lowered into the provider's memory via cabi_realloc; the
-	// export sums the bytes loaded one-per-byte.
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)
   (global $h (mut i32) (i32.const 1024))
@@ -75,7 +62,6 @@ func TestSelfHostExternU8ArrayParamCustomProvider(t *testing.T) {
 	run(wasmtools, "component", "embed", provWit, "-w", "provider", filepath.Join(dir, "prov_core.wasm"), "-o", filepath.Join(dir, "prov_embed.wasm"))
 	run(wasmtools, "component", "new", filepath.Join(dir, "prov_embed.wasm"), "-o", provider)
 
-	// --- User world (custom sink iface + wasi stdout). ---
 	userWit := filepath.Join(dir, "userwit")
 	if out, err := exec.Command("cp", "-r", "../../../cmd/fern/wit/deps", filepath.Join(userWit, "deps")).CombinedOutput(); err != nil {
 		_ = os.MkdirAll(userWit, 0o755)
@@ -104,7 +90,6 @@ func TestSelfHostExternU8ArrayParamCustomProvider(t *testing.T) {
 		t.Fatalf("DecodeWorldBytes: %v", err)
 	}
 
-	// --- Self-host backend: emit the core from the u8[]-param program. ---
 	copySelfHostDriver(t, dir, "drivers/wasm_runio_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_runio_run.fern", "wasm_runio_run")
 

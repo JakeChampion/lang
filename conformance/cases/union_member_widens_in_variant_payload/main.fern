@@ -1,5 +1,5 @@
-// A union-member struct given to a variant constructor widens to the union
-// the expected payload names: `Some(A { … })` where `Option[U]` is wanted.
+
+
 import "std/i32";
 
 struct A { n: i32 }

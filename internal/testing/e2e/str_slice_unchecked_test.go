@@ -1,15 +1,3 @@
-// Differential coverage for `slice_unchecked(s, a, b): str` (#5634, D9,
-// slice 3) — the byte slice the expression `s[a:b]` used to be, under
-// its accurate name: half-open,
-// byte-indexed, trapping (exit 134) on a < 0 || b > s.len() || a > b, and
-// deliberately NOT checking UTF-8 char boundaries — and its total
-// std/string sibling `s.slice_snap(a, b)`, which clamps both bounds to
-// [0, len] then snaps them INWARD to char boundaries (a forward, b
-// backward) and returns "" on an inverted or snapped-empty range.
-//
-// The multibyte fixture is "héllo" built from explicit bytes
-// (string_from_bytes_unchecked, the utf8_test idiom) so the é's
-// [195, 169] encoding is pinned rather than trusted to source encoding.
 package e2e
 
 import (
@@ -17,12 +5,6 @@ import (
 	"testing"
 )
 
-// strSliceUncheckedProgram exits 0 on success, a distinct code per failed
-// step. Steps: (a) the mid-code-point cut stays byte-honest; boundary
-// index forms; (b) the slice_snap snap/clamp/inverted/identity table;
-// (d) an owned-temp source (a + b) sliced in a loop, exercising the IR's
-// owned-temp stash — asserted by value, since a stash bug reads freed
-// bytes or the wrong view.
 const strSliceUncheckedProgram = `import "std/string";
 
 // h(104) é(195,169) l l o — 6 bytes, 5 code points.
@@ -136,11 +118,6 @@ func TestStrSliceUncheckedWasm(t *testing.T) {
 	}
 }
 
-// The trap contract: each case violates one clause of
-// a < 0 || b > s.len() || a > b. If the bounds check were missing, every
-// program here returns a small slice length (or garbage) — never 134 —
-// so the exit code discriminates a trap from a silent out-of-bounds view.
-// Bounds are carried in vars so constfold cannot pre-judge them.
 var strSliceUncheckedTrapCases = []struct{ name, src string }{
 	{"high_past_end", `function main(): i32 {
     let s: string = "hello";
@@ -169,8 +146,6 @@ func TestStrSliceUncheckedTrap(t *testing.T) {
 	for _, c := range strSliceUncheckedTrapCases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Run("interp", func(t *testing.T) {
-				// The interpreter reports a diagnostic and exits non-zero
-				// rather than using the natives' 134 abort.
 				if got := runInterpExit(t, c.src); got == 0 {
 					t.Errorf("interp did not trap (exit 0)\nsrc:\n%s", c.src)
 				}
@@ -188,9 +163,6 @@ func TestStrSliceUncheckedTrap(t *testing.T) {
 				}
 			})
 			t.Run("wasm32-wasi", func(t *testing.T) {
-				// wasm's `unreachable` surfaces as wasmtime's own non-zero
-				// exit, not 134 — assert the trap, not its spelling
-				// (matching assertAborts).
 				comp := buildCLIComponent(t, c.src)
 				_, _, code := runWasmArtifact(t, comp, runOpts{})
 				if code == 0 {
@@ -201,9 +173,6 @@ func TestStrSliceUncheckedTrap(t *testing.T) {
 	}
 }
 
-// TestRunnerStringSliceSnapExamplePasses gates the pure-Fern runner suite
-// for slice_snap + slice_unchecked, wired like the other tests/stdlib
-// gates in test_runner_test.go.
 func TestRunnerStringSliceSnapExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "tests/stdlib/string_slice_snap_test.fern")
@@ -218,9 +187,6 @@ func TestRunnerStringSliceSnapExamplePasses(t *testing.T) {
 	}
 }
 
-// TestRunnerStringSnapHelpersExamplePasses gates the pure-Fern runner
-// suite for the snap-semantics std/string helpers (take / drop /
-// split_at / chunks / truncate / ellipsis, #5634).
 func TestRunnerStringSnapHelpersExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "tests/stdlib/string_snap_helpers_test.fern")

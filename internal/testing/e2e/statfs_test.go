@@ -1,22 +1,3 @@
-// `statfs` (#9062) end to end on every backend that provides it.
-//
-// The numbers are whatever filesystem the runner is on, so the probe is
-// handed the ones the harness read through Go and compares them. That is the
-// discriminating check: every way this helper can be wrong produces a
-// plausible-looking record. Reading Linux's `struct statfs` one word early
-// puts f_type in `block_size` and f_blocks in `blocks_free`; taking
-// `blocks_free` for `blocks_avail` hides the superuser reserve that `df`
-// exists to show; and Darwin's u32 f_bsize loaded as 64 bits drags f_iosize
-// in beside it.
-//
-// The block size, the two limits and the type, ID and fundamental block size
-// are compared exactly, since none of them moves under a mounted filesystem. The counts are compared for ORDER
-// instead — blocks get used while the test runs — but the nesting
-// (available <= free <= total) breaks long before the bounds do when a record
-// is read at the wrong offset.
-//
-// wasm has no leg: neither preview has a volume interface, so the `fsinfo`
-// capability withholds the builtin.
 package e2e
 
 import (
@@ -28,8 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// statfsProbe returns the probe source for `dir` plus the directory to run it
-// in. Each failing step returns its own code.
 func statfsProbe(t *testing.T, dir string) string {
 	t.Helper()
 	blockSize, nameMax, pathMax := hostFsFacts(t, dir)
@@ -80,9 +59,6 @@ func TestInterpStatfs(t *testing.T) {
 	}
 }
 
-// Both wasm worlds refuse it. A zero-filled record would claim a filesystem
-// with no blocks and no name length — a measurement a component never took —
-// so the correct answer is the compile-time refusal.
 func TestWASMStatfsRefused(t *testing.T) {
 	prog, err := parser.Parse(`function main(): i32 {
     match (statfs(".")) { Ok(_) => { return 0; }, Err(_) => { return 1; } }

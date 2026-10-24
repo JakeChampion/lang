@@ -1,32 +1,3 @@
-// sort.fern — GNU-compatible `sort`.
-//
-//   sort [OPTION]... [FILE]...
-//   sort [OPTION]... --files0-from=F
-//
-// Lines from every operand, concatenated and ordered by a list of
-// keys, with the whole line as a last-resort tie-break. Usage errors
-// exit 2, a failed `-c` check exits 1.
-//
-// Four things about it are not obvious from the synopsis:
-//
-//   - `-k1` is the WHOLE LINE, not the first field: a key whose start
-//     is field 1 character 1 has nothing to skip, and GNU turns that
-//     into the line itself, so its end is the line's end rather than
-//     the end of field one.
-//   - A field STARTS at the blanks in front of it when -t is absent,
-//     so `-k2` on `b a` selects ` a` and not `a`. `b` is what the
-//     `leading blanks are significant` warning is about.
-//   - Global ordering options are inherited by a key only when that
-//     key names no ordering of its own AND is not reversed, so
-//     `sort -n -k2r` compares field 2 as TEXT, reversed.
-//   - The last-resort comparison is dropped by -u and by -s, and it
-//     is the only comparison the global `-r` applies to once any key
-//     exists: `sort -k1n -r` reverses the tie-break and not the key.
-//
-// The whole input is read before anything is written — `sort -o f f`
-// works because of it — and is held in one buffer with the lines as
-// offsets into it, so ordering permutes 4-byte indices rather than
-// strings.
 import "std/string";
 import "std/array";
 import "std/utf8";
@@ -38,18 +9,10 @@ import "./lib/ld";
 import "./lib/radix";
 import "./lib/byte_input";
 
-// The exit status of a usage error and of any other failure; gnulib's
-// exit_failure, which sort sets to 2. A `-c` mismatch is 1, and so is
-// an argmatch failure, which exits through usage(EXIT_FAILURE).
 function sort_failure(): i32 {
   return 2;
 }
 
-// ---- option ids -------------------------------------------------------------
-//
-// Declared in GNU's order: the ambiguity list prints candidates in the
-// order the long options are declared, so `--r` names '--random-sort'
-// before '--random-source' before '--reverse'.
 function o_blanks(): i32 {
   return 1;
 }
@@ -234,12 +197,6 @@ function help_text(): string {
   return out;
 }
 
-// ---- character tables -------------------------------------------------------
-//
-// GNU builds four tables at start-up from the locale; in C they are
-// these. `blanks` is isblank PLUS newline: a line cannot hold the
-// newline that ends it, so treating one as a field separator only ever
-// matters under -z, where it does.
 function is_blank_b(c: i32): boolean {
   return c == 32 || c == 9 || c == 10;
 }
@@ -248,7 +205,6 @@ function is_print_b(c: i32): boolean {
   return c >= 32 && c < 127;
 }
 
-// The C-locale digit test the numeric comparisons ask once per byte.
 function is_digit_b(c: i32): boolean {
   return c >= 48 && c <= 57;
 }
@@ -264,9 +220,6 @@ function fold_up(c: i32): i32 {
   return c;
 }
 
-// The two `ignore` tables a key can carry: 1 is -i's (drop what is not
-// printable), 2 is -d's (drop what is neither alphanumeric nor a
-// blank). -d wins over -i whatever order they were given in.
 function ignore_none(): i32 {
   return 0;
 }
@@ -286,13 +239,6 @@ function ignored(kind: i32, c: i32): boolean {
   return !is_alnum_b(c) && !is_blank_b(c);
 }
 
-// ---- keys -------------------------------------------------------------------
-//
-// One `-k` (or one obsolete `+POS -POS`). `sword` / `eword` are
-// zero-origin field numbers with -1 for "not given", which for the
-// start means the whole line; `schar` / `echar` are the extra
-// characters into the field, zero-origin at the start and a count at
-// the end.
 struct Key { sword: i32, schar: i32, eword: i32, echar: i32, skipsblanks: boolean, skipeblanks: boolean, ignore: i32, translate: boolean, numeric: boolean, general: boolean, human: boolean, month: boolean, version: boolean, random: boolean, reverse: boolean, obsolete: boolean }
 
 function key_new(): Key {
@@ -307,31 +253,21 @@ function key_numeric(k: Key): boolean {
   return k.numeric || k.general || k.human;
 }
 
-// Whether `k` names no ordering at all — the test that decides both
-// whether a key inherits the global options and whether the global
-// options become a key of their own. `reverse` is deliberately not
-// part of it: `sort -r` alone still has no key.
 function default_key_compare(k: Key): boolean {
   return !(k.ignore != ignore_none() || k.translate || k.skipsblanks || k.skipeblanks || key_numeric(k) || k.month || k.version || k.random);
 }
 
-// The tab a run has, and the value that stands for "none given": GNU's
-// TAB_DEFAULT is CHAR_MAX + 1, a value no byte can equal.
 function tab_default(): i32 {
   return 0 - 1;
 }
 
-// ---- the run's settings -----------------------------------------------------
 struct Conf { keys: Key[], tab: i32, reverse: boolean, unique: boolean, stable: boolean, term: i32, seed: [u8], debug: boolean, gkey_only: boolean }
 
-// ---- diagnostics ------------------------------------------------------------
 function die(msg: string): void {
   gnu.error(msg);
   exit(sort_failure());
 }
 
-// gnulib's sort_die: one message, the file it is about, and the errno
-// text — `sort: cannot read: nosuch: No such file or directory`.
 function die_file(msg: string, file: string, e: IoError): void {
   die(msg + ": " + gnu.quotef(file) + ": " + gnu.io_error_text(e));
 }
@@ -340,12 +276,6 @@ function bad_field(spec: string, msgid: string): void {
   die(msgid + ": invalid field specification " + gnu.quote(spec));
 }
 
-// ---- counts -----------------------------------------------------------------
-//
-// xstrtoumax with no suffixes, as every count in a key spec is parsed:
-// leading blanks and a `+` are accepted, a `-` is not, and a value past
-// what a line can hold saturates rather than failing — GNU saturates at
-// SIZE_MAX for the same reason. Returns (value, end, ok).
 function parse_count(s: string, from: i32): (i32, i32, boolean) {
   let i: i32 = from;
   while (i < s.len() && gnu.is_blank(s[i] as i32)) {
@@ -372,9 +302,6 @@ function parse_count(s: string, from: i32): (i32, i32, boolean) {
   return (v, i, true);
 }
 
-// `parse_field_count(spec, from, msgid)` — one count inside a field
-// spec. A malformed one dies naming the REMAINDER of the spec, which
-// is what GNU quotes: `-k1,x` complains about 'x'.
 function parse_field_count(spec: string, from: i32, msgid: string): (i32, i32) {
   let r: (i32, i32, boolean) = parse_count(spec, from);
   if (!r.2) {
@@ -383,7 +310,6 @@ function parse_field_count(spec: string, from: i32, msgid: string): (i32, i32) {
   return (r.0, r.1);
 }
 
-// ---- ordering letters -------------------------------------------------------
 function bl_start(): i32 {
   return 1;
 }
@@ -396,9 +322,6 @@ function bl_both(): i32 {
   return 3;
 }
 
-// The `[bdfgiMhnRrV]` run of a key spec, and the single letters the
-// global options set. Returns the key and the index of the first byte
-// that is not one of them.
 function set_ordering(s: string, from: i32, k: Key, blanktype: i32): (Key, i32) {
   let key: Key = k;
   let i: i32 = from;
@@ -420,7 +343,6 @@ function set_ordering(s: string, from: i32, k: Key, blanktype: i32): (Key, i32) 
     } else if (c == 104) {
       key = Key { ...key, human: true };
     } else if (c == 105) {
-      // -d implies -i, so -i never overrides a -d already given.
       if (key.ignore == ignore_none()) {
         key = Key { ...key, ignore: ignore_nonprinting() };
       }
@@ -442,7 +364,6 @@ function set_ordering(s: string, from: i32, k: Key, blanktype: i32): (Key, i32) 
   return (key, i);
 }
 
-// `parse_key(spec)` — one `-k F[.C][OPTS][,F[.C][OPTS]]`.
 function parse_key(spec: string): Key {
   let k: Key = key_new();
   let r: (i32, i32) = parse_field_count(spec, 0, "invalid number at field start");
@@ -489,12 +410,6 @@ function parse_key(spec: string): Key {
   return k;
 }
 
-// ---- fields -----------------------------------------------------------------
-//
-// `begfield` / `limfield`, which is where a key's bytes come from. A
-// field starts at the blanks in front of it when no -t was given, so
-// `-k2` on `b a` selects ` a`; with -t the separator belongs to the
-// field it precedes.
 function begfield(text: u8[], lo: i32, hi: i32, k: Key, tab: i32): i32 {
   let ptr: i32 = lo;
   let sword: i32 = k.sword;
@@ -558,9 +473,6 @@ function limfield(text: u8[], lo: i32, hi: i32, k: Key, tab: i32): i32 {
       eword = eword - 1;
     }
   }
-  // `b` on the end position moves the character offset past the end
-  // field's blanks; with no offset to move, the key ends where the
-  // field does and the blanks after it belong to the next field.
   if (echar == 0) {
     return ptr;
   }
@@ -575,9 +487,6 @@ function limfield(text: u8[], lo: i32, hi: i32, k: Key, tab: i32): i32 {
   return ptr + echar;
 }
 
-// The half-open span key `k` selects out of the line at [lo, hi),
-// packed the way a line is: a tuple here would be a heap pair per key
-// per comparison, which is most of what an ordering mode costs.
 function key_span(text: u8[], lo: i32, hi: i32, k: Key, tab: i32): i64 {
   let lim: i32 = hi;
   if (k.eword != 0 - 1) {
@@ -597,8 +506,6 @@ function key_span(text: u8[], lo: i32, hi: i32, k: Key, tab: i32): i64 {
   return pack_line(beg, lim - beg);
 }
 
-// The comparisons that GNU makes over a NUL-terminated copy of the key
-// stop at an embedded NUL as well as at the key's end.
 function nul_end(text: u8[], lo: i32, hi: i32): i32 {
   let i: i32 = lo;
   while (i < hi && text[i] as i32 != 0) {
@@ -607,14 +514,6 @@ function nul_end(text: u8[], lo: i32, hi: i32): i32 {
   return i;
 }
 
-// ---- numeric comparison -----------------------------------------------------
-//
-// gnulib's strnumcmp: the two numbers are compared digit by digit
-// without ever being converted, so `-n` orders values no long double
-// could hold apart. The C locale has no thousands separator and `.` for
-// a decimal point.
-//
-// `byte_at` is the NUL a C string would have past its end.
 function byte_at(text: u8[], i: i32, end: i32): i32 {
   if (i >= end) {
     return 0;
@@ -622,8 +521,6 @@ function byte_at(text: u8[], i: i32, end: i32): i32 {
   return text[i] as i32;
 }
 
-// The fraction after a decimal point, once the integer parts have been
-// found equal.
 function fraccompare(ta: u8[], ai: i32, aend: i32, tb: u8[], bi: i32, bend: i32): i32 {
   let a: i32 = ai;
   let b: i32 = bi;
@@ -657,8 +554,6 @@ function fraccompare(ta: u8[], ai: i32, aend: i32, tb: u8[], bi: i32, bend: i32)
   return 0;
 }
 
-// 1 when what follows the zeros is still a digit — a fraction that is
-// not all zeros, so the number with it is the larger.
 function trailing_nonzero(text: u8[], from: i32, end: i32): i32 {
   let i: i32 = from;
   while (byte_at(text, i, end) == 48) {
@@ -670,8 +565,6 @@ function trailing_nonzero(text: u8[], from: i32, end: i32): i32 {
   return 0;
 }
 
-// The sign-free half of strnumcmp: two magnitudes, leading zeros
-// already skipped.
 function magcompare(ta: u8[], ai: i32, aend: i32, tb: u8[], bi: i32, bend: i32): i32 {
   let a: i32 = ai;
   let b: i32 = bi;
@@ -729,8 +622,6 @@ function magcompare(ta: u8[], ai: i32, aend: i32, tb: u8[], bi: i32, bend: i32):
   return tmp;
 }
 
-// Past a run of `-`, then a run of zeros; the two skips strnumcmp makes
-// before it can compare anything.
 function skip_zeros(text: u8[], from: i32, end: i32): i32 {
   let i: i32 = from;
   while (i < end && text[i] as i32 == 48) {
@@ -739,9 +630,6 @@ function skip_zeros(text: u8[], from: i32, end: i32): i32 {
   return i;
 }
 
-// Whether what remains, after any leading zeros and one decimal point
-// with its zeros, is a digit: strnumcmp's test for "this side is a
-// nonzero number and the other is not".
 function nonzero_after(text: u8[], from: i32, end: i32): boolean {
   let i: i32 = skip_zeros(text, from, end);
   if (byte_at(text, i, end) == 46) {
@@ -785,11 +673,6 @@ function numcompare(ta: u8[], ai: i32, aend: i32, tb: u8[], bi: i32, bend: i32):
   return magcompare(ta, skip_zeros(ta, a, aend), aend, tb, skip_zeros(tb, b, bend), bend);
 }
 
-// ---- human-readable comparison ----------------------------------------------
-//
-// `-h` orders by the SI suffix first and by the number only within one
-// order of magnitude, so 1K < 1M whatever the digits say. A negative
-// number takes a negative order, which is what puts -1K below 1.
 function unit_order(c: i32): i32 {
   if (c == 75 || c == 107) {
     return 1;
@@ -846,8 +729,6 @@ function find_unit_order(text: u8[], from: i32, end: i32): i32 {
     }
     p = p + 1;
   }
-  // A number worth zero has no order, so `0K` sits with the bare
-  // numbers rather than with the kilos.
   if (!nonzero) {
     return 0;
   }
@@ -870,11 +751,6 @@ function human_numcompare(ta: u8[], ai: i32, aend: i32, tb: u8[], bi: i32, bend:
   return numcompare(ta, a, aend, tb, b, bend);
 }
 
-// ---- month comparison -------------------------------------------------------
-//
-// The C locale's abbreviated month names, case-folded: an unknown month
-// is 0, which is why `sort -M` puts everything it does not recognise
-// first.
 function month_name(i: i32): string {
   if (i == 0) {
     return "JAN";
@@ -912,8 +788,6 @@ function month_name(i: i32): string {
   return "DEC";
 }
 
-// The month at the start of [from, end), packed with the offset its
-// name ended at: the value in the high half, the end in the low one.
 function getmonth(text: u8[], from: i32, end: i32): i64 {
   let p: i32 = from;
   while (p < end && is_blank_b(text[p] as i32)) {
@@ -934,17 +808,6 @@ function getmonth(text: u8[], from: i32, end: i32): i64 {
   return pack_line(0, p);
 }
 
-// ---- random comparison ------------------------------------------------------
-//
-// `-R` groups equal keys and shuffles the groups: the key's MD5 digest
-// under a state seeded from --random-source decides the order, and the
-// raw bytes break a digest tie so that equal keys stay together.
-//
-// The state is rebuilt from the seed bytes per key rather than held as
-// one Md5 and updated twice, which is the linear use `std/crypto`
-// documents. It costs nothing — a shared state's pending block is
-// copied by every update anyway — and the shape it avoids is one the
-// self-host compiler miscompiles (#8825).
 function compare_random(seed: [u8], ta: u8[], a0: i32, a1: i32, tb: u8[], b0: i32, b1: i32): i32 {
   let da: u8[] = crypto.md5_new().update(seed).update(ta[a0:a1]).final_bytes();
   let db: u8[] = crypto.md5_new().update(seed).update(tb[b0:b1]).final_bytes();
@@ -960,14 +823,6 @@ function compare_random(seed: [u8], ta: u8[], a0: i32, a1: i32, tb: u8[], b0: i3
   return cmp_bytes(ta, a0, a1, tb, b0, b1);
 }
 
-// ---- lines ------------------------------------------------------------------
-//
-// A line is one i64: the byte it starts at in `text` in the high half,
-// its length without the terminator in the low half. Ordering moves
-// those, so reaching a line's text costs one SEQUENTIAL read of the
-// array being merged rather than two scattered reads of an offset
-// table — and over a file too large for the last-level cache that
-// difference is most of the sort.
 function pack_line(start: i32, len: i32): i64 {
   return start as i64 << 32 as i64 | len as i64;
 }
@@ -980,11 +835,6 @@ function line_len(v: i64): i32 {
   return (v & 4294967295 as i64) as i32;
 }
 
-// ---- the comparison ---------------------------------------------------------
-//
-// A plain byte comparison of two spans, with the shorter one first when
-// one is a prefix of the other. An empty span sorts before every
-// non-empty one.
 function cmp_bytes(ta: u8[], a0: i32, a1: i32, tb: u8[], b0: i32, b1: i32): i32 {
   let la: i32 = a1 - a0;
   let lb: i32 = b1 - b0;
@@ -1001,9 +851,6 @@ function cmp_bytes(ta: u8[], a0: i32, a1: i32, tb: u8[], b0: i32, b1: i32): i32 
   if (lb < n) {
     n = lb;
   }
-  // Scan only the common span: a terminator or the next line must not
-  // decide prefix ordering. The mismatch kernel compares bytes in blocks
-  // without allocating substrings, including embedded NUL and high bytes.
   let i: i32 = __mismatch_bytes(ta, a0, tb, b0, n);
   if (i < n) {
     return ta[a0 + i] as i32 - tb[b0 + i] as i32;
@@ -1017,7 +864,6 @@ function cmp_bytes(ta: u8[], a0: i32, a1: i32, tb: u8[], b0: i32, b1: i32): i32 
   return 0;
 }
 
-// The same with each byte folded to upper case first: -f.
 function cmp_folded(ta: u8[], a0: i32, a1: i32, tb: u8[], b0: i32, b1: i32): i32 {
   let la: i32 = a1 - a0;
   let lb: i32 = b1 - b0;
@@ -1043,9 +889,6 @@ function cmp_folded(ta: u8[], a0: i32, a1: i32, tb: u8[], b0: i32, b1: i32): i32
   return 0;
 }
 
-// The same skipping every byte the key's `ignore` table drops, with or
-// without the case fold. Two keys are equal when both run out at the
-// same time.
 function cmp_ignoring(k: Key, ta: u8[], a0: i32, a1: i32, tb: u8[], b0: i32, b1: i32): i32 {
   let a: i32 = a0;
   let b: i32 = b0;
@@ -1082,16 +925,11 @@ function cmp_ignoring(k: Key, ta: u8[], a0: i32, a1: i32, tb: u8[], b0: i32, b1:
   return ra - rb;
 }
 
-// One key's verdict on two spans, before its own `r` is applied.
 function key_diff(c: Conf, k: Key, ta: u8[], a0: i32, a1: i32, tb: u8[], b0: i32, b1: i32): i32 {
   if (k.random) {
     return compare_random(c.seed, ta, a0, a1, tb, b0, b1);
   }
   if (key_numeric(k)) {
-    // The number scans stop at any byte that is not part of a number,
-    // and a NUL is one, so the key's own end is the only bound they
-    // need — GNU's NUL terminator is already what `byte_at` answers
-    // past it.
     if (k.human) {
       return human_numcompare(ta, a0, a1, tb, b0, b1);
     }
@@ -1124,10 +962,6 @@ function key_diff(c: Conf, k: Key, ta: u8[], a0: i32, a1: i32, tb: u8[], b0: i32
   return cmp_bytes(ta, a0, a1, tb, b0, b1);
 }
 
-// `-g` converts with strtold and compares the two long doubles, which
-// is the one ordering mode whose answer depends on the machine's
-// format. A string no conversion consumed sorts before every number,
-// and a NaN between the two.
 function general_numcompare(ta: u8[], a0: i32, a1: i32, tb: u8[], b0: i32, b1: i32): i32 {
   let f: ld.Format = ld.format();
   let pa: ld.Parse = f.strtold_array(ta, a0, a1);
@@ -1154,7 +988,6 @@ function general_numcompare(ta: u8[], a0: i32, a1: i32, tb: u8[], b0: i32, b1: i
   return 0;
 }
 
-// How key `k` orders the two spans, reversed when the key was.
 function key_ordered(c: Conf, k: Key, ta: u8[], sa: i64, tb: u8[], sb: i64): i32 {
   let a0: i32 = line_start(sa);
   let b0: i32 = line_start(sb);
@@ -1165,7 +998,6 @@ function key_ordered(c: Conf, k: Key, ta: u8[], sa: i64, tb: u8[], sb: i64): i32
   return d;
 }
 
-// Every key in turn; the first that separates the two lines decides.
 function keycompare(c: Conf, ta: u8[], alo: i32, ahi: i32, tb: u8[], blo: i32, bhi: i32): i32 {
   let i: i32 = 0;
   while (i < c.keys.len()) {
@@ -1179,13 +1011,6 @@ function keycompare(c: Conf, ta: u8[], alo: i32, ahi: i32, tb: u8[], blo: i32, b
   return 0;
 }
 
-// The one-word summary of a `-n` key that orders two spans without a
-// digit walk: the sign, the count of integer digits past leading zeros,
-// and the first fourteen of those digits, laid out so a plain i64
-// comparison agrees with numcompare whenever the words differ. Equal
-// words decide nothing — a fraction, digits past fourteen, and a
-// magnitude of zero (a non-number, or a negative zero) all leave the
-// answer to numcompare.
 function numeric_key(text: u8[], a0: i32, a1: i32): i64 {
   let a: i32 = a0;
   while (a < a1 && is_blank_b(text[a] as i32)) {
@@ -1223,13 +1048,10 @@ function numeric_key(text: u8[], a0: i32, a1: i32): i64 {
   return key;
 }
 
-// Whether key `k` is the plain `-n` ordering numeric_key summarises.
 function plain_numeric(k: Key): boolean {
   return k.numeric && !k.general && !k.human && !k.random;
 }
 
-// `numeric_keys(c, text, spans, n)` — numeric_key of every span of every
-// plain numeric key, indexed like `spans`; zero under any other key.
 function numeric_keys(c: Conf, text: u8[], spans: i64[], n: i32): i64[] {
   let out: i64[] = [];
   let ki: i32 = 0;
@@ -1251,10 +1073,6 @@ function numeric_keys(c: Conf, text: u8[], spans: i64[], n: i32): i64[] {
   return out;
 }
 
-// The key spans found once per line: `spans[k * n + i]` is line i's span
-// under key k. Locating a key is a byte walk over the line, and the sort
-// compares each line log n times, so the walk is done once and a
-// comparison reads two words.
 function key_spans(c: Conf, text: u8[], lines: i64[]): i64[] {
   let n: i32 = lines.len();
   let out: i64[] = [];
@@ -1273,9 +1091,6 @@ function key_spans(c: Conf, text: u8[], lines: i64[]): i64[] {
   return out;
 }
 
-// The whole comparison: the keys, then the line itself unless -u or -s
-// dropped that last resort. The global -r applies only here once a key
-// exists.
 function compare(c: Conf, ta: u8[], a: i64, tb: u8[], b: i64): i32 {
   let alo: i32 = line_start(a);
   let ahi: i32 = alo + line_len(a);
@@ -1294,11 +1109,6 @@ function compare(c: Conf, ta: u8[], a: i64, tb: u8[], b: i64): i32 {
   return r;
 }
 
-// compare for the sort: lines `ia` and `ib` of `lines`, their keys read
-// out of `spans`. The same decision as compare, written out again rather
-// than shared, because this runs n log n times and compare, which calls,
-// is not inlined: a call is most of what a comparison of two short lines
-// costs.
 function compare_at(c: Conf, text: u8[], input: byte_input.Array, lines: i64[], spans: i64[], nkeys: i64[], n: i32, ia: i32, ib: i32): i32 {
   let nk: i32 = c.keys.len();
   if (nk > 0) {
@@ -1307,7 +1117,6 @@ function compare_at(c: Conf, text: u8[], input: byte_input.Array, lines: i64[], 
       let d: i32 = 0;
       let ka: i64 = nkeys[i * n + ia];
       let kb: i64 = nkeys[i * n + ib];
-      // Only a plain numeric key has words that can differ.
       if (ka != kb) {
         d = 1;
         if (ka < kb) {
@@ -1350,13 +1159,6 @@ function compare_at(c: Conf, text: u8[], input: byte_input.Array, lines: i64[], 
   return r;
 }
 
-// ---- the sort ---------------------------------------------------------------
-//
-// `in_order(c, text, lines)` — whether no line sorts before the one ahead
-// of it. The merge below is stable, so such input is already its own
-// result, and GNU's merge finds that in one comparison a line where the
-// radix pass would cost a full sort. Unsorted input stops at its first
-// disorder.
 function in_order(c: Conf, text: u8[], lines: i64[]): boolean {
   let i: i32 = 1;
   while (i < lines.len()) {
@@ -1368,18 +1170,12 @@ function in_order(c: Conf, text: u8[], lines: i64[]): boolean {
   return true;
 }
 
-// A bottom-up stable merge over line indices: only 4-byte indices move,
-// and equal lines keep their input order, which is what -u and -s both
-// rely on. Each pass writes a fresh destination rather than merging
-// through an alias.
 function sort_lines(c: Conf, text: u8[], lines: i64[]): i64[] {
   let input: byte_input.Array = byte_input.Array { data: text };
   let n: i32 = lines.len();
   if (n < 2 || in_order(c, text, lines)) {
     return lines;
   }
-  // The elements sorted are line INDICES, so the key spans and words
-  // found once per line can be read by index at each comparison.
   let keyed: boolean = c.keys.len() > 0;
   let spans: i64[] = [];
   let nkeys: i64[] = [];
@@ -1387,9 +1183,6 @@ function sort_lines(c: Conf, text: u8[], lines: i64[]): i64[] {
     spans = key_spans(c, text, lines);
     nkeys = numeric_keys(c, text, spans, n);
   }
-  // The first comparison's word, where it has one, orders the lines
-  // with a radix sort; only the runs of equal words are left for the
-  // merge below, which compares the way `compare_at` does.
   let words: i64[] = [];
   if (n >= radix.threshold()) {
     words = line_words(c, text, lines, nkeys, spans, n);
@@ -1409,9 +1202,6 @@ function sort_lines(c: Conf, text: u8[], lines: i64[]): i64[] {
         hi = hi + 1;
       }
     }
-    // A bottom-up merge of src[lo..hi), the two buffers alternating;
-    // an odd number of passes leaves the run in dst, and it is copied
-    // back so src holds every run.
     let passes: i32 = 0;
     let width: i32 = 1;
     while (width < hi - lo) {
@@ -1485,16 +1275,6 @@ function sort_lines(c: Conf, text: u8[], lines: i64[]): i64[] {
   return out;
 }
 
-// ---- the word sort ----------------------------------------------------------
-//
-// `line_words(c, text, lines, nkeys, spans, n)` — one word per line
-// that orders the way the first comparison does, or nothing when that
-// comparison has no such word. A plain numeric key's word is its
-// numeric_key; a byte comparison's — the first key's span, or the line
-// itself without keys — is radix's `bytes_word` of it, and a folded
-// comparison's is those bytes folded. Two lines with equal words are
-// ordered by the whole comparison afterwards, so the word has only to
-// agree with it wherever it separates them.
 function line_words(c: Conf, text: u8[], lines: i64[], nkeys: i64[], spans: i64[], n: i32): i64[] {
   let fold: boolean = false;
   let numeric: boolean = false;
@@ -1546,8 +1326,6 @@ function line_words(c: Conf, text: u8[], lines: i64[], nkeys: i64[], spans: i64[
   return out2;
 }
 
-// Whether the words order as signed numbers (a numeric key) rather than
-// as unsigned bytes, and whether the first comparison is reversed.
 function word_signed(c: Conf): boolean {
   return c.keys.len() > 0 && plain_numeric(c.keys[0]);
 }
@@ -1559,10 +1337,6 @@ function word_reversed(c: Conf): boolean {
   return c.reverse;
 }
 
-// A merge buffer holding 0..n-1: the indices a keyed sort starts from,
-// and the second buffer either sort writes into. The two alternate rather
-// than each pass allocating one, and they are always distinct, so no
-// pass ever reads a slot it has already overwritten.
 function index_of(n: i32): i64[] {
   let out: i64[] = [];
   let i: i32 = 0;
@@ -1573,14 +1347,10 @@ function index_of(n: i32): i64[] {
   return out;
 }
 
-// ---- input ------------------------------------------------------------------
 function read_size(): i32 {
   return 262144;
 }
 
-// `read_into(h, path, open_msg)` — every byte of `path` ("-" is standard
-// input) pushed into the builder `h`, and the last of them, -1 for none;
-// or death with the wording GNU uses for that stage.
 function read_into(h: usize, path: string, open_msg: string): i32 {
   let r: Reader = stdin();
   if (path != "-") {
@@ -1600,7 +1370,6 @@ function read_into(h: usize, path: string, open_msg: string): i32 {
   return last;
 }
 
-// `read_into_from(h, r, path)` — read_into from the open reader `r`.
 function read_into_from(h: usize, r: Reader, path: string): i32 {
   let last: i32 = 0 - 1;
   while (true) {
@@ -1620,8 +1389,6 @@ function read_into_from(h: usize, r: Reader, path: string): i32 {
   return last;
 }
 
-// Every byte of `path` ("-" is standard input), or death with the
-// wording GNU uses for that stage.
 function slurp(path: string, open_msg: string): u8[] {
   let h: usize = buf_new(read_size());
   read_into(h, path, open_msg);
@@ -1630,7 +1397,6 @@ function slurp(path: string, open_msg: string): u8[] {
   return bytes;
 }
 
-// Copy only retained ranges; comparisons use offsets into the original array.
 function byte_range(bytes: u8[], lo: i32, hi: i32): u8[] {
   if (lo == 0 && hi == bytes.len()) {
     return bytes;
@@ -1657,8 +1423,6 @@ function concat_bytes(a: u8[], b: u8[]): u8[] {
   return out;
 }
 
-// GNU asks access(R_OK) about every named input before it reads any of
-// them, so `sort missing existing` reports the missing one and stops.
 function check_inputs(files: string[]): void {
   let i: i32 = 0;
   while (i < files.len()) {
@@ -1676,7 +1440,6 @@ function check_inputs(files: string[]): void {
   }
 }
 
-// ---- output -----------------------------------------------------------------
 struct Out { w: io_buffered.BufWriter, file: string, to_stdout: boolean }
 
 function out_open(file: string, to_stdout: boolean): Out {
@@ -1694,8 +1457,6 @@ function out_open(file: string, to_stdout: boolean): Out {
   return Out { w: gnu.out_new(), file: file, to_stdout: true };
 }
 
-// The name the output is reported under: the -o file, or gnulib's
-// wording for fd 1.
 function out_name(o: Out): string {
   if (o.to_stdout) {
     return gnu.quotef("standard output");
@@ -1703,9 +1464,6 @@ function out_name(o: Out): string {
   return gnu.quotef(o.file);
 }
 
-// A failure here is followed by close_stdout's own line. Darwin's
-// fclose still reports a failed close after the stream's write failure;
-// glibc reports the existing stream error without another errno.
 function out_die(o: Out, stage: string, e: IoError): void {
   gnu.error(stage + ": " + out_name(o) + ": " + gnu.io_error_text(e));
   if (target_os() == "darwin" && o.to_stdout) {
@@ -1740,8 +1498,6 @@ function out_put_bytes(o: Out, bytes: u8[]): Out {
   return Out { ...o, w: w };
 }
 
-// `out_settle(o)` — flush once a block has built up in the writer's
-// builder, which the output loop pushes lines into directly.
 function out_settle(o: Out): Out {
   let w: io_buffered.BufWriter = o.w.settle();
   match (w.error()) {
@@ -1764,10 +1520,6 @@ function out_finish(o: Out): void {
   gnu.close_stdout_with(w, false, sort_failure());
 }
 
-// ---- lines ------------------------------------------------------------------
-//
-// The line boundaries of `text`: [lo, hi) excludes the terminator, and
-// a final line without one still counts. An empty input has no lines.
 function split_lines(text: u8[], term: i32): i64[] {
   let lines: i64[] = [];
   let start: i32 = 0;
@@ -1783,12 +1535,6 @@ function split_lines(text: u8[], term: i32): i64[] {
   return lines;
 }
 
-// ---- argmatch ---------------------------------------------------------------
-//
-// gnulib's argmatch: an exact match wins, a unique abbreviation is
-// accepted, and anything else prints the valid values — one line per
-// distinct meaning, so `--check`'s quiet and silent share a line — and
-// exits through usage(), which is 1 rather than sort's own 2.
 function argmatch(value: string, names: string[], vals: i32[], option: string, groups: string[]): i32 {
   let found: i32 = 0 - 1;
   let ambiguous: boolean = false;
@@ -1849,11 +1595,6 @@ function sort_groups(): string[] {
   return ["'general-numeric'", "'human-numeric'", "'month'", "'numeric'", "'random'", "'version'"];
 }
 
-// ---- -S, --parallel, --batch-size -------------------------------------------
-//
-// None of the three changes a byte of output — this sort holds the
-// whole input in memory — but each is validated exactly as GNU
-// validates it, because the diagnostics are output.
 function xstrtol_fatal(status: i32, option: string, arg: string): void {
   if (status == 1) {
     die("invalid " + option + " argument " + gnu.quote(arg));
@@ -1864,10 +1605,6 @@ function xstrtol_fatal(status: i32, option: string, arg: string): void {
   die(option + " argument " + gnu.quote(arg) + " too large");
 }
 
-// xstrtoumax over `s` with the -S suffix set, then the two suffixes
-// specify_sort_size adds itself: a bare `b` is bytes and a `%` is a
-// share of memory. Returns 0 accepted, 1 malformed, 2 a bad suffix,
-// 3 out of range.
 function parse_sort_size(s: string): i32 {
   let i: i32 = 0;
   while (i < s.len() && gnu.is_blank(s[i] as i32)) {
@@ -1903,7 +1640,6 @@ function parse_sort_size(s: string): i32 {
     i = i + 1;
   }
   if (i == s.len()) {
-    // No suffix: the unit is KiB.
     if (over) {
       return 3;
     }
@@ -1948,8 +1684,6 @@ function parse_sort_size(s: string): i32 {
   return 2;
 }
 
-// The -S suffixes, `EgGkKmMPQRtTYZ`: note the lower-case letters GNU
-// accepts and the ones it does not.
 function sort_size_power(c: i32): i32 {
   if (c == 75 || c == 107) {
     return 1;
@@ -1984,11 +1718,6 @@ function sort_size_power(c: i32): i32 {
   return 0;
 }
 
-// ---- key inheritance --------------------------------------------------------
-//
-// A key that names no ordering of its own, and is not reversed, takes
-// the global options; when no key was given at all, the global options
-// BECOME the one key.
 function inherit(k: Key, g: Key): Key {
   if (!default_key_compare(k) || k.reverse) {
     return k;
@@ -1996,12 +1725,6 @@ function inherit(k: Key, g: Key): Key {
   return Key { ...k, ignore: g.ignore, translate: g.translate, skipsblanks: g.skipsblanks, skipeblanks: g.skipeblanks, month: g.month, numeric: g.numeric, general: g.general, human: g.human, version: g.version, random: g.random, reverse: g.reverse };
 }
 
-// ---- ordering compatibility --------------------------------------------------
-//
-// One key may name at most one way of ordering. The four value
-// orderings — -n, -g, -h, -M — exclude each other and also exclude -R,
-// -V and the -d / -i filters; those three are compatible among
-// themselves, so `sort -RVd` is fine and `sort -nV` is not.
 function check_ordering_compatibility(keys: Key[]): void {
   let i: i32 = 0;
   while (i < keys.len()) {
@@ -2036,13 +1759,6 @@ function check_ordering_compatibility(keys: Key[]): void {
   }
 }
 
-// ---- --debug ----------------------------------------------------------------
-//
-// Every line is echoed with the span each key selected underlined, and
-// the ordering options are audited against the keys first. Two things
-// about the echo: a tab is shown as `>` so the columns line up, and the
-// width a byte occupies is not its length — a control byte other than
-// tab occupies none, DEL none, and a byte over 0x7f one.
 function byte_width(b: i32): i32 {
   if (b == 9 || b >= 32 && b != 127) {
     return 1;
@@ -2071,9 +1787,6 @@ function mark_key(o: Out, offset: i32, width: i32): Out {
   return out_put(out, "_".repeat(width) + "\n");
 }
 
-// The end of the number `-n` and `-h` would read at `beg`: an optional
-// minus, then digits and decimal points, and for -h the unit letter
-// after them. A run with no digit at all is no match.
 function raw_number_end(text: u8[], beg: i32, lim: i32, human: boolean): i32 {
   let p: i32 = beg;
   if (p < lim && text[p] as i32 == 45) {
@@ -2098,8 +1811,6 @@ function raw_number_end(text: u8[], beg: i32, lim: i32, human: boolean): i32 {
   return p;
 }
 
-// One underline row: the span key `k` reads, narrowed to the part an
-// ordering mode would actually convert.
 function debug_key(o: Out, c: Conf, text: u8[], lo: i32, hi: i32, k: Key, has_key: boolean): Out {
   let beg: i32 = lo;
   let lim: i32 = hi;
@@ -2135,8 +1846,6 @@ function debug_key(o: Out, c: Conf, text: u8[], lo: i32, hi: i32, k: Key, has_ke
   return mark_key(o, debug_width(text, lo, beg), debug_width(text, beg, lim));
 }
 
-// The line itself, then one row per key, then the whole line for the
-// last-resort comparison unless -u or -s dropped it.
 function debug_line(o: Out, c: Conf, text: u8[], lo: i32, hi: i32): Out {
   let bs: u8[] = [];
   let i: i32 = lo;
@@ -2161,9 +1870,6 @@ function debug_line(o: Out, c: Conf, text: u8[], lo: i32, hi: i32): Out {
   return out;
 }
 
-// The letters a key stands for, in the order GNU lists them. The
-// incompatibility report clears `b` and `r` first; the ignored-option
-// report keeps `b`.
 function key_to_opts(k: Key): string {
   let out: string = "";
   if (k.skipsblanks || k.skipeblanks) {
@@ -2202,8 +1908,6 @@ function key_to_opts(k: Key): string {
   return out;
 }
 
-// `+A[.x] [-B[.y]]` rewritten as the -k it means: the end word gains
-// one back because the obsolete form counts it exclusively.
 function obsolete_advice(k: Key): string {
   let sword: i32 = k.sword;
   if (sword < 0) {
@@ -2218,8 +1922,6 @@ function obsolete_advice(k: Key): string {
   return "obsolescent key " + gnu.quote(old) + " used; consider " + gnu.quote(fresh) + " instead";
 }
 
-// Whether a key reads more than one field as one number, which makes
-// the separator part of the number it reads.
 function spans_fields(k: Key): boolean {
   let sfield: i32 = k.sword;
   if (sfield < 0) {
@@ -2283,8 +1985,6 @@ function key_warnings(c: Conf, gkey: Key): void {
   }
 }
 
-// The global options key `k` did not take over, so that what is left
-// once every key has been asked is what the run ignores.
 function unused_globals(u: Key, k: Key): Key {
   let out: Key = u;
   if (out.ignore != ignore_none() && out.ignore == k.ignore) {
@@ -2296,9 +1996,6 @@ function unused_globals(u: Key, k: Key): Key {
   return Key { ...out, skipsblanks: out.skipsblanks && !k.skipsblanks, skipeblanks: out.skipeblanks && !k.skipeblanks, month: out.month && !k.month, numeric: out.numeric && !k.numeric, general: out.general && !k.general, human: out.human && !k.human, random: out.random && !k.random, version: out.version && !k.version, reverse: out.reverse && !k.reverse };
 }
 
-// The decimal point the numbers are read with, and what a separator
-// that IS the decimal point (or a minus) does to a number spanning
-// fields.
 function numeric_locale_warnings(tab: i32, span: boolean): void {
   if (tab == 46) {
     if (span) {
@@ -2314,14 +2011,6 @@ function numeric_locale_warnings(tab: i32, span: boolean): void {
   gnu.error("numbers use " + gnu.quote(".") + " as a decimal point in this locale");
 }
 
-// ---- the check --------------------------------------------------------------
-//
-// `-c` reports the first line that is out of order and exits 1; `-C`
-// exits 1 in silence. With -u, equal adjacent lines are disorder too.
-//
-// The input is checked as it is read, as GNU checks it. Each read is
-// appended to what is left of the one before, the last whole line and a
-// partial one, so only that tail is copied and memory stays one read.
 function check_order(c: Conf, name: string, quiet: boolean): i32 {
   let r: Reader = stdin();
   if (name != "-") {
@@ -2390,7 +2079,6 @@ function check_order(c: Conf, name: string, quiet: boolean): i32 {
   return 0;
 }
 
-// ---- --files0-from ----------------------------------------------------------
 function read_names(file: string): Option[string[]] {
   let text: u8[] = [];
   if (file == "-") {
@@ -2440,7 +2128,6 @@ function read_names(file: string): Option[string[]] {
   return Some(names);
 }
 
-// ---- main -------------------------------------------------------------------
 function declare_options(): gnu.Opt[] {
   let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("b", "ignore-leading-blanks", o_blanks()));
@@ -2476,7 +2163,6 @@ function declare_options(): gnu.Opt[] {
   return opts;
 }
 
-// The settings the option scan builds up.
 struct Args { gkey: Key, keys: Key[], tab: i32, have_tab: boolean, checkonly: i32, merge: boolean, unique: boolean, stable: boolean, zero: boolean, debug: boolean, outfile: string, have_out: boolean, randsource: string, have_rand: boolean, files: string[], files0: string, have_files0: boolean }
 
 function args_new(): Args {
@@ -2485,8 +2171,6 @@ function args_new(): Args {
   return Args { gkey: global_key_new(), keys: keys, tab: tab_default(), have_tab: false, checkonly: 0, merge: false, unique: false, stable: false, zero: false, debug: false, outfile: "", have_out: false, randsource: "", have_rand: false, files: files, files0: "", have_files0: false };
 }
 
-// One `-t SEP`: a single byte, or the two-character `\0` for NUL. A
-// second one that disagrees with the first is an error.
 function set_tab(a: Args, v: string): Args {
   if (v.len() == 0) {
     die("empty tab");
@@ -2505,8 +2189,6 @@ function set_tab(a: Args, v: string): Args {
   return Args { ...a, tab: newtab, have_tab: true };
 }
 
-// The single ordering letter a global option stands for, applied to
-// the global key.
 function global_letter(a: Args, letter: string, blanktype: i32): Args {
   let r: (Key, i32) = set_ordering(letter, 0, a.gkey, blanktype);
   return Args { ...a, gkey: r.0 };
@@ -2555,8 +2237,6 @@ pub function main(): i32 {
       }
     }
   }
-  // Everything past `--`: glibc ends the scan there, so those tokens
-  // are file names rather than obsolete key specs.
   let rest: string[] = g.operands();
   let k: i32 = 0;
   while (k < rest.len()) {
@@ -2566,8 +2246,6 @@ pub function main(): i32 {
   return run(a);
 }
 
-// One operand: sort's obsolete `+POS [-POS]` key when the environment
-// still asks for it, else a file name.
 function operand(a0: Args, g0: gnu.Getopt, tok: string, obsolete_usage: boolean, posixly: boolean): (Args, gnu.Getopt) {
   let a: Args = a0;
   let g: gnu.Getopt = g0;
@@ -2736,7 +2414,6 @@ function option(a0: Args, m: gnu.OptMatch): Args {
   return a;
 }
 
-// `--sort=WORD` is spelled as the letter its short option is.
 function sort_letter(w: i32): string {
   if (w == 103) {
     return "g";
@@ -2756,8 +2433,6 @@ function sort_letter(w: i32): string {
   return "V";
 }
 
-// `--parallel=N`: a count out of range is silently clamped, only zero
-// and a non-number are refused.
 function parallel(a: Args, v: string): Args {
   let r: (i32, i32, boolean) = parse_count(v, 0);
   if (!r.2) {
@@ -2772,9 +2447,6 @@ function parallel(a: Args, v: string): Args {
   return a;
 }
 
-// `--batch-size=NMERGE`: below 2 is refused with the minimum named.
-// The upper bound is the process's open-file limit, which Fern cannot
-// ask for yet (#8819), so a value above it is accepted here.
 function batch_size(a: Args, v: string): Args {
   let r: (i32, i32, boolean) = parse_count(v, 0);
   if (!r.2) {
@@ -2790,8 +2462,6 @@ function batch_size(a: Args, v: string): Args {
   return a;
 }
 
-// The sixteen bytes `-R` seeds each key's MD5 with: read from
-// --random-source, or from the default source when none was named.
 function random_seed(a: Args): u8[] {
   let src: string = default_random_source();
   if (a.have_rand) {
@@ -2825,11 +2495,6 @@ function random_seed(a: Args): u8[] {
   return [];
 }
 
-// Where `-R` gets its sixteen bytes when --random-source names no
-// file. GNU asks the kernel through getrandom(2) and seeds ISAAC with
-// the answer; this reads the same kernel pool by its name, so the
-// shuffle is unpredictable in the same way. A machine with no
-// /dev/urandom reports that file rather than aborting as GNU does.
 function default_random_source(): string {
   return "/dev/urandom";
 }
@@ -2878,8 +2543,6 @@ function run(a0: Args): i32 {
     files = files.append("-");
   }
 
-  // Global options become the one key when no -k was given, and are
-  // inherited by every key that names no ordering of its own.
   let keys: Key[] = [];
   let i: i32 = 0;
   while (i < a.keys.len()) {
@@ -2921,7 +2584,6 @@ function run(a0: Args): i32 {
   if (a.merge) {
     return merge_files(c, a, files);
   }
-  // Every operand read into one builder, each ending in a terminator.
   let hb: usize = buf_new(read_size());
   i = 0;
   while (i < files.len()) {
@@ -2963,16 +2625,6 @@ function run(a0: Args): i32 {
   return 0;
 }
 
-// ---- merge ------------------------------------------------------------------
-//
-// `-m` holds one buffer of each input and emits the smallest head across
-// them, a tie going to the earlier operand. Nothing is compared within
-// one input, so `sort -m` over an unsorted file reproduces it.
-//
-// `bufs[f]` is input f's current buffer, `cur[f]` its head line in that
-// buffer (-1 once the input is spent), and `at[f]` where the line after
-// the head starts. `Feeds` holds what only a refill touches; `fresh` is
-// the buffer the last refill read.
 struct Feeds { rs: Reader[], names: string[], eof: boolean[], fresh: u8[] }
 
 function merge_files(c: Conf, a: Args, files: string[]): i32 {
@@ -3009,8 +2661,6 @@ function merge_files(c: Conf, a: Args, files: string[]): i32 {
   let prev_text: u8[] = [];
   let prev: i64 = 0 as i64;
   let have_prev: boolean = false;
-  // Each input is advanced once to prime it, then the input a line was
-  // taken from is advanced after each line.
   let primed: i32 = 0;
   f = 0;
   while (f >= 0) {
@@ -3074,9 +2724,6 @@ function merge_files(c: Conf, a: Args, files: string[]): i32 {
   return 0;
 }
 
-// `open_feed(m, path, ...)` — input `path` added to `m`, its buffer left
-// in `fresh`: empty, unless the input is the -o file, which is read whole
-// now as GNU copies it aside, since opening the output empties it.
 function open_feed(own m: Feeds, path: string, o_file: boolean, o_dev: i64, o_ino: i64, term: i32): Feeds {
   let r: Reader = stdin();
   if (path != "-") {
@@ -3111,10 +2758,6 @@ function open_feed(own m: Feeds, path: string, o_file: boolean, o_dev: i64, o_in
   return Feeds { ...m, rs: m.rs.append(r), eof: m.eof.append(whole), fresh: buf };
 }
 
-// `refill(m, f, buf, from, term)` — input f's next buffer into `fresh`:
-// what is left of `buf` past `from`, then reads until one holds a
-// terminator or the input ends, when a last unterminated line gets one.
-// Empty once the input is spent.
 function refill(own m: Feeds, f: i32, buf: u8[], from: i32, term: i32): Feeds {
   if (m.eof[f]) {
     return Feeds { ...m, fresh: [] };
@@ -3127,7 +2770,6 @@ function refill(own m: Feeds, f: i32, buf: u8[], from: i32, term: i32): Feeds {
     match (m.rs[f].read_chunk_bytes(read_size())) {
       Ok(chunk) => {
         if (chunk.len() == 0) {
-          // What is held has no terminator, or the loop had stopped.
           ended = true;
           if (buf_len(h) > 0) {
             buf_push_byte(h, term);

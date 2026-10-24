@@ -81,7 +81,6 @@ func RunFoldByteCases(t *testing.T, bin string, runner []string, census func(*te
 	}
 	major, majorErr := strconv.Atoi(parts[0])
 	minor, minorErr := strconv.Atoi(parts[1])
-	// Fold's handling of 0xff bytes, NULs and backspaces changed from 9.8 to 9.12.
 	if majorErr != nil || minorErr != nil || major < 9 || major == 9 && minor < 12 {
 		t.Skip("requires GNU coreutils 9.12 or newer")
 	}

@@ -4,17 +4,6 @@ import (
 	"testing"
 )
 
-// Map loop-var reclamation (RC-Perceus). A `let m = map_new(8)`
-// re-declared in a loop reuses one slot per iteration. The exit sweep
-// already reclaims an owned Map (value column + string-key column + buf
-// + handle via __map_drop_values / __drop_map_str_* / __map_drop_impl),
-// but emitVarReinitDropOld routed Map through emitStructEnumSlotDrop,
-// whose dropFnNameFor declines Map → a flat __fern_rc_dec that frees
-// nothing. So every iteration but the last leaked the entire map
-// structure (a __heap_bump_bytes() probe measured 6400 B → 640000 B).
-// The fix routes Map loop-var reinit through the shared emitMapSlotDrop
-// (extracted from the exit sweep), so the bump high-water stays FLAT.
-
 func mapReinitBumpSrc(n string) string {
 	return `import "core/map";
 function main(): i32 {
@@ -32,8 +21,6 @@ function main(): i32 {
 }`
 }
 
-// String key + value columns must also reclaim (and not over-release).
-// Returns 0 iff value-correct AND no over-release over 200 iterations.
 const mapReinitUnderflowSrc = `import "core/map";
 function main(): i32 {
     let i: i32 = 0;

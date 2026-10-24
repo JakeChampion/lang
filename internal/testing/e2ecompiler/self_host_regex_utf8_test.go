@@ -13,8 +13,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The general self-host fixture lane requires a native x86-64 host. Use
-// the primary CLI harness here so all regex callers also run on arm64 hosts.
 func TestSelfHostRegexConformance(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	paths, err := filepath.Glob("../../../conformance/cases/regex*/main.fern")
@@ -38,8 +36,6 @@ func TestSelfHostRegexConformance(t *testing.T) {
 		if strings.Count(string(src), main) != 1 {
 			t.Fatalf("%s: expected one main declaration", path)
 		}
-		// Compare inside the program so WASI's exit-code cap cannot hide
-		// a failing bitmask assertion in the older fixtures.
 		program := strings.Replace(string(src), main, "function regex_fixture_main(): i32", 1)
 		program += fmt.Sprintf("\nfunction main(): i32 { if (regex_fixture_main() == %d) { return 0; } return 1; }\n", want)
 		for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {

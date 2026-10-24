@@ -2,22 +2,6 @@ package checker
 
 import "github.com/jakechampion/lang/internal/syntax/ast"
 
-// computeResultBorrows settles, for every function with a body, whether its
-// result can alias one of its BORROWED pointer parameters. That is the property
-// E051 needs at a call site: a result that cannot be such a borrow is freshly
-// owned and may be transferred into an `own` parameter, however the callee's
-// parameter list looks (#9538).
-//
-// Returning a local is not a borrow. A return moves it, so nothing the caller
-// holds aliases it afterwards; only a borrowed parameter has an owner that
-// outlives the call.
-//
-// Least fixed point from "nothing borrows". A function is marked when one of
-// its returns is derived from a borrowed parameter, and marking one can only
-// ever mark its callers, so iterating until nothing changes settles. A
-// recursive cycle that returns no borrow is therefore never marked, and a
-// function whose body is not here is not resolved by this walk at all —
-// calleeResultBorrows falls back to the signature rule for it.
 func (c *checker) computeResultBorrows(prog *ast.Program) {
 	c.resultBorrows = make(map[string]bool, len(prog.Funcs))
 	c.resultAnalysed = make(map[string]bool, len(prog.Funcs))
@@ -40,8 +24,6 @@ func (c *checker) computeResultBorrows(prog *ast.Program) {
 	}
 }
 
-// funcResultBorrows reports whether any of fn's returns is derived from one of
-// its borrowed pointer parameters.
 func (c *checker) funcResultBorrows(fn *ast.FuncDecl) bool {
 	b := borrowScope{borrowed: map[string]bool{}, values: map[string]bool{}}
 	for _, p := range fn.Params {
@@ -63,7 +45,6 @@ func (c *checker) funcResultBorrows(fn *ast.FuncDecl) bool {
 		}
 		switch s := n.(type) {
 		case *ast.Lambda:
-			// A lambda's returns are its own, not this function's.
 			return false
 		case *ast.Return:
 			if s.Value != nil && c.exprBorrows(s.Value, b) {
@@ -75,9 +56,6 @@ func (c *checker) funcResultBorrows(fn *ast.FuncDecl) bool {
 	return found
 }
 
-// borrowedLocals names the locals of fn that can hold a borrow of one of its
-// borrowed parameters. Settled to a fixed point rather than walked once, so a
-// value that only becomes a borrow on a loop's second iteration is still seen.
 func (c *checker) borrowedLocals(fn *ast.FuncDecl, b borrowScope) map[string]bool {
 	b.locals = map[string]bool{}
 	mark := func(name string, init ast.Expr) bool {
@@ -109,14 +87,10 @@ func (c *checker) borrowedLocals(fn *ast.FuncDecl, b borrowScope) map[string]boo
 	return b.locals
 }
 
-// borrowScope is what exprBorrows reads: the borrowed pointer parameters, the
-// locals that can hold a borrow of one, and the parameters whose elements are
-// values, so that indexing one yields a copy.
 type borrowScope struct {
 	borrowed, locals, values map[string]bool
 }
 
-// elemType is the element type of an array or view type, else nil.
 func elemType(t ast.Type) ast.Type {
 	switch at := t.(type) {
 	case ast.ArrayType:
@@ -127,8 +101,6 @@ func elemType(t ast.Type) ast.Type {
 	return nil
 }
 
-// exprBorrows reports whether e can alias one of the borrowed names.
-// Pessimistic: a shape not named here is assumed to be able to.
 func (c *checker) exprBorrows(e ast.Expr, b borrowScope) bool {
 	switch x := e.(type) {
 	case nil:
@@ -136,8 +108,6 @@ func (c *checker) exprBorrows(e ast.Expr, b borrowScope) bool {
 	case *ast.NumberLit, *ast.FloatLit, *ast.StringLit, *ast.BoolLit, *ast.CharLit, *ast.UnitLit,
 		*ast.StructLit, *ast.TupleLit, *ast.ArrayLit, *ast.MapLit, *ast.EnumLit,
 		*ast.Binary, *ast.Unary, *ast.CastExpr:
-		// A construction is fresh: it copies references into a new value rather
-		// than being one.
 		return false
 	case *ast.Ident:
 		return b.borrowed[x.Name] || b.locals[x.Name]
@@ -153,9 +123,6 @@ func (c *checker) exprBorrows(e ast.Expr, b borrowScope) bool {
 	case *ast.IfExpr:
 		return c.exprBorrows(x.Then, b) || c.exprBorrows(x.Else, b)
 	case *ast.Call:
-		// A callee that can hand a borrowed parameter back aliases whichever
-		// argument it was given, so its result is a borrow HERE only when one
-		// of those arguments is one.
 		if !c.calleeResultBorrows(x) {
 			return false
 		}
@@ -169,8 +136,6 @@ func (c *checker) exprBorrows(e ast.Expr, b borrowScope) bool {
 	return true
 }
 
-// calleeResultBorrows reports whether the call's result can alias one of the
-// arguments the caller passed.
 func (c *checker) calleeResultBorrows(x *ast.Call) bool {
 	id, ok := x.Callee.(*ast.Ident)
 	if !ok {
@@ -185,16 +150,11 @@ func (c *checker) calleeResultBorrows(x *ast.Call) bool {
 	return c.signatureResultBorrows(id.Name)
 }
 
-// freshResultBuiltins are the builtins that are lent byte views and answer
-// an array they built, so none can hand a view back however its parameters
-// look.
 var freshResultBuiltins = map[string]bool{
 	"__bytes_owned": true, "__bytes_range": true, "__bytes_into": true, "__aes_expand_key": true, "__aes_ctr32": true,
 	"__ghash": true, "__aes_gcm_seal": true, "__aes_gcm_open": true, "__sha256_hw_blocks": true, "__sha1_hw_blocks": true,
 }
 
-// signatureResultBorrows is the approximation used where no body is available:
-// a callee with a borrowed pointer parameter could hand that same pointer back.
 func (c *checker) signatureResultBorrows(name string) bool {
 	if freshResultBuiltins[name] {
 		return false
@@ -215,15 +175,6 @@ func (c *checker) signatureResultBorrows(name string) bool {
 	return false
 }
 
-// isOwnedScrutinee answers a DIFFERENT question from an argument transfer, and
-// deliberately keeps the narrower pre-#9538 answer for a call.
-//
-// Matching decomposes the box in place, and the RC lowering releases what it
-// decomposes off the same signature-shaped rule the checker used before the
-// returns-borrow inference. Handing the inference's wider answer to this site
-// frees a freshly-returned scrutinee AT the match and then reads it: the shape
-// in std/json's json_get_object underflows its refcount (#9539). The two sites
-// converge when the lowering moves with the rule, not before.
 func (c *checker) isOwnedScrutinee(tag ast.Expr, inferred func(ast.Expr) bool) bool {
 	if call, ok := tag.(*ast.Call); ok {
 		id, isIdent := call.Callee.(*ast.Ident)

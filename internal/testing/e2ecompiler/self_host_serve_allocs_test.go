@@ -16,11 +16,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// #9853 exit criterion A, count half: what the serve loop allocates per
-// hello request on a keep-alive connection, through the self-host compiler.
-// docs/NET-P0-MESSAGE-LAYER-PLAN.md §6 took it to zero on x86-64 over
-// 2,000 requests; the gate spans 100k there and holds the same zero on
-// arm64 under qemu and on wasm under wasmtime over 10k each.
 func TestSelfHostServeAllocsPerRequest(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := filepath.Join(t.TempDir(), "main.fern")
@@ -33,9 +28,6 @@ func TestSelfHostServeAllocsPerRequest(t *testing.T) {
 	e2eharness.CheckServeAllocs(t, addr, 0, e2eharness.ServeAllocsRounds)
 }
 
-// The same zero with the loop waiting on an io_uring (`FERN_IO_URING=1`,
-// docs/NET-P7-IO-URING-PLAN.md): a wait re-arms its polls in the ring the
-// driver mapped when it was made, so a request costs the ring nothing.
 func TestSelfHostServeAllocsPerRequestRing(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := filepath.Join(t.TempDir(), "main.fern")
@@ -60,8 +52,6 @@ func TestSelfHostServeAllocsPerRequestArm64(t *testing.T) {
 	e2eharness.CheckServeAllocs(t, addr, 0, e2eharness.ServeAllocsRoundsEmulated)
 }
 
-// The wasm leg binds a port the test picked, since wasmtime hands a guest
-// no inherited listener, and runs under `-S inherit-network`.
 func TestSelfHostServeAllocsPerRequestWasm(t *testing.T) {
 	wasmtime := e2eharness.Wasmtime(t)
 	cli := buildSelfHostCLI(t)
@@ -86,13 +76,6 @@ func TestSelfHostServeAllocsPerRequestWasm(t *testing.T) {
 	e2eharness.CheckServeAllocs(t, fmt.Sprintf("127.0.0.1:%d", port), 0, e2eharness.ServeAllocsRoundsEmulated)
 }
 
-// ServeAllocsH2Ceiling bounds what the loop allocates per hello request
-// on one HTTP/2 connection, a ratchet like the HTTP/1.1 zero above, as a
-// ceiling on the mean since the count varies from request to request with
-// how the client's frames coalesce into reads. The mean reads 20.0 on
-// x86-64 (from 99.0 on the first reading; docs/NET-P6-HTTP2-PLAN.md slice
-// 4 records each cut and what the 20 are); the CI runner reads a few
-// lower, as the note on serveAllocsH2Drift says.
 const ServeAllocsH2Ceiling = 21
 
 func TestSelfHostServeAllocsPerRequestH2(t *testing.T) {
@@ -106,25 +89,6 @@ func TestSelfHostServeAllocsPerRequestH2(t *testing.T) {
 	e2eharness.CheckServeAllocsH2(t, addr, ServeAllocsH2Ceiling, e2eharness.ServeAllocsRounds)
 }
 
-// ServeAllocsTLSCeiling bounds what the serve loop and the TLS 1.3 record
-// layer allocate per hello request on one keep-alive TLS connection
-// (`Config.with_tls`), a ratchet like the HTTP/2 one: the connection's
-// handshake sits in the /count bracketing's intercept, so the mean is what
-// one record pair costs — a request record opened in, a response record
-// sealed out. The first reading was 56.0 on x86-64 (docs/benchmarks/
-// net-h2-tls-2026-10-18.md); 55.0 with `record.open` handing the decrypted
-// buffer back shortened in place rather than copying the content out; 53.0
-// here with the decrypted application data moved into the step and then
-// into the read buffer rather than copied at each layer; 49.0 with a byte
-// slice's view descriptor in the frame (#12780) and the session taken out of
-// its enum slot rather than retained (#12781); 43.0 on arm64-darwin with
-// the methods nothing outside the bodies calls returning their variants
-// paired (sempair), where 49.0 was measured before. The count's small
-// variation between runs (how the client's records coalesce into reads) is
-// why it is a ceiling on the mean; a mean serveAllocsH2Drift or more under
-// it fails, to lower it. Most of the remaining count is the per-record
-// rebuild of the session and handshake state (docs/benchmarks/
-// net-h2-tls-2026-10-18.md, "Left").
 const ServeAllocsTLSCeiling = 43
 
 func TestSelfHostServeAllocsPerRequestTLS(t *testing.T) {
@@ -148,57 +112,12 @@ func TestSelfHostServeAllocsPerRequestTLS(t *testing.T) {
 	e2eharness.CheckServeAllocsTLS(t, addr, ServeAllocsTLSCeiling, e2eharness.ServeAllocsRounds, pool)
 }
 
-// ServeAllocsH3Ceiling bounds allocations per hello request over one HTTP/3
-// connection. The 100,000-request measurement and ratchet are recorded in
-// docs/benchmarks/net-h3-2026-10-17.md; 265.2 on arm64 since elements are
-// re-read where their record dies; 255.2 here and 256.2 on the CI runner
-// on x86-64 with the request target handed back when already normal and
-// the handler started from its request rather than a framed record built
-// around it; 247.2 here with a byte slice's view descriptor in the frame
-// (#12780) and payloads taken out of enum slots (#12781); 230.33 on
-// arm64-darwin and 231.19 on the x86-64 runner with methods' variant returns
-// paired, where 247.33 was measured before; 226.06 and 226.92 on two runs
-// here with a scalar concat growing a sole receiver's block in place
-// (docs/benchmarks/net-h3-concat-2026-10-21.md); 224.92 here with a stream's
-// element taken out of the list across the update that keeps it
-// (docs/rc-log/2026-10-22-a-an-element-take-survives-the-update-that-keeps-its-array.md);
-// 200.92 here with record updaters spliced into their callers and a read
-// that a dominating read of the same slot already made reused
-// (docs/rc-log/2026-10-22-b-an-updater-is-spliced-and-a-repeated-read-is-reused.md);
-// 197.92 here with a field read kept, not read again, past the update of
-// its record (docs/rc-log/2026-10-22-e-a-read-is-kept-past-its-records-update.md);
-// 192.92 with the session taken out of the connection at that update
-// (docs/rc-log/2026-10-23-a-a-member-leaves-its-record-at-the-update.md).
 const ServeAllocsH3Ceiling = 194
 
-// ServeAllocsH3MuxCeiling bounds allocations per hello request with
-// ServeAllocsH3MuxConcurrency requests in flight on one connection, the
-// multiplexed path the 1x256 nightly row exercises. It sits well under the
-// serial ServeAllocsH3Ceiling: a burst's flush and its acknowledgements are
-// shared across the requests answered in one pass, so the per-request share
-// falls as the concurrency rises. Measured 133.33 at this ratchet's shape
-// (64 in flight, 100,000 rounds) on the x86-64 runner
-// (docs/benchmarks/net-h3-encode-2026-10-21.md), and 130.32 here with a
-// scalar concat growing a sole receiver's block in place
-// (docs/benchmarks/net-h3-concat-2026-10-21.md), and 112.91 here with
-// record updaters spliced and repeated reads reused, 109.91 with a field
-// read kept past the update of its record, and 106.85 with the session taken
-// out at that update; bounded like the H2 and serial H3 means, a ceiling that
-// a gain lowers.
 const ServeAllocsH3MuxCeiling = 108
 
-// ServeAllocsH3MuxConcurrency is how many requests the multiplexed client
-// keeps in flight: enough to measure the multiplexed path, below the
-// server's grant of 100 request streams so the connection never waits on
-// stream credit (the client does not send STREAMS_BLOCKED, so it would not
-// learn the credit returned). The nightly's 1x256 row offers more with
-// h2load, which does.
 const ServeAllocsH3MuxConcurrency = 64
 
-// ServeAllocsH3MuxMinPeak is the fewest requests the client must have held
-// in flight for the run to count as multiplexed: three quarters of the
-// target, so a run that quietly fell back toward the serial path fails
-// rather than passing under a ceiling it was not measured against.
 const ServeAllocsH3MuxMinPeak = ServeAllocsH3MuxConcurrency * 3 / 4
 
 func TestSelfHostServeAllocsPerRequestH3(t *testing.T) {
@@ -222,10 +141,6 @@ func TestSelfHostServeAllocsPerRequestH3(t *testing.T) {
 	e2eharness.CheckServeAllocsH3(t, addr, runX86_64Bin(cli.runner, client, port, strconv.Itoa(e2eharness.ServeAllocsRounds)), ServeAllocsH3Ceiling, e2eharness.ServeAllocsRounds)
 }
 
-// TestSelfHostServeAllocsPerRequestH3Mux is TestSelfHostServeAllocsPerRequestH3
-// with ServeAllocsH3MuxConcurrency requests in flight on the one connection,
-// the multiplexed path the 1x256 nightly row exercises. The client reports
-// the peak it held so the ratchet is not quietly measuring the serial path.
 func TestSelfHostServeAllocsPerRequestH3Mux(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	dir := t.TempDir()
@@ -248,13 +163,6 @@ func TestSelfHostServeAllocsPerRequestH3Mux(t *testing.T) {
 	e2eharness.CheckServeAllocsH3Mux(t, addr, run, ServeAllocsH3MuxCeiling, e2eharness.ServeAllocsRounds, ServeAllocsH3MuxMinPeak)
 }
 
-// ServeFetchAllocsCeiling bounds what a handler making two requests
-// through `plat.http` allocates per request, the serve loop's share
-// included (e2eharness.ServeFetchAllocsServerSource, the nightly two-fetch
-// profile; docs/benchmarks/net-twofetch-2026-10-17.md and
-// docs/benchmarks/net-fetch-client-2026-10-18.md). 91.00 on arm64-darwin
-// with methods' variant returns paired, the transport read's Ok among them,
-// where 99.00 was measured before, as on the x86-64 runner.
 const ServeFetchAllocsCeiling = 91
 
 func TestSelfHostServeAllocsPerRequestTwoFetch(t *testing.T) {

@@ -1,5 +1,5 @@
-// Owned arrays and views have separate method namespaces even when both
-// methods infer the same element type. Chained view results keep that type.
+
+
 function (xs: T[]) pick(): T {
   return xs[0];
 }
@@ -16,7 +16,7 @@ function view_head[T](xs: [T]): T {
   return xs[0];
 }
 
-// Concrete receivers keep the same namespaces, regardless of declaration order.
+
 function (xs: [u8]) back(): u8 {
   return xs[xs.len() - 1];
 }
@@ -125,7 +125,7 @@ function main(): i32 {
   if ((if (source.len() == 2) { bytes } else { source.as_bytes() }).back() != 122 as u8) {
     return 15;
   }
-  // A lambda's own parameters are receivers too.
+
   let pick_last = (v: [i32]): i32 => v.pick();
   let pick_first = (v: i32[]): i32 => v.pick();
   if (pick_last(a[:]) != 7 || pick_first(a) != 3) {

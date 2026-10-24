@@ -8,11 +8,6 @@ import (
 	"testing"
 )
 
-// std/http/router's cost per request, by allocation count, on each target:
-// a literal route must cost what its handler alone costs, and a route with
-// one parameter that handler plus the parameter's copy, the values array
-// and the Params record. The pin is a ratchet: a count above it is a
-// regression, one below it an improvement whose PR lowers the pin.
 func TestSelfHostRouterAllocs(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := filepath.Join(t.TempDir(), "main.fern")
@@ -71,10 +66,6 @@ func checkRouterAllocs(t *testing.T, out string, want routerAllocs) {
 		got.literal, got.param, got.bare, want.literal, want.param, want.bare)
 }
 
-// The probe routes two requests through a five-route table, one to a
-// literal pattern and one to a pattern with a parameter whose value the
-// handler reads, and calls the literal route's handler directly for the
-// cost the handler alone has; each count is a total over the rounds.
 const routerAllocsSource = `import "std/http";
 import "std/http/router";
 import "std/platform";

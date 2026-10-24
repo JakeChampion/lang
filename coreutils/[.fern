@@ -1,7 +1,3 @@
-// [.fern — GNU-compatible `[`, the bracket form of test(1): the same
-// expression with a mandatory closing `]`, and `--help` / `--version`
-// honoured only as the sole argument (so only when no `]` follows).
-// The evaluator is `lib/cond.fern`, shared with `test.fern`.
 import "./lib/cond";
 import "./lib/gnu";
 

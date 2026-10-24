@@ -1,10 +1,3 @@
-// Shared-library (.so) end-to-end tests — slice 2 of the Android app path.
-// Compile a Fern program to an x86-64 shared object that EXPORTS a chosen
-// function, then dlopen + dlsym + call that export from a gcc-built loader
-// on the host. This is the same artifact an Android app would load via
-// System.loadLibrary; calling the export proves the dynamic symbol table
-// resolves and Fern code runs inside a dlopen'd library (no `_start`, with
-// the lazy-mmap heap initialising on first use).
 package e2e
 
 import (
@@ -20,9 +13,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// TestCLISharedX86Dlopen drives the user-facing `-shared` flag end to end:
-// `fern -target x86-64-linux -shared -export answer -o lib.so prog.fern` must
-// produce a .so whose `answer` export dlopen+dlsym+calls to 42 (host amd64).
 func TestCLISharedX86Dlopen(t *testing.T) {
 	gcc, err := exec.LookPath("gcc")
 	if err != nil {
@@ -34,8 +24,6 @@ func TestCLISharedX86Dlopen(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "prog.fern")
-	// main does NOT call answer — it survives only because -export keeps it
-	// as a tree-shake root (the case a real JVM-only JNI entry needs).
 	if err := os.WriteFile(src, []byte("function answer(): i32 { return 42; }\nfunction main(): i32 { return 0; }\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -61,14 +49,7 @@ int main(int c, char**v){void*h=dlopen(v[1],RTLD_NOW);if(!h){fprintf(stderr,"%s\
 	}
 }
 
-// TestCLISharedReservedNameExport covers exporting a function whose name the
-// x86-64 assembler reserves as a token (`mod` is an Intel-syntax expression
-// operator). The x86-64 backend defines such a function as `mod$fn`, so the
-// .text lookup has to use the escaped symbol while .dynsym keeps the Fern
-// name a loader dlsyms. arm64 reserves nothing and must resolve the same
-// names unescaped.
 func TestCLISharedReservedNameExport(t *testing.T) {
-	// One name per reserved class widened in #6876, plus `mod`.
 	const src = `function mod(x: i32): i32 { return x + 1; }
 function near(x: i32): i32 { return x + 2; }
 function r16(x: i32): i32 { return x + 3; }
@@ -95,7 +76,6 @@ function main(): i32 { return 0; }
 			"-export", strings.Join(exports, ","), "-o", soPath, srcPath).CombinedOutput(); err != nil {
 			t.Fatalf("-shared build failed: %v\n%s", err, o)
 		}
-		// mod(10)+near(10)+r16(10) = 11+12+13 = 36.
 		loader := `#include <dlfcn.h>
 #include <stdio.h>
 int main(int c, char**v){
@@ -145,10 +125,6 @@ int main(int c, char**v){
 	})
 }
 
-// dynsymExports reads a Fern .so's dynamic symbol table into name -> vaddr.
-// The emitter writes no section headers, so debug/elf's DynamicSymbols has
-// nothing to read: walk PT_DYNAMIC for DT_SYMTAB / DT_STRTAB / DT_HASH and
-// map each vaddr back through the PT_LOAD segments to a file offset.
 func dynsymExports(t *testing.T, soPath string) map[string]uint64 {
 	t.Helper()
 	raw, err := os.ReadFile(soPath)
@@ -190,9 +166,9 @@ func dynsymExports(t *testing.T, soPath string) map[string]uint64 {
 	if symtab == 0 || strtab == 0 || hash == 0 {
 		t.Fatalf("PT_DYNAMIC missing DT_SYMTAB/DT_STRTAB/DT_HASH (%#x/%#x/%#x)", symtab, strtab, hash)
 	}
-	nsym := f.ByteOrder.Uint32(raw[off(hash)+4:]) // .hash nchain == symbol count
+	nsym := f.ByteOrder.Uint32(raw[off(hash)+4:])
 	out := map[string]uint64{}
-	for i := uint64(1); i < uint64(nsym); i++ { // index 0 is the null symbol
+	for i := uint64(1); i < uint64(nsym); i++ {
 		e := off(symtab) + i*24
 		nameOff := uint64(f.ByteOrder.Uint32(raw[e:]))
 		value := f.ByteOrder.Uint64(raw[e+8:])
@@ -202,9 +178,6 @@ func dynsymExports(t *testing.T, soPath string) map[string]uint64 {
 	return out
 }
 
-// TestCLISharedArm64Structure checks `fern -target arm64-android -shared`
-// produces an AArch64 ET_DYN .so with PT_DYNAMIC and the export name in
-// .dynstr (the x86 test above exercises dlopen end to end).
 func TestCLISharedArm64Structure(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
@@ -264,7 +237,7 @@ function main(): i32 { return fib10(); }`, 55},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			export := c.name // the exported function name varies per case
+			export := c.name
 			switch c.name {
 			case "const":
 				export = "answer"
@@ -273,12 +246,6 @@ function main(): i32 { return fib10(); }`, 55},
 			case "recursion":
 				export = "fib10"
 			}
-			// The export has to reach CODEGEN, not just the assembler: it is
-			// what roots the function in the tree-shake and the IR
-			// dead-function cull, exactly as `fern -shared -export` does. The
-			// other 13 sites in this file already pass it; this one relied on
-			// main calling the function instead, which stops being true the
-			// moment the call is inlined.
 			so := selfHostSharedX86(t, c.src, export)
 
 			dir := t.TempDir()
@@ -312,14 +279,6 @@ int main(int argc, char** argv) {
 	}
 }
 
-// TestSharedLibX86ExportArgsJNI proves Fern .so exports are C-ABI callable
-// *with arguments* (System V AMD64: integer args in rdi/rsi/rdx…), which is
-// what makes a Fern function usable as a JNI method directly: a JNI entry is
-// a C function (JNIEnv* env, jclass cls, <args>) — env in rdi, cls in rsi,
-// the first real arg in rdx. The gcc loader dlsyms the symbol and invokes it
-// as `long f(long,long,long)`; SysV passes the args in rdi/rsi/rdx
-// regardless of the callee's declared arity, so a Fern function reading its
-// Nth param sees the Nth C argument.
 func TestSharedLibX86ExportArgsJNI(t *testing.T) {
 	gcc, err := exec.LookPath("gcc")
 	if err != nil {
@@ -332,17 +291,13 @@ func TestSharedLibX86ExportArgsJNI(t *testing.T) {
 		name, fn, src string
 		a, b, c, want int
 	}{
-		// One i32 arg (rdi): triple(14) = 42.
 		{"one_arg", "triple", `function triple(x: i32): i32 { return x * 3; }
 function main(): i32 { return triple(14); }`, 14, 0, 0, 42},
-		// JNI-shaped (env, cls, n): the real arg n is the 3rd param (rdx).
 		{"jni_shape", "jni_answer", `function jni_answer(env: i64, cls: i64, n: i32): i32 { return n + 1; }
 function main(): i32 { return 0; }`, 0, 0, 41, 42},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			// Compile with the export as a tree-shake root — jni_answer is
-			// never called by main, exactly like a real JVM-only JNI entry.
 			so := selfHostSharedX86(t, c.src, c.fn)
 			dir := t.TempDir()
 			soPath := filepath.Join(dir, "libfern.so")
@@ -395,10 +350,6 @@ func decstr(n int) string {
 	return string(b)
 }
 
-// TestSharedLibX86CCallFFI validates the __c_callN FFI primitive: a Fern .so
-// export receives a C function pointer and calls it via __c_call0/__c_call1,
-// returning its result. The gcc loader passes real callbacks. This is the
-// mechanism for calling JNIEnv methods / NDK callbacks from Fern.
 func TestSharedLibX86CCallFFI(t *testing.T) {
 	gcc, err := exec.LookPath("gcc")
 	if err != nil {
@@ -407,8 +358,6 @@ func TestSharedLibX86CCallFFI(t *testing.T) {
 	if runtime.GOARCH != "amd64" {
 		t.Skip("host is not amd64")
 	}
-	// run0(env,cls,cb) calls cb(); run1 calls cb(x); run4 calls cb(a,b,c,d)
-	// — run4 exercises __c_call4's 4-arg slide (the r8 register).
 	src := `function run0(env: usize, cls: usize, cb: usize): i32 { return __c_call0(cb) as i32; }
 function run1(env: usize, cls: usize, cb: usize, x: usize): i32 { return __c_call1(cb, x) as i32; }
 function run4(env: usize, cls: usize, cb: usize, a: usize, b: usize, c: usize, d: usize): i32 { return __c_call4(cb, a, b, c, d) as i32; }
@@ -420,7 +369,6 @@ function main(): i32 { return 0; }`
 	if err := os.WriteFile(soPath, so, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// run0(forty_two)=42 ; run1(dbl,21)=42 ; run4(sum4,10,11,9,12)=42.
 	loader := `#include <dlfcn.h>
 #include <stdio.h>
 static long forty_two(void){ return 42; }
@@ -454,12 +402,6 @@ int main(int c, char**v){
 	}
 }
 
-// TestStdJNIDispatch validates the std/jni outbound bridge: a Fern function
-// calls a JNIEnv method (table[index](env, arg)) via jni.call1, dispatched
-// through __c_call. A C harness builds a FAKE JNIEnv — a function table whose
-// entry at `index` increments its argument — so no real JVM is needed; the
-// result proves the env -> table -> method[index](env, arg) indirection and
-// the C-ABI call land correctly.
 func TestStdJNIDispatch(t *testing.T) {
 	gcc, err := exec.LookPath("gcc")
 	if err != nil {
@@ -479,8 +421,6 @@ function main(): i32 { return 0; }`
 	if err := os.WriteFile(soPath, so, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// Fake JNIEnv: env -> tptr -> table[]; table[5] = inc(env, x) = x+1.
-	// probe1(0, 0, env, 5, 41) -> jni.call1(env, 5, 41) -> table[5](env, 41) = 42.
 	loader := `#include <dlfcn.h>
 #include <stdio.h>
 static long inc(void* env, long x){ (void)env; return x + 1; }
@@ -510,11 +450,6 @@ int main(int c, char** v){
 	}
 }
 
-// TestStdJNITypedWrappers validates the typed std/jni wrappers route to the
-// correct JNINativeInterface indices. A fake JNIEnv wires the FindClass (6)
-// and NewStringUTF (167) slots to an increment fn; the Fern probes call
-// jni.find_class / jni.new_string_utf, and each must dispatch to its slot
-// (so f(env, 41) -> 42), proving the wrappers carry the right indices.
 func TestStdJNITypedWrappers(t *testing.T) {
 	gcc, err := exec.LookPath("gcc")
 	if err != nil {
@@ -538,7 +473,6 @@ function main(): i32 { return 0; }`
 	if err := os.WriteFile(soPath, so, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// table[6] = FindClass, table[167] = NewStringUTF — both inc(env, x)=x+1.
 	loader := `#include <dlfcn.h>
 #include <stdio.h>
 static long inc(void* env, long x){ (void)env; return x + 1; }
@@ -570,11 +504,6 @@ int main(int c, char** v){
 	}
 }
 
-// TestStdJNIGetMethodId validates the env+3-arg path: jni.get_method_id ->
-// call3 -> __c_call4, dispatching to JNINativeInterface slot 33 (GetMethodID)
-// with all three real arguments (clazz, name, sig) preserved through the FFI
-// shim's arg slide. The fake slot sums its three args, so a result of 42
-// proves none was dropped or clobbered.
 func TestStdJNIGetMethodId(t *testing.T) {
 	gcc, err := exec.LookPath("gcc")
 	if err != nil {
@@ -595,8 +524,6 @@ function main(): i32 { return 0; }`
 	if err := os.WriteFile(soPath, so, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// table[33] = GetMethodID(env, clazz, name, sig) = clazz + name + sig.
-	// probe_gmid(0,0,env,10,20,12) -> get_method_id(env,10,20,12) -> 42.
 	loader := `#include <dlfcn.h>
 #include <stdio.h>
 static long gmid(void* env, long a, long b, long c){ (void)env; return a + b + c; }
@@ -625,11 +552,6 @@ int main(int c, char** v){
 	}
 }
 
-// TestStdJNIStaticIds validates the remaining env+3 ID wrappers
-// (get_field_id / get_static_method_id / get_static_field_id) carry the
-// right JNINativeInterface indices (94 / 113 / 144). Each fake slot returns
-// its own marker, so the probe's combined result proves each wrapper landed
-// on its slot.
 func TestStdJNIStaticIds(t *testing.T) {
 	gcc, err := exec.LookPath("gcc")
 	if err != nil {
@@ -638,8 +560,6 @@ func TestStdJNIStaticIds(t *testing.T) {
 	if runtime.GOARCH != "amd64" {
 		t.Skip("host is not amd64")
 	}
-	// Each probe ignores its args and returns the slot's marker; the C side
-	// checks field=1, smethod=2, sfield=3 then returns 42.
 	src := `import "std/jni";
 function probe_field(env: usize, cls: usize, jenv: usize): i32 {
     return jni.get_field_id(jenv, 0 as usize, 0 as usize, 0 as usize) as i32;
@@ -658,7 +578,6 @@ function main(): i32 { return 0; }`
 	if err := os.WriteFile(soPath, so, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// table[94]=GetFieldID->1, table[113]=GetStaticMethodID->2, table[144]=GetStaticFieldID->3.
 	loader := `#include <dlfcn.h>
 #include <stdio.h>
 static long m1(void* e, long a, long b, long c){ (void)e;(void)a;(void)b;(void)c; return 1; }
@@ -695,11 +614,6 @@ int main(int c, char** v){
 	}
 }
 
-// TestStdJNICstr validates jni.cstr copies a Fern string into a fresh,
-// NUL-terminated C buffer reachable from the dlopen'd .so: the export
-// returns jni.cstr("hello"), and the C side checks the bytes round-trip as
-// the NUL-terminated string "hello" (exercises the lazy-mmap heap +
-// __memcpy + the i32 NUL pad inside a library with no _start).
 func TestStdJNICstr(t *testing.T) {
 	gcc, err := exec.LookPath("gcc")
 	if err != nil {
@@ -745,11 +659,6 @@ int main(int c, char** v){
 	}
 }
 
-// TestStdJNIExceptionAndRefWrappers validates the exception-handling,
-// reference-management, and class-relationship wrappers each dispatch to
-// their JNINativeInterface slot. A fake JNIEnv wires each slot to a fn that
-// returns the slot index as a marker; every probe must come back with its
-// own index, proving the wrapper carries the right number.
 func TestStdJNIExceptionAndRefWrappers(t *testing.T) {
 	gcc, err := exec.LookPath("gcc")
 	if err != nil {
@@ -774,7 +683,6 @@ function p_same(env: usize, cls: usize, j: usize): i32 { return jni.is_same_obje
 function p_alloc(env: usize, cls: usize, j: usize): i32 { return jni.alloc_object(j, 0 as usize) as i32; }
 function p_instof(env: usize, cls: usize, j: usize): i32 { return jni.is_instance_of(j, 0 as usize, 0 as usize); }
 function main(): i32 { return 0; }`
-	// probe name -> expected JNINativeInterface slot index.
 	probes := []struct {
 		fn   string
 		slot int
@@ -794,8 +702,6 @@ function main(): i32 { return 0; }`
 	if err := os.WriteFile(soPath, so, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// Give each slot a trampoline that returns its own index, then check
-	// every probe echoes its slot back — proving each wrapper's index.
 	var fns, slotInit, checks string
 	for _, p := range probes {
 		idx := decstr(p.slot)
@@ -826,11 +732,6 @@ function main(): i32 { return 0; }`
 	}
 }
 
-// TestStdJNIFieldAccessors validates the instance/static field accessors and
-// get_array_length: correct slot dispatch, a 64-bit get_long_field value
-// (proving the full word survives, not just 32 bits), and a set_int_field
-// write that lands in the fake field. A backing `long fld` models the
-// instance field so the get/set pair round-trips through the .so.
 func TestStdJNIFieldAccessors(t *testing.T) {
 	gcc, err := exec.LookPath("gcc")
 	if err != nil {
@@ -854,9 +755,6 @@ function main(): i32 { return 0; }`
 	if err := os.WriteFile(soPath, so, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// Fake JNIEnv slots: 100 GetIntField, 101 GetLongField (returns a value
-	// >32 bits), 95 GetObjectField, 109 SetIntField (writes fld), 150
-	// GetStaticIntField, 171 GetArrayLength.
 	loader := `#include <dlfcn.h>
 #include <stdio.h>
 static long fld;
@@ -897,11 +795,6 @@ int main(int c, char** v){
 	}
 }
 
-// TestAsBytesInSharedLib reads a string literal's bytes through as_bytes()
-// inside a dlopen'd library, which maps the literal at a high (>32-bit) base:
-// an index past the sixteenth byte must read the real byte, not a truncated
-// address's. A C caller wanting the bytes themselves takes jni.cstr's copy;
-// `as_bytes() as usize` is not a data pointer (docs/RUNTIME-INTRINSICS.md).
 func TestAsBytesInSharedLib(t *testing.T) {
 	gcc, err := exec.LookPath("gcc")
 	if err != nil {
@@ -947,12 +840,6 @@ int main(int c, char** v){
 	}
 }
 
-// TestStdJNIFloatFieldAccessors validates the FP-returning field getters:
-// get_float_field / get_double_field / get_static_double_field route through
-// the __c_call*_f32 / _f64 shims so the jfloat/jdouble result comes back in
-// the FP register (xmm0). Fake JNIEnv slots return known FP constants; the C
-// side reads them as float/double and the probe echoes them back as a scaled
-// int (×4) so a single integer exit code can assert all three.
 func TestStdJNIFloatFieldAccessors(t *testing.T) {
 	gcc, err := exec.LookPath("gcc")
 	if err != nil {
@@ -961,8 +848,6 @@ func TestStdJNIFloatFieldAccessors(t *testing.T) {
 	if runtime.GOARCH != "amd64" {
 		t.Skip("host is not amd64")
 	}
-	// Each probe scales its FP result by 4 and truncates to i32, so exact
-	// quarter-valued constants round-trip losslessly through the exit code.
 	src := `import "std/jni";
 function p_float(env: usize, cls: usize, j: usize): i32 { return (jni.get_float_field(j, 0 as usize, 0 as usize) * (4.0 as f32)) as i32; }
 function p_double(env: usize, cls: usize, j: usize): i32 { return (jni.get_double_field(j, 0 as usize, 0 as usize) * 4.0) as i32; }
@@ -975,8 +860,6 @@ function main(): i32 { return 0; }`
 	if err := os.WriteFile(soPath, so, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// table[102]=GetFloatField->2.5, [103]=GetDoubleField->6.25,
-	// [153]=GetStaticDoubleField->9.75. Scaled ×4: 10, 25, 39.
 	loader := `#include <dlfcn.h>
 #include <stdio.h>
 static float  f102(void*e,long o,long f){(void)e;(void)o;(void)f;return 2.5f;}
@@ -1006,13 +889,6 @@ int main(int c, char** v){
 	}
 }
 
-// TestStdlibInSharedLib proves real stdlib string helpers work inside a
-// dlopen'd .so. These all flow through s.as_bytes() over string-literal
-// .rodata, which is mapped at a high (>32-bit) base in a PIE shared object —
-// the exact case the slice-header fix addresses. Before that fix every one
-// of these returned garbage in a .so; this guards the whole class (case
-// folding, base64, hex) against regression, and documents that the .so /
-// Android target is stdlib-usable, not just JNI-glue-usable.
 func TestStdlibInSharedLib(t *testing.T) {
 	gcc, err := exec.LookPath("gcc")
 	if err != nil {
@@ -1021,8 +897,6 @@ func TestStdlibInSharedLib(t *testing.T) {
 	if runtime.GOARCH != "amd64" {
 		t.Skip("host is not amd64")
 	}
-	// `check` returns a bitmask; each bit is one stdlib round-trip that must
-	// hold. 63 == all six pass.
 	src := `import "std/string";
 import "std/base64";
 import "std/codec";
@@ -1078,12 +952,6 @@ int main(int c, char** v){
 	}
 }
 
-// TestStdJNICallMethodA validates invoking Java methods through the
-// fixed-arity jvalue-array Call<Type>MethodA family + the jvalues packer:
-// jni.call_int_method_a (slot 51) sums the packed jvalue args, the FP-return
-// jni.call_double_method_a (slot 60, via call3_f64) round-trips a jdouble,
-// and jni.call_void_method_a (slot 63) delivers its arg. A fake JNIEnv reads
-// the jvalue array (8-byte slots) the packer built.
 func TestStdJNICallMethodA(t *testing.T) {
 	gcc, err := exec.LookPath("gcc")
 	if err != nil {
@@ -1111,8 +979,6 @@ function main(): i32 { return 0; }`
 	if err := os.WriteFile(soPath, so, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// table[51]=CallIntMethodA (sum of 3 jvalue ints), [60]=CallDoubleMethodA
-	// ((a0+a1)+0.25, FP return), [63]=CallVoidMethodA (records its arg).
 	loader := `#include <dlfcn.h>
 #include <stdio.h>
 static long cim(void*e,long o,long m,long long* a){(void)e;(void)o;(void)m; return (long)(a[0]+a[1]+a[2]); }
@@ -1144,11 +1010,6 @@ int main(int c,char**v){
 	}
 }
 
-// TestStdJNIJvalueFloatArgs validates passing float/double method ARGUMENTS
-// via the typed jvalue setters: jvalue_alloc + jvalue_set_f64/int/f32 build
-// a mixed-type arg array whose slots carry IEEE-754 bits (jdouble = 8 bytes,
-// jfloat = low 4 bytes) and integer words, exactly as the jvalue union lays
-// out. A fake CallDoubleMethodA reads d/i/f back out and sums them.
 func TestStdJNIJvalueFloatArgs(t *testing.T) {
 	gcc, err := exec.LookPath("gcc")
 	if err != nil {
@@ -1173,8 +1034,6 @@ function main(): i32 { return 0; }`
 	if err := os.WriteFile(soPath, so, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// jvalue union: [0].d (double @0), [1].i (int @ slot+0 = byte 8),
-	// [2].f (float @ slot+0 = byte 16). Sum = 2.5 + 4 + 1.5 = 8.0; ×4 = 32.
 	loader := `#include <dlfcn.h>
 #include <stdio.h>
 #include <string.h>
@@ -1206,14 +1065,11 @@ int main(int c,char**v){
 	}
 }
 
-// selfHostSharedX86 builds src into an x86-64 shared object with the
-// self-host CLI's -shared, exporting `exports`, and returns its bytes.
 func selfHostSharedX86(t *testing.T, src string, exports ...string) []byte {
 	t.Helper()
 	return selfHostShared(t, "x86-64-linux", src, exports...)
 }
 
-// selfHostShared is selfHostSharedX86 for any -shared target.
 func selfHostShared(t *testing.T, target, src string, exports ...string) []byte {
 	t.Helper()
 	dir := t.TempDir()
@@ -1235,14 +1091,6 @@ func selfHostShared(t *testing.T, target, src string, exports ...string) []byte 
 	return so
 }
 
-// sharedCEntrySrc exercises the C-ABI entry the self-host puts in front of
-// each export: its functions read their arguments from the stack, so the entry
-// moves the C caller's registers there, widening a narrow integer by its sign,
-// converting an f32, carrying an f64 in and back out, and passing on the
-// arguments that arrive on the C caller's stack (sum10 past six on x86-64 and
-// eight on arm64, fsum9 past eight FP registers on both). A string literal
-// and an allocation run inside the library too, so a relocated data word and
-// the lazily mapped heap are both reached under dlopen.
 const sharedCEntrySrc = `function greet(n: i32): i32 { let s: string = "hello" + "!"; return s.len() + n; }
 function neg(x: i32): i32 { return 0 - x; }
 function low(b: u8, w: u32): i64 { return (b as i64) * 100000 + (w as i64); }
@@ -1269,13 +1117,8 @@ int main(int c, char** v){
   return 0;
 }`
 
-// sharedCEntryWant: low keeps 0x05 of 0x1ff05 as its u8 and 2 of
-// 0x100000002 as its u32.
 const sharedCEntryWant = "10 -4 7 500002 6 1.5 19891 1008\n"
 
-// sharedCEntryCheck builds sharedCEntrySrc for target, loads it with a
-// loader built by cc and run through runner ("" to run it directly), and
-// checks every export's answer and the image's headers.
 func sharedCEntryCheck(t *testing.T, target, cc, runner string, env []string, machine elf.Machine) {
 	t.Helper()
 	so := selfHostShared(t, target, sharedCEntrySrc, "greet", "neg", "low", "scale", "halve", "sum10", "fsum9")
@@ -1307,11 +1150,6 @@ func sharedCEntryCheck(t *testing.T, target, cc, runner string, env []string, ma
 	sharedImageCheck(t, so, machine)
 }
 
-// sharedImageCheck holds a shared object to what a loader needs: ET_DYN for
-// the machine, PT_DYNAMIC, a non-executable PT_GNU_STACK, and on arm64 no
-// segment both writable and executable, which Android refuses. Its .bss is
-// zero-fill in memory, not bytes in the file. It carries no stack-overflow
-// handler: the host owns the stack and the signal handlers.
 func sharedImageCheck(t *testing.T, so []byte, machine elf.Machine) {
 	t.Helper()
 	f, err := elf.NewFile(bytes.NewReader(so))
@@ -1356,9 +1194,6 @@ func TestSelfHostSharedCEntry(t *testing.T) {
 	sharedCEntryCheck(t, "x86-64-linux", gcc, "", nil, elf.EM_X86_64)
 }
 
-// TestArm64SelfHostSharedCEntry is TestSelfHostSharedCEntry for arm64-linux:
-// natively on an arm64 host, else through the cross gcc and qemu-aarch64 with
-// the aarch64 sysroot as its library prefix.
 func TestArm64SelfHostSharedCEntry(t *testing.T) {
 	gcc, qemu := e2eharness.Arm64Tooling(t)
 	var env []string
@@ -1368,8 +1203,6 @@ func TestArm64SelfHostSharedCEntry(t *testing.T) {
 	sharedCEntryCheck(t, "arm64-linux", gcc, qemu, env, elf.EM_AARCH64)
 }
 
-// TestArm64SelfHostSharedAndroid builds the library Android's
-// System.loadLibrary takes: the arm64 image, W^X, naming the export.
 func TestArm64SelfHostSharedAndroid(t *testing.T) {
 	so := selfHostShared(t, "arm64-android", "function answer(): i32 { return 42; }\nfunction main(): i32 { return answer(); }\n", "answer")
 	sharedImageCheck(t, so, elf.EM_AARCH64)
@@ -1378,8 +1211,6 @@ func TestArm64SelfHostSharedAndroid(t *testing.T) {
 	}
 }
 
-// TestSelfHostSharedRefusals pins what the self-host's -shared refuses, in
-// native's words where native has them.
 func TestSelfHostSharedRefusals(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "main.fern")

@@ -1,10 +1,10 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Overwrite-dec under churn: 200 fresh arrays stored at the
-// same key. With no live borrow, each overwrite frees the prior
-// value at rc==1 → the freelist recycles, memory stays bounded,
-// and the counter stays 0. Last write is [199,200,201].
+
+
+
+
+
+
+
 import "core/int";
 import "core/map";
 function main(): i32 {

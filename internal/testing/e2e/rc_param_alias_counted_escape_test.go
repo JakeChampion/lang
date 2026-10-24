@@ -2,9 +2,6 @@ package e2e
 
 import "testing"
 
-// An alias of a borrowed string parameter takes no count of its own when
-// every escape of it takes one, as a closure capture does (#10113). Four
-// calls.
 func TestBorrowedParamAliasWithACountedEscape(t *testing.T) {
 	const main = `
 function mkstr(a: string): string { return a + "!"; }

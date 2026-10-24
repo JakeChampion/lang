@@ -7,14 +7,6 @@ import (
 	"testing"
 )
 
-// `.to_string()` on an i64 / u64 receiver on the wasm IR path — the wasm half
-// of #5826.
-
-// wideToStringProg formats the interesting magnitudes of each width in one
-// module: an ordinary i64, INT64_MIN (whose negation overflows back to itself,
-// so the magnitude must run through i64.div_u), zero (the early-return branch
-// with its own allocation), and a u64 with the high bit set (which the signed
-// formatter would render as -1).
 const wideToStringProg = `function main(): i32 {
     let a: i64 = 1234567890123 as i64;
     let b: i64 = (0 as i64) - (9223372036854775807 as i64) - (1 as i64);
@@ -26,11 +18,8 @@ const wideToStringProg = `function main(): i32 {
 }
 `
 
-// wideImports declares the formatters the programs call.
 const wideImports = "import \"std/i32\";\nimport \"std/i64\";\nimport \"std/u64\";\n"
 
-// TestSelfHostWideToStringWasmIR checks that the wide formatters render the
-// same digits the native interpreter does.
 func TestSelfHostWideToStringWasmIR(t *testing.T) {
 	dir := t.TempDir()
 	l := newWasmStdlibLoader(t)
@@ -63,8 +52,6 @@ func TestSelfHostWideToStringWasmIR(t *testing.T) {
 		}
 	})
 
-	// An f-string interpolant desugars to .to_string(), so it reaches the same
-	// helper by a different syntactic route.
 	t.Run("fstring", func(t *testing.T) {
 		src := `function main(): i32 {
     let n: i64 = 42000000000 as i64;
@@ -77,7 +64,6 @@ func TestSelfHostWideToStringWasmIR(t *testing.T) {
 		}
 	})
 
-	// Each width alone in a module.
 	for _, tc := range []struct {
 		name string
 		src  string
@@ -106,11 +92,6 @@ func TestSelfHostWideToStringWasmIR(t *testing.T) {
 		})
 	}
 
-	// A zero formatted through the i64 body is boxed by $__fern_str_box like
-	// every other string block: its early-return branch used to hand back a
-	// header-less $__fern_alloc block, which $__fern_arr_dec would have freed
-	// off a garbage rc word. The churn loop reclaims one per iteration, so a
-	// corrupted freelist shows up as a trap rather than passing by luck.
 	t.Run("zero-churn", func(t *testing.T) {
 		src := `function main(): i32 {
     let n: i64 = 0 as i64;

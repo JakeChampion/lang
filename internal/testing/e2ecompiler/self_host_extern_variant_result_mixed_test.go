@@ -11,16 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestSelfHostExternVariantResultMixedCustomProvider is the self-host port of
-// the mixed (payloaded + payloadless) variant result (docs/WIT-BRING-YOUR-OWN.md,
-// Go-side TestExternVariantResultMixedCustomProvider). A `variant opt-num
-// { some(s32), none }` returns indirectly (disc:u8 @0, payload @4); the self-host
-// wrapper materializes a `[struct_id@0][payload@4]` box for every case — the
-// payloadless `none` case gets that box with an unused payload (tag-correct,
-// match-correct). Verifies the self-host result gate accepts payloadless cases.
-//
-// The provider exports `lookup: func(n: s32) -> opt-num`: n>=0 → some(n*2),
-// else none. The self-host program matches Found(v)->v / Missing->-1.
 func TestSelfHostExternVariantResultMixedCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {

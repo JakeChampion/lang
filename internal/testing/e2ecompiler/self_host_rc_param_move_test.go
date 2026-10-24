@@ -2,13 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// A param aliased or destructured at its LAST mention is a move when the frame
-// owns it (#8498). An owned array param aliased that way hands the alias its
-// one release, so there is no retain, no second dec and no leak. The
-// consumed-tuple rows pin the other direction: a tuple param reassigned on one
-// path and then destructured or aliased must stay underflow-free on the path
-// that never reassigned, with the caller still reading its box afterwards;
-// they do not claim leak-freedom.
 func TestSelfHostRcParamMoveX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -16,14 +9,11 @@ func TestSelfHostRcParamMoveX86_64(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	cases := []struct {
-		name string
-		src  string
-		exit int
-		// leakFree pins allocs == frees; the plan-only rows do not claim it.
+		name     string
+		src      string
+		exit     int
 		leakFree bool
 	}{
-		// `own` array param aliased at its last mention: the alias owns the
-		// box and releases it at exit — no retain, no second dec, no leak.
 		{"own-array-alias", `function f(own xs: i32[]): i32 {
 	let ys = xs;
 	return ys[0] + ys[1];
@@ -34,9 +24,6 @@ function main(): i32 {
 	if (__rc_underflow_count() != 0) { return 99; }
 	return a + b;
 }`, 10, true},
-		// The consumed-tuple shape: a reassigned
-		// tuple param destructured at its last mention, called on both the
-		// reassigning and the non-reassigning path.
 		{"consumed-tuple-destructure", `function tup(t: (string, i32), re: boolean): i32 {
 	if (re) { t = ("xyz", 10); }
 	let (s, k) = t;
@@ -49,7 +36,6 @@ function main(): i32 {
 	if (__rc_underflow_count() != 0) { return 99; }
 	return a + b + t.1;
 }`, 18, false},
-		// The same with a bare alias instead of a destructure.
 		{"consumed-tuple-alias", `function g(t: (i32[], i32), re: boolean): i32 {
 	if (re) { t = ([7], 3); }
 	let u = t;

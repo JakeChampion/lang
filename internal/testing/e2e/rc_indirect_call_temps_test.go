@@ -5,10 +5,6 @@ import (
 	"testing"
 )
 
-// A call through a function VALUE releases its argument temps and, under a
-// match, its result box, whatever the callee expression is: a struct field,
-// an array element, a call's result or a capture, as well as the named local
-// that already did. Each case runs four calls, and each returns 6.
 func TestIndirectCallThroughAnyCalleeReleasesItsTemps(t *testing.T) {
 	const prelude = `struct C { value: i32 }
 struct S { name: string, run: (C) => i32 }

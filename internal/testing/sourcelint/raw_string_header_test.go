@@ -9,33 +9,10 @@ import (
 	"testing"
 )
 
-// `__raw_alloc(n)` reserves 24 bytes AHEAD of the pointer it returns, and
-// `__raw_string(p, len)` builds the string box in that reserved header rather
-// than allocating a second block (#7351: a heap string used to cost a box block
-// and a data block where native's costs one). Both register backends do this;
-// wasm refuses the whole raw floor and serves these helpers with hand-written
-// WAT, so it is unaffected.
-//
-// The header is therefore a CONTRACT on `__raw_string`'s pointer: it must be a
-// `__raw_alloc` result, unadjusted. Hand it anything else — the static
-// `__raw_scratch` buffer, an argv entry, an interior address — and the box is
-// stamped into 24 bytes that belong to something else. Nothing at run time
-// reports that; the corruption surfaces somewhere later.
-//
-// asmcore.fern is the only place the contract can be broken, because it is the
-// only place the raw floor is written: every rt_src_* helper body is a Fern
-// source string this file generates, and the intrinsics exist for those bodies.
-//
-// The scan is per generator function, which is the unit a helper body is
-// assembled in. Within one, every `__raw_string`'s pointer must be a bare name
-// the same function binds with `__raw_alloc`.
 var rawStringCallRe = regexp.MustCompile(`__raw_string\(`)
 
-// rawAllocBindRe matches the binding form the helpers use: `let p: usize =
-// __raw_alloc(...)`.
 var rawAllocBindRe = regexp.MustCompile(`let\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*usize\s*=\s*__raw_alloc\(`)
 
-// genFnRe matches the start of one asmcore.fern generator function.
 var genFnRe = regexp.MustCompile(`(?m)^(?:pub )?function\s+[A-Za-z_][A-Za-z0-9_]*\s*\(`)
 
 func TestRawStringPointerComesFromRawAlloc(t *testing.T) {
@@ -89,9 +66,6 @@ type genFnChunk struct {
 	text string
 }
 
-// splitGeneratorFns cuts src at each top-level generator function. The helper
-// body a set of intrinsic calls belongs to is assembled inside one of them, so
-// it is the right scope for "this name was allocated here".
 func splitGeneratorFns(src string) []genFnChunk {
 	locs := genFnRe.FindAllStringIndex(src, -1)
 	out := make([]genFnChunk, 0, len(locs))
@@ -107,19 +81,8 @@ func splitGeneratorFns(src string) []genFnChunk {
 	return out
 }
 
-// bareAddrArgRe matches a plain pointer name, the one spelling __raw_string's
-// pointer argument may take.
-//
-// asmcore.fern builds helper bodies as Fern string literals, so a name can also
-// arrive as the generator's own interpolation — `__raw_store8(" + buf + ", 0,
-// 2)` in sockaddr_head. That is still a bare name in the emitted text, so the
-// leading `" + ` and trailing ` + "` seams are part of the accepted form. They
-// have to sit at the very ends: `buf + " + statoff(t, "mode") + "` (the #6386
-// shape) keeps the seam in the middle and is rejected.
 var bareAddrArgRe = regexp.MustCompile(`^(?:"\s*\+\s*)?[A-Za-z_][A-Za-z0-9_]*(?:\s*\+\s*")?$`)
 
-// firstArg returns the text of the first argument of the call whose `(` is at
-// open — everything up to the matching `)` or the first comma at depth 1.
 func firstArg(src string, open int) (string, bool) {
 	depth := 0
 	for i := open; i < len(src); i++ {
@@ -144,17 +107,6 @@ func lineOf(src string, off int) int {
 	return strings.Count(src[:off], "\n") + 1
 }
 
-// blankFullLineComments replaces the body of every whole-line `//` comment with
-// spaces, so the scan sees only code. Offsets are preserved, keeping lineOf's
-// reported line numbers correct.
-//
-// Only lines whose first non-space characters are `//` are blanked. Cutting at
-// any `//` would truncate a code line that carries one inside a Fern string
-// literal, and asmcore.fern is nothing but string literals.
-//
-// A helper's block comment naturally spells the intrinsic it describes —
-// "ordinary Some(__raw_string(...)) lowering" is the shape that surfaced this —
-// and an argument of `...` is not a pointer expression to check.
 func blankFullLineComments(src string) string {
 	out := []byte(src)
 	for i := 0; i < len(out); {

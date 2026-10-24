@@ -24,7 +24,6 @@ func TestRootRenameSafetyRejectsDifferentMounts(t *testing.T) {
 	}
 }
 
-// fdinfo's mount identity distinguishes bind mounts sharing the same st_dev.
 func linuxMountOf(t *testing.T, path string) uint64 {
 	t.Helper()
 	f, err := os.Open(path)

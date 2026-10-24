@@ -15,18 +15,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The wasi:http wrapper hands the handler owned strings, so a retain and its
-// release change nothing but the string's own count (#11479).
-//
-// The method, the path and every header name and value used to reach Fern
-// code as (data, len) pairs over buffers with no rc header: the count a retain
-// and a release read was whatever word sat 8 bytes before the data. For a path
-// of eight bytes or fewer that word is the zeroed tail of the host's buffer, so
-// `touch(req.path)` took it from 0 to 1 and back, freeing the path while the
-// request still held it, and the next allocation (`filler`) read back in its
-// place. Header names showed the same fault as a value shifted by one byte
-// (`"irst\x00"` for `"first"`) once HeaderMap.append kept a name it was handed
-// instead of a lowercased copy.
 func TestWasiHTTPRequestStringsAreOwned(t *testing.T) {
 	wasmtime := e2eharness.Wasmtime(t)
 	dir := t.TempDir()
@@ -96,9 +84,6 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 	}
 }
 
-// freeLoopbackPort asks the kernel for a free TCP port and releases it, for
-// a server such as `wasmtime serve` that binds its own address and cannot be
-// handed a listener.
 func freeLoopbackPort(t *testing.T) int {
 	t.Helper()
 	probe, err := net.Listen("tcp", "127.0.0.1:0")

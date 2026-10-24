@@ -6,26 +6,17 @@ import (
 	"testing"
 )
 
-// armBinderFields lists every field of MatchArm / MatchExprArm /
-// TuplePatElem that names something, and says whether the arm walks yield
-// it. A new field fails this test rather than going missing: a binder these
-// walks skip is a name the import rewriter mangles into a module decl, the
-// renamer collapses onto another declaration's slot, and constfold
-// substitutes a const over — one omission, three silent wrong answers
-// (#8607).
 var armBinderFields = map[string]bool{
-	// MatchArm / MatchExprArm.
 	"Bindings":  true,
 	"AtBinding": true,
 	"Payloads":  true,
 
 	"TupleElems":    true,
-	"VariantName":   false, // the pattern's TAG, not a binder
+	"VariantName":   false,
 	"VariantModule": false,
-	"FieldNames":    false, // the projected FIELD, parallel to Bindings
+	"FieldNames":    false,
 	"EnumName":      false,
 
-	// TuplePatElem.
 	"Name":              true,
 	"VariantBindings":   true,
 	"VariantPayloads":   true,
@@ -33,9 +24,6 @@ var armBinderFields = map[string]bool{
 	"VariantFieldNames": false,
 }
 
-// TestArmBindersCoverEveryNameField pins the field list the walks have to
-// keep up with. Only string-ish and pattern-shaped fields are considered —
-// the type / position / flag fields cannot carry a name.
 func TestArmBindersCoverEveryNameField(t *testing.T) {
 	seen := map[string]bool{}
 	for _, typ := range []reflect.Type{
@@ -64,9 +52,6 @@ func TestArmBindersCoverEveryNameField(t *testing.T) {
 	}
 }
 
-// armWithEveryBinderPosition is one arm carrying a binder in every position
-// the walks claim to reach, with a distinct type per position so BinderType's
-// answers are told apart.
 func armWithEveryBinderPosition() *MatchExprArm {
 	return &MatchExprArm{
 		Bindings:     []string{"payload", ""},
@@ -99,9 +84,6 @@ func TestBindersReachEveryPosition(t *testing.T) {
 	}
 }
 
-// BinderType must answer for every name Binders lists — the two walks read
-// the same fields, and a position one reaches and the other does not is the
-// drift this pairing exists to prevent.
 func TestBinderTypeAnswersForEveryBinder(t *testing.T) {
 	arm := armWithEveryBinderPosition()
 	scrutinee := Type(TupleType{Elems: []Type{StringType{}}})
@@ -124,9 +106,6 @@ func TestBinderTypeAnswersForEveryBinder(t *testing.T) {
 	}
 }
 
-// A position whose type list is shorter than its binder list answers nil
-// rather than reading past the end: the checker fills these in step, and a
-// panic here would turn a stamping gap into a compiler crash.
 func TestBinderTypeToleratesShortTypeLists(t *testing.T) {
 	arm := &MatchExprArm{
 		Bindings:   []string{"a"},

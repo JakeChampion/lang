@@ -1,15 +1,10 @@
 import "std/test";
 import "../../coreutils/lib/timefmt" as timefmt;
 
-// tests/stdlib/coreutils_timefmt_test.fern — the year as each C library's
-// strftime writes it, which `%c`, `%EY`, `%EC` and date's --debug trace
-// reach. Apple's form is called directly, so it is checked on every host.
-
 function apple(year: i64): string {
   return timefmt.apple_yconv(year - 1900i64, true);
 }
 
-// Apple pads to four digits as two `%02d` fields and runs past them.
 function test_apple_pads_the_year(): test.TestOutcome {
   if (apple(1i64) != "0001") {
     return test.fail("1: " + apple(1i64));
@@ -26,8 +21,6 @@ function test_apple_pads_the_year(): test.TestOutcome {
   return test.assert_eq(apple(2147485547i64), "2147485547");
 }
 
-// A negative year: `-0` in the zeroth century, the sign on the century
-// past it.
 function test_apple_negative_years(): test.TestOutcome {
   if (apple(0i64 - 5i64) != "-005") {
     return test.fail("-5: " + apple(0i64 - 5i64));
@@ -42,8 +35,6 @@ function test_apple_century(): test.TestOutcome {
   return test.assert_eq(timefmt.apple_yconv(5i64 - 1900i64, false), "00");
 }
 
-// glibc writes `tm_year + 1900` as an int: unpadded, and wrapped past
-// INT_MAX.
 function test_glibc_year(): test.TestOutcome {
   if (target_os() == "darwin") {
     return test.assert_eq(timefmt.c_year(1i64), "0001");

@@ -7,9 +7,6 @@ import (
 	"strings"
 )
 
-// HTTPContentLengthProbe compares public parser results with unbounded decimal
-// arithmetic. Include lengths that wrap to zero or a small positive i32, since
-// checking the sign after multiplication cannot reject those consistently.
 func HTTPContentLengthProbe() string {
 	var src strings.Builder
 	src.WriteString(`import "std/http";

@@ -1,5 +1,3 @@
-// Package sourcelint holds fast, dependency-free repo-hygiene checks that run
-// in the ordinary `go test ./...` lane (no build tools, no fixtures).
 package sourcelint
 
 import (
@@ -9,25 +7,6 @@ import (
 	"testing"
 )
 
-// guardedDrivers are the self-host driver entry points whose `main` must route
-// through util.rc_underflow_guard.
-//
-// The rc over-release detector (__rc_underflow_count, bumped by every
-// __fern_rc_dec that finds rc <= 0) shipped on all three backends and then
-// nothing ran it, which is what let #6021 stay latent on main: the compiler
-// over-released one of its OWN heap blocks on a shape as ordinary as a
-// boolean struct field used as an `if` condition, kept emitting correct asm
-// (the doubly-freed block was recycled harmlessly), and only crashed once an
-// unrelated change shifted allocation sizes enough for the poisoned freelist
-// head to be popped — ~50% of runs, presenting as "adding a field to
-// LowerState breaks the compiler". The per-module fixpoint, all 335 fixtures
-// and the native suite were green the whole time.
-//
-// The guard is what makes every existing driver-based test a detector: a
-// corrupted freelist exits RC_UNDERFLOW_EXIT with a diagnostic instead of
-// producing plausible output. It is one BSS load on the healthy path and
-// changes no output, which is exactly what makes it easy to delete by
-// accident — hence this check rather than trust.
 var guardedDrivers = []string{
 	"drivers/asm_ir_run.fern",
 	"drivers/wasm_ir_run.fern",
@@ -50,10 +29,6 @@ func TestSelfHostDriversRunTheRcUnderflowGuard(t *testing.T) {
 		}
 	}
 
-	// The helper itself must read the counter. These drivers are compiled by
-	// the native backend, whose checker registers `__rc_underflow_count`, so a
-	// wrong spelling would not compile — but a guard that reads nothing would
-	// compile and always pass.
 	utilSrc, err := os.ReadFile(filepath.Join(root, "compiler", "util.fern"))
 	if err != nil {
 		t.Fatalf("read util.fern: %v", err)
@@ -63,8 +38,6 @@ func TestSelfHostDriversRunTheRcUnderflowGuard(t *testing.T) {
 	}
 }
 
-// repoRoot walks up from the working directory to the module root (the
-// directory holding go.mod).
 func repoRoot() (string, error) {
 	dir, err := os.Getwd()
 	if err != nil {

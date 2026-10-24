@@ -10,26 +10,17 @@ import (
 	"github.com/jakechampion/lang/internal/pkg/manifest"
 )
 
-// Source locates a specific package version's archive/directory: a local
-// directory (Path) or a hash-addressed remote archive (URL+Hash). Path
-// entries make the index fully usable offline (a local monorepo of
-// versioned packages); URL entries flow through the content-addressed
-// store exactly like a `url` dependency.
 type Source struct {
-	Path string // absolute (resolved against the index dir) or relative dir
+	Path string
 	URL  string
 	Hash string
 }
 
-// Index maps package name → version string → source. It is the version
-// authority MVS resolves against — a plain file, so no registry service
-// is required (the research's "no mandatory registry" stance).
 type Index struct {
-	Dir      string // directory the index file lives in (for relative Paths)
+	Dir      string
 	Packages map[string]map[string]Source
 }
 
-// Versions returns pkg's available versions, ascending.
 func (ix *Index) Versions(pkg string) []Version {
 	var vs []Version
 	for s := range ix.Packages[pkg] {
@@ -41,7 +32,6 @@ func (ix *Index) Versions(pkg string) []Version {
 	return vs
 }
 
-// Latest returns pkg's highest available version.
 func (ix *Index) Latest(pkg string) (Version, bool) {
 	vs := ix.Versions(pkg)
 	if len(vs) == 0 {
@@ -50,7 +40,6 @@ func (ix *Index) Latest(pkg string) (Version, bool) {
 	return vs[len(vs)-1], true
 }
 
-// SourceFor returns the source for a specific (pkg, version).
 func (ix *Index) SourceFor(pkg string, v Version) (Source, bool) {
 	s, ok := ix.Packages[pkg][v.String()]
 	if !ok {
@@ -62,7 +51,6 @@ func (ix *Index) SourceFor(pkg string, v Version) (Source, bool) {
 	return s, true
 }
 
-// LoadIndex reads and parses an index file.
 func LoadIndex(path string) (*Index, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -80,9 +68,6 @@ func LoadIndex(path string) (*Index, error) {
 	return ix, nil
 }
 
-// ParseIndex parses the index format: a `[package]` section per package,
-// each line `"VERSION" = { path = "…" }` or
-// `"VERSION" = { url = "…", hash = "sha256:…" }`.
 func ParseIndex(src string) (*Index, error) {
 	ix := &Index{Packages: map[string]map[string]Source{}}
 	pkg := ""

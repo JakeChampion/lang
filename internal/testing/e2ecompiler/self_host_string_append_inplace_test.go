@@ -5,12 +5,6 @@ import (
 	"testing"
 )
 
-// `s = s + piece` on a local the frame owns grows its buffer in place while
-// the block's size class has room, so 20,000 eight-byte appends allocate only
-// at class boundaries: about 290 times, where a fresh concatenation per append
-// allocated 20,000 times and copied the whole prefix each time (#9077). The
-// program exits 42 when the result is whole and the loop allocated fewer than
-// 1,000 times.
 const stringAppendInPlaceSrc = `function main(): i32 {
     let s: string = "";
     let a1: i64 = __heap_alloc_count();
@@ -34,12 +28,6 @@ func TestSelfHostStringAppendInPlace(t *testing.T) {
 	}
 }
 
-// An in-place growth is still one block, so the leak census moves its live
-// bytes and leaves its counts alone, as native's does; counting it as a free
-// plus an alloc reported one allocation per append. The FERN_RC_TRACE leg
-// covers the path where the trace's event hooks have already counted the pair.
-// Wasm's growth keeps the block's stored size, which its free charges, so its
-// census needs no correction and is checked as it stands.
 const stringAppendCensusSrc = `function churn(n: i32): i32 {
     let piece: string = "abcdefghijklmnopqrstuvwxyz0123456789abcdefgh";
     let out: string = "";

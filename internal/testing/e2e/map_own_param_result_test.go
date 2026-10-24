@@ -1,20 +1,5 @@
 package e2e
 
-// A Map threaded through `own` parameters and mutator chains on the native
-// backends (#11168).
-//
-//   - A call with a cast argument, `m = ins(m, i as i64, v)`, read the cast as
-//     a borrowed input, so the binding lost its typed drop and the map leaked
-//     at exit; bound through `let m2 = …; m = m2;` each COW copy leaked too.
-//   - `return m.remove(k)` retained a projection that the read out of the
-//     temporary tuple had already retained, so the returned map leaked.
-//   - A mutator chain, `m.insert(a, 1).insert(b, 2)`, hands back the
-//     receiver's own handle like a single mutator does, but neither a rebind
-//     nor a return recognised it: the rebind released the handle it stored
-//     back, and the return handed the caller a handle the exit sweep freed.
-//
-// The interpreter and the self-host compiler were right throughout.
-
 import (
 	"strings"
 	"testing"
@@ -74,7 +59,6 @@ function main(): i32 {
 }
 `
 
-// 42 when clean; every rc underflow the run recorded adds to it.
 const mapOwnParamResultRcProg = mapOwnParamResultDefs + `
 function main(): i32 {
     let r: i32 = check();
@@ -89,8 +73,6 @@ func TestMapOwnParamResultInterp(t *testing.T) {
 	}
 }
 
-// Under the sanitizer: a leak is a verdict line, a double release or a read
-// of a freed handle is fatal.
 func TestMapOwnParamResultSelfHostX86_64(t *testing.T) {
 	_, stderr, code := runSanitizeX86_64(t, mapOwnParamResultProg)
 	checkMapOwnParamResult(t, stderr, code)

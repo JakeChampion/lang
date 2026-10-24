@@ -4,40 +4,6 @@ import (
 	"testing"
 )
 
-// Self-append reclamation for POINTER-element arrays — `a = a.append(x)` over
-// string[] / struct[].
-//
-// The owned-array self-reassign fix (selfReassignOwnedLocal) is gated by
-// typeSelfDropSafe, which historically excluded strings (uncounted at
-// construction back then; the exclusion is lifted now that strings are
-// rc-tracked, #3425) and still excludes Maps. Either way the ARRAY
-// reassignment-overwrite frees the old buffer with a buffer-only
-// __fern_arr_dec (it never walks elements), so for the `a = a.append(x)` form
-// no element-type gate is needed at all: isSelfArrayPushLocal recognises
-// the rc-safe push pattern (push_grow's rc-gating frees only a uniquely-owned
-// orphan; a borrowed-derived buffer at rc≥2 is never freed) and lets every
-// element type reclaim its per-grow buffers.
-//
-// build(300) over string[] / struct[] grows past 2048 B and drops every
-// iteration; a leak would scale the bump pointer with the iteration count.
-//
-// This is also the SKIP half of the `_move_` grow helpers' contract (#3457).
-// `__fern_arr_push_grow_move_ptr` / `_move_str` retain the copied elements only
-// when the incoming rc != 1; here every grow is uniquely owned, so the retain
-// must NOT fire — the assign's buffer-only `__fern_arr_dec` frees the old
-// buffer without walking it and the elements transfer. An unconditional retain
-// leaks one reference per element per grow, which shows up here as a working
-// set that scales with the iteration count. The RETAIN half (rc != 1, the
-// shared-alias pair) is `TestAliasGrowNoOverRelease`.
-//
-// All three backends. The wasm `string[]` leg used to fail (20 iters -> 64480
-// bytes, 400 -> 1231840) and the cause was NOT string-specific: wasm's freelist
-// had no large tier, so `__free` dropped every block over 2048 B. A `string[]`
-// grow buffer is 16 + 8*cap bytes and crosses that at cap 254, while the
-// single-word `struct[]` sibling (16 + 4*cap) stayed under it — which is why
-// only the string leg leaked. Fixed by mirroring the native two-tier freelist
-// (#3425) in wasmbin; this leg is its end-to-end guard.
-
 func strArrPushSrc(iters string) string {
 	return `
 function build(k: i32): string[] {

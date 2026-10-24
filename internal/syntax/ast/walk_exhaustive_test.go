@@ -10,11 +10,6 @@ import (
 	"testing"
 )
 
-// walkSkips names the Expr-, Stmt- and *Block-typed fields Walk deliberately
-// does not descend into, with the reason. TestWalkVisitsEveryChildSlot
-// requires every other such field to be reached, and fails on an entry that
-// IS reached — so the table cannot become a licence for whatever the
-// traversal happens to miss.
 var walkSkips = map[string]string{
 	"FString.Desugared":     "checker-stamped mirror of Parts; walking both double-visits every interpolant",
 	"Binary.CheckedLowered": "checker-stamped desugar, spliced in by RewriteProgramExprs before any later pass sees the Binary",
@@ -26,9 +21,6 @@ var walkSkips = map[string]string{
 
 func nodeName(n Node) string { return reflect.TypeOf(n).Elem().Name() }
 
-// TestNodeKindsRegistryMatchesPackage derives every Node implementor from
-// the package source (each has a `func (*X) Pos() Position`) and requires
-// NodeKinds to return exactly that set.
 func TestNodeKindsRegistryMatchesPackage(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	if err != nil {
@@ -83,9 +75,6 @@ func TestNodeKindsRegistryMatchesPackage(t *testing.T) {
 	}
 }
 
-// TestWalkHandlesEveryNodeKind proves every registered kind has a case in
-// walkChildren: the default arm panics, so a missing one fails here rather
-// than silently skipping the subtree at some caller.
 func TestWalkHandlesEveryNodeKind(t *testing.T) {
 	for _, kind := range NodeKinds() {
 		t.Run(nodeName(kind), func(t *testing.T) {
@@ -94,9 +83,6 @@ func TestWalkHandlesEveryNodeKind(t *testing.T) {
 	}
 }
 
-// TestRewriteChildrenHandlesEveryNodeKind is TestWalkHandlesEveryNodeKind
-// for the RewriteProgramExprs traversal, whose two switches enumerate the
-// same union a second time.
 func TestRewriteChildrenHandlesEveryNodeKind(t *testing.T) {
 	for _, kind := range NodeKinds() {
 		t.Run(nodeName(kind), func(t *testing.T) {
@@ -111,10 +97,6 @@ func TestRewriteChildrenHandlesEveryNodeKind(t *testing.T) {
 	}
 }
 
-// TestWalkVisitsEveryChildSlot requires every Expr-, Stmt- and *Block-typed
-// field of every node kind to be reached by Walk, or listed in walkSkips.
-// A case that exists but forgot one of its node's slots fails here — the
-// half of the bug a "is there a case for this type" check cannot see.
 func TestWalkVisitsEveryChildSlot(t *testing.T) {
 	for _, kind := range NodeKinds() {
 		t.Run(nodeName(kind), func(t *testing.T) {
@@ -136,8 +118,6 @@ func TestWalkVisitsEveryChildSlot(t *testing.T) {
 	}
 }
 
-// TestWalkSkipsNameRealFields keeps walkSkips exact in the other direction:
-// a renamed or deleted field must take its entry with it.
 func TestWalkSkipsNameRealFields(t *testing.T) {
 	for key := range walkSkips {
 		typeName, field, _ := strings.Cut(key, ".")
@@ -156,13 +136,6 @@ func TestWalkSkipsNameRealFields(t *testing.T) {
 	}
 }
 
-// TestCloneCopiesEverythingWalkReaches states the contract that stops a
-// clone from sharing mutable structure with its source: everything Walk can
-// reach from a node must be freshly allocated by the clone, and the clone
-// must have the same shape. That is exactly the invariant #7042 / #7149
-// broke — a missing arm returned the node itself, so substituting types into
-// one instantiation wrote through every other. Anything Walk does not reach
-// is shared by design, and no pass that traverses via Walk can observe it.
 func TestCloneCopiesEverythingWalkReaches(t *testing.T) {
 	for _, kind := range NodeKinds() {
 		name := nodeName(kind)
@@ -204,9 +177,6 @@ func walkSeq(n Node) []Node {
 	return out
 }
 
-// populate builds an instance of kind with every child slot filled by a
-// distinct sentinel node. deep also fills the node slots nested inside
-// element structs (a match arm's guard, a struct literal's field values).
 func populate(t *testing.T, kind Node, deep bool) Node {
 	t.Helper()
 	n, _ := populateSlots(t, kind, deep)
@@ -232,10 +202,6 @@ var (
 	blockType = reflect.TypeOf((*Block)(nil))
 )
 
-// fillStruct assigns a sentinel to every Expr-, Stmt- and *Block-typed field
-// of v, recording it under its path. Stmt slots take a *Block: the interface
-// admits any statement, but the slots a parser only ever fills with a block
-// are asserted to be one by their consumers.
 func fillStruct(v reflect.Value, path string, deep bool, depth int, slots map[Node]string) {
 	rt := v.Type()
 	for i := 0; i < rt.NumField(); i++ {
@@ -265,10 +231,6 @@ func fillStruct(v reflect.Value, path string, deep bool, depth int, slots map[No
 				fv.Set(reflect.Append(fv, el))
 			}
 		case deep && depth < 2 && f.Type.Kind() == reflect.Ptr && f.Type.Implements(nodeType):
-			// A concrete node pointer (Block.Sugar, Lambda.Synthetic,
-			// ForEach.Pattern): allocate it empty. Filling it as well
-			// would recurse without end through the mutually-referential
-			// kinds.
 			fv.Set(reflect.New(f.Type.Elem()))
 		}
 	}
@@ -288,9 +250,6 @@ func newElem(t reflect.Type) reflect.Value {
 	return reflect.New(t).Elem()
 }
 
-// holdsNodeSlot reports whether t is a struct (or pointer to one) with an
-// Expr / Stmt / *Block field — the element types worth filling, e.g.
-// FieldInit, MapEntry, MatchArm.
 func holdsNodeSlot(t reflect.Type) bool {
 	if t.Kind() == reflect.Ptr {
 		t = t.Elem()

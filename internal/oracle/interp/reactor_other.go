@@ -4,8 +4,6 @@ package interp
 
 import "syscall"
 
-// A host without epoll or kqueue: the reactor floor answers ENOSYS, like
-// every socket call there.
 func reactorCreate() (int, error) { return 0, syscall.ENOSYS }
 
 func (r *reactor) watch(raw int, interest int) error { return syscall.ENOSYS }

@@ -4,12 +4,6 @@ import (
 	"testing"
 )
 
-// A closure held in a variant payload is released with the variant (#9841):
-// the construction counts the env box and the release gives the count back.
-// Each program runs ten rounds and returns 99 if __rc_underflow_count() moved.
-
-// The payload built from a lambda, a closure local and a closure-returning
-// call; matched with the payload ignored, bound and called, and never matched.
 const closureVariantBuiltSrc = `enum E { A(i32, (i32) => i32), B }
 function mk(k: i32): (i32) => i32 { return (x: i32): i32 => x + k; }
 function round(i: i32): i32 {
@@ -30,10 +24,6 @@ function round(i: i32): i32 {
 }
 ` + closureVariantMain
 
-// Enums returned from functions: a lambda payload, a call payload behind a
-// branch that also returns a unit variant, a parameter stored as the payload,
-// and results matched, left unused, bound and lent, or lent straight from the
-// call.
 const closureVariantReturnedSrc = `enum E { A(i32, (i32) => i32), B }
 function mk(k: i32): (i32) => i32 { return (x: i32): i32 => x + k; }
 function lam(i: i32): E { return A(i, (x: i32): i32 => x * i); }
@@ -60,8 +50,6 @@ function round(i: i32): i32 {
 }
 ` + closureVariantMain
 
-// An enum in a struct field, matched through the field, and a struct local
-// rebound in a loop whose first value holds a closure local that outlives it.
 const closureVariantStructFieldSrc = `enum E { A(i32, (i32) => i32), B }
 struct H { e: E, n: i32 }
 function mk(k: i32): (i32) => i32 { return (x: i32): i32 => x + k; }
@@ -81,10 +69,6 @@ function round(i: i32): i32 {
 }
 ` + closureVariantMain
 
-// The guard: the closure outlives the variant that held it. keep is stored
-// into a variant released every iteration and called afterwards; an arm
-// stores its binding to an outer local and another returns it, and both are
-// called after the variant is gone.
 const closureVariantOutlivesSrc = `enum E { A(i32, (i32) => i32), B }
 function pick(i: i32): (i32) => i32 {
     let v: E = A(i, (x: i32): i32 => x + i);
@@ -108,8 +92,6 @@ function round(i: i32): i32 {
 }
 ` + closureVariantMain
 
-// An enum array whose elements hold closure payloads, read only by len(), so
-// __enum_arr_elems_drop_E releases each payload with the array.
 const closureVariantArraySrc = `enum E { A(i32, (i32) => i32), B }
 function mk(k: i32): (i32) => i32 { return (x: i32): i32 => x + k; }
 function round(i: i32): i32 {
@@ -119,8 +101,6 @@ function round(i: i32): i32 {
 }
 ` + closureVariantMain
 
-// An arm binding handed to a function that only calls it is lent, so the
-// release after the match still gives back the variant's count.
 const closureVariantArgBorrowSrc = `enum E { A(i32, (i32) => i32), B }
 function mk(k: i32): (i32) => i32 { return (x: i32): i32 => x + k; }
 function apply2(f: (i32) => i32, n: i32): i32 { return f(f(n)); }
@@ -135,8 +115,6 @@ function round(i: i32): i32 {
 }
 ` + closureVariantMain
 
-// A payload built by a method that returns a closure: the method's return is
-// counted, so the construction does not retain it a second time.
 const closureVariantMethodSrc = `enum E { A(i32, (i32) => i32), B }
 struct Maker { k: i32 }
 function (b: Maker) maker(): (i32) => i32 {
@@ -162,7 +140,6 @@ const closureVariantMain = `function main(): i32 {
 }
 `
 
-// Wants are interpreter-confirmed.
 var closureVariantPayloadCases = []struct {
 	name string
 	src  string

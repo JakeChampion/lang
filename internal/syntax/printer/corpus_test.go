@@ -13,25 +13,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/corpus"
 )
 
-// The two properties in this file are CORPUS-driven: they walk every `.fern`
-// file under corpus.Sources rather than a fixture list.
-//
-// That is the point. #6832 added the type-check property over
-// `fmtParityCases`, a hand-maintained list, and #6812 then landed
-// construction-site type arguments that neither printer emitted while the
-// property stayed green — new syntax is invisible to a gate that only sees the
-// rows somebody remembered to add, and new syntax is exactly when printer /
-// parser drift happens (#6838). A corpus run needs no maintenance: a file is
-// covered the moment it exists.
-//
-// They live in internal/syntax/printer, not internal/testing/e2ecompiler, because that is
-// where the unit lane runs them. The self-host lane executes only tests
-// matching `^TestSelfHost` (`-test.list '^TestSelfHost'` in the shard
-// partition, and a named `-test.run` in every other job), and
-// scripts/unit-test-packages excludes internal/testing/e2ecompiler — so a
-// differently-named test in that package runs nowhere.
-
-// corpusRoot returns the repository root.
 func corpusRoot(t *testing.T) string {
 	t.Helper()
 	root, err := corpus.RepoRoot()
@@ -41,7 +22,6 @@ func corpusRoot(t *testing.T) string {
 	return root
 }
 
-// corpusFiles lists every Fern source in corpus.Sources, repo-relative.
 func corpusFiles(t *testing.T, root string) []string {
 	t.Helper()
 	files, err := corpus.Files(root, corpus.Sources)
@@ -51,7 +31,6 @@ func corpusFiles(t *testing.T, root string) []string {
 	return files
 }
 
-// formatSource is what `fern -fmt FILE` does: parse the one file, print it.
 func formatSource(src string) (string, error) {
 	prog, err := parser.Parse(src)
 	if err != nil {
@@ -60,17 +39,6 @@ func formatSource(src string) (string, error) {
 	return Format(prog), nil
 }
 
-// TestFormatCorpusOutputTypeChecks states the property #6802 asks for over the
-// whole corpus: formatting a program that compiles must yield a program that
-// still compiles.
-//
-// Conditional on the input compiling, because a corpus file is not always a
-// standalone program — several stdlib modules do not type-check on their own,
-// and a formatter cannot be blamed for that.
-//
-// The check runs against a MIRROR of the tree with the one file replaced, so
-// relative imports (`import "./parser"`) and stdlib imports resolve exactly as
-// they do in place.
 func TestFormatCorpusOutputTypeChecks(t *testing.T) {
 	root := corpusRoot(t)
 	files := corpusFiles(t, root)
@@ -107,14 +75,6 @@ func TestFormatCorpusOutputTypeChecks(t *testing.T) {
 	}
 }
 
-// TestFormatCorpusRoundtripShape is the structural half, and the stronger of the
-// two: parse → print → parse must yield the same AST modulo source position.
-//
-// A type-check property passes on output that still compiles while having lost
-// information — a dropped `Box[i64]` instantiation re-infers as `Box[i32]` and
-// compiles fine — so it sees only the subset of data loss that stops compiling.
-// A structural comparison cannot be fooled that way, and unlike the type-check
-// property it applies to every file whether or not it is a standalone program.
 func TestFormatCorpusRoundtripShape(t *testing.T) {
 	root := corpusRoot(t)
 	for _, rel := range corpusFiles(t, root) {
@@ -124,7 +84,6 @@ func TestFormatCorpusRoundtripShape(t *testing.T) {
 		}
 		first, err := parser.Parse(string(src))
 		if err != nil {
-			// A corpus file that does not parse is not this gate's business.
 			continue
 		}
 		printed := Format(first)
@@ -141,13 +100,6 @@ func TestFormatCorpusRoundtripShape(t *testing.T) {
 	}
 }
 
-// TestFormatCorpusIdempotent is the third property, also corpus-driven:
-// formatting already-formatted source must change nothing.
-//
-// internal/syntax/printer/idempotence_test.go holds the same property over a fixture
-// list. Over the corpus it costs one extra format pass and catches the shape the
-// fixtures cannot: an instability that only appears in a construct nobody wrote a
-// row for.
 func TestFormatCorpusIdempotent(t *testing.T) {
 	root := corpusRoot(t)
 	for _, rel := range corpusFiles(t, root) {
@@ -170,11 +122,6 @@ func TestFormatCorpusIdempotent(t *testing.T) {
 	}
 }
 
-// TestFormatCorpusPreservesCommentAnchor is TestFormatPreservesCommentAttachment
-// over every corpus file rather than its fixture rows: no comment moves to a
-// different line of code. A formatter change that hoisted late imports kept
-// native/self-host byte parity and its own fixed point across 478 files
-// (#10870); this is the property that fails on it.
 func TestFormatCorpusPreservesCommentAnchor(t *testing.T) {
 	root := corpusRoot(t)
 	for _, rel := range corpusFiles(t, root) {
@@ -200,9 +147,6 @@ func TestFormatCorpusPreservesCommentAnchor(t *testing.T) {
 	}
 }
 
-// TestFormatCorpusPreservesCommentBlanks holds the blank-line shape of every
-// comment run across Format: a gap between two comments survives, which the
-// anchor property cannot see (#10885).
 func TestFormatCorpusPreservesCommentBlanks(t *testing.T) {
 	root := corpusRoot(t)
 	for _, rel := range corpusFiles(t, root) {
@@ -221,9 +165,6 @@ func TestFormatCorpusPreservesCommentBlanks(t *testing.T) {
 	}
 }
 
-// mirrorCorpus copies corpus.Sources into a temporary directory so
-// a formatted file can be type-checked with its imports intact without writing
-// into the working tree.
 func mirrorCorpus(t *testing.T, root string) string {
 	t.Helper()
 	dst := t.TempDir()
@@ -253,7 +194,6 @@ func mirrorCorpus(t *testing.T, root string) string {
 	return dst
 }
 
-// typeChecksAt runs the load → constfold → check chain `fern -check` does.
 func typeChecksAt(path string) error {
 	prog, _, err := modload.Load(path)
 	if err != nil {

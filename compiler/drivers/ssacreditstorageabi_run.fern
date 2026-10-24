@@ -146,7 +146,6 @@ function target_checks(target: string): void {
   for generic in [false, true] {
     let original = semlower.driven(parser.parse_module(lexer.tokenize(source(generic, true))), target).sub;
     check(original, "replace", "scalar call may exit with unproved caller obligations");
-    // A separate coherent source graph supplies the non-exiting positive case.
     let sub = semlower.driven(parser.parse_module(lexer.tokenize(source(generic, false))), target).sub;
     check(sub, "replace", "proved checked-capacity consumer invocation");
     assertion_contracts(sub);

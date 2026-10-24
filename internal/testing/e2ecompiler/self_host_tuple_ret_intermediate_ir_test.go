@@ -7,22 +7,15 @@ import (
 	"testing"
 )
 
-// tupleRetIntermediateCases pin the #4357 tuple-returning dead-intermediate
-// reclaim: `let t = mk(k); … t.0 …`, where mk returns a fresh tuple literal,
-// must free the box at scope exit and at the loop-rebind, as a scalar-tuple
-// literal local's box is. Escape and alias shapes must stay CORRECT at
-// detector zero.
 var tupleRetIntermediateCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// The core leak shape: bind, read elements, dead at exit.
 	{"tupret-flat", `function mk(k: i32): (i32, i32) { return (k, k + 1); }
 function go(k: i32): i32 { let t = mk(k); return t.0 + t.1; }
 function churn(m: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + go(i)) % 251; i = i + 1; } return acc; }
 function main(): i32 { let w: i32 = churn(3000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(3000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0},
-	// Loop-local rebind in one frame — per-iteration boxes reclaim at the rebind.
 	{"tupret-loop-rebind-flat", `function mk(k: i32): (i32, i32) { return (k, k + 1); }
 function main(): i32 {
     let acc: i32 = 0;
@@ -37,7 +30,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// Multi-return callee: every branch a direct literal still qualifies.
 	{"tupret-branchy-flat", `function mk(k: i32): (i32, i32) { if (k % 2 == 0) { return (k, k + 1); } return (k + 1, k); }
 function main(): i32 {
     let acc: i32 = 0;
@@ -52,18 +44,13 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// ESCAPE negative: `return t` un-credits t (a returned box must not be
-	// freed under the caller). Value correctness + detector zero.
 	{"tupret-escape-safe", `function mk(k: i32): (i32, i32) { return (k, k + 1); }
 function wrap(k: i32): (i32, i32) { let t = mk(k); return t; }
 function main(): i32 { let u = wrap(20); if (__rc_underflow_count() != 0) { return 99; } return u.0 + u.1; }`, 41},
-	// ALIAS negative: `let u = t` un-credits t (freeing would dangle u).
 	{"tupret-alias-safe", `function mk(k: i32): (i32, i32) { return (k, k + 1); }
 function main(): i32 { let t = mk(20); let u = t; let a: i32 = t.0 + u.1; if (__rc_underflow_count() != 0) { return 99; } return a; }`, 41},
 }
 
-// TestSelfHostTupleRetIntermediateIRX86_64 drives the cases through the
-// self-hosted x86-64 compiler (asm_run), heap-bump + underflow guarded.
 func TestSelfHostTupleRetIntermediateIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

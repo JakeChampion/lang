@@ -1,45 +1,8 @@
-// tests/proposals/inicfg.fern — proposal turn, line 6:
-// "An INI/TOML-subset config parser with typed lookups and a useful error on
-// a malformed line."
-//
-// The interesting clause is the last one. Parsing `key = value` is a morning's
-// work; the part that is usually written once and never checked is the claim
-// that the error is USEFUL. "Useful" sounds unfalsifiable, so it gets skipped —
-// but it decomposes into two properties that a wrong parser fails outright:
-//
-//   - **The reported line is the malformed one.** Take a valid document, splice
-//     one bad line in at position p, and the parser must report exactly p. Swept
-//     over every position and every kind of malformation, so a parser that
-//     always says "line 1", or reports where it gave up rather than where the
-//     fault is, cannot pass.
-//   - **The count is of PHYSICAL lines.** Comments and blanks are skipped for
-//     meaning but must still be counted for position. This is the off-by-one
-//     that ships: a parser that increments its counter only on significant
-//     lines is correct on every example that has no comments, and wrong on
-//     every real config file. The test varies the number of comments and blanks
-//     ABOVE the fault and pins the reported number to the physical one.
-//
-// The typed lookups get the matching treatment. The failure mode there is not a
-// crash, it is a plausible zero: `get_int` on `mode = fast` returning 0, or a
-// missing key returning the type's default, so a typo in a config silently
-// becomes a valid-looking setting. Both are asserted to be errors, and the
-// no-coercion rule is stated in both directions — `get_bool` on `1` fails too,
-// because truthiness is exactly how that hole reopens.
-//
-// Two whole-document properties keep the parser from passing the above by
-// rejecting more than it should: every generated valid document must parse
-// clean, and rendering a parsed config back out and reparsing it must yield the
-// same entries — so nothing is dropped, invented, or retyped in the round trip.
-//
-// The app writes its report to stderr; stdout carries TAP-13 from std/test.
 import "std/test";
 import "std/i32";
 import "std/i64";
 import "std/string";
 
-// ---------------------------------------------------------------- values ---
-
-// kind: 0 = int, 1 = bool, 2 = string
 struct Entry {
   section: string,
   key: string,
@@ -51,8 +14,6 @@ struct Entry {
 
 struct Config { entries: Entry[] }
 
-// code: 1 no `=`, 2 bad section header, 3 empty key, 4 unterminated string,
-//       5 duplicate key, 10 not found, 11 wrong type
 struct Fault { line: i32, code: i32, msg: string }
 
 struct ParseR { ok: boolean, cfg: Config, err: Fault }
@@ -77,11 +38,6 @@ function is_digit(c: u8): boolean {
   return c >= 48 && c <= 57;
 }
 
-// ---------------------------------------------------------------- parsing ---
-
-// A bare decimal integer, optionally signed. Returns ok=false for anything
-// else, INCLUDING the empty string and a lone "-", so a malformed number is
-// never silently a zero.
 function parse_i64(s: string): I64R {
   let n: i32 = s.len();
   if (n == 0) {
@@ -112,9 +68,6 @@ function parse_i64(s: string): I64R {
 
 struct ValR { ok: boolean, kind: i32, i: i64, b: boolean, s: string, code: i32, msg: string }
 
-// Classify a trimmed value. Order matters: the quoted form is recognised by its
-// opening quote BEFORE the bare-string fallback, so `"unterminated` is a fault
-// rather than a bare string that happens to start with a quote.
 function classify(v: string): ValR {
   if (v == "true") {
     return ValR { ok: true, kind: 1, i: 0, b: true, s: "", code: 0, msg: "" };
@@ -153,9 +106,6 @@ function has_key(cfg: Config, section: string, key: string): boolean {
   return false;
 }
 
-// The line counter is over PHYSICAL lines: `lineno` advances once per element of
-// `lines`, before any decision about whether the line carries meaning. Skipping
-// a comment must not skip a number.
 function parse(text: string): ParseR {
   let lines: string[] = text.split("\n");
   let cfg: Config = Config { entries: [] };
@@ -226,8 +176,6 @@ function parse(text: string): ParseR {
   return ParseR { ok: true, cfg: cfg, err: no_fault() };
 }
 
-// ---------------------------------------------------------- typed lookups ---
-
 function find(cfg: Config, section: string, key: string): i32 {
   let i: i32 = 0;
   while (i < cfg.entries.len()) {
@@ -248,9 +196,6 @@ function wrong_type(key: string, want: string): Fault {
   return Fault { line: 0, code: 11, msg: "key `" + key + "` is not " + want };
 }
 
-// No coercion in either direction: an int-typed lookup of a bool or a string is
-// an error, and so is a bool-typed lookup of `1`. Returning a default here is
-// how a typo in a config file becomes a plausible setting.
 function get_int(cfg: Config, section: string, key: string): IntR {
   let at: i32 = find(cfg, section, key);
   if (at < 0) {
@@ -287,8 +232,6 @@ function get_str(cfg: Config, section: string, key: string): StrR {
   return StrR { ok: true, v: e.s, err: no_fault() };
 }
 
-// ----------------------------------------------------------------- render ---
-
 function render_value(e: Entry): string {
   if (e.kind == 0) {
     return e.i.to_string();
@@ -302,9 +245,6 @@ function render_value(e: Entry): string {
   return "\"" + e.s + "\"";
 }
 
-// Every value is written in a form `classify` reads back as the SAME kind —
-// strings are re-quoted, so a string whose text is `42` does not come back as
-// an integer. That is the property the round-trip test exists to pin.
 function render(cfg: Config): string {
   let out: string = "";
   let sections: string[] = [];
@@ -372,8 +312,6 @@ function same_entries(a: Config, b: Config): boolean {
   return true;
 }
 
-// ------------------------------------------------------------- generators ---
-
 function join_lines(lines: string[]): string {
   let out: string = "";
   let i: i32 = 0;
@@ -384,10 +322,6 @@ function join_lines(lines: string[]): string {
   return out;
 }
 
-// A valid document with `pad` comment/blank lines interleaved. Varying `pad`
-// changes the PHYSICAL position of every later line without changing the
-// meaning of the document at all — which is exactly the asymmetry the
-// line-number test needs.
 function valid_lines(pad: i32): string[] {
   let out: string[] = [];
   let s: i32 = 0;
@@ -426,7 +360,6 @@ function valid_lines(pad: i32): string[] {
   return out;
 }
 
-// The malformations, each with the fault code it must produce.
 function bad_lines(): string[] {
   return ["this line has no equals sign", "[unclosed", "= 12", "k9 = \"open", "[]"];
 }
@@ -450,11 +383,6 @@ function splice(lines: string[], at: i32, replacement: string): string[] {
   return out;
 }
 
-// ------------------------------------------------------------------ tests ---
-
-// Sweep the fault over every position, for every malformation. A parser that
-// reports where it stopped, or a fixed line, or the count of SIGNIFICANT lines,
-// fails somewhere in this sweep.
 function test_the_reported_line_is_the_malformed_one(): test.TestOutcome {
   let base: string[] = valid_lines(0);
   let bads: string[] = bad_lines();
@@ -485,9 +413,6 @@ function test_the_reported_line_is_the_malformed_one(): test.TestOutcome {
   return test.pass();
 }
 
-// The same fault, pushed down the file by comments and blanks that carry no
-// meaning. The reported number must track the physical position, not the
-// significant-line count.
 function test_comments_and_blanks_do_not_shift_the_line(): test.TestOutcome {
   let pad: i32 = 0;
   while (pad < 5) {
@@ -559,8 +484,6 @@ function test_typed_lookups_agree_with_the_source(): test.TestOutcome {
   return test.pass();
 }
 
-// The plausible-zero test. Every wrong-type lookup must FAIL rather than coerce,
-// including `get_bool` on `1` — truthiness is how the hole reopens.
 function test_a_wrong_type_lookup_is_an_error(): test.TestOutcome {
   let r: ParseR = parse("[s]\nn = 7\nflag = true\nname = \"x\"\none = 1\nyes = \"true\"\n");
   if (!r.ok) {
@@ -625,9 +548,6 @@ function test_a_missing_key_is_an_error_not_a_default(): test.TestOutcome {
   return test.pass();
 }
 
-// Rendering must not lose, invent, or retype an entry. The document deliberately
-// contains a STRING whose text is a number and a string whose text is `true`,
-// which is where an unquoted render would change the type on the way back in.
 function test_render_round_trips_through_the_parser(): test.TestOutcome {
   let docs: string[] = [
     join_lines(valid_lines(3)),
@@ -664,7 +584,6 @@ function test_a_duplicate_key_is_rejected(): test.TestOutcome {
   if (r.err.code != 5) {
     return test.fail("duplicate reported code " + r.err.code.to_string());
   }
-  // The same key in a DIFFERENT section is not a duplicate.
   let ok: ParseR = parse("[a]\nn = 1\n[b]\nn = 2\n");
   if (!ok.ok) {
     return test.fail("the same key in two sections was rejected: " + ok.err.msg);

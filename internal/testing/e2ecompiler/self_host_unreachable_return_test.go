@@ -7,8 +7,6 @@ import (
 	"testing"
 )
 
-// A syntactically unreachable loop exit still needs a well-typed physical
-// return. In particular WASM validates that tail even when it cannot execute.
 func TestSelfHostUnreachableReturn(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	cases := []struct{ name, typ, value string }{
@@ -71,8 +69,6 @@ function main(): i32 { let value: %s = stop(); return value as i32; }
 	}
 }
 
-// Scalar returns and literal strings need not allocate. Require the report and
-// balance even when both counters are zero, unlike heap-allocation probes.
 func assertUnreachableReturnCensus(t *testing.T, stderr string) {
 	t.Helper()
 	var allocs, frees, live int64

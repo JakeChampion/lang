@@ -9,38 +9,10 @@ import (
 	"testing"
 )
 
-// TestSelfHostX86WholeProgramMatchesGNUAs closes what docs/TEST-GATES.md
-// listed under "what nothing gates": every other e2ecompiler program test
-// hands `-emit asm` text to gcc, so compiler/x86_native.fern never
-// saw a real program. The testl/testq sign-flag bug (#6544) is the worked
-// example — invisible on the hand-written snippets that did exist, wrong on
-// a program. This is the x86 twin of
-// TestSelfHostArm64WholeProgramMatchesGas (#7898).
-//
-// # Why the comparison is per-instruction and not byte-for-byte
-//
-// A single instruction the two encode to different lengths shifts every later
-// address, so byte equality reports one real fact as thousands of
-// shifted-window differences and can never point at the instruction that
-// actually diverged.
-//
-// So the streams are compared as DECODED INSTRUCTIONS, which is what the
-// gate is for: a dropped, added, or substituted instruction, or a wrong
-// register or immediate, fails — and that is the #6544 class. Encoding
-// LENGTH is reported separately: the byte totals are logged, and when they
-// differ every instruction that encodes to a different size is named, which
-// is the list #7949's remaining gap has to be worked from.
 func TestSelfHostX86WholeProgramMatchesGNUAs(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	as, objcopy, objdump := findGNUToolsX86(t)
 
-	// Import-free on purpose: asm_ir_run has no module loader. The emitter
-	// DCEs the runtime down to what the program touches, so this is
-	// deliberately written to touch a spread of it — refcounted arrays,
-	// nested arrays, string concat and slicing, f64 arithmetic and
-	// comparison, i64 division and remainder, a closure through a function
-	// value, and recursion. Widen the program before reaching for a heavier
-	// driver.
 	const program = `
 function fib(n: i32): i32 {
     if (n < 2) { return n; }
@@ -103,9 +75,6 @@ function main(): i32 {
 			bad++
 			continue
 		}
-		// A branch operand is an ADDRESS, and the two layouts need not agree
-		// byte for byte, so compare where it lands: the index of the
-		// instruction it targets must be the same in both streams.
 		if g.target >= 0 || w.target >= 0 {
 			if g.target != w.target {
 				if bad < 20 {
@@ -116,8 +85,6 @@ function main(): i32 {
 			}
 			continue
 		}
-		// A rip-relative operand likewise names an address the two lay out
-		// differently; everything else must match text for text.
 		if strings.Contains(w.ops, "(%rip)") || strings.Contains(g.ops, "(%rip)") {
 			continue
 		}
@@ -132,10 +99,6 @@ function main(): i32 {
 		t.Errorf("... and %d more (%d instructions differ of %d)", bad-20, bad, len(wantI))
 	}
 
-	// The streams agree instruction for instruction, so anything left in the
-	// byte total is an encoding the two picked different-sized forms for.
-	// Name them, so a residual gap is a list of sites to work rather than a
-	// number.
 	if len(got) != len(want) {
 		shown := 0
 		for i := range wantI {
@@ -152,9 +115,6 @@ function main(): i32 {
 	}
 }
 
-// x86Insn is one decoded instruction: its mnemonic, its operand text, its
-// encoded length in bytes, and — for a direct branch — the INDEX of the
-// instruction it targets, or -1.
 type x86Insn struct {
 	mnem   string
 	ops    string
@@ -186,7 +146,6 @@ func findGNUToolsX86(t *testing.T) (as, objcopy, objdump string) {
 	return as, objcopy, objdump
 }
 
-// gnuAsTextX86 assembles src with GNU as and returns the raw .text bytes.
 func gnuAsTextX86(t *testing.T, as, objcopy, dir, src string) []byte {
 	t.Helper()
 	sPath := filepath.Join(dir, "whole.s")
@@ -196,8 +155,6 @@ func gnuAsTextX86(t *testing.T, as, objcopy, dir, src string) []byte {
 		t.Fatal(err)
 	}
 	if out, err := exec.Command(as, "--64", sPath, "-o", oPath).CombinedOutput(); err != nil {
-		// gas failing on the emitter's own output is a finding in its own
-		// right: the oracle has to be able to read what we write.
 		t.Fatalf("gas rejected the emitter's own output: %v\n%s", err, out)
 	}
 	if out, err := exec.Command(objcopy, "-O", "binary", "--only-section=.text", oPath, binPath).CombinedOutput(); err != nil {
@@ -210,10 +167,6 @@ func gnuAsTextX86(t *testing.T, as, objcopy, dir, src string) []byte {
 	return text
 }
 
-// decodeX86 disassembles a raw .text image and returns one entry per
-// instruction, with direct-branch targets resolved from an address to an
-// instruction index so the two streams stay comparable under different
-// layouts.
 func decodeX86(t *testing.T, objdump, dir, name string, code []byte) []x86Insn {
 	t.Helper()
 	p := filepath.Join(dir, name)
@@ -239,7 +192,7 @@ func decodeX86(t *testing.T, objdump, dir, name string, code []byte) []x86Insn {
 		rest := ln[colon+2:]
 		tab := strings.Index(rest, "\t")
 		if tab < 0 {
-			continue // a bytes-only continuation line
+			continue
 		}
 		text := strings.TrimSpace(rest[tab+1:])
 		if text == "" || strings.HasPrefix(text, "(bad)") {
@@ -259,28 +212,24 @@ func decodeX86(t *testing.T, objdump, dir, name string, code []byte) []x86Insn {
 	if n := len(insns); n > 0 {
 		insns[n-1].size = len(code) - addrs[n-1]
 	}
-	// Second pass: a direct branch's operand is a bare hex address; turn it
-	// into the index of the instruction living there.
 	for i := range insns {
 		if !isDirectBranchX86(insns[i].mnem) {
 			continue
 		}
 		v, err := strconv.ParseInt(strings.TrimPrefix(insns[i].ops, "0x"), 16, 64)
 		if err != nil {
-			continue // indirect / register operand: leave it to the text compare
+			continue
 		}
 		if idx, ok := idxOf[int(v)]; ok {
 			insns[i].target = idx
 		} else {
-			insns[i].target = -2 // lands mid-instruction: a finding either way
+			insns[i].target = -2
 		}
 	}
 	_ = addrs
 	return insns
 }
 
-// isDirectBranchX86 reports whether a mnemonic takes a direct code target,
-// whose operand is an address rather than a value.
 func isDirectBranchX86(mnem string) bool {
 	switch mnem {
 	case "jmp", "call", "loop", "loope", "loopne", "jrcxz", "jecxz":

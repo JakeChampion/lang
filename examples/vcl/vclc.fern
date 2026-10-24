@@ -1,21 +1,3 @@
-// examples/vcl/vclc.fern — compile a VCL policy to Fern source.
-//
-//   $ fern -interp vclc.fern -- testdata/policy.vcl > policy.fern
-//   $ fern -target x86-64-linux -o policy policy.fern
-//   $ ./policy GET /static/app.css -n 2
-//
-// The output is a complete Fern module: one function per VCL subroutine,
-// one per ACL, a dispatcher, and a `main`. It imports the same runtime the
-// interpreter uses and hands `machine.run_with` its own dispatcher, so the
-// state machine is shared rather than regenerated.
-//
-// `-p PREFIX` sets what the generated imports are relative to. The default
-// `./` is right when the output sits beside the runtime modules; a build
-// that puts it elsewhere passes the relative path back to this directory.
-//
-// The policy is CHECKED first and compilation is refused if it has
-// problems: generated code reads `t.req.url` as a struct field with no
-// scope test, which is only sound because the check already passed.
 import "std/string";
 import "std/i64";
 import "std/io";

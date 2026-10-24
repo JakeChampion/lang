@@ -6,16 +6,6 @@ import (
 	"testing"
 )
 
-// The checked operators in DESTINATION-TYPED positions: an annotated `let`, a
-// `return`, and a call argument. checked_arith_test.go covers the same
-// operators but reaches every one of them through `match (a +? b)`, which
-// supplies no expected type — so none of it exercised the settle path, and the
-// checker re-typing `a +? b` as a bare `i32` there went unnoticed.
-//
-// That is the whole point of this file: the operator exists to hand an
-// `Option[T]` to something, and handing it to something is what was broken.
-//
-// Returns 0 when every case holds, else the index of the first failure.
 const checkedArithDestProgram = `
 function addc(a: i32, b: i32): Option[i32] { return a +? b; }
 function mulc(a: i64, b: i64): Option[i64] { return a *? b; }

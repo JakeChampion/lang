@@ -9,7 +9,6 @@ import (
 	"testing"
 )
 
-// `fern -tangle -chunk NAME` prints just that chunk's expansion.
 func TestLiterateTangleChunk(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
@@ -31,7 +30,6 @@ func TestLiterateTangleChunk(t *testing.T) {
 	if strings.Contains(got, "fn main()") {
 		t.Errorf("should print only the helper chunk, not the root:\n%s", got)
 	}
-	// An undefined chunk exits non-zero.
 	if err := exec.Command(bin, "-tangle", "-chunk", "nope", src).Run(); err == nil {
 		t.Error("expected non-zero exit for an undefined chunk")
 	}

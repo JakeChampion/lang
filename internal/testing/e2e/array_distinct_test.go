@@ -1,11 +1,5 @@
 package e2e
 
-// Differential coverage for core/cmp's generic `distinct` — every element
-// once, in first-seen order (`distinct([3,1,3,2,1]) == [3,1,2]`). Unlike
-// std/array's `dedup` (consecutive runs only) it removes duplicates anywhere;
-// unlike a Set round-trip it preserves order. Returns 42 iff every check holds
-// across interp / x86-64 / wasm / arm64.
-
 import "testing"
 
 const arrayDistinctProg = `

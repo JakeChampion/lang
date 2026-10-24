@@ -4,11 +4,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostLiteralArgReclaimIRArm64 is the arm64 port of
-// TestSelfHostLiteralArgReclaimIRX86_64 (#4355 slice 6): the literal
-// string-arg box reclaim at borrowable call positions, on the arm64
-// backend, which additionally exercises __fern_str_free's register
-// discipline mid-expression. Lighter churn under qemu.
 func TestSelfHostLiteralArgReclaimIRArm64(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
 	cli := newStrictCLI(t)
@@ -21,7 +16,6 @@ func TestSelfHostLiteralArgReclaimIRArm64(t *testing.T) {
 		}
 	}
 
-	// Literal arg at a borrowable position — churn flat at detector zero.
 	run(t, `function readit(nm: string): i32 { return nm.len(); }
 function main(): i32 {
     let acc: i32 = 0;
@@ -37,8 +31,6 @@ function main(): i32 {
     return 0;
 }`, "literal-arg-borrowable-flat-arm64", 0)
 
-	// NON-borrowable position (callee returns its param): the bound value
-	// stays readable at detector zero.
 	run(t, `@noinline function keepit(nm: string): string { return nm; }
 function main(): i32 {
     let bad: i32 = 0;
@@ -53,8 +45,6 @@ function main(): i32 {
     return 0;
 }`, "literal-arg-retained-safe-arm64", 0)
 
-	// #6544: the same reclaim at a METHOD call, which was wired at the
-	// free-call site only.
 	run(t, `function (s: string) readit(nm: string): i32 { return s.len() + nm.len(); }
 function main(): i32 {
     let recv: string = "rr";
@@ -72,8 +62,6 @@ function main(): i32 {
     return 0;
 }`, "method-literal-arg-borrowable-flat-arm64", 0)
 
-	// The param MOVED into a struct field is not borrowable, so the literal
-	// keeps its prior sound leak and the field stays readable.
 	run(t, `struct Box { tag: string, n: i32 }
 function (b: Box) relabel(t: string): Box {
     if (t.len() == 0) { return b; }
@@ -94,8 +82,6 @@ function main(): i32 {
     return 0;
 }`, "method-literal-arg-consumed-safe-arm64", 0)
 
-	// The fresh PRODUCER CALL in argument position, on the second register
-	// backend. Same reclaim, a different emitter.
 	run(t, `function mks(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
 function size(s: string): i32 { return s.len(); }
 function main(): i32 {
@@ -112,8 +98,6 @@ function main(): i32 {
     return 0;
 }`, "producer-call-arg-borrowable-flat-arm64", 0)
 
-	// The callee returns the argument: refused, and the aliased result is read
-	// back rather than merely counted.
 	run(t, `function mks(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
 @noinline function pick(s: string): string { return s; }
 function main(): i32 {
@@ -129,7 +113,6 @@ function main(): i32 {
     return 0;
 }`, "producer-call-arg-returned-safe-arm64", 0)
 
-	// The ARRAY sibling on the second register backend.
 	run(t, `function mk(n: i32): i32[] { let out: i32[] = []; for i in 0..3 { out = out.append(n + i); } return out; }
 function size(d: i32[]): i32 { return d.len(); }
 function main(): i32 {
@@ -146,7 +129,6 @@ function main(): i32 {
     return 0;
 }`, "producer-call-arr-arg-borrowable-flat-arm64", 0)
 
-	// Refused: the callee returns the array, and the alias is read back.
 	run(t, `function mk(n: i32): i32[] { let out: i32[] = []; for i in 0..3 { out = out.append(n + i); } return out; }
 @noinline function pick(d: i32[]): i32[] { return d; }
 function main(): i32 {
@@ -158,9 +140,6 @@ function main(): i32 {
     return 0;
 }`, "producer-call-arr-arg-returned-safe-arm64", 0)
 
-	// The counted-retain STRING position on the second register backend, with
-	// the byte-index read that keeps the parameter credited. 24 B/round before;
-	// lighter churn under qemu.
 	run(t, `struct Q { tag: string, k: i32 }
 function mkq2(t: string, k: i32): Q { return Q { tag: t, k: k + (t[0] as i32) }; }
 function main(): i32 {

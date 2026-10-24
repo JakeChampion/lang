@@ -1,25 +1,8 @@
-// cut.fern — extract selected fields or characters, like `cut(1)`.
-//
-//   -f LIST      select fields (1-based), split on the delimiter
-//   -d DELIM     field delimiter (default tab); single byte
-//   -c LIST      select characters (1-based byte positions)
-//
-// LIST is a comma-separated set of single positions and `lo-hi`
-// ranges, e.g. `1,3,5-7`. Open ranges `-N` (from start) and `N-`
-// (to end) are supported.
-//
-//   $ printf 'a:b:c\n' | ./cut -d : -f 1,3   ->  a:c
-//   $ printf 'hello\n' | ./cut -c 1-3         ->  hel
-//
-// Showcases: parsing a numeric range LIST, field vs character
-// selection, custom delimiters.
 import "std/string";
 import "std/i32";
 import "std/io";
 import "std/array";
 
-// A selection is a list of (lo, hi) inclusive 1-based ranges; hi == 0
-// means "open to the end".
 function parse_list(spec: string): (i32, i32)[] {
   let out: (i32, i32)[] = [];
   let parts: string[] = spec.split(",");
@@ -31,7 +14,7 @@ function parse_list(spec: string): (i32, i32)[] {
         let los: string = bounds.0;
         let his: string = bounds.1;
         let lo: i32 = 1;
-        let hi: i32 = 0;  // open
+        let hi: i32 = 0;
         if (!los.is_empty()) {
           match (los.parse_int()) {
             Some(n) => {
@@ -64,7 +47,6 @@ function parse_list(spec: string): (i32, i32)[] {
   return out;
 }
 
-// Is 1-based position `pos` inside any selected range?
 function selected(pos: i32, ranges: (i32, i32)[]): boolean {
   let i: i32 = 0;
   while (i < ranges.len()) {
@@ -80,8 +62,6 @@ function selected(pos: i32, ranges: (i32, i32)[]): boolean {
 }
 
 function cut_fields(line: string, delim: string, ranges: (i32, i32)[]): string {
-  // Lines without the delimiter are passed through unchanged, as
-  // GNU cut does by default.
   if (!line.contains(delim)) {
     return line;
   }
@@ -124,7 +104,7 @@ function main(): i32 {
   let argv: string[] = args();
   let delim: string = "\t";
   let spec: string = "";
-  let mode: string = "";  // "f" or "c"
+  let mode: string = "";
   let inputs: string[] = [];
 
   let i: i32 = 1;

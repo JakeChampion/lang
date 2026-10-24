@@ -13,11 +13,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// std/http/router under std/serve's loop: a route with a typed parameter,
-// one taking the rest of the path, 405 with Allow, 404, HEAD answered by a
-// GET route, and a CORS preflight answered by the middleware the router
-// wraps, for a path whose routes do not register OPTIONS. The interpreter
-// and the x86-64 backend.
 func TestRouterServeInterp(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := writeRouterServeSource(t)
@@ -83,9 +78,6 @@ function main(): i32 {
 }
 `
 
-// A router whose pattern was refused: `handler()` reports the pattern on
-// stderr and exits 2 before anything is served, under the interpreter and
-// the x86-64 build.
 func TestRouterRefusedPatternExitsInterp(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := writeRouterRefusedSource(t)

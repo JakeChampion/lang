@@ -18,47 +18,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/corpus"
 )
 
-// fmtParityCases pin #6762: both compilers accept `-fmt`, and until now they
-// formatted the same source DIFFERENTLY — four-space indent against native's
-// two, and every binary and unary expression parenthesised against native's
-// precedence-driven minimum, so `if (x > 0)` reprinted as `if ((x > 0))`.
-// Nothing compared the two, which is why it stayed invisible.
-//
-// It is not a cosmetic gap. `make fmt-check` gates every examples/*.fern file
-// against NATIVE's formatter, so under a self-host-only toolchain a single
-// `fern -fmt -w` would rewrite the tree into a form the project's own gate
-// rejects — the "the two frontends disagree about what the language is" shape
-// of #6576, one level up, at its written form.
-//
-// #6769 added the other half: comments and blank lines. Placing them needs a
-// source line on every statement, so five Stmt kinds grew one and parse_stmt
-// stamps it; the cases at the end of the list are that half's.
-//
-// #6773 closed four of the five parser-side losses that came after: `str` was
-// canonicalised to `string` and a function type coarsed to the flat `fn` tag,
-// both now held by Par.verbatim — a parse mode only `-fmt` selects, since those
-// canonicalisations are exactly what the compile path's `type_name == "string"`
-// / `== "fn"` dispatch sites read. Struct / enum / alias `pub` and both
-// destructuring forms needed no parser work at all: the data was already on the
-// node and the printer did not read it.
-//
-// #6773's last item closed the `trait` block: the compile path keeps two
-// DERIVED views of one and neither can be printed from, so the written form is
-// retained beside the Module — the way the comment and blank-line maps already
-// sit beside it, rather than as a field on Module that 101 literals would have
-// to carry and none would read.
-//
-// #6783 did the same for `impl` blocks, which were desugared into free-standing
-// receiver methods on the way in.
-//
-// Corpus-wide, `fern -fmt` and `fern-selfhost -fmt` agree byte for byte on 210
-// of the 244 files under the corpus, against 0 before #6762.
-// That count is unchanged by #6783 even though every impl block now prints
-// correctly: the files carrying one also carry the LAST structural divergence,
-// `else { if … }` collapsing to `else if` (#6779) — `core/cmp.fern` differs by
-// nothing else at all. The other remaining cause is an ARROW lambda: native
-// reprints `() => e` as `(): T => { return e; }`, filling in a return type
-// from the callee's signature that the self-host printer has no way to know.
 var fmtParityCases = []struct {
 	name string
 	src  string
@@ -78,24 +37,11 @@ enum H { S(P) }
 function f(h: H): i32 { return match (h) { S(w @ P { x }) => w.x + x }; }
 function main(): i32 { return 0; }
 `},
-	// A binding's annotation types a lambda that writes no return type; the
-	// compile parse stamps the return type onto the lambda, and -fmt must print
-	// the lambda as written (#12359).
 	{"lambda-return-as-written", fmtLambdaAsWrittenSrc},
-	// `opaque` survives -fmt in every declaration arm; dropping it would make
-	// the fields readable from importing modules (#12658).
 	{"opaque-struct-kept", "pub opaque struct A { a: i32 }\npub(package) opaque struct B { b: i32 }\n@must_consume pub opaque struct C { c: i32 }\ntrait Default { function default(): Self; }\n@derive(Default) opaque struct D { d: i32 }\nfunction main(): i32 { return 0; }\n"},
-	// A function written without a return type (E081) prints without one;
-	// native used to fill in the parser's `: void` default.
 	{"omitted-return-type-as-written", "function helper() {}\n\nfunction main(): i32 {\n  return 0;\n}\n"},
-	// An associated constant prints as written in a trait and an impl, and a
-	// read keeps the `::` it was written with (docs/ASSOCIATED-TYPES.md).
 	{"assoc-const-as-written", "trait Lanes {\n  const LANES: i32;\n  const NAME: string = \"lanes\";\n  function width(self: Self): i32;\n}\n\nstruct V2 { a: f64 }\n\nimpl Lanes for V2 {\n  const LANES: i32 = 2;\n  function width(self: Self): i32 {\n    return Self.LANES;\n  }\n}\n\nfunction chunk[T: Lanes](n: i32): i32 {\n  return n / T.LANES + f64.LANES;\n}\n\nfunction main(): i32 {\n  return 0;\n}\n"},
-	// A const parameter prints as declared, and a const argument keeps its
-	// spelling in a type-argument list and in the bracket after a call
-	// (docs/CONST-GENERICS.md).
 	{"const-params-as-written", "function filled[const N: i32](x: f64): f64[] {\n  return [x];\n}\n\nfunction count[const N: i32, T](x: T): i32 {\n  return N;\n}\n\nfunction main(): i32 {\n  return filled[0x4](1.0).len() + count[1_000, string](\"a\") + count[0o17, i32](1);\n}\n"},
-	// A value block whose statements span lines prints one per line (#12393).
 	{"value-block-statements-span-lines", `function g(c: boolean, n: i32): i32 {
   let total: i32 = 0;
   while (total < n) {
@@ -151,9 +97,6 @@ function main(): i32 {
   return 0;
 }
 `},
-	// An owned receiver keeps its `own`: dropping it turns a consuming
-	// method into a borrowing one, which the checker then rejects at every
-	// call that hands the receiver over.
 	{"owned-receiver", `struct Counter { n: i32 }
 
 function (own c: Counter) bump(): Counter {
@@ -197,10 +140,6 @@ return self.n;
   f(x);
 }
 `},
-	// `assert` desugars to `if (!cond) { eprint(…); exit(1); }` in both
-	// parsers; both formatters print the call it was written as, with and
-	// without a message, and with a condition that needs no parentheses
-	// of its own.
 	{"assert-with-and-without-message", `function check(xs: i32[], n: i32): i32 {
   assert(xs.len() > 0);
   assert(n <= 2147483647 - xs.len(), "too long: " + int_to_string(n));
@@ -211,8 +150,6 @@ function main(): i32 {
   return check([1, 2], 3);
 }
 `},
-	// `k @` in front of a literal or range, in a match, an `if let` and a
-	// `let … else`, and the braceless `if let` body.
 	{"at-binding-scalar-heads", `function classify(n: i32): i32 {
   match (n) {
     k @ 1..10 => { return k * 2; },
@@ -259,12 +196,6 @@ function pick(flag: boolean, box: Box): i32 {
 }
 function main(): i32 { return pick(false, Full(7)); }
 `},
-	// `pub(package)` — the third visibility level (docs/PUB-PACKAGE.md). The
-	// self-host consumed the `pub` and left `(package)` on the cursor, so the
-	// declaration lost its visibility and the leftover became a stray
-	// `package;` statement: -fmt both downgraded the decl and invented a
-	// statement. Every decl kind that can carry it is here, since each has its
-	// own printer arm.
 	{"pub-package", `pub(package) struct S { n: i32 }
 pub(package) enum E { A, B }
 pub(package) type T = S | S;
@@ -287,18 +218,11 @@ pub fip function keep(own xs: i32[]): i32[] { return xs; }
 @inline
 function id[T](x: T): T { return x; }
 `},
-	// A self-recursive nested function must reprint as a `function`: the
-	// arrow-lambda `let` it desugars to cannot call itself (#10383).
 	{"nested-fn-recursive", `function main(): i32 {
 function f(n: i32): i32 { if (n <= 0) { return 0; } return f(n - 1); }
 return f(3);
 }
 `},
-	// Precedence is the substantive half — one wrong level silently
-	// reassociates. `(n & (n - 1)) == 0` is the trap native's own table
-	// documents: bitwise sits BELOW the comparison family in Fern's grammar,
-	// so an and-then-compare that loses its parens re-parses as ANDing a
-	// number with a boolean.
 	{"precedence-arith", `function main(): i32 {
 let a: i32 = 1;
 let b: i32 = 2;
@@ -312,11 +236,6 @@ let t6: i32 = a << b >> c;
 return t1 + t2 + t3 + t4 + t5 + t6;
 }
 `},
-	// An omitted slice bound is not a layout choice. The AST stands a
-	// literal 0 in for a missing LOW bound and an unevaluated placeholder in
-	// for a missing HIGH one, so a printer that reads them back prints
-	// `s[1:0]` for `s[1:]` — an empty slice where the source asked for the
-	// tail. `-fmt -w` would then rewrite the program into a different one.
 	{"slice-bounds", `function f(s: string): string {
 let a: string = s[1:];
 let b: string = s[:3];
@@ -329,27 +248,6 @@ print(f("abcdef"));
 return 0;
 }
 `},
-	// A NESTED payload (`A(Ok2(n))`) and a LITERAL one (`V(0)`) are both
-	// consumed by the lowering — the first into a merged arm plus an inner
-	// match on a `__nest` temp, the second into a synthetic binder plus a
-	// guard. Neither formatter had anything left to reprint but that
-	// lowering, so `-fmt -w` rewrote the file into the desugar. Nothing in
-	// the parity CORPUS uses either spelling, which is why the gate stayed
-	// green through it; this fixture is what covers them.
-	// `if let` and a match in EXPRESSION position are both parsed into
-	// something else — a two-arm match with a wildcard else, and a 0-arg IIFE
-	// — and the self-host reprinted those lowerings: the `if let` came back as
-	// `match (o) { Sm(n) => {…}, _ => {} }`, and an expression match whose arms
-	// nest came back as the whole `(): i32 => { … }()`. Nothing in the
-	// parity CORPUS spells either (`if let` appears only inside string
-	// literals and comments in the compiler's own sources), so these fixtures
-	// are the only thing covering them.
-	// A tuple- or struct-SCRUTINEE match desugars to a done-flag chain and
-	// leaves no StmtMatch behind, so the self-host had only the chain to
-	// reprint — `if (true) { let __sm4_5_d = false; … }` over the user's
-	// match (#7065). Independent of pattern nesting: the plainest all-binder
-	// `P { x, y }` reproduced it. Nothing in the parity CORPUS spells either
-	// scrutinee, so these fixtures are the only cover.
 	{"pattern-struct-scrutinee", `struct P { x: i32, y: i32 }
 struct Q { a: i32, b: i32, c: i32 }
 enum In { Ok2(i32), Er2(i32) }
@@ -381,14 +279,6 @@ return plain(P { x: 1, y: 2 }) + lit(P { x: 0, y: 3 }) + rename(Q { a: 1, b: 2, 
 + nested(W { e: E.A(In.Ok2(4)), n: 5 }) + payloadless(W { e: E.B, n: 2 }) + guarded(P { x: 9, y: 1 }) + at_bound(P { x: 1, y: 1 });
 }
 `},
-	// A destructuring PARAMETER is desugared away at parse time too — the
-	// pattern becomes a holder param plus a leading `let` in the body prelude
-	// — so both formatters have only the desugar to reprint, and they have to
-	// reprint the same one. The struct spelling reached the self-host parser
-	// only in #7306; the corpus spells no
-	// destructuring parameter at all, so this fixture is its only cover. The
-	// ARROW form is deliberately absent: native fills in a return type the
-	// self-host printer cannot know, which is the known divergence named above.
 	{"param-pattern-struct", `struct P { x: i32, y: i32 }
 struct R { w: i32, h: i32 }
 function add(P { x, y }: P): i32 {
@@ -492,12 +382,6 @@ function main(): i32 {
 return pick(Sm.V(0)) + pick(Sm.V(7)) + pick(Sm.W);
 }
 `},
-	// The five binding sites share one pattern grammar (#2698), so `if let`
-	// and `let … else` accept tuple, struct, literal and range heads. Those
-	// heads lower through the tuple / struct / literal match builders, which
-	// leave no StmtMatch — so the carrier on the synthesised `if` is the only
-	// record of what was written, and without it `-fmt -w` rewrote the source
-	// into the `match` (or, for a nested payload, into the `__nest` temp).
 	{"pattern-if-let-tuple", `function pick(t: (i32, i32)): i32 {
 if let (1, 2) | (3, 4) = t {
 return 1;
@@ -582,11 +466,6 @@ function main(): i32 {
 return get(E.B(4));
 }
 `},
-	// A destructuring PARAMETER is lowered to a holder plus a prelude `let`,
-	// and the self-host printer reverses that. A body's OWN `let` destructure
-	// of a parameter has the same shape, so both directions are pinned here:
-	// the prelude must fold back into the signature, and the body statement
-	// must survive as one (#7523).
 	{"param-destructure-vs-body-let", `struct Point { x: i32, y: i32 }
 function folds_struct(Point { x: a, y }: Point): i32 {
 return a + y;
@@ -641,9 +520,6 @@ return r + s;
 return 0;
 }
 `},
-	// Postfix positions bind tighter than every operator, so an operand that
-	// is a binary or unary expression keeps its parens under a call, an
-	// index, a slice or a field read.
 	{"precedence-postfix-receivers", `struct P { x: i32, y: i32 }
 function main(): i32 {
 let s: string = "hello";
@@ -656,8 +532,6 @@ let d: i32 = (p.x + p.y) * 2;
 return a + b + c.len() + d;
 }
 `},
-	// Indentation depth: every nesting level differed by two spaces per level,
-	// so a deeply nested block is where the two formatters were furthest apart.
 	{"indent-nesting", `function main(): i32 {
 let total: i32 = 0;
 let i: i32 = 0;
@@ -676,10 +550,6 @@ i = i + 1;
 return total;
 }
 `},
-	// #6769: comments and blank lines. Leading comments attach to the statement
-	// below them, a comment on a single-line statement's own line goes inline
-	// after two spaces, and one blank line survives where the author left one
-	// (runs collapse to one, and a blank just inside `{` is dropped).
 	{"comments-and-blanks", `// file header, above the import
 import "std/i32";
 
@@ -703,9 +573,6 @@ function g(): i32 {
   return x + y;
 }
 `},
-	// A comment after a block's LAST statement belongs to whatever follows it at
-	// the OUTER indent, not to the block it trails — the cursor is monotonic, so
-	// getting this wrong relocates the comment into an unrelated body.
 	{"comments-at-block-end", `function f(a: i32): i32 {
   if (a > 0) {
     return 1;
@@ -719,9 +586,6 @@ function g(): i32 {
 }
 // trailing comment past the last declaration
 `},
-	// Declarations emit in SOURCE order, not grouped by kind: a monotonic comment
-	// cursor would otherwise drain a comment against whichever declaration was
-	// printed first and reattach it to an unrelated one.
 	{"decl-source-order", `// about the first function
 function one(): i32 {
   return 1;
@@ -735,8 +599,6 @@ function two(p: P): i32 {
   return p.x + p.y;
 }
 `},
-	// An import below a declaration prints where it was written; hoisting it
-	// drained every comment above it into the import block (#10870).
 	{"late-import", `import "core/map";
 
 // about one
@@ -754,8 +616,6 @@ function two(): i32 {
   return 2;
 }
 `},
-	// A blank line between a section comment and the doc comment below it, or
-	// between the last comment and the declaration, survives (#10870).
 	{"section-comment-apart", `// --- section one ---
 
 // about first
@@ -781,8 +641,6 @@ function third(): i32 {
   return 3;
 }
 `},
-	// The same gaps in the comments a statement, a field and the end of the
-	// file collect (#10885).
 	{"comment-gaps-below-top-level", `function f(): i32 {
   // section
 
@@ -802,10 +660,6 @@ struct S {
 
 // trailing b
 `},
-	// The modifiers and the shapes a formatter must not drop: `pub` on a
-	// function, type parameters, an aliased import, a cast, a void `return;`.
-	// The unexported struct pins the other half of the visibility rule that
-	// `visibility-on-types` covers: an absent `pub` must stay absent.
 	{"modifiers-and-shapes", `import "std/i32" as ints;
 
 struct Box[T] { item: T }
@@ -820,10 +674,6 @@ pub function early(a: i32): void {
   }
 }
 `},
-	// #6773 item 1: `str` is a borrowed VIEW and `string` owned storage, so
-	// erasing one to the other at the parse boundary means a reformat rewrites
-	// the program's ownership. The return position is where the corpus has
-	// almost all of them (every `std/string` trimmer returns `str`).
 	{"written-str-spelling", `pub function head(s: string): str {
 return slice_unchecked(s, 0, 1);
 }
@@ -837,10 +687,6 @@ let u: string = "owned";
 return t.len() + u.len();
 }
 `},
-	// #6773 item 2: the flat `fn` tag names neither what the callback takes nor
-	// what it returns, so a formatted signature stopped stating its own
-	// contract. Zero-arg, multi-arg, array-returning and qualified-return forms
-	// all appear in the stdlib.
 	{"written-fn-type-spelling", `struct Rec { n: i32 }
 pub function sort_by[T](arr: T[], cmp: (T, T) => i32): T[] {
 return arr;
@@ -852,9 +698,6 @@ function main(): i32 {
 return 0;
 }
 `},
-	// #6773 item 4: `pub` on a struct / enum / alias. Only FuncDecl.is_pub was
-	// being read, so a formatted library file kept its function exports and
-	// silently lost every type export.
 	{"visibility-on-types", `pub struct Open { x: i32 }
 
 struct Shut { y: i32 }
@@ -871,10 +714,6 @@ pub function use_them(o: Open, c: Colour): i32 {
 return o.x;
 }
 `},
-	// #6773 item 5: both destructuring forms parse to a StmtVar — the tuple one
-	// with its bindings comma-joined, the struct one additionally tagged on
-	// type_name — and printing either as a plain `let` emitted `let a,b = …`,
-	// which is not syntax the parser accepts back.
 	{"destructuring-forms", `struct Point { x: i32, y: i32 }
 function pair(): (i32, i32) {
 return (1, 2);
@@ -887,12 +726,6 @@ let Point { x: px, y: py } = Point { x: 6, y: 7 };
 return a + b + q + r + s + x + y + px + py;
 }
 `},
-	// #5356: the pattern-head lookahead is now shared, so a `for` header and a
-	// `let` destructure take the struct and `@` heads a destructured
-	// parameter already did. The two printers reach them by different routes —
-	// native reprints the ForEach node's Pattern, while the self-host reprints
-	// the `$forpat_` element's own destructure, its desugar having consumed the
-	// header — so this is where the two would diverge on the written form.
 	{"pattern-binding-sites", `struct Point { x: i32, y: i32 }
 function main(): i32 {
 let ps: Point[] = [Point { x: 1, y: 2 }];
@@ -915,11 +748,6 @@ let t @ (p, q) = ts[0];
 return acc + v.x + x + y + t.0 + p + q;
 }
 `},
-	// A struct pattern's trailing `..` binds nothing — the pattern binds only
-	// the fields it lists — so it survives a reprint only by being carried to
-	// the printer. Both compilers dropped it, so both deleted it under
-	// `-fmt -w`; they now have to agree on putting it back, at every site that
-	// takes a struct pattern.
 	{"struct-pattern-rest", `struct Point { x: i32, y: i32, z: i32 }
 function param(Point { x, .. }: Point): i32 {
 return x;
@@ -941,12 +769,6 @@ acc = acc + mx;
 return acc + x + w.z + param(p);
 }
 `},
-	// Surfaced by the two cases above: FuncDecl.type_params carried only the
-	// BOUNDED parameters (the unbounded ones are erased and the monomorphiser
-	// has no use for their names), so a formatted `each[T, U]` lost both and
-	// left every T and U unbound. A METHOD's parameters are written before its
-	// receiver — the spelling native emits, which the self-host parser did not
-	// accept, so its own formatted output did not re-parse.
 	{"type-parameter-lists", `import "core/cmp";
 
 enum Opt[T] { Some(T), None }
@@ -963,10 +785,6 @@ pub function [U] (o: Opt[T]) map(f: (T) => U): Opt[U] {
 return None;
 }
 `},
-	// The rest of the loop family. The C-style form is #6771's, covered by the
-	// `c-style-for` cases below; these are the ones with no NATIVE node (#6770),
-	// where native wrote its own expansion — `__range_hi_1`, `__foreach_iter_1`,
-	// the map iterator's cursor calls — back over the user's source.
 	{"for-range", `function hi(): i32 {
   return 4;
 }
@@ -996,9 +814,6 @@ function main(): i32 {
   return t;
 }
 `},
-	// A loop label and the `break` / `continue` naming it are one fact written
-	// twice: dropping either half retargets the jump at the innermost loop, so
-	// the reformatted program leaves a different loop than the one written.
 	{"loop-labels", `function walk(a: i32[]): i32 {
   let t: i32 = 0;
   outer: while (t < 10) {
@@ -1019,13 +834,6 @@ function main(): i32 {
   return walk([1, 2]);
 }
 `},
-	// #6773 item 3: a `trait` block reached the printer only as the two DERIVED
-	// views the compile path keeps — TraitReq's abstract method set (names
-	// simplified past any `mod.` qualifier) and TraitDefault's bodies — so the
-	// declaration vanished from formatted output entirely and every `impl` of
-	// one then named a trait the file no longer declared. The written form is
-	// retained beside the Module now. Generic parameters, a supertrait list, an
-	// empty block and a bodied default are each a piece the derived views drop.
 	{"trait-and-impl-member-comments", `trait Shape {
   // The area, in whatever unit the shape was measured in.
   function area(self: Self): i32;
@@ -1071,17 +879,6 @@ function main(): i32 {
 return 0;
 }
 `},
-	// #6783: an `impl` block is desugared on the way in — each method becomes an
-	// ordinary receiver method on Module.funcs and the block reduces to the
-	// ImplInfo the E021 conformance walk reads — so a formatted file re-declared
-	// each method as a plain receiver method and the `impl` it belonged to was
-	// gone, leaving the type no longer implementing the trait. The block is
-	// retained beside the Module now, the way traits are.
-	//
-	// The methods print DESUGARED, which is also what native emits: `Self` reads
-	// as the concrete impl type and the `self` receiver goes back to being the
-	// first parameter. An empty impl adopts the trait's defaults and states no
-	// methods; a parametric one states its bounds once, on the block.
 	{"impl-blocks", `import "core/cmp";
 
 trait Display {
@@ -1111,10 +908,6 @@ function main(): i32 {
 return 0;
 }
 `},
-	// A comment inside a trait or impl method body has to drain against the
-	// SHARED comment cursor. Printing those bodies with a fresh one dropped
-	// every such comment and flushed it at the end of the file, relocating it
-	// onto an unrelated declaration.
 	{"comments-inside-impl-bodies", `trait Display {
 function to_string(self: Self): string;
 }
@@ -1139,27 +932,6 @@ let s: string = "a" + "b" + "c";
 return p.x + q.y + xs[2] + s.len();
 }
 `},
-	// #6771: the C-style `for` is desugared at parse time, so the printer sees
-	// an `if (true)` wrapping a flag-driven `while` and used to print exactly
-	// that — writing the desugar, synthesised `__forc_<line>_<col>` and all,
-	// back over the user's loop. Native keeps the loop, so comparing against it
-	// is what catches the leak; idempotence cannot, since the second pass has
-	// nothing left to desugar.
-	//
-	// All three header clauses are optional, and an omitted one takes a
-	// different path through the desugar, so each is covered: an empty init, an
-	// empty step, and a `continue` (which is the reason the desugar runs STEP
-	// at the TOP of the body rather than the bottom).
-	// #6779: `else if` and `else { if … }` parse to the same one-element
-	// else_body, and the printer rendered every such body as a chain — so the
-	// block form was rewritten into the chained one. The reverse never
-	// happened, which is why only one direction is asserted by construction:
-	// both spellings must come back as they were written.
-	//
-	// `indent-nesting` above has an if/else but no NESTED else, which is why
-	// nothing caught this. The third function is the case that is not merely
-	// cosmetic: a binding declared before the inner `if` is scoped to the else
-	// block, and the collapse has nowhere to put it.
 	{"else-block-vs-else-if", `function f(c: i32): i32 {
   if (c == 1) {
     return 1;
@@ -1222,10 +994,6 @@ t = t + 1;
 return t;
 }
 `},
-	// The recogniser keys on the reserved `__forc_` flag name, so a hand-written
-	// block of the same SHAPE must still print as itself. Without this the
-	// reconstruction would rewrite ordinary code into a loop that never existed
-	// — the bug's mirror image.
 	{"if-true-while-is-not-a-for", `function main(): i32 {
 let acc: i32 = 0;
 if (true) {
@@ -1239,17 +1007,6 @@ break;
 return acc;
 }
 `},
-	// #6802 / #6803: the rows where a formatter emitted source that no longer
-	// COMPILES, which is why fmtOutputTypeChecks below exists. Each was a live
-	// divergence: the self-host dropped a `when` guard (two arms then collide,
-	// E028), printed `?` as a prefix `try_` (E001), and wrote a match/if
-	// expression back as its IIFE desugar carrying the return-type TAG the
-	// desugar guessed; native dropped a `Map { … }` value outright
-	// (unparseable), leaked its internal `__discard_` name, invented `: void`
-	// over an arrow lambda, and canonicalised hex to decimal. `own` and
-	// `((string) => string)[]` were found by the type-check property itself —
-	// one drops a checked modifier (E053), the other loses parens the grammar
-	// needs, since `(string) => string[]` is ONE function returning an array.
 	{"guard-try-slice-own-fnarray-hex-discard-ifexpr", `enum Shape { Circle(f64), Square(f64) }
 
 function area(s: Shape): Result[f64, string] {
@@ -1369,9 +1126,6 @@ function main(): i32 {
   return 0;
 }
 `},
-	// A parametrised trait bound: the self-host's type-param scan consumed the
-	// `[i32]` and kept only the base name, so `I: iter.Iterator[i32]` came back
-	// as `I: iter.Iterator` — a weaker bound the checker then refuses.
 	{"parametrised-trait-bound", `import "core/iter";
 
 pub function total[I: iter.Iterator[i32]](it: I): i32 {
@@ -1382,10 +1136,6 @@ function main(): i32 {
   return 0;
 }
 `},
-	// A module-QUALIFIED generic argument. The self-host's generic-arg
-	// reconstruction broke on the `.`, truncating the type and corrupting the
-	// whole `let` into a StmtUnknown — which `-fmt` wrote back as
-	// `/*unknown-stmt:missing = in let*/`, destroying the statement.
 	{"qualified-type-in-generic-args", `import "std/test";
 
 function tally(): i32 {
@@ -1401,14 +1151,6 @@ function main(): i32 {
   return 0;
 }
 `},
-	// #6812's two construction-site forms. Written type args must survive
-	// `-fmt`: dropping them re-infers the literal, so `Box[i64]` silently
-	// becomes `Box[i32]`, `Stack[i32] { items: [] }` stops compiling
-	// altogether (E040), and `empty[i32]()` formatted to `empty()` — the
-	// formatter deleting the syntax the diagnostic recommends. These were a
-	// native-only list until the self-host grew a written-form carrier for
-	// both (#6802): the type args are stored on the literal's type name and on the
-	// callee's written name, which is where its printer already reads from.
 	{"struct-lit-type-args", `struct Box[T] {
   val: T
 }
@@ -1436,13 +1178,6 @@ function main(): i32 {
   return xs.len();
 }
 `},
-	// #6802's remaining rows. A `Map { … }` literal desugars to
-	// `map_new(8).insert(…)`, which states no K/V — so a formatted
-	// `let m: Map[string, i32] = Map { }` came back as `map_new(8)` and
-	// stopped compiling (E043). A comment written INSIDE a struct or enum
-	// forces the multi-line block form in both formatters; printing the
-	// one-liner instead left every such comment queued and re-emitted it
-	// above the NEXT declaration, where it documents the wrong thing.
 	{"map-literal-and-inner-comments", `import "core/map";
 
 struct Layer {
@@ -1489,13 +1224,6 @@ function main(): i32 {
   return 0;
 }
 `},
-	// Four statement forms the self-host parser LOWERS on the way in, leaving
-	// nothing of the written form behind for `-fmt` to reprint (#7072): a bare
-	// `{ … }` block and a block-shaped `defer` (there is no block node in the
-	// self-host Stmt union, so both become `if (true) { … }`), a chained
-	// assignment (one copy per target), and a match on a non-enum scrutinee
-	// (an if/else-if chain, in statement and in expression position alike).
-	// None appear in the parity CORPUS, so these fixtures are the only cover.
 	{"lowering-bare-block", `function main(): i32 {
 let s: i32 = 0;
 {
@@ -1508,7 +1236,6 @@ s = 0;
 return s;
 }
 `},
-	// An impl method keeps `Self` where it was written (#12891).
 	{"impl-keeps-self", `struct Box[T] {
 xs: T[],
 }
@@ -1544,8 +1271,6 @@ a = b = c = 7;
 return a + b + c;
 }
 `},
-	// `a[i] = v` and `o.f = v` lower to __set_index / __set_field calls, which
-	// the checker refuses; -fmt still reprints them as written.
 	{"lowering-place-assign", `struct P { f: i32 }
 function main(): i32 {
 let a: i32[] = [0, 0];
@@ -1584,12 +1309,6 @@ function main(): i32 {
 return grade(3).len() + words("a") + pick(0);
 }
 `},
-	// A value-position `{ … }` is a block EXPRESSION, which the self-host parse
-	// turns into a 0-arg IIFE — so `-fmt` reprinted the whole
-	// `(): i32 => { … }()` (#7072). The tag on the synthesised lambda is
-	// what tells it apart from `real_lambda` below, which is a hand-written
-	// IIFE and must survive as one: its `return` stays inside the lambda, where
-	// a block expression's escapes to the enclosing function.
 	{"lowering-block-expression", `function id(n: i32): i32 {
 return n;
 }
@@ -1609,13 +1328,6 @@ function main(): i32 {
 return shapes(1) + real_lambda(2);
 }
 `},
-	// An or-pattern arm is a parse-time clone-desugar in BOTH compilers — one
-	// arm per alternative, body copied into each — so `-fmt` reprinted
-	// `A | B => …` as two arms and the parity gate could not see it: the two
-	// agreed on the same wrong answer (#7077). Every arm shape that admits a
-	// `|` is here, since each takes its own path: variant arms through
-	// Match.Sugar / StmtMatch.sugar, literal and range arms through the
-	// literal chain, tuple arms through the done-flag chain.
 	{"pattern-or-alternatives", `enum Col { R, G, B }
 function variant(c: Col, n: i32): i32 {
 match (c) {
@@ -1656,18 +1368,6 @@ function main(): i32 {
 return variant(Col.R, 1) + guarded(Col.R, 1) + lits(3) + strs("b") + tup((3, 4)) + expr_form(Col.B);
 }
 `},
-	// A tuple- or struct-scrutinee match in EXPRESSION position routes its arm
-	// values through a local instead of a `return` (IfChain.value_local), so
-	// the IIFE body is three statements and the one-statement shape
-	// print_expr_iife recognises did not fit it — `-fmt` reprinted the whole
-	// `(): i32 => { let __tm4_18_r = 0; … }()`, synthesised name and all
-	// (#7089). #7065 fixed only the statement form.
-	//
-	// A TUPLE sub-pattern in an arm payload (`Pr((a, b))`) is the same leak one
-	// level down and in BOTH positions: it is stored on the pattern's tup_* fields
-	// rather than on `nested`, so neither the written-form snapshot nor the
-	// pattern printer knew about it and the arm came back as
-	// `Pr(__nest_5_9_0) => { match (__nest_5_9_0) { … } }`.
 	{"lowering-value-local-match", `struct P { x: i32, y: i32 }
 enum W { Pr((i32, i32)), None }
 function tup(t: (i32, i32)): i32 {
@@ -1709,12 +1409,6 @@ return tup((1, 2)) + strct(P { x: 1, y: 2 }) + block_arm((0, 3)) + sub_pattern_s
 }
 `},
 
-	// A comment inside a multi-line array literal, argument list or struct
-	// literal stays where it was written (#10143): the list prints one source
-	// line per output line, keeping elements that shared a line together, with
-	// leading comments above a line and a trailing one after its comma. Before,
-	// both printers collapsed the list and moved every comment to the next
-	// statement.
 	{"block-end-comments", `function f(x: i32): i32 {
   if (x > 0) {
     x = x + 1;
@@ -1744,11 +1438,6 @@ return tup((1, 2)) + strct(P { x: 1, y: 2 }) + block_arm((0, 3)) + sub_pattern_s
 function g(): i32 { return 1; }  // one
 function main(): i32 { return f(3) + g(); }
 `},
-	// A list written across lines keeps its lines with no comment inside
-	// (#8475): a table written one entry per line does not collapse onto one.
-	// The written grouping survives, as it does for a commented list. A list
-	// written on one line stays one line, and struct and enum declarations
-	// written across lines print one member per line.
 	{"list-written-across-lines", `struct S {
   a: i32,
   b: i32
@@ -1781,9 +1470,6 @@ function main(): i32 {
     .len();
 }
 `},
-	// A binary chain written across lines keeps its breaks (#8475), with the
-	// operator leading each continuation line, whether the source broke
-	// before the operator or after it.
 	{"binary-written-across-lines", `function g(a: i32, b: boolean): i32 {
   if (b) { return a; }
   return 0;
@@ -1803,8 +1489,6 @@ function main(): i32 {
       || t == 2) + s.len() + u;
 }
 `},
-	// A union written across lines keeps its lines (#10853), continuing with a
-	// leading `|` whether the source broke before the `|` or after it.
 	{"union-written-across-lines", `struct A { n: i32 }
 struct B { n: i32 }
 struct C { n: i32 }
@@ -1865,36 +1549,20 @@ function main(): i32 {
 }
 `},
 
-	// A control byte in a string literal re-emits as `\xNN` rather than raw: a
-	// raw NUL makes git read the formatted file as binary, and the escape reads
-	// back the same byte. `\0` takes the hex form on both sides — neither
-	// printer has a `\0` arm — so this pins the two agreeing on which spelling
-	// wins as well as on escaping at all.
 	{"string-control-bytes", "function main(): i32 {\n" +
 		"let s: string = \"a\\x00b\\x1fc\\x7fd\\0e\";\n" +
 		"let f: string = f\"pre\\x01{s}\";\n" +
 		"return s.len() + f.len();\n" +
 		"}\n"},
 
-	// An f-string inside a placeholder prints as written: the placeholder is
-	// sub-parsed in the formatter's verbatim mode, not desugared to a
-	// `+`-chain of `to_string()` calls.
 	{"nested-fstring-placeholder", "import \"std/i32\";\nimport \"std/string\";\n\nfunction main(): i32 {\n  let x = 5;\n  let s = f\"a {f\"b {x}\"} c {\"}{\"}\";\n  return s.len();\n}\n"},
 
-	// A \u{...} escape prints as the character it names on both sides, as a
-	// raw multibyte character does; a control scalar stays an escape.
 	{"string-unicode-escapes", "function main(): i32 {\n" +
 		"let s: string = \"\\u{7}\\u{e9}é\\u{1F600}\";\n" +
 		"let f: string = f\"\\u{e9}{s}\\u{7B}\";\n" +
 		"return s.len() + f.len();\n" +
 		"}\n"},
 
-	// `use` is a rest-of-block desugar on both sides — a synthesised callback
-	// passed as the call's last argument — and both printers emitted that
-	// callback instead of the `use` (#8729): native as a `__use_N` local
-	// function whose unannotated parameter printed as `(a: )`, the self-host
-	// as an arrow lambda. Annotated and unannotated bindings, nested, with a
-	// comment and a blank line in the continuation.
 	{"use-sugar", `function maybe_double(n: i32, cb: (i32) => Option[i32]): Option[i32] {
 return cb(n + n);
 }
@@ -1913,13 +1581,6 @@ None => { return 0; }
 }
 }
 `},
-	// Every lambda prints in the arrow form, with a braced body indented
-	// against the statement it sits in (#8730): print_expr carried no depth,
-	// so an annotated or multi-statement lambda fell back to the retired
-	// `function(` spelling with its block at column 0. Nested lambdas at
-	// depths 2 and 3, the written return type kept, an unannotated braced
-	// body, a destructuring parameter with an expression body, and an IIFE
-	// whose callee needs parens.
 	{"lambda-arrow-depth", `struct P { x: i32, y: i32 }
 function chain(start: i32): i32 {
 let f = (n: i32): i32 => {
@@ -1943,12 +1604,6 @@ return 0;
 }
 function main(): i32 { return chain(1); }
 `},
-	// A `_` binding is renamed to `__discard_<line>_<col>_<n>` by both
-	// parsers (#8852), and both printers have to write `_` back — through a
-	// parameter, a lambda parameter, a plain var, a tuple destructure with
-	// a nested position, a struct destructure's renamed field, and a `for`
-	// header. Every site is here because the self-host reprints them from
-	// four different encodings.
 	{"discard-bindings", `struct P { x: i32, y: i32 }
 function pair(): (i32, i32) { return (1, 2); }
 function constant(_: i32, _: string): i32 { return 7; }
@@ -1966,13 +1621,6 @@ for (k, _) in xs { s = s + k; }
 return a + b + c + y + s + g(0, 1) + constant(1, "x");
 }
 `},
-	// An arrow lambda's return annotation is followed by the lambda's own
-	// `=>`, so the type parser reserves the top-level function-type arrow
-	// there (#8706, #8717). Both printers must put the grouping parens back
-	// around a function-typed return, or `-fmt` writes a program that
-	// re-parses with the wrong split. A tuple return and a single-element
-	// grouping are included, since those are the shapes the reservation exists
-	// for.
 	{"lambda-return-annotation", `function main(): i32 {
 let tup = (): (string, i32) => { return ("ab", 7); };
 let grp = (): (i32) => { return 7; };
@@ -1983,13 +1631,6 @@ let r = fnt(1)(2);
 return tup().1 + grp() + fnp(1)(2) + fnb(1)(2) + r.0 + r.1;
 }
 `},
-	// The unit value and its type `void` (#8759). The self-host parser records
-	// the VALUE `()` as the constant 0 it lowers to, and had nothing left to
-	// reprint but that constant — so `Ok(())` came back as `Ok(0)` and
-	// `let u: void = ();` as `let u: void = 0;`, which is E003.
-	//
-	// `() => i32` is here because empty parens before `=>` are a function
-	// type's parameter list, which the formatter must keep with its arrow.
 	{"unit-value-and-type", `function sink(u: void): i32 { return 0; }
 function fallible(): Result[void, i32] { return Ok(()); }
 function thunk(): () => i32 { return (): i32 => { return 1; }; }
@@ -2002,15 +1643,6 @@ let t: (void, i32) = ((), 1);
 return sink(u) + sink(v) + sink(t.0) + thunk()() + t.1;
 }
 `},
-	// The grouping parens native's type parser strips (#8800). The self-host
-	// generic-argument collector passed them through verbatim, so
-	// `Result[(i32), i32]` reprinted with the ones around the single element
-	// still in place — byte-parity broke against native, which resolves
-	// `(i32)` to `i32` wherever it occurs. Kept are the parens that are
-	// SYNTAX rather than grouping: a tuple (a top-level comma), a function
-	// parameter list (a `=>` follows the group), and the array-of-closure
-	// shape whose suffix the group stops splitting into an array of the
-	// function's RESULT.
 	{"generic-arg-grouping-parens", `function sink(p: Result[(i32), i32]): i32 { return 0; }
 function nested(p: Result[Option[(i32)], i32]): i32 { return 0; }
 function fnarg(p: Result[((i32) => i32), i32]): i32 { return 0; }
@@ -2022,8 +1654,6 @@ function nestedfn(p: Result[(Option[(i32) => i32])[], i32]): i32 { return 0; }
 function generictup(p: Result[(Option[i32], i32), i32]): i32 { return 0; }
 function main(): i32 { return 0; }
 `},
-	// A `resource` declaration, with and without its `@import` binding. The
-	// self-host printer dropped both, leaving every handle naming them unknown.
 	{"resource-declaration", `@import("wasi:io/poll@0.2.0", "pollable")
 resource Pollable;
 
@@ -2038,8 +1668,6 @@ function main(): i32 { return 0; }
 `},
 }
 
-// typeChecks reports whether src is a program the checker accepts, running the
-// same load → constfold → check chain `fern -check` does.
 func typeChecks(src string) error {
 	prog, _, err := modload.LoadSource(src)
 	if err != nil {
@@ -2052,24 +1680,6 @@ func typeChecks(src string) error {
 	return err
 }
 
-// fmtOutputTypeChecks is the parity gate's third property, beside byte-parity
-// against native and self-host idempotence: formatting a program that compiles
-// must yield a program that still compiles.
-//
-// The two older properties are both blind to a desugar leak. Byte-parity only
-// catches one where native happens to be right, and #6803 is the list of shapes
-// where it was not. Idempotence catches nothing at all here — the self-host
-// formatter is perfectly stable on its own broken output, re-emitting the same
-// unparseable `Layer { writes: , … }` or the same `try_first(xs)` every pass.
-//
-// Every correctness row in #6802 and #6803 fails this directly, and two more
-// were found by adding it: a dropped `own` (E053 on the `fip` sort helpers) and
-// a function-typed array element losing its parens.
-//
-// Conditional on the INPUT compiling, because many cases above are printer
-// fixtures rather than programs — `precedence-bitwise-vs-compare` is `n & 1 ==
-// 0` precisely so a lost paren shows up, and that is `i32 & boolean`. Those
-// still carry their byte-parity and idempotence assertions.
 func fmtOutputTypeChecks(t *testing.T, label, src, formatted string) {
 	t.Helper()
 	if typeChecks(src) != nil {
@@ -2080,12 +1690,6 @@ func fmtOutputTypeChecks(t *testing.T, label, src, formatted string) {
 	}
 }
 
-// TestSelfHostFmtNativeParityX86_64 formats each case with BOTH formatters and
-// compares bytes, then re-formats the self-host's own output and compares that
-// too. The second half is the property native already tests
-// (internal/syntax/printer/idempotence_test.go) and the self-host did not: a formatter
-// that is byte-equal to native but unstable still rewrites a file on every
-// pass.
 func TestSelfHostFmtNativeParityX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -2104,7 +1708,6 @@ func TestSelfHostFmtNativeParityX86_64(t *testing.T) {
 
 	for _, tc := range fmtParityCases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Native side: the same printer.Format the `fern -fmt` CLI calls.
 			prog, err := goparser.Parse(tc.src)
 			if err != nil {
 				t.Fatalf("native parse: %v", err)
@@ -2123,13 +1726,9 @@ func TestSelfHostFmtNativeParityX86_64(t *testing.T) {
 				t.Errorf("self-host -fmt differs from native -fmt\n--- native ---\n%s\n--- self-host ---\n%s", want, got)
 			}
 
-			// Both outputs must still be programs. Stated per-formatter rather
-			// than only on `got`, so a case where the two AGREE on something
-			// broken still fails.
 			fmtOutputTypeChecks(t, "native -fmt", tc.src, want)
 			fmtOutputTypeChecks(t, "self-host -fmt", tc.src, string(got))
 
-			// Idempotence: formatting the formatted output is a fixed point.
 			outPath := filepath.Join(dir, tc.name+"_fmt.fern")
 			if err := os.WriteFile(outPath, got, 0o644); err != nil {
 				t.Fatalf("write formatted: %v", err)
@@ -2145,15 +1744,6 @@ func TestSelfHostFmtNativeParityX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostFmtKeepsCStyleFor states the property #6771 names, independently
-// of native: formatting must not write a compiler-synthesised name into the
-// user's source.
-//
-// The parity cases above catch the leak by comparing against native, which is
-// the stronger check while native is right. This one survives native
-// regressing — and it is the assertion a reader of #6771 would write, since
-// `__forc_` appearing in formatted output is the bug, whatever native does.
-// #6770 is the same class on native's side, for the range form.
 func TestSelfHostFmtKeepsCStyleFor(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -2186,9 +1776,6 @@ func TestSelfHostFmtKeepsCStyleFor(t *testing.T) {
 	if !strings.Contains(got, "for (let i: i32 = 1; i <= 10; i = i + 1)") {
 		t.Errorf("the C-style for header did not survive formatting:\n%s", got)
 	}
-	// Source preservation is the point, so the formatted file must still be the
-	// same program: `-fmt` is advertised as a round-trip, and a rewritten loop
-	// that happens to compute the same thing is still a rewritten loop.
 	if got != src {
 		t.Errorf("already-formatted source was rewritten:\n--- in ---\n%s\n--- out ---\n%s", src, got)
 	}
@@ -2202,9 +1789,6 @@ const fmtLambdaAsWrittenSrc = `function main(): i32 {
 }
 `
 
-// TestSelfHostFmtKeepsLambdaAsWritten states #12359's property without
-// native: a lambda the binding's annotation types is printed with the return
-// type it was written with, none where it wrote none.
 func TestSelfHostFmtKeepsLambdaAsWritten(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -2226,35 +1810,8 @@ func TestSelfHostFmtKeepsLambdaAsWritten(t *testing.T) {
 	}
 }
 
-// selfHostFmtKnownDivergences is every corpus file the self-host formatter is
-// known to print differently from native. The list is EXACT in both directions:
-// a file that diverges without being here fails, and a file here that no longer
-// diverges fails too, so it shrinks as fixes land instead of outliving them.
-//
-// It is EMPTY, and that is the state to defend. #6802 started at 40 divergent
-// files of 425 and #6832 had already taken it from 71; the last ten classes went
-// with a written-form carrier each (`Map { … }` and construction-site type args
-// as new/reused nodes, `let … else` and `loop` and `|>` and the nested
-// `function` decl and the f-string from data the nodes now carry) plus one fix on
-// NATIVE's side, where `-fmt` was re-rendering every float literal from its value
-// and rewriting `1e-6` into `1e-06`.
-//
-// Add a row only with the reason and the issue, never to make a red build green.
 var selfHostFmtKnownDivergences = map[string]string{}
 
-// TestSelfHostFmtCorpusParityX86_64 runs the byte-parity property over the whole
-// corpus rather than over fmtParityCases.
-//
-// The fixture list is what a formatter bug hides behind: #6802 was found by a
-// hand-run 425-file sweep, not by this suite, and every row it produced had to
-// be transcribed into a fixture before anything gated it. A corpus run gates the
-// files themselves, so the next divergence is a red build rather than an issue
-// somebody has to notice and write up.
-//
-// Cheap enough to belong here: 425 `-fmt` invocations of the linked driver take
-// ~16 s in total (the driver's fixed startup is ~12 ms; the cost is the
-// 15-50 kloc compiler/ modules), against the driver build the parity test above
-// already pays for and caches.
 func TestSelfHostFmtCorpusParityX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	root := repoRootFromTest(t)
@@ -2271,7 +1828,6 @@ func TestSelfHostFmtCorpusParityX86_64(t *testing.T) {
 		}
 		prog, err := goparser.Parse(string(src))
 		if err != nil {
-			// Not a parseable program: nothing for the two formatters to agree on.
 			continue
 		}
 		want := goprinter.Format(prog)
@@ -2297,23 +1853,6 @@ func TestSelfHostFmtCorpusParityX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostFmtDiffCorpusParityX86_64 is the same corpus, comparing what the
-// two drivers print for `-fmt -d` rather than for `-fmt`.
-//
-// The alignment behind the diff is a separate implementation from the layout
-// the test above pins, and a shortest edit script is NOT unique: two correct
-// implementations can pick different, equally short arrangements of the same
-// change. So byte-parity here only holds while the two compute the alignment
-// the same way, and the dozen-line fixtures elsewhere in this package cannot
-// say whether they do — they are too short for the algorithms to disagree.
-// Over this corpus they can: before the self-host got the linear-space
-// alignment (#8611) 166 of these files came out arranged differently, with both
-// suites green.
-//
-// It is the only gate on the cost, too. The large self-host sources are the
-// inputs in the tree that push the search at all, and the O(m*n) table
-// this replaced wanted 48 GB for the deleted irlower.fern — a failure here that is a timeout rather
-// than a mismatch is that table coming back.
 func TestSelfHostFmtDiffCorpusParityX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	root := repoRootFromTest(t)
@@ -2323,8 +1862,6 @@ func TestSelfHostFmtDiffCorpusParityX86_64(t *testing.T) {
 
 	for _, rel := range corpusFernFiles(t, root) {
 		if _, known := selfHostFmtKnownDivergences[rel]; known {
-			// The two drivers would be diffing different pairs, so a mismatch
-			// here would just report the formatter divergence a second time.
 			continue
 		}
 		path := filepath.Join(root, rel)
@@ -2337,7 +1874,6 @@ func TestSelfHostFmtDiffCorpusParityX86_64(t *testing.T) {
 			continue
 		}
 		want := goprinter.UnifiedDiff(string(src), goprinter.Format(prog), path, path)
-		// `-d` exits 1 when it prints a diff, which is the usual case here.
 		out, err := runX86_64Bin(runner, fernBin, "-fmt", "-d", path).Output()
 		if err != nil {
 			var ee *exec.ExitError
@@ -2352,7 +1888,6 @@ func TestSelfHostFmtDiffCorpusParityX86_64(t *testing.T) {
 	}
 }
 
-// repoRootFromTest returns the repository root.
 func repoRootFromTest(t *testing.T) string {
 	t.Helper()
 	root, err := corpus.RepoRoot()
@@ -2362,8 +1897,6 @@ func repoRootFromTest(t *testing.T) string {
 	return root
 }
 
-// corpusFernFiles lists every Fern source in corpus.Sources, repo-relative with
-// slash separators so the allowlist keys read the same on every platform.
 func corpusFernFiles(t *testing.T, root string) []string {
 	t.Helper()
 	files, err := corpus.Files(root, corpus.Sources)
@@ -2373,9 +1906,6 @@ func corpusFernFiles(t *testing.T, root string) []string {
 	return files
 }
 
-// firstDiffLines reports the first differing line of two outputs, with its
-// neighbours, under each side's name — a whole 50 kloc module is not a test
-// failure message.
 func firstDiffLines(wantName, want, gotName, got string) string {
 	w := strings.Split(want, "\n")
 	g := strings.Split(got, "\n")

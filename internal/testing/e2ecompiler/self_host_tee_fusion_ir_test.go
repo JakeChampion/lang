@@ -10,62 +10,24 @@ import (
 	"testing"
 )
 
-// teeFusionCases pin #6638's tee fusion and the copy propagation that follows it.
-//
-// The pass itself is twenty lines; the work was that NO consumer lowered
-// `tee_local`. The op constructor and its kind tag had existed since the IR was
-// written, but the only callers were unit drivers that build op lists and never
-// emit them — so fusing without adding the emitter arms would have rewritten real
-// code into an op every consumer discards, and the fixpoint could not
-// have seen it (a stable miscompile reproduces itself perfectly).
-//
-// # Why most cases now expect NO local.tee
-//
-// A fused tee is an intermediate form, not an end state. `fuse_tee` creates it,
-// and then `propagate_copies` drops it whenever the slot has no other reader —
-// which is most scalar code. A case that emits no `local.tee` is therefore the
-// pipeline working correctly, not the fusion failing, and `wantTee` records which
-// shapes measurably retain one: the runtime pointer-valued case, where the
-// allocated array is read and released. Keep the original static pointer case.
-//
-// The VALUE assertions carry the weight on every case and every backend. They are
-// what would have caught the missing lowering, and `tee-reread-slot` is the sharp
-// one: a tee that wrote the operand stack but not the frame passes the others and
-// fails that.
-//
-// # Parameters and runtime input
-//
-// These programs used to bind literals (`let a: i32 = 7; ...`). Constant
-// propagation then folded them whole — correct, faster, and no longer a test of
-// codegen, since nothing survived to the backend but a constant. Keep those
-// parameterized programs and add an opaque runtime pointer input for tee coverage.
 var teeFusionCases = []struct {
 	name     string
 	src      string
 	expected int
-	// wantTee: measured, not assumed. Only the runtime pointer shape retains a
-	// `local.tee` after copy propagation; asserting it on a shape whose tee is
-	// correctly dropped would pin the absence of an optimisation.
-	wantTee bool
+	wantTee  bool
 }{
-	// A chain of bindings, each read once: every tee is created and then dropped.
-	// 7*3 = 21, +7 = 28.
 	{"tee-chain", `function chain(a: i32): i32 {
     let b: i32 = a * 3;
     let c: i32 = b + a;
     return c;
 }
 function main(): i32 { return chain(7); }`, 28, false},
-	// The slot must still hold the value AFTER the tee — `a` is read three more
-	// times. c = 5 + 5 = 10, then 10 + 5 - 5 = 10.
 	{"tee-reread-slot", `function reread(a: i32): i32 {
     let b: i32 = a;
     let c: i32 = a + b;
     return c + a - 5;
 }
 function main(): i32 { return reread(5); }`, 10, false},
-	// Fusion inside a loop body, where the slot is rewritten every iteration and
-	// read across the back edge. sum 0..9 = 45.
 	{"tee-loop", `function loopy(k: i32): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -77,24 +39,18 @@ function main(): i32 { return reread(5); }`, 10, false},
     return acc;
 }
 function main(): i32 { return loopy(10); }`, 45, false},
-	// A fused pair feeding a call argument, and one inside the callee.
 	{"tee-call-arg", `function twice(n: i32): i32 { let d: i32 = n * 2; return d; }
 function callarg(x: i32): i32 {
     let y: i32 = twice(x);
     return y + x;
 }
 function main(): i32 { return callarg(6); }`, 18, false},
-	// Preserve the original pointer-width values and result. The array is now
-	// static, and the inlined body no longer retains a tee.
 	{"tee-ptr-values", `function ptrs(s: string, xs: i32[]): i32 {
     let n: i32 = s.len();
     let m: i32 = xs[2];
     return n + m;
 }
 function main(): i32 { return ptrs("hello", [3, 4, 5]); }`, 10, false},
-	// Program-name-only argv supplies n=1, preserving the original array values.
-	// The single-argument reader keeps the pointer store/reload adjacent before
-	// the call. The caller must still read that saved pointer to release it.
 	{"tee-runtime-ptr-values", `@noinline function ptrs(s: string, xs: i32[]): i32 {
     let n: i32 = s.len();
     let m: i32 = xs[2];
@@ -105,8 +61,6 @@ function main(): i32 { return ptrs("hello", [3, 4, 5]); }`, 10, false},
 function main(): i32 { return probe(args().len()); }`, 10, true},
 }
 
-// TestSelfHostTeeFusionIRX86_64 runs the cases through the self-hosted x86-64
-// compiler.
 func TestSelfHostTeeFusionIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -140,8 +94,6 @@ func TestSelfHostTeeFusionIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostTeeFusionIRArm64 is the arm64 leg: `ldr x0, [sp]` peeks the
-// operand-stack top where store_local pops it.
 func TestSelfHostTeeFusionIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -165,9 +117,6 @@ func TestSelfHostTeeFusionIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostTeeFusionWasmIR is the leg the pass exists for: it asserts the WAT
-// actually carries `local.tee` — the emitted instruction is the whole point —
-// and that the program still computes the right answer through it.
 func TestSelfHostTeeFusionWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host tee-fusion wasm IR e2e")

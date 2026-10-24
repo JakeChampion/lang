@@ -1,9 +1,9 @@
-// Nested match patterns (#5353) desugar at parse time to a flat outer arm that
-// re-matches the payload, so every backend sees only flat arms.
-//
-// A flat sibling arm (`Some(other)`) after the nested one acts as the
-// inner catch-all, binding the whole payload.
-// exit: 9 + 102
+
+
+
+
+
+
 function g(o: Option[Result[i32, i32]]): i32 {
   match (o) {
     Some(Ok(n)) => { return n + 100; },

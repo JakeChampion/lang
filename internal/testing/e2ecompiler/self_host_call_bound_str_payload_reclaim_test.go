@@ -5,17 +5,6 @@ import (
 	"testing"
 )
 
-// --- Call-bound STRING-payload Option/Result locals reclaim ------------------
-//
-// `let v: Option[string] = mk(i)` releases the box AND its string payload, the
-// same as the constructor written inline. Missed, both leaked every iteration
-// (`frees=0`).
-//
-// Freeing a non-fresh payload under a live alias does not leak less — it
-// DANGLES. So the aliased rows below are as essential as the fresh ones, and
-// each asserts the exit code against `fern -interp` so a dangle shows up as a
-// wrong answer rather than a quiet corruption. Every row balances.
-
 const cbsOptStrCallSrc = `function mk(i: i32): Option[string] {
     if (i < 0) { return None; }
     return Some("abcd");
@@ -37,8 +26,6 @@ function main(): i32 {
     return x % 83;
 }`
 
-// The Result spelling: a string Ok, a scalar Err. The Err arm needs no drop, so
-// the tag guard's else-branch stays empty.
 const cbsResultStrOkCallSrc = `function mk(i: i32): Result[string, i32] {
     if (i < 0) { return Err(1); }
     return Ok("abcd");
@@ -60,10 +47,6 @@ function main(): i32 {
     return x % 83;
 }`
 
-// A fresh string PRODUCER payload rather than a literal — the other half of what
-// the "f" flag admits, and the one that actually allocates. The concat
-// temporaries are freed by other machinery, so a double free here would tick the
-// underflow detector rather than merely unbalance the count.
 const cbsOptStrConcatCallSrc = `function mk(i: i32): Option[string] {
     if (i < 0) { return None; }
     return Some("ab" + "cd");
@@ -85,7 +68,6 @@ function main(): i32 {
     return x % 83;
 }`
 
-// Function-scoped single bind — the fn-level emit site rather than lower_block's.
 const cbsOptStrFnScopeSrc = `function mk(i: i32): Option[string] {
     if (i < 0) { return None; }
     return Some("abcd");
@@ -103,8 +85,6 @@ function main(): i32 {
     return x % 83;
 }`
 
-// The direct-ctor sibling, which already reclaimed: a guard that the new
-// admission does not disturb the path it sits beside.
 const cbsOptStrDirectSrc = `function round(r: i32): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -122,10 +102,6 @@ function main(): i32 {
     return x % 83;
 }`
 
-// --- the rows that must NOT reclaim -----------------------------------------
-//
-// The producer wraps a bare LOCAL: the box is fresh, the payload is not.
-// Freeing it would dangle the local.
 const cbsOptStrAliasLocalSrc = `function mk(i: i32): Option[string] {
     let pre: string = "abcd";
     if (i < 0) { return None; }
@@ -148,9 +124,6 @@ function main(): i32 {
     return x % 83;
 }`
 
-// The same refusal where the alias reaches further: the payload is the CALLER's
-// live string, passed as a parameter. `keep` is read after the loop, so a free
-// here corrupts a value still in use rather than one merely out of scope.
 const cbsOptStrParamAliasSrc = `function mk(s: string, i: i32): Option[string] {
     if (i < 0) { return None; }
     return Some(s);
@@ -183,8 +156,6 @@ func TestSelfHostCallBoundStrPayloadReclaimX86_64(t *testing.T) {
 
 	counts := func(t *testing.T, name, src string) (int64, int64, int64) {
 		t.Helper()
-		// The oracle, not a hardcoded constant: a dangling payload shows up here
-		// as a wrong answer, and that matters more than the byte counts below.
 		want := interpExit(t, interpBin, src)
 		asm := hevCompile(t, runner, driverBin, src, []string{"FERN_LEAKCHECK=1"})
 		progBin := buildBin(t, gcc, dir, name, asm)
@@ -212,9 +183,6 @@ func TestSelfHostCallBoundStrPayloadReclaimX86_64(t *testing.T) {
 		return allocs, frees, live
 	}
 
-	// Fully reclaimed: box and string both released. The alias rows' payload
-	// aliases a live string, so a release under it shows up as a wrong answer
-	// against the interpreter.
 	for _, tc := range []struct{ name, src string }{
 		{"optstr_from_call", cbsOptStrCallSrc},
 		{"result_str_ok_from_call", cbsResultStrOkCallSrc},

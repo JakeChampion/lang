@@ -1,11 +1,3 @@
-// E2E test for the WASI Preview 2 component pipeline. Builds the lang
-// CLI, asks it to emit a Component Model component (preview-1 module
-// wrapped via wasm-tools + the wasi-preview1-component-adapter), and
-// runs it with `wasmtime run`.
-//
-// Skips when either wasm-tools, the adapter (FERN_WASI_ADAPTER env), or
-// wasmtime is missing so `go test ./...` stays green on developer
-// machines without the full preview-2 toolchain.
 package e2e
 
 import (
@@ -37,15 +29,6 @@ func TestWasmPreview2HelloWorld(t *testing.T) {
 
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "hello.fern")
-	// Exercises three native preview-2 paths through one program:
-	//   - wasi:random/random.get-random-bytes (canonical-ABI list<u8>
-	//     return + cabi_realloc, from step 2);
-	//   - wasi:cli/stdout.get-stdout + wasi:io/streams output-stream
-	//     blocking-write-and-flush (the print path, step 3);
-	//   - wasi:cli/stderr.get-stderr + same blocking-write-and-flush
-	//     (the eprint path).
-	// The preview-1 adapter no longer touches stdio for us — the
-	// imports above reach the host directly.
 	if err := os.WriteFile(srcPath, []byte(`function main(): i32 {
     let b = random_bytes(8);
     print("hello preview2");
@@ -56,9 +39,6 @@ func TestWasmPreview2HelloWorld(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 
-	// Build the lang CLI from this checkout so the test exercises
-	// the in-tree post-process pipeline rather than whatever happens
-	// to be on PATH.
 	bin := buildFernCLI(t)
 
 	componentPath := filepath.Join(dir, "hello.component.wasm")
@@ -74,8 +54,6 @@ func TestWasmPreview2HelloWorld(t *testing.T) {
 		t.Fatalf("fern -target wasm32-wasi: %v\nstdout:\n%s\nstderr:\n%s", err, obuf.String(), ebuf.String())
 	}
 
-	// The output should be a Component Model component, recognised
-	// by `wasm-tools print` as a top-level `(component …)` form.
 	dump := exec.Command("wasm-tools", "print", componentPath)
 	dout, err := dump.CombinedOutput()
 	if err != nil {
@@ -101,12 +79,6 @@ func TestWasmPreview2HelloWorld(t *testing.T) {
 	}
 }
 
-// TestWasmPreview2StdinReadLine exercises the native preview-2
-// stdin path: `wasi:cli/stdin.get-stdin` +
-// `wasi:io/streams.input-stream.blocking-read` under io.read_line, with
-// the host allocating each byte through our `cabi_realloc` export. Echoes
-// each line back via the streams stdout writer (step 3a), so this
-// test covers the full preview-2 stdio surface.
 func TestWasmPreview2StdinReadLine(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("preview-2 toolchain not exercised on windows")
@@ -120,9 +92,6 @@ func TestWasmPreview2StdinReadLine(t *testing.T) {
 
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "echo.fern")
-	// Loop until EOF, writing each line back. write() doesn't add
-	// a newline; io.read_line keeps the trailing '\n', so we get
-	// byte-for-byte echo.
 	if err := os.WriteFile(srcPath, []byte(`import "std/io";
 
 function main(): i32 {
@@ -169,15 +138,6 @@ function main(): i32 {
 	}
 }
 
-// TestWasmPreview2FileRoundtrip exercises the native preview-2
-// file I/O path: open_writer + Writer.write + Writer.close, then
-// open_reader + Reader.read_line + Reader.close. Both go through
-// `wasi:filesystem/preopens.get-directories`,
-// `wasi:filesystem/types.descriptor.open-at`, and the appropriate
-// `*-via-stream` to materialise an `input-stream` /
-// `output-stream` resource the Reader/Writer struct holds. No
-// preview-1 path_open / fd_read / fd_write involved on either
-// side.
 func TestWasmPreview2FileRoundtrip(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("preview-2 toolchain not exercised on windows")
@@ -232,10 +192,6 @@ function main(): i32 {
 		t.Fatalf("fern -target wasm32-wasi: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
 	}
 
-	// `wasmtime run --dir DIR` preopens DIR as the working
-	// directory, which `get-directories` returns to us as the
-	// first preopen descriptor — that's where `open-at` resolves
-	// "out.txt" against.
 	run := exec.Command("wasmtime", "run", "--dir", dir, componentPath)
 	var sout, serr bytes.Buffer
 	run.Stdout = &sout
@@ -247,7 +203,6 @@ function main(): i32 {
 	if got := sout.String(); got != want {
 		t.Fatalf("stdout = %q; want %q (stderr=%q)", got, want, serr.String())
 	}
-	// Verify the file actually got written.
 	on_disk, err := os.ReadFile(filepath.Join(dir, "out.txt"))
 	if err != nil {
 		t.Fatalf("read out.txt: %v", err)
@@ -257,11 +212,6 @@ function main(): i32 {
 	}
 }
 
-// TestWasmPreview2FileReadWriteAdapterFree exercises read+write of files
-// in one program (read one file, write another) — the combined-direction
-// wasi:filesystem/types instance type. It composed only via the adapter
-// before; now `-target wasm32-wasi` (no adapter) handles it. Runs under
-// `wasmtime run --dir` and checks the copied content lands on disk.
 func TestWasmPreview2FileReadWriteAdapterFree(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("preview-2 toolchain not exercised on windows")
@@ -324,14 +274,6 @@ func TestWasmPreview2FileReadWriteAdapterFree(t *testing.T) {
 	}
 }
 
-// TestWasmPreview2FileCloseAdapterFree exercises file close on the
-// adapter-free path (`-target wasm32-wasi`, no -wasi-adapter): Writer.close()
-// and Reader.close() now drop the own<output-stream> / own<input-stream>
-// handle via canon resource.drop instead of preview-1 fd_close (the last
-// preview-1 holdout for file I/O). Two phases — a write-only program
-// (output-stream drop) whose on-disk content is checked, then a
-// read-only program (input-stream drop) that reads it back to stdout —
-// since a single program can't mix both descriptor stream directions.
 func TestWasmPreview2FileCloseAdapterFree(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("preview-2 toolchain not exercised on windows")
@@ -362,7 +304,6 @@ func TestWasmPreview2FileCloseAdapterFree(t *testing.T) {
 		if out, err := emit.CombinedOutput(); err != nil {
 			t.Fatalf("fern -target wasm32-wasi (%s, no adapter): %v\n%s", name, err, out)
 		}
-		// Adapter-free: no preview-1 fd_close — the close drops the stream.
 		printed, err := exec.Command("wasm-tools", "print", comp).CombinedOutput()
 		if err != nil {
 			t.Fatalf("wasm-tools print (%s): %v\n%s", name, err, printed)
@@ -373,8 +314,7 @@ func TestWasmPreview2FileCloseAdapterFree(t *testing.T) {
 		return comp
 	}
 
-	want := "close-via-drop\n" // on-disk bytes (Fern's \n → newline)
-	// Phase 1: write-only + close → output-stream resource.drop.
+	want := "close-via-drop\n"
 	writer := build("writer", `function main(): i32 {
     match (open_writer("f.txt")) {
         Ok(w) => {
@@ -396,7 +336,6 @@ func TestWasmPreview2FileCloseAdapterFree(t *testing.T) {
 		t.Fatalf("on-disk = %q; want %q", string(onDisk), want)
 	}
 
-	// Phase 2: read-only + close → input-stream resource.drop.
 	reader := build("reader", `import "std/io";
 
 function main(): i32 {
@@ -418,11 +357,6 @@ function main(): i32 {
 	}
 }
 
-// TestWasmPreview2ReadWriteFile exercises the convenience
-// helpers `write_file` / `read_file` through the preview-2
-// pipeline. Both delegate to the open_reader / open_writer
-// helpers from step 3c, so they go through native
-// `wasi:filesystem` instead of preview-1 `path_open`.
 func TestWasmPreview2ReadWriteFile(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("preview-2 toolchain not exercised on windows")
@@ -436,9 +370,6 @@ func TestWasmPreview2ReadWriteFile(t *testing.T) {
 
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "rwf.fern")
-	// Force the read_file accumulator to grow at least once so we
-	// also exercise the doubling + memory.copy path. The initial
-	// buffer is 4 KiB, so we write a payload past that.
 	if err := os.WriteFile(srcPath, []byte(`function main(): i32 {
     let content = "";
     let i = 0;
@@ -497,19 +428,6 @@ func TestWasmPreview2ReadWriteFile(t *testing.T) {
 	}
 }
 
-// TestWasmPreview2TcpEcho exercises the wasi:sockets pipeline:
-// the guest itself binds a TCP port, accepts one connection,
-// echoes the bytes received, then closes. Pre-step-4 this would
-// have required `wasmtime --tcp-listen=…` since preview-1 had
-// no way for the guest to open a listener; now the guest is
-// self-contained — the only host privilege needed is
-// `-S inherit-network` for outbound socket creation.
-//
-// Picking a port: the guest binds 0 and prints the port
-// tcp_local_port reports, and the host dials what it read. That
-// replaces probing for a free port on the host and handing it to
-// the guest, which raced anything else on the machine between the
-// probe closing and the guest binding.
 func TestWasmPreview2TcpEcho(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("preview-2 toolchain not exercised on windows")
@@ -523,9 +441,6 @@ func TestWasmPreview2TcpEcho(t *testing.T) {
 
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "echo.fern")
-	// The guest announces where it is listening. `tcp_listen(0)`
-	// takes whatever port is free and `tcp_local_port` reads it
-	// back off the socket, so no port is named anywhere.
 	src := `import "core/int";
 import "std/net";
 
@@ -566,9 +481,6 @@ function main(): i32 {
 		t.Fatalf("fern -target wasm32-wasi: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
 	}
 
-	// Spawn the server. `-S inherit-network` lets the guest
-	// create + bind sockets via wasi:sockets — without it the
-	// host denies tcp-create-socket / start-bind.
 	run := exec.Command("wasmtime", "run", "-S", "inherit-network", componentPath)
 	stdout, err := run.StdoutPipe()
 	if err != nil {
@@ -579,7 +491,6 @@ function main(): i32 {
 	if err := run.Start(); err != nil {
 		t.Fatalf("wasmtime run start: %v", err)
 	}
-	// Make sure we always reap the process even on failure.
 	t.Cleanup(func() {
 		if run.Process != nil {
 			run.Process.Kill()
@@ -587,9 +498,6 @@ function main(): i32 {
 		run.Wait()
 	})
 
-	// The guest's first line is the port it bound. Reading it is
-	// also the readiness signal: it is printed after start-listen
-	// returns, so there is nothing to poll for and no retry loop.
 	port := readGuestPort(t, stdout, &serr)
 
 	conn, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", itoa(port)), 5*time.Second)
@@ -602,8 +510,6 @@ function main(): i32 {
 	if _, err := conn.Write([]byte(want)); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	// Half-close the write side so the guest's read
-	// returns even if it asked for more bytes than we sent.
 	if cw, ok := conn.(*net.TCPConn); ok {
 		cw.CloseWrite()
 	}
@@ -620,10 +526,6 @@ function main(): i32 {
 	}
 }
 
-// readGuestPort reads the port a self-announcing guest prints on its first
-// stdout line. A guest that dies before printing gives an EOF here rather than
-// a dial that times out against a port nobody ever bound, so the failure names
-// the real cause.
 func readGuestPort(t *testing.T, stdout io.Reader, serr *bytes.Buffer) int {
 	t.Helper()
 	type result struct {
@@ -651,12 +553,6 @@ func readGuestPort(t *testing.T, stdout io.Reader, serr *bytes.Buffer) int {
 	}
 }
 
-// TestWasmPreview2TcpServerStdoutAdapterFree composes an adapter-free
-// TCP echo server that also print()s — TCP + CLI-stream stdout mixing.
-// The composed request surfaces wasi:cli/stdout.get-stdout and reuses
-// net.write's output-stream.blocking-write-and-flush lowering for the log
-// write. Built with `-target wasm32-wasi` (no adapter); a Go client round-trips
-// a payload, and the print output is verified in wasmtime's stdout.
 func TestWasmPreview2TcpServerStdoutAdapterFree(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("preview-2 toolchain not exercised on windows")
@@ -765,33 +661,11 @@ function main(): i32 {
 	if err := run.Wait(); err != nil {
 		t.Fatalf("wasmtime exit: %v\nstdout:\n%s\nstderr:\n%s", err, sout.String(), serr.String())
 	}
-	// The two print()s land on the server's stdout.
 	if !bytes.Contains(sout.Bytes(), []byte("LISTENING")) || !bytes.Contains(sout.Bytes(), []byte("GOTDATA")) {
 		t.Errorf("expected LISTENING + GOTDATA in server stdout, got:\n%s", sout.String())
 	}
 }
 
-// TestWasmPreview2UdpSendAdapterFree drives the send-only UDP path:
-// net.udp_socket + net.send_to composed adapter-free (`-target wasm32-wasi`,
-// no -wasi-adapter) through the unified composer. A Go net.ListenPacket
-// UDP socket stands in for the agent; the guest creates a socket, binds
-// an ephemeral port, connects to the listener, sends one datagram, and
-// exits 0. The test then reads the datagram off the socket and checks
-// its bytes — proving the create → bind → stream → send → drop pipeline
-// runs end-to-end on wasmtime's host sockets.
-// TestWasmPreview2UdpSendStdoutAdapterFree is the UDP send path plus
-// print() — a telemetry client that logs. UDP's datagram path isn't
-// io/streams, so the composed request pulls in a fresh wasi:io/streams
-// (output side) + wasi:cli/stdout for the log write. The datagram is
-// received by a Go socket and the log line lands on the guest's stdout.
-// runWasmtimeUDPFlaky runs a one-shot UDP-datagram preview2 component under
-// wasmtime with a bounded retry. The wasi:sockets UDP send path races
-// intermittently under wasmtime (ephemeral-port bind / send-teardown timing):
-// it exit-1's on roughly 1-in-3 runs and clears on an identical re-run — the
-// classic environmental-race signature tracked in #4358. A genuine fault
-// fails every attempt (deterministic), so bounded retry self-heals the race
-// without masking real regressions. Returns the combined output of the first
-// successful run; fails the test only if all attempts fail.
 func runWasmtimeUDPFlaky(t *testing.T, label string, args ...string) []byte {
 	t.Helper()
 	const attempts = 4
@@ -902,21 +776,12 @@ func TestWasmPreview2UdpSendAdapterFree(t *testing.T) {
 		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
 	}
 
-	// Run the client (synchronous: sends one datagram, exits 0) several
-	// times against the one compiled component. The repeat is the
-	// regression guard for the send-retry in __fern_udp_sendto_bytes: wasmtime's
-	// `send` legitimately accepts 0 of the 1 datagram at a few-percent
-	// rate on loopback (the send permit is a snapshot), and before the
-	// runtime re-entered the permit wait and resent, that surfaced here
-	// as a rare exit-1 flake — one send per CI run almost never caught
-	// it, ten make a regression fail fast.
 	for i := 0; i < 10; i++ {
 		run := exec.Command("wasmtime", "run", "-S", "inherit-network", componentPath)
 		if out, err := run.CombinedOutput(); err != nil {
 			t.Fatalf("wasmtime run (udp client, iteration %d): %v\n%s", i, err, out)
 		}
 
-		// The datagram is buffered on the socket; read it back.
 		pc.SetReadDeadline(time.Now().Add(3 * time.Second))
 		buf := make([]byte, 2048)
 		n, _, err := pc.ReadFrom(buf)
@@ -929,13 +794,6 @@ func TestWasmPreview2UdpSendAdapterFree(t *testing.T) {
 	}
 }
 
-// TestWasmPreview2TcpUdpAdapterFree puts both socket families in one
-// program: a TCP listener and a UDP datagram send. The unified composer
-// surfaces wasi:sockets/tcp and wasi:sockets/udp over one
-// instance-network, sharing the io/poll + io/streams instances; before
-// unification the shape-specific composers could each emit only their
-// own family. Runs under `wasmtime run -S inherit-network`; a Go
-// packet listener must receive the datagram.
 func TestWasmPreview2TcpUdpAdapterFree(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("preview-2 toolchain not exercised on windows")
@@ -954,7 +812,6 @@ func TestWasmPreview2TcpUdpAdapterFree(t *testing.T) {
 	defer pc.Close()
 	udpPort := pc.LocalAddr().(*net.UDPAddr).Port
 
-	// A free TCP port for the listen(); nothing connects to it.
 	probe, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("probe listen: %v", err)
@@ -1011,12 +868,6 @@ func TestWasmPreview2TcpUdpAdapterFree(t *testing.T) {
 	}
 }
 
-// TestWasmPreview2UdpFileAdapterFree folds the filesystem read
-// open-chain into the UDP composer: a program that reads a payload off
-// disk and ships it as a datagram (the log-shipper shape). It mixes
-// wasi:sockets/udp + wasi:filesystem/{types,preopens} + wasi:io/streams,
-// which the shape-specific UDP composer could not express. Runs under
-// `wasmtime run --dir`; the datagram must carry the file's bytes.
 func TestWasmPreview2UdpFileAdapterFree(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("preview-2 toolchain not exercised on windows")
@@ -1091,15 +942,6 @@ func TestWasmPreview2UdpFileAdapterFree(t *testing.T) {
 	}
 }
 
-// TestWasmPreview2TcpFileServerAdapterFree is the motivating
-// composer-unification case: a static file server — a TCP server that
-// reads a file off disk and serves it, while logging to stdout —
-// composes adapter-free (`-target wasm32-wasi`, no -wasi-adapter). It mixes
-// wasi:sockets/tcp + wasi:io/streams + wasi:cli/stdout +
-// wasi:filesystem (the read open-chain), which only compose together
-// once the TCP composer folds in the filesystem read open-chain. Runs
-// under `wasmtime run --dir` (the cli/run world grants filesystem); a Go
-// client fetches the served bytes and they must equal the file content.
 func TestWasmPreview2TcpFileServerAdapterFree(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("preview-2 toolchain not exercised on windows")
@@ -1206,13 +1048,6 @@ func TestWasmPreview2TcpFileServerAdapterFree(t *testing.T) {
 	}
 }
 
-// TestWasmPreview2TcpFileWriteAdapterFree covers the write + append
-// directions of the TCP composer's filesystem open-chain (a server that
-// writes access logs / uploads to disk). write and append are separate
-// programs — the filesystem/types instance type is single-direction, so
-// one program can't do both (nor read+write). Each composes adapter-free
-// (`-target wasm32-wasi`) and runs under `wasmtime run --dir`; the on-disk file
-// content is checked.
 func TestWasmPreview2TcpFileWriteAdapterFree(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("preview-2 toolchain not exercised on windows")
@@ -1228,8 +1063,6 @@ func TestWasmPreview2TcpFileWriteAdapterFree(t *testing.T) {
 	if out, err := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
 		t.Fatalf("go build lang: %v\n%s", err, out)
 	}
-	// Each phase: a TCP listen+close server (no accept needed) that also
-	// touches a file, run with its own preopen dir; check the file.
 	run := func(name, src, file, want string) {
 		root := filepath.Join(dir, name)
 		if err := os.Mkdir(root, 0o755); err != nil {
@@ -1257,7 +1090,6 @@ func TestWasmPreview2TcpFileWriteAdapterFree(t *testing.T) {
 			t.Fatalf("%s: on-disk = %q; want %q", name, string(got), want)
 		}
 	}
-	// A free port for the listen() (closed immediately; no client).
 	probe, _ := net.Listen("tcp", "127.0.0.1:0")
 	port := probe.Addr().(*net.TCPAddr).Port
 	probe.Close()
@@ -1284,10 +1116,6 @@ func TestWasmPreview2TcpFileWriteAdapterFree(t *testing.T) {
 }`, "a.log", "entry\n")
 }
 
-// TestWasmPreview2TcpStdinAdapterFree exercises TCP + stdin: a server
-// that reads a line from stdin (e.g. config) then listens, composed
-// adapter-free. The composed request surfaces wasi:cli/stdin's
-// get-stdin. Run with stdin piped; the echoed line confirms the read.
 func TestWasmPreview2TcpStdinAdapterFree(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("preview-2 toolchain not exercised on windows")
@@ -1342,14 +1170,6 @@ function main(): i32 {
 	}
 }
 
-// TestWasmPreview2SocketCliExtrasAdapterFree exercises the composer
-// unification: a TCP server and a UDP client that ALSO use the
-// standalone CLI capabilities (now() / env() / print()) compose
-// adapter-free, where before those mixes forced -wasi-adapter. Both run
-// under wasi:cli/run (`wasmtime run`), whose full CLI world grants
-// clocks / environment. The TCP side (listen+close + now+env+print)
-// runs to exit 0; the UDP side reads its target host from env, stamps
-// now(), and the datagram is received by a Go socket.
 func TestWasmPreview2SocketCliExtrasAdapterFree(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("preview-2 toolchain not exercised on windows")
@@ -1380,7 +1200,6 @@ func TestWasmPreview2SocketCliExtrasAdapterFree(t *testing.T) {
 		return comp
 	}
 
-	// TCP listen+close server that also stamps now(), reads env(), prints.
 	tcpProbe, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("probe: %v", err)
@@ -1401,7 +1220,6 @@ func TestWasmPreview2SocketCliExtrasAdapterFree(t *testing.T) {
 		t.Fatalf("wasmtime run (tcp+now+env+print): %v\n%s", err, out)
 	}
 
-	// UDP client: target host from env, payload sent; datagram received.
 	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen udp: %v", err)
@@ -1430,8 +1248,6 @@ func TestWasmPreview2SocketCliExtrasAdapterFree(t *testing.T) {
 	}
 }
 
-// fernUDPSend opens a Fern program with send_datagram, which sends data from
-// an ephemeral port to ip:port and answers whether the host accepted it.
 const fernUDPSend = `import "std/net";
 import "std/string";
 
@@ -1451,9 +1267,6 @@ function send_datagram(ip: net.IpAddr, port: i32, data: string): boolean {
 
 `
 
-// itoa is a tiny strconv.Itoa shim — we don't import strconv
-// elsewhere in this file and the cost of pulling it in for one
-// call isn't worth it.
 func itoa(n int) string {
 	if n == 0 {
 		return "0"
@@ -1476,17 +1289,6 @@ func itoa(n int) string {
 	return string(b[i:])
 }
 
-// TestWasmPreview2HttpHandler exercises step 5: the
-// `fern -target wasm32-wasi-http` build mode emits a component that
-// implements `wasi:http/incoming-handler.handle`. We compile a
-// tiny router (path == /hello → 200 "world"; POST any path
-// echoes the body), spawn `wasmtime serve`, drive it with curl
-// equivalents through Go's net/http client, and assert that
-// method / path / body all flow through correctly.
-//
-// This is the same WIT shape Fastly Compute, Netlify Edge
-// Functions, and Unikraft Cloud target — proxy-world components
-// produced here run on any of those without extra glue.
 func TestWasmPreview2HttpHandler(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("preview-2 toolchain not exercised on windows")
@@ -1498,10 +1300,6 @@ func TestWasmPreview2HttpHandler(t *testing.T) {
 		t.Skip("wasmtime not on PATH; skipping preview-2 e2e")
 	}
 
-	// Pick a free port. wasmtime serve's --addr binds eagerly
-	// without retrying, so we hand it a kernel-assigned ephemeral
-	// port and hope nobody else races us into it before serve
-	// starts. Same trade-off as TestWasmPreview2TcpEcho.
 	probe, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("probe listen: %v", err)
@@ -1562,10 +1360,6 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 		run.Wait()
 	})
 
-	// Wait for wasmtime to start listening. wasmtime serve writes
-	// "Serving HTTP on http://…" to stderr once it's bound, but
-	// dialing in a retry loop is simpler and matches what other
-	// component-model HTTP harnesses do.
 	client := &http.Client{Timeout: 5 * time.Second}
 	deadline := time.Now().Add(5 * time.Second)
 	var resp *http.Response
@@ -1601,10 +1395,6 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 		t.Errorf("/missing body = %q; want %q", string(body), "not found")
 	}
 
-	// POST round-trip exercises the body-read pipeline (consume +
-	// stream + bulk blocking-read). Use a short body that fits in
-	// one read; the doubling accumulator is exercised separately
-	// by spec-shaped programs but we keep this one fast.
 	want := "echo me back"
 	resp, err = client.Post("http://"+addr+"/echo", "text/plain", strings.NewReader(want))
 	if err != nil {
@@ -1620,15 +1410,6 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 	}
 }
 
-// TestWasmPreview2HttpHandlerResponseHeaders pins the wasi:http
-// wrapper's response-header marshalling: a handler that builds a
-// HeaderMap and `.set`s custom headers must have them surface on the
-// wire. Regression guard for the bug where the wrapper read the
-// user's `string[]` headers at the wrong (length-prefixed) offsets
-// and passed SSO-inline header strings straight to
-// `fields.append` — both produced an out-of-bounds trap (500). The
-// short value "fern" exercises the inline-SSO path; "text/plain"
-// (>7 bytes) exercises the heap-string path.
 func TestWasmPreview2HttpHandlerResponseHeaders(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("preview-2 toolchain not exercised on windows")
@@ -1719,14 +1500,6 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 	}
 }
 
-// TestWasmPreview2HttpHandlerRequestHeaders drives several requests
-// with different `x-echo` header values through ONE handler instance
-// and asserts each is read back correctly. The wrapper builds the
-// request HeaderMap's backing string[]s before populating them from
-// fields.entries; this guards that those arrays are valid empty
-// growable arrays (len read from the canonical -4 slot) rather than
-// relying on the bytes preceding the allocation, so request 2+ does
-// not read a garbage length from recycled memory.
 func TestWasmPreview2HttpHandlerRequestHeaders(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("preview-2 toolchain not exercised on windows")
@@ -1790,8 +1563,6 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	deadline := time.Now().Add(5 * time.Second)
-	// Several distinct values, sent in sequence to the same instance,
-	// so request 2+ runs against memory the prior request used.
 	wants := []string{"first", "second-value", "third"}
 	for i, want := range wants {
 		var resp *http.Response
@@ -1818,16 +1589,6 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 	}
 }
 
-// TestWasmPreview2HttpHandlerLoggingAdapterFree composes an adapter-free
-// wasi:http handler that also print()s — exercising TCP/http + CLI-stream
-// mixing. ComposeHttpHandler surfaces wasi:cli/stdout.get-stdout and
-// reuses the body's output-stream.blocking-write-and-flush lowering for
-// the log write. The handler logs through its bag (`plat.log`, which is
-// `eprint`: a handler reaching `print` around the bag is E080), so a
-// successful 200 proves the stderr path is wired (a broken handle would
-// trap mid-request); the component is also checked to import
-// wasi:cli/stderr, and the log line is verified in wasmtime's captured
-// stderr.
 func TestWasmPreview2HttpHandlerLoggingAdapterFree(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("preview-2 toolchain not exercised on windows")
@@ -1918,26 +1679,12 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 	if string(body) != "logged" {
 		t.Errorf("/ping body = %q; want %q", string(body), "logged")
 	}
-	// The log line lands on wasmtime serve's captured stderr (prefixed
-	// per-stream). Give it a moment to flush, then confirm it.
 	time.Sleep(200 * time.Millisecond)
 	if !bytes.Contains(serr.Bytes(), []byte("LOGLINE GET /ping")) {
 		t.Errorf("expected log line in server stderr, got:\n%s", serr.String())
 	}
 }
 
-// TestWasmPreview2HttpHandlerClockAdapterFree exercises an HTTP handler
-// that also uses the clocks and entropy through its bag (`plat.now_ms` /
-// `plat.elapsed_ns` / `plat.random_i32`, which are now_unix_ms /
-// monotonic_ns / random_i32) — the standalone CLI capabilities the
-// wasi:http/proxy world `wasmtime serve` grants (wasi:clocks +
-// wasi:random). ComposeHttpHandler lowers them via the
-// shared MemTramp / Structured path, so a handler that stamps a
-// timestamp composes adapter-free and serves. (env() / files are NOT
-// granted by the proxy world, so they still route to -wasi-adapter —
-// covered by the rejection check at the end.) Also a regression guard
-// for the alloc 8-byte alignment fix: now()'s record has a u64 field
-// whose retptr traps if only 4-aligned.
 func TestWasmPreview2HttpHandlerClockAdapterFree(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("preview-2 toolchain not exercised on windows")
@@ -2023,14 +1770,6 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 		t.Fatalf("status=%d body=%q; want 200 \"clock-ok\" (stderr=%q)", resp.StatusCode, string(body), serr.String())
 	}
 
-	// env is not granted by the wasi:http/proxy world `wasmtime serve`
-	// runs — the world has no `wasi:cli/environment` import, and a
-	// component carrying one fails to link at instantiation. So a handler
-	// reading the environment, through its bag (a bare `env()` is E080
-	// before any target is consulted), must be rejected, and it is
-	// rejected by the target capability gate at check time (E066, naming
-	// the builtin the bag method reaches) rather than by the composer
-	// after codegen.
 	envSrc := `
 import "std/http";
 import "std/platform";
@@ -2052,15 +1791,6 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 	}
 }
 
-// TestWasmPreview2HttpHandlerAdapterFree is TestWasmPreview2HttpHandler
-// without the preview-1 adapter: `-target wasm32-wasi-http` (no -wasi-adapter)
-// composes the wasi:http/incoming-handler component natively through
-// the Go-side ComposeHttpHandler — importing wasi:http/types +
-// wasi:io/streams and exporting wasi:http/incoming-handler. It needs no
-// FERN_WASI_ADAPTER; a green run proves the whole http/types method
-// surface (request accessors, body read via consume+stream+blocking-read,
-// fields, outgoing-response build, outgoing-body write, response-outparam
-// set) lowers and runs under `wasmtime serve`.
 func TestWasmPreview2HttpHandlerAdapterFree(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("preview-2 toolchain not exercised on windows")
@@ -2181,17 +1911,6 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 	}
 }
 
-// TestWasmPreview2HttpHandlerPlatformCapabilities drives the capability
-// methods `std/platform` puts on the handler's bag through the proxy world
-// — the target the bag was designed for (docs/PLATFORM-RESEARCH.md Rec §1).
-// The proxy profile grants log / now / random and nothing else, so this is
-// also where the capability split matters: the handler's output stream is
-// `plat.log`, there being no stdout to fall back on, and `plat.env` is an
-// E066 here rather than something to call.
-//
-// The status carries whether the clocks and entropy answered (the body
-// names the one that did not), and wasmtime's stderr carries what
-// `plat.log` wrote.
 func TestWasmPreview2HttpHandlerPlatformCapabilities(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("preview-2 toolchain not exercised on windows")
@@ -2283,10 +2002,6 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 		t.Errorf("/caps body = %q; want %q", string(body), "caps-ok")
 	}
 
-	// The guest's log line reaches the host's stderr through
-	// wasi:cli/stderr, which is what the `log` capability names. It is
-	// written before the response is sent but arrives on a different
-	// stream, so give it a moment rather than racing the read.
 	logged := false
 	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); {
 		if strings.Contains(serr.String(), "handled /caps") {

@@ -1,15 +1,3 @@
-// compiler/drivers/lint_ratchet_run.fern — the measurements the repository's
-// complexity ratchet holds each first-party tree to
-// (internal/testing/e2ecompiler/self_host_lint_ratchet_test.go). For each
-// directory argument it prints
-//
-//     tree DIR worst NAME SCORE excess N
-//
-// where SCORE is the highest complexity any function reaches, suppressed ones
-// included, and N the summed distance over the default limit of the
-// unsuppressed functions above it; then one `directive FILE:LINE: MESSAGE`
-// line per malformed `fern-lint:` comment.
-
 import "../coverreport";
 import "../lexer";
 import "../lint";

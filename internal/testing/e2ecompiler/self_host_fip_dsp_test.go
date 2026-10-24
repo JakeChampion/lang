@@ -41,7 +41,6 @@ func testDSPOracle(t *testing.T, module string) {
 		{"large_block", 257, 31},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			// Scalar stream oracle: no staged buffers or subject helper calls.
 			ring := make([]float64, tc.delay)
 			cursor := 0
 			previous, previous2 := 0.0, 0.0
@@ -67,8 +66,6 @@ func testDSPOracle(t *testing.T, module string) {
 					cursor = (cursor + 1) % len(ring)
 					output[i] = min(1.0, max(-1.0, filtered*0.75+wet*0.5))
 				}
-				// Keep oracle literals in separate functions so GNU as can flush
-				// each function's ARM literal pool. These execute before the mark.
 				for _, fixture := range []struct {
 					name   string
 					values []float64
@@ -78,8 +75,6 @@ func testDSPOracle(t *testing.T, module string) {
 				}
 				fmt.Fprintf(&checks, "g = dsp_fip.process(g, input%d, %d);\nif (__heap_alloc_count() != mark) { return 10; }\nif (!same(g.output, output%d) || !same(g.delay, ring%d)) { return 11; }\nif (g.cursor != %d || g.samples != %di64 || g.output_count != %d || g.refused || !near(g.previous, %s) || !near(g.previous2, %s)) { return 12; }\n", block, tc.block, block, block, cursor, (block+1)*tc.block, tc.block, strconv.FormatFloat(previous, 'f', 12, 64), strconv.FormatFloat(previous2, 'f', 12, 64))
 			}
-			// Constants and input live outside the allocation mark. This includes
-			// the FIRST callback after construction, without a warm-up exemption.
 			source := `import "./dsp_core";
 import "./dsp_fip";
 ` + fixtures.String() + `
@@ -95,8 +90,6 @@ g = dsp_fip.process(g, input0, -1);
 if (!g.refused || g.output_count != 0 || !same(g.delay, before.delay) || !same(g.output, before.output) || g.samples != before.samples || g.cursor != before.cursor || !near(g.previous, before.previous) || !near(g.previous2, before.previous2)) { return 14; }
 return 0; } } }
 `, tc.block, 5*tc.block)
-			// The ordinary loop receives the same oracle, without imposing a
-			// contract on its allocation count. The benchmark measures that count.
 			source = strings.ReplaceAll(source, "dsp_fip", module)
 			if module == "dsp_direct" {
 				source = strings.ReplaceAll(source, "if (__heap_alloc_count() != mark) { return 10; }", "")

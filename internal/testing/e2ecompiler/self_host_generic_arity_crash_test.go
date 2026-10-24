@@ -9,8 +9,6 @@ import (
 	"testing"
 )
 
-// writeTempFern writes one case's source into dir and returns its path, so the
-// interpreter can be asked about the same text the driver is handed.
 func writeTempFern(t *testing.T, dir, name, src string) string {
 	t.Helper()
 	path := filepath.Join(dir, "genarity_"+name+".fern")
@@ -20,33 +18,10 @@ func writeTempFern(t *testing.T, dir, name, src string) string {
 	return path
 }
 
-// genericArityCrashCases pin that a generic type-argument list whose length does
-// not match the declaration is REJECTED rather than aborting the compiler.
-//
-// The monomorphiser compares the supplied argument count to the declared
-// type-parameter count where it registers an instantiation (`mg_ty` for
-// structs, `genum_key_from_anno` for enums). Unchecked, the clone loop zips the
-// short key against the full parameter list and `subst_ty`'s `cts[k]` indexes
-// past the end: the driver dies with "array index out of range" and exit 134 on
-// programs the Go front end diagnoses cleanly (E019). internal/oracle/monomorph
-// guards at the same place.
-//
-// The trigger is the UNSUPPLIED parameter being reachable, not the annotation
-// itself: `struct Pair[A, B] { first: A, second: A }` with `Pair[i32]` never
-// makes `tp_index` return 1, so it does not crash even unguarded. That is the
-// `unused_tparam_still_rejected` case below — it must still be refused, but it
-// is the one shape that would pass a test that only asserted "no crash".
-//
-// The struct and enum routes each need their own guard: with `mg_ty`'s alone,
-// the six struct cases pass and all four enum cases still exit 134.
 var genericArityCrashCases = []struct {
 	name string
 	src  string
 }{
-	// Struct, one argument short, at each annotation position. The `let` and
-	// return positions were the ones the checker did not report E019 for when
-	// this was written, so nothing stopped them reaching the monomorphiser; the
-	// guard stays, since the checker's verdict is not what the driver runs on.
 	{"struct_var", `struct Pair[A, B] { first: A, second: B }
 function main(): i32 { let p: Pair[i32] = Pair { first: 1, second: 2 }; return p.first; }`},
 	{"struct_param", `struct Pair[A, B] { first: A, second: B }
@@ -58,20 +33,13 @@ function main(): i32 { return 0; }`},
 	{"struct_return", `struct Pair[A, B] { first: A, second: B }
 function f(): Pair[i32] { return Pair { first: 1, second: 2 }; }
 function main(): i32 { return 0; }`},
-	// An array of the under-supplied instantiation, so the mismatch is reached
-	// through mg_ty's recursion rather than at the top of the annotation.
 	{"struct_nested_array", `struct Pair[A, B] { first: A, second: B }
 function main(): i32 { let xs: Pair[i32][] = []; return 0; }`},
-	// Two short rather than one, so the guard cannot be an off-by-one that only
-	// happens to cover a single missing argument.
 	{"struct_three_params_one_supplied", `struct T[A, B, C] { a: A, b: B, c: C }
 function main(): i32 { let p: T[i32] = T { a: 1, b: 2, c: 3 }; return p.a; }`},
 	{"unused_tparam_still_rejected", `struct Pair[A, B] { first: A, second: A }
 function main(): i32 { let p: Pair[i32] = Pair { first: 1, second: 2 }; return p.first; }`},
 
-	// Generic ENUMS take a different route to the same zip: ge_inst_of and
-	// me_collect_anno both build the key through genum_key_from_anno, which is
-	// why the guard lives there rather than on one caller.
 	{"enum_var", `enum E[A, B] { L(A), R(B) }
 function main(): i32 { let e: E[i32] = L(1); return 0; }`},
 	{"enum_param", `enum E[A, B] { L(A), R(B) }
@@ -84,9 +52,6 @@ function main(): i32 { return 0; }`},
 function main(): i32 { let e: E[i32] = L(1); return 0; }`},
 }
 
-// genericArityOKCases are the negative controls: correct arity must still
-// monomorphise and run. Without these the guards could pass the cases above by
-// refusing every generic instantiation.
 var genericArityOKCases = []struct {
 	name string
 	src  string
@@ -102,11 +67,6 @@ function main(): i32 { let b: Box2[i32] = Wrap(5); match (b) { Wrap(v) => { retu
 function main(): i32 { match (f()) { Some(v) => { return v; }, None => { return 0; } } }`, 3},
 }
 
-// TestSelfHostGenericArityNoCrashX86_64 asserts the driver never aborts on a
-// mismatched-arity instantiation. Refusing the module is a legitimate outcome
-// here — the programs are invalid and the interpreter rejects them — so the
-// assertion is on the FAILURE MODE, not on the exit code: a diagnostic is fine,
-// a bounds abort is not.
 func TestSelfHostGenericArityNoCrashX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -118,9 +78,6 @@ func TestSelfHostGenericArityNoCrashX86_64(t *testing.T) {
 	for _, tc := range genericArityCrashCases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			// The interpreter is the validity check: every case here must be a
-			// program it REJECTS, else the test is pinning a crash on a
-			// legitimate program and the guard is wrong rather than the compiler.
 			if _, code := runFixtureInterp(t, writeTempFern(t, dir, tc.name, tc.src), ""); code == 0 {
 				t.Fatalf("%s: interp accepted the program — it is not an arity error, "+
 					"so refusing it would be a regression, not a fix", tc.name)
@@ -150,8 +107,6 @@ func TestSelfHostGenericArityNoCrashX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostGenericArityStillCompilesX86_64 is the other half: a correctly
-// applied generic still monomorphises, emits, and produces the oracle's answer.
 func TestSelfHostGenericArityStillCompilesX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

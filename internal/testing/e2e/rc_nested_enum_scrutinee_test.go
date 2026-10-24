@@ -4,25 +4,6 @@ import (
 	"testing"
 )
 
-// #7910 (d) — a NESTED enum payload consumed straight off a call.
-//
-// `match (mk(i)) { Some(o) => { match (o) { Some(xs) => … } } … }` binds `o`,
-// a pointer to the inner box, and reads it through a second match. The fresh
-// scrutinee reclaim (reclaimableMatchScrutinee) admits a pointer binding only
-// when it is confined to its arm, and bindingConfinedToArm's excuse list —
-// field access, index, borrowing call argument — had no entry for "the
-// scrutinee of a nested match", so `o` read as an escape and the outer box
-// was never released: outer box, inner box and payload all stranded, one set
-// per call. Every single-level position (Ok / Err / Some, string / string[] /
-// i32[]) was already clean, and so was the same nested value once BOUND to a
-// local first; the leak was the direct-call position alone.
-//
-// A nested match whose arms bind no `@`, no sub-pattern, and confine their
-// own pointer bindings is now excused, so the join's deep drop reaches the
-// inner box through the generated __drop_enum_ for the instantiation.
-
-// The four nested positions the isolation table found leaking, each read
-// through a nested match statement with the payload confined to its arm.
 const nestedEnumScrutineeSrc = `function w(i: i32): string { let t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
 enum In { S(string[]), N }
 function mk_oo(i: i32): Option[Option[string[]]] { if (i % 3 == 0) { return None; } return Some(Some([w(i)])); }
@@ -65,11 +46,6 @@ function main(): i32 {
 }`
 }
 
-// Value correctness + zero over-release on the same positions: the inner
-// payload must still read right inside the arm, and the join's deep drop must
-// release each box exactly once — the direction leakcheck cannot see. The
-// inner match binding is read through a method AND indexed, so a premature
-// free of the inner box or its array would change the answer.
 const nestedEnumScrutineeUnderflowSrc = `function w(i: i32): string { let t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
 function mk_oo(i: i32): Option[Option[string[]]] { if (i % 3 == 0) { return None; } return Some(Some([w(i), w(i + 1)])); }
 function mk_ro(i: i32): Result[Option[string[]], string] { if (i % 2 == 0) { return Err(w(i)); } return Ok(Some([w(i)])); }
@@ -148,15 +124,6 @@ func TestWASMNestedEnumScrutineeReclaim(t *testing.T) {
 	}
 }
 
-// The ALIASED-payload half of the same rule, which the table above cannot see
-// — every payload there is freshly built inside the producer.
-//
-// `Some(Some(pre))` over a live local counts `pre` into the inner box, and
-// the outer join's reclaim is a DEEP drop that reaches the inner box through
-// the generated __drop_enum_, so that drop must release only the count the
-// construction took. The in-arm `xs[0].len()` pins the payload still
-// readable through the copy, and the post-loop `pre[0].len()` pins the
-// caller's array surviving every round.
 const nestedEnumScrutineeAliasedPayloadSrc = `@noinline
 function mk(pre: string[]): Option[Option[string[]]] { return Some(Some(pre)); }
 

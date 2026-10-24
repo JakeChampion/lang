@@ -1,13 +1,5 @@
 package e2e
 
-// Differential coverage for std/array `running_max` / `running_min` — the
-// running (prefix) maximum / minimum, the `cmp.Ord` cumulative siblings of
-// `num.cumsum`. `out[i]` reduces `xs[0..=i]`, so the result is monotonic and
-// its last element is the overall extremum. Checks the running values, the
-// monotonicity + last-element-is-overall properties, and the empty / single
-// inputs. Returns 42 iff every check holds across interp / x86-64 / wasm /
-// arm64.
-
 import "testing"
 
 const arrayRunningMinMaxProg = `

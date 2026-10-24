@@ -8,31 +8,6 @@ import (
 	"testing"
 )
 
-// --- A value block is not a closure -----------------------------------------
-//
-// Reading a struct local's field through a `match` EXPRESSION must not cost that
-// local — or any other struct local in the same function — its release. A match
-// expression is not an AST expression: parser.fern desugars it to a zero-arg
-// IIFE marked ORIGIN_MATCH_EXPR, one of the VALUE BLOCK origins the lowering
-// INLINES rather than calls, so no closure is built and the idents in its body
-// are not captures.
-//
-// The rows pair each value-block form with the identical program written
-// without one, so a regression shows up as the pair diverging rather than as a
-// number nobody can place. `if` expressions and block expressions use the same
-// origin set as `match` and are pinned here for that reason.
-//
-// Exit 99 is reserved for an over-release on every row: a value a real capture
-// still holds must not be freed, which is what the real_lambda_capture_refused
-// row guards from the other side.
-//
-// Every want was confirmed against bin/fern -interp, never read off the
-// self-host run.
-//
-// Counts here are ONE block per heap string: the box shares the buffer's
-// reserved header (#7351). A "Base:" figure in a row note predates that, at two
-// blocks per string.
-
 type matchExprBorrowCase struct {
 	name   string
 	src    string
@@ -59,9 +34,6 @@ function mkxs(i: i32): i32[] { let o: i32[] = [i, i + 1]; return o; }
 `
 	return []matchExprBorrowCase{
 		{
-			// THE REPRO. The match expression reads a field of an ALIASED struct
-			// local. Base: allocs=300 frees=0 — the payload, the enum box and the
-			// holder box all stranded, every round.
 			name: "match_expr_field_read_aliased",
 			src: enumDecls + `function round(i: i32): i32 {
     let q: P = P { f: mkv(i), n: i };
@@ -72,8 +44,6 @@ function mkxs(i: i32): i32[] { let o: i32[] = [i, i + 1]; return o; }
 			want: 5, allocs: 300, frees: 300,
 		},
 		{
-			// The control: byte-identical but for the field read, which is what
-			// makes the row above attributable. This one was ALWAYS clean.
 			name: "plain_field_read_aliased",
 			src: enumDecls + `function round(i: i32): i32 {
     let q: P = P { f: mkv(i), n: i };
@@ -84,9 +54,6 @@ function mkxs(i: i32): i32[] { let o: i32[] = [i, i + 1]; return o; }
 			want: 3, allocs: 300, frees: 300,
 		},
 		{
-			// No alias at all: a match expression over a plain local's field.
-			// The poisoning was never about the alias — the alias bind is just
-			// where the refusal became visible.
 			name: "match_expr_no_alias",
 			src: enumDecls + `function round(i: i32): i32 {
     let q: P = P { f: mkv(i), n: i };
@@ -96,9 +63,6 @@ function mkxs(i: i32): i32[] { let o: i32[] = [i, i + 1]; return o; }
 			want: 5, allocs: 300, frees: 300,
 		},
 		{
-			// An IF expression uses the same value-block origin set, so it was
-			// poisoning identically — with an array-field holder, to show the
-			// field kind was never what mattered.
 			name: "if_expr_field_read_aliased",
 			src: arrDecls + `function round(i: i32): i32 {
     let q: Q = Q { xs: mkxs(i), n: i };
@@ -109,7 +73,6 @@ function mkxs(i: i32): i32[] { let o: i32[] = [i, i + 1]; return o; }
 			want: 6, allocs: 200, frees: 200,
 		},
 		{
-			// A block expression, the third origin in the set.
 			name: "block_expr_field_read_aliased",
 			src: arrDecls + `function round(i: i32): i32 {
     let q: Q = Q { xs: mkxs(i), n: i };
@@ -120,9 +83,6 @@ function mkxs(i: i32): i32[] { let o: i32[] = [i, i + 1]; return o; }
 			want: 4, allocs: 200, frees: 200,
 		},
 		{
-			// The same shape one KIND over: a string[] local read through a
-			// match expression still releases its elements and buffer.
-			// Base: allocs=500 frees=100.
 			name: "match_expr_strarr_read",
 			src: `function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }
 function round(i: i32): i32 {
@@ -133,8 +93,6 @@ function round(i: i32): i32 {
 			want: 93, allocs: 300, frees: 300,
 		},
 		{
-			// Its control: the same program with a plain element read, always
-			// clean. The pair is what makes the row above attributable.
 			name: "plain_strarr_read",
 			src: `function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }
 function round(i: i32): i32 {
@@ -145,10 +103,6 @@ function round(i: i32): i32 {
 			want: 93, allocs: 300, frees: 300,
 		},
 		{
-			// A REAL lambda whose body mentions the local may run after
-			// this frame, so a release under a live closure would show as a
-			// wrong value or exit 99. The typed lowering reclaims the local
-			// after the closure is done with it.
 			name: "real_lambda_capture_refused",
 			src: arrDecls + `function apply(f: () => i32): i32 { return f(); }
 function round(i: i32): i32 {
@@ -162,7 +116,6 @@ function round(i: i32): i32 {
 	}
 }
 
-// TestSelfHostMatchExprBorrowX86_64 is the leak-accounting leg.
 func TestSelfHostMatchExprBorrowX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
@@ -201,8 +154,6 @@ func TestSelfHostMatchExprBorrowX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostMatchExprBorrowWasmIR — the wasm sibling. Exit codes only, so what
-// this leg catches is a release that frees a LIVE box on wasm.
 func TestSelfHostMatchExprBorrowWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping match-expr borrow wasm IR e2e")
@@ -241,7 +192,6 @@ func TestSelfHostMatchExprBorrowWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostMatchExprBorrowIRArm64 — the arm64 sibling under qemu.
 func TestSelfHostMatchExprBorrowIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

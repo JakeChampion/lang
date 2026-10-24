@@ -9,14 +9,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostWriteFileIRX86_64 routes the built-in write_file(path, content)
-// through the self-hosted x86-64 IR path (newly added op_write_file, the write
-// sibling of op_read_file) and verifies: routing is pinned to "ir", the compiled
-// binary's exit matches the interpreter oracle, AND the bytes actually landed in
-// the file. write_file returns Result[void, IoError] (Ok(()) on success), reusing the
-// existing __fern_write_file runtime. x86-64 only — no wasm file I/O
-// (wasm_eligible rejects write_file, like read_file). This was the last non-libm
-// CLI bail (tee); with it the whole CLI corpus except bc routes IR.
 func TestSelfHostWriteFileIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -30,8 +22,6 @@ func TestSelfHostWriteFileIRX86_64(t *testing.T) {
 
 	cases := []struct {
 		name string
-		// src is the content as written in the .fern string literal (with \n
-		// escapes); want is the actual bytes that should land in the file.
 		src  string
 		want string
 	}{
@@ -41,28 +31,24 @@ func TestSelfHostWriteFileIRX86_64(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Distinct output paths for the interpreter oracle vs the compiled binary.
 			interpOut := filepath.Join(t.TempDir(), "interp.out")
 			binOut := filepath.Join(t.TempDir(), "bin.out")
 			mk := func(path string) string {
 				return "function main(): i32 { match (write_file(\"" + path + "\", \"" + tc.src + "\")) { Err(_) => { return 1; }, Ok(_) => { return 0; } } }\n"
 			}
 
-			// Oracle: interpret, writing to interpOut.
 			want := interpExit(t, interpBin, mk(interpOut))
 			gotInterp, _ := os.ReadFile(interpOut)
 			if string(gotInterp) != tc.want {
 				t.Fatalf("interp wrote %q, want %q", gotInterp, tc.want)
 			}
 
-			// Routing must be IR (probe the binOut variant — path text doesn't affect routing).
 			src := []byte(mk(binOut))
 			path := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, src)))
 			if path != "ir" {
 				t.Fatalf("%s routed through %q path, want \"ir\"", tc.name, path)
 			}
 
-			// Compile + run, writing to binOut.
 			asm := runCapture(t, gcc, runner, driverBin, src)
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
@@ -84,12 +70,6 @@ func TestSelfHostWriteFileIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostWriteFileIRWasm routes write_file(path, content) through the wasm
-// IR backend under wasmtime, granting the run directory as preopen fd 3
-// (`--dir=.::/`). wasm_ir emits `call $__fern_write_file` and wasm_ir_run pulls
-// in the path_open / fd_close / fd_write imports + the writefile_func helper.
-// Each case writes to wf_<name>.txt and the test reads the bytes back from the
-// host run directory, asserting Ok (exit 0) and the exact content landed.
 func TestSelfHostWriteFileIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host write_file wasm IR e2e")

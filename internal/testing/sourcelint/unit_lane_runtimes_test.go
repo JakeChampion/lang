@@ -9,23 +9,6 @@ import (
 	"testing"
 )
 
-// CLAUDE.md: a SKIP is a missing dependency to fix, not a green light. The
-// unit lane was built so that a large family of tests could only ever skip
-// (#8472) — it owns the wasm unit packages and the arm64 run tests, and no
-// other lane runs them.
-//
-// Two independent halves, so two gates. A third gate below covers the same
-// class of false report from the other direction: a suite the harness kills
-// rather than one it never runs.
-
-// TestUnitLaneRequestsWasmtime pins the install. 902 test sites across
-// internal/ open with `exec.LookPath("wasmtime")` and t.Skip() without it, and
-// a skipped test reports `ok`, so dropping this input returns the whole wasm
-// unit surface to running nothing while staying green.
-//
-// Requesting it also arms setup-fern's preflight, which fails the JOB when a
-// requested tool is missing — that is what makes the coverage real rather than
-// hopeful.
 func TestUnitLaneRequestsWasmtime(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join("..", "..", "..", ".github", "workflows", "test-units.yml"))
 	if err != nil {
@@ -42,12 +25,6 @@ func TestUnitLaneRequestsWasmtime(t *testing.T) {
 	}
 }
 
-// TestArm64RunTestsFallBackToNative pins the second half. The lane also runs
-// on ubuntu-24.04-arm, which can execute an arm64 binary with no emulator at
-// all — but a bare qemu lookup skips there too. A run helper must fall back
-// to running the binary natively instead.
-//
-// internal/testing/e2ecompiler is excluded: it has its own lane, which installs qemu.
 func TestArm64RunTestsFallBackToNative(t *testing.T) {
 	scanned := 0
 	for _, root := range []string{"..", filepath.Join("..", "..", "..", "cmd")} {
@@ -81,12 +58,6 @@ func TestArm64RunTestsFallBackToNative(t *testing.T) {
 	}
 }
 
-// TestUnitLaneSetsAnExplicitTestTimeout pins the lane's -timeout.
-//
-// go test's default timeout is ten minutes, and a binary it kills reports the
-// cases that were in flight as failures with NO output and an unknown elapsed:
-// the lane names tests that did not fail and never names the timeout. So the
-// lane chooses its own rather than inheriting that default.
 func TestUnitLaneSetsAnExplicitTestTimeout(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join("..", "..", "..", ".github", "workflows", "test-units.yml"))
 	if err != nil {
@@ -102,20 +73,12 @@ func TestUnitLaneSetsAnExplicitTestTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse the lane's -timeout %q: %v", m[1], err)
 	}
-	// internal/syntax/printer, the longest package in the lane, measures
-	// ~6m30s. The margin is deliberately generous: the bound is on the
-	// slowest package, not the sum.
 	if mins < 20 {
 		t.Errorf("the units lane's -timeout is %dm, which leaves too little headroom above internal/syntax/printer (~6m30s) "+
 			"for the lane's other packages to grow into", mins)
 	}
 }
 
-// TestCoreutilsLaneRequestsWasmtime is the units lane's wasmtime gate, for the
-// lane internal/testing/coreutils moved to. internal/testing/coreutils/wasm_test.go opens with
-// `exec.LookPath("wasmtime")` and t.Skip()s without it, and a skipped test
-// reports ok (#8472) — so the install is what makes that case real, and
-// requesting it arms setup-fern's preflight to fail the job when it is absent.
 func TestCoreutilsLaneRequestsWasmtime(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join("..", "..", "..", ".github", "workflows", "test-coreutils.yml"))
 	if err != nil {
@@ -131,12 +94,6 @@ func TestCoreutilsLaneRequestsWasmtime(t *testing.T) {
 	}
 }
 
-// TestCoreutilsLaneHasTheGNUOracle pins the reference every GNU comparison is
-// made against. A parity case asks a GNU binary what the answer is, so without
-// the built 9.12 oracle a lane either fails wholesale against the image's 9.4
-// or — worse — reports version differences as Fern's bugs. The build is one
-// composite action, used by the coreutils lane and by the self-host shards,
-// whose byte tests compare the self-host's utilities with GNU's too.
 func TestCoreutilsLaneHasTheGNUOracle(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join("..", "..", "..", ".github", "actions", "gnu-coreutils", "action.yml"))
 	if err != nil {

@@ -8,19 +8,6 @@ import (
 	"testing"
 )
 
-// open(2)'s flag bits are not portable, and the ones the fs bundle uses differ
-// between Linux and XNU in every position: O_CREAT 0100 vs 0x200, O_TRUNC
-// 01000 vs 0x400, O_APPEND 02000 vs 0x8. The native arm64 backend emitted the
-// Linux words on Darwin too, which does not fail — it selects a different,
-// legal mode. 577 becomes O_WRONLY|O_ASYNC|O_CREAT (create, do NOT truncate)
-// and 1089 becomes O_WRONLY|O_ASYNC|O_TRUNC (an APPEND that empties the file).
-//
-// Both are invisible to a test that only writes to a fresh path, which is why
-// this checks the semantics against a PRE-EXISTING file. The macos-15 lane
-// executes these; everywhere else they still prove the target builds.
-
-// buildAndRunDarwin compiles `prog` for arm64-darwin and, on Apple Silicon,
-// runs it in `dir`. Returns false when the run was skipped.
 func buildAndRunDarwin(t *testing.T, dir, prog string) bool {
 	t.Helper()
 	bin := buildFernCLI(t)
@@ -50,8 +37,8 @@ func buildAndRunDarwin(t *testing.T, dir, prog string) bool {
 }
 
 const (
-	stale = "STALE-CONTENT-THAT-IS-LONG" // 26 bytes
-	fresh = "short"                      // 5 bytes
+	stale = "STALE-CONTENT-THAT-IS-LONG"
+	fresh = "short"
 )
 
 func TestArm64DarwinWriteFileTruncates(t *testing.T) {
@@ -111,8 +98,6 @@ func TestArm64DarwinOpenWriterTruncates(t *testing.T) {
 	}
 }
 
-// The append case is the more damaging half: XNU reads Linux's O_APPEND word
-// as O_TRUNC, so opening a log to add a line emptied it instead.
 func TestArm64DarwinOpenAppenderAppends(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "log.txt")

@@ -1,5 +1,5 @@
 import "core/map";
-// Map with string keys and i32 values (a portable K/V combo).
+
 function main(): i32 {
     let m: Map[string, i32] = map_new(4);
     m = m.insert("answer", 42);

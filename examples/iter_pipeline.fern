@@ -1,27 +1,14 @@
-// Iterator pipeline — a tour of the core/iter + core/cmp stdlib.
-//
-// `core/iter` is a generic iterator protocol (`Iterator[T]`); `iter.of(xs)`
-// adapts a plain `T[]` into one, and the lazy `filter` / `map` adapters and the
-// `collect` / `fold` sinks are methods every iterator gets from the trait.
-// `core/cmp`'s generic `sort` sorts the result. None of this is built into the
-// language — it is ordinary Fern over the trait machinery, and it lowers on
-// every backend (interp / x86-64 / arm64 / wasm).
 import "core/iter" as iter;
 import "core/cmp" as cmp;
 
 function main(): i32 {
   let xs: i32[] = [5, 2, 8, 1, 4, 7, 6];
 
-  // Keep the evens: [2, 8, 4, 6].
   let evens = iter.of(xs).filter((x: i32): boolean => x % 2 == 0).collect();
 
-  // Square them and sum the squares, building no intermediate array:
-  // 2² + 8² + 4² + 6² = 120.
   let total = iter.of(evens).map((x: i32): i32 => x * x).fold(0, (a: i32, b: i32): i32 => a + b);
 
-  // Sort the evens ascending: [2, 4, 6, 8].
   let asc = cmp.sort(evens);
 
-  // 120 + 2*10 + 8 = 148.
   return total + asc[0] * 10 + asc[3];
 }

@@ -6,15 +6,6 @@ import (
 	"testing"
 )
 
-// GenericFnValueProgram names a generic function as a value in every position
-// a function type can be wanted at: an argument to a plain function, to a
-// generic one (also in a return) and to a function-typed parameter, a let, a
-// struct field and a return, with a bounded and an unbounded generic; and
-// inside another generic, where the callable it is wanted at is spelled in
-// the encloser's own type variable (#12313): `outer` and `meas_in` through a
-// free function, `via_both` through a generic struct's method, and
-// `plain_with` through a plain struct's method. main answers 0 when every
-// call dispatched to the right instance, and the sum it got otherwise.
 const GenericFnValueProgram = `trait Shape { function area(self: Self): i32; }
 struct Sq { s: i32 }
 impl Shape for Sq { function area(self: Sq): i32 { return self.s * self.s; } }
@@ -60,8 +51,6 @@ function main(): i32 {
 }
 `
 
-// WriteGenericFnValueProgram writes the program into a fresh directory and
-// returns its path.
 func WriteGenericFnValueProgram(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "main.fern")

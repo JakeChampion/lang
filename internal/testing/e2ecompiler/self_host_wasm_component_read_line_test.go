@@ -9,16 +9,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostWasmComponentReadLine builds programs that read stdin through
-// io.read_line(stdin()) as wasm32-wasi components with the self-host CLI. The
-// stdin() call is all that says the component needs wasi:cli/stdin: the CLI
-// once refused a read-only program as having no import for it, and composed
-// one that also printed without fetching the stdin stream, so its read saw
-// EOF.
-//
-// A line keeps its newline, as the interpreter's does, a last line without one
-// is still returned, and EOF is Ok(None). A component reports only 0 or non-zero,
-// so each program's answer is that and what it prints.
 func TestSelfHostWasmComponentReadLine(t *testing.T) {
 	requireWasmTools(t)
 	cli := buildSelfHostCLI(t)

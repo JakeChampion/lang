@@ -1,17 +1,5 @@
 import "std/test";
 
-// tests/stdlib/ci_string_and_log_kv_test.fern — batch 29
-// additions to std/test:
-//   * Case-insensitive string assertions wrapping the
-//     existing CI string methods:
-//     `assert_eq_string_ci` / `assert_neq_string_ci` /
-//     `assert_contains_ci` / `assert_starts_with_ci` /
-//     `assert_ends_with_ci`.
-//   * Structured-breadcrumb log methods on test.TestRunner:
-//     `(r).log_kv_string(key, value)` (quoted),
-//     `(r).log_kv_i32(key, value)` (unquoted),
-//     `(r).log_kv_i64(key, value)` (unquoted).
-
 function test_eq_string_ci_same_case(): test.TestOutcome {
   return test.assert_eq_string_ci("hello", "hello");
 }
@@ -26,9 +14,6 @@ function test_eq_string_ci_truly_different_reports(): test.TestOutcome {
       return test.fail("expected ci-mismatch fail");
     },
     Fail(msg) => {
-      // Both raw values should be quoted in the
-      // diagnostic (NO case-folding applied for
-      // display) so the reader sees the bytes.
       if (!msg.contains("\"hello\"") || !msg.contains("\"world\"")) {
         return test.fail("expected both quoted raw: " + msg);
       }
@@ -104,10 +89,6 @@ function test_ends_with_ci_fail(): test.TestOutcome {
   }
 }
 
-// The log_kv tests exercise the chaining + output shape.
-// Verifying the actual emitted text requires the Go-side
-// gate to inspect stdout — we just confirm here that the
-// methods chain through cleanly.
 function test_log_kv_chains(r: test.TestRunner): test.TestRunner {
   r = r.log_kv_string("session_id", "abc-123");
   r = r.log_kv_i32("retry_count", 3);

@@ -8,27 +8,10 @@ import (
 	"testing"
 )
 
-// annotateConsumerCases pin the consumer half of the typed-IR migration
-// (#5986, docs/TYPED-IR-REWRITE.md): shapes whose type only the checker's
-// stamped type on the node can answer, because a structural walk of the
-// expression cannot. Each case was first demonstrated as a live defect against
-// the interp oracle — an IR bail under FERN_STRICT_IR or a silent wrong answer.
-// The _control siblings perturb each shape so the type is also visible
-// structurally (an annotated local, a named type) and pin that both agree.
-//
-// The shapes cover: bool / string / u32 results of calls, field accesses,
-// indexing and overloaded unary operators; the struct type of an indexed
-// element and of an operator-overload result; map-array elements; a sliced
-// array base; an Option element from a method callee; a nested tuple-element
-// field access; the i64 width of an associated method call; the types of
-// lifted lambda captures (module consts, wide arithmetic, builtin calls, a
-// match scrutinee field); tuple types surviving the monomorphiser's array/map
-// method folds; and function-value locals and params.
 var annotateConsumerCases = []struct {
 	name string
 	src  string
 }{
-	// gap g00 — was: wrong-output (bool-arms)
 	{"bool_call_closure_local", `import "core/cmp";
 function main(): i32 {
     let flip: boolean = false;
@@ -48,7 +31,6 @@ function main(): i32 {
     if (n == 4) { return 42; }
     return n;
 }`},
-	// gap g01 — was: wrong-output (bool-arms)
 	{"bool_tuple_elem_to_string", `import "core/cmp";
 function main(): i32 {
     let t: (boolean, i32) = (true, 1);
@@ -64,7 +46,6 @@ function main(): i32 {
     if (n == 4) { return 42; }
     return n;
 }`},
-	// gap g02 — was: wrong-output (bool-arms)
 	{"bool_neg_overload", `import "core/cmp";
 struct V { b: boolean }
 function (a: V) neg(): boolean { return !a.b; }
@@ -85,7 +66,6 @@ function main(): i32 {
     if (n == 4) { return 42; }
     return n;
 }`},
-	// gap g03 — was: wrong-output (str-u32-arms)
 	{"str_tuple_elem_of_call", `enum Color { Red }
 
 function f(): (string, Color) {
@@ -106,7 +86,6 @@ function main(): i32 {
     if (n == 5) { return 42; }
     return 1;
 }`},
-	// gap g05 — was: wrong-output (str-u32-arms)
 	{"str_neg_overload", `struct W { s: string }
 
 function (a: W) neg(): string {
@@ -131,7 +110,6 @@ function main(): i32 {
     if (n == 5) { return 42; }
     return 1;
 }`},
-	// gap g06 — was: wrong-output (str-u32-arms)
 	{"u32_index_of_call_result", `function mk(): u32[] {
     return [2147484527u32];
 }
@@ -149,7 +127,6 @@ function main(): i32 {
     if ((xs[0] >> 1u32) == 1073742263u32) { return 42; }
     return 1;
 }`},
-	// gap g07 — was: wrong-output (str-u32-arms)
 	{"u32_neg_overload_compare", `struct U { v: u32 }
 
 function (a: U) neg(): u32 {
@@ -174,8 +151,6 @@ function main(): i32 {
     if (u1.neg() > u2.neg()) { return 42; }
     return 1;
 }`},
-	// Both records are static boxes; they differed only in a u32 word that
-	// read as zero, so both named one box (#10501).
 	{"u32_neg_overload_compare_static", `struct U { v: u32 }
 
 function (a: U) neg(): u32 {
@@ -188,7 +163,6 @@ function main(): i32 {
     if ((-u1) > (-u2)) { return 42; }
     return 1;
 }`},
-	// gap g08 — was: bail (struct-composite)
 	{"struct_elem_of_sliced_array", `struct P { x: i32 }
 function (p: P) get(): i32 { return p.x; }
 function main(): i32 {
@@ -202,7 +176,6 @@ function main(): i32 {
     let q: P = ps[1:][0];
     return q.get();
 }`},
-	// gap g09 — was: bail (arr-opt-tuple)
 	{"opt_scrutinee_sliced_base", `function main(): i32 {
     let xs: Option[i32][] = [Some(1), None, Some(3)];
     match (xs[1:][1]) {
@@ -217,7 +190,6 @@ function main(): i32 {
         None => { return 9; }
     }
 }`},
-	// gap g10 — was: wrong-output (struct-composite)
 	{"map_array_elem_tuple", `import "core/map";
 function main(): i32 {
     let m1: Map[i32, i32] = Map { 1: 10 };
@@ -232,7 +204,6 @@ function main(): i32 {
     let t = (m1, 7);
     return t.0.len() + t.1;
 }`},
-	// gap g11 — was: bail (arr-opt-tuple)
 	{"opt_tuple_elem_method_call", `struct S { n: i32 }
 function (a: S) find(k: i32): Option[i32] { return Some(a.n + k); }
 function main(): i32 {
@@ -253,7 +224,6 @@ function main(): i32 {
         None => { return 9; }
     }
 }`},
-	// gap g12 — was: bail (arr-opt-tuple)
 	{"tuple_elem_nested_fieldaccess", `function main(): i32 {
     let big: i64 = 4294967338i64;
     let x: i64 = ((big, 2i64), 3).0.0;
@@ -267,7 +237,6 @@ function main(): i32 {
     if (x == big) { return 42; }
     return 7;
 }`},
-	// gap g13 — was: bail (struct-composite)
 	{"struct_overload_iife_operand", `struct V { x: i32 }
 function (a: V) add(b: V): V { return V { x: a.x + b.x }; }
 enum E { A(V), B(V) }
@@ -286,7 +255,6 @@ function main(): i32 {
     let r = match (e) { A(q) => { q.add(w) }, B(p) => { p.add(w) } };
     return r.x;
 }`},
-	// gap g14 — was: wrong-output (lift-detector)
 	{"lift_detector_unannotated_local", `struct R { hs: ((i32) => i32)[] }
 function mk(n: i32): R {
     return R { hs: [(x: i32): i32 => { return x + n; }] };
@@ -311,7 +279,6 @@ function main(): i32 {
     let g = pick();
     return g(1);
 }`},
-	// gap g15 — was: wrong-output (lift-detector)
 	{"lift_detector_index_elem", `struct H { f: (i32) => i32 }
 function mkh(n: i32): H {
     return H { f: (x: i32): i32 => { return x + n; } };
@@ -342,7 +309,6 @@ function main(): i32 {
     let g = pick();
     return g(1);
 }`},
-	// gap g16 — was: wrong-output (lift-detector)
 	{"lift_detector_call_chain", `struct R { hs: ((i32) => i32)[] }
 function mk(n: i32): R {
     return R { hs: [(x: i32): i32 => { return x + n; }] };
@@ -366,7 +332,6 @@ function main(): i32 {
     let g = pick();
     return g(1);
 }`},
-	// gap g18 — was: bail (lift-captype)
 	{"lift_cap_module_const", `const LIMIT: i32 = 41;
 
 function f(): i32 {
@@ -389,7 +354,6 @@ function f(): i32 {
 function main(): i32 {
     return f();
 }`},
-	// gap g19 — was: bail (lift-captype)
 	{"lift_cap_wide_arith", `function f(a: i64, b: i64): i64 {
     let k = a * b;
     let g = () => k + 1i64;
@@ -408,7 +372,6 @@ function main(): i32 {
 function main(): i32 {
     return f(5i64, 8i64) as i32;
 }`},
-	// gap g20 — was: bail (lift-captype)
 	{"lift_cap_builtin_call", `function f(s: string): i32 {
     let n = s.len();
     let g = () => n + 1;
@@ -427,7 +390,6 @@ function main(): i32 {
 function main(): i32 {
     return f("fortyone!");
 }`},
-	// gap g21 — was: bail (mono-survival)
 	{"mono_arrm_fold_tuple_ty", `// Gap 21: generic ARRAY-method fold (parser.fern:9034) rebuilds xs.stats()
 // as __arrm_stats__u32(xs) with ty:"" — dropping the checker's "(f64, i32)"
 // stamp the lowering needs to width the .0 read.
@@ -450,7 +412,6 @@ function main(): i32 {
     let xs: u32[] = [5u32, 6u32];
     return (stats(xs).0 * 4.0) as i32;
 }`},
-	// gap g22 — was: bail (mono-survival)
 	{"mono_mapm_fold_tuple_ty", `// Gap 22: generic MAP-method fold (parser.fern:9060) rebuilds m.stats()
 // as __mapm_stats__string;i32(m) with ty:"" — dropping the checker's
 // "(f64, i32)" stamp the lowering needs to width the .0 read.
@@ -477,7 +438,6 @@ function main(): i32 {
     let m: Map[string, i32] = Map { "a": 1, "b": 2 };
     return (stats(m).0 * 4.0) as i32;
 }`},
-	// gap g24 — was: wrong-output (registry-siblings)
 	{"assoc_method_i64_width", `trait HasStart { function start(): i64; }
 
 struct Counter { n: i32 }
@@ -498,7 +458,6 @@ function main(): i32 {
     if (t == 5000000000i64) { return 42; }
     return 1;
 }`},
-	// gap g27 — was: wrong-output (registry-siblings)
 	{"tuple_bind_from_call_array", `function mk(): (i32, string)[] {
     return [(1, "abcd")];
 }
@@ -514,9 +473,6 @@ function main(): i32 {
 function main(): i32 {
     return mk()[0].1.len() + 38;
 }`},
-	// gap g17 — was: bail (lift-captype); fixed one level down in the checker:
-	// type_from_name_with_names_and_unions had no builtin-generic-enum arm,
-	// so an Option[...] struct FIELD typed unknown and stamped "" (#5986).
 	{"lift_cap_match_scrutinee_field", `struct S { o: Option[i32] }
 
 function f(s: S): i32 {
@@ -550,9 +506,6 @@ function f(s: S): i32 {
 function main(): i32 {
     return f(S { o: Some(41) });
 }`},
-	// A call through a REASSIGNED closure-typed local carries the checker's
-	// TypeFunc return; these pin the fn-value shape that stamped before the
-	// fn_ret widening gave the param/field siblings (below) the same footing.
 	{"fnvalue_local_strarr_index", `function main(): i32 {
     let flip: boolean = false;
     let g = (): string[] => { return ["ab", "c"]; };
@@ -593,11 +546,6 @@ function main(): i32 {
     let m = g();
     return m.get_or("k", 7) + 41;
 }`},
-	// The fn-typed PARAM / FIELD shapes: the parser coarsens fn types to
-	// "fn", and until the fn_ret widening the checker read the sidecar
-	// nowhere, so these four stamped "" and no consumer wiring could see
-	// them. build_func_scope now binds such a param to a real TypeFunc and
-	// collect_struct_sigs types a fn field from its fn_ret (#5986).
 	{"fnparam_field_strarr_index", `struct H { f: () => string[] }
 
 function main(): i32 {
@@ -646,11 +594,6 @@ function apply(f: () => Map[string, i32]): i32 {
 function main(): i32 {
     return apply(mk);
 }`},
-	// The widened fn_ret spellings (tuple and array returns) through the
-	// sidecar consumers. w1's fn param mixes an i64 param with an array
-	// return, so the wasm funcref signature must carry the widths, not just
-	// the arity; w3 is an annotated tuple-returning fn var on x86-64. w2/w4
-	// pin the neighbouring shapes through the same paths.
 	{"fnwiden_funcref_width", `function pick(f: (i64) => i32[]): i32 {
     let xs: i32[] = f(5000000042i64);
     return xs[0];
@@ -675,10 +618,6 @@ function main(): i32 { return pick(mk); }`},
 }`},
 }
 
-// TestSelfHostAnnotateConsumersX86_64 runs the cases on the self-host x86-64
-// backend. fern.fern is the driver because it runs checker.annotate_module; a
-// driver that skips annotation leaves every ty empty and exercises only the
-// structural walk.
 func TestSelfHostAnnotateConsumersX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
@@ -715,9 +654,6 @@ func TestSelfHostAnnotateConsumersX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostAnnotateConsumersWasm is the wasm leg — it carries the cases
-// whose pre-fix failure was wasm-shaped (an invalid module, a signed
-// shift/divide on an unsigned value that x86-64's zero-extension hides).
 func TestSelfHostAnnotateConsumersWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping annotate-consumer wasm cases")

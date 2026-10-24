@@ -2,12 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// fnLocalCallProgram iterates the array a call through a fn-typed parameter
-// returns and calls an array method on a field of the loop variable. The
-// parser's array-method rewrite needs the loop variable's type, which it reads
-// from what the iterated call answers: a fn-typed local answers what its
-// spelling says (#12523). Before, the call typed to nothing and `p.bytes.take`
-// was refused as an unsupported call target.
 const fnLocalCallProgram = `import "std/array";
 
 struct P { bytes: u8[], bits: i32 }

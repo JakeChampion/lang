@@ -8,10 +8,6 @@ import (
 	"testing"
 )
 
-// One function per append path the physical lowering takes. main checks the
-// runtime's copy counter against what the report claims: none for the sole
-// owner, one per iteration that had spare capacity for the live alias, one
-// for the retained row.
 const selfHostAppendReportSrc = `import "std/i32";
 
 struct Acc { items: i32[], n: i32 }
@@ -145,7 +141,6 @@ func TestSelfHostAppendReport(t *testing.T) {
 	if out, err := runX86_64Bin(cli.runner, buildBin(t, cli.gcc, t.TempDir(), "append-report", asm)).CombinedOutput(); err != nil {
 		t.Fatalf("reported program: %v\n%s", err, out)
 	}
-	// Without -g there are no source positions or binding names to read.
 	_, plain := compile("1")
 	for owner, got := range appendReportRows(t, plain) {
 		for _, row := range got {
@@ -174,8 +169,6 @@ func appendReportSourceLine(t *testing.T, owner string, nth int) int {
 	return 0
 }
 
-// appendReportRows reads the append storage section into each owner's
-// diagnostic lines, in report order.
 func appendReportRows(t *testing.T, report string) map[string][]string {
 	t.Helper()
 	header := "array report: primary Fern compiler, append storage\n"

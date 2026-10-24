@@ -8,13 +8,6 @@ import (
 	"testing"
 )
 
-// The default `-target wasm32-wasi` composes a wasi:cli/run component, and that
-// world's `run: func() -> result` carries ok or err and nothing wider, so
-// `return 42` reaches the host as exit 1. A WASI preview-1 COMMAND is the shape
-// that carries the value, and the shape `web/wasi-shim.js` runs, so it is what
-// a browser needs to host a Fern program — or the self-host compiler — without
-// a component transpile.
-
 func TestEmitCommandModuleCarriesTheExitCode(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -47,29 +40,21 @@ func TestEmitCommandModuleFlagErrors(t *testing.T) {
 		want []string
 	}{
 		{
-			// The module is written to a path, so there is nothing to send to
-			// stdout in its place.
 			"needs-an-output-path",
 			[]string{"-target", "wasm32-wasi", "-emit", "command-module", entry},
 			[]string{"command-module", "-o OUTPUT"},
 		},
 		{
-			// An output FORM belongs to the artifact, so it is refused rather
-			// than ignored where the target cannot produce it.
 			"native-target-is-refused",
 			[]string{"-target", "x86-64-linux", "-emit", "command-module", "-o", dst, entry},
 			[]string{"command-module", "x86-64-linux", "wasm32-wasi"},
 		},
 		{
-			// wasm32-wasi-http exports a handler and has no main, so there is
-			// nothing for a command entry to start.
 			"the-http-reactor-has-no-main",
 			[]string{"-target", "wasm32-wasi-http", "-emit", "command-module", "-o", dst, entry},
 			[]string{"command-module", "wasm32-wasi-http"},
 		},
 		{
-			// The refusal for an unknown form has to name both, or the new one
-			// is undiscoverable from the error a typo produces.
 			"unknown-form-names-both",
 			[]string{"-target", "wasm32-wasi", "-emit", "commandmodule", "-o", dst, entry},
 			[]string{"core-module", "command-module"},

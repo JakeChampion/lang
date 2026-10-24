@@ -12,8 +12,6 @@ import (
 	"time"
 )
 
-// Exercise the actual file-output function using a private directory. The
-// fixture does not read or alter passwd, utmp or any user's home directory.
 func WritePinkyByteFixture(t testing.TB) string {
 	t.Helper()
 	data, err := os.ReadFile(RepoPath("coreutils", "pinky.fern"))
@@ -63,14 +61,14 @@ func RunPinkyByteCases(t *testing.T, bin string, runner []string, census func(*t
 			for _, file := range []struct{ name, label string }{{"project", "Project: "}, {"plan", "Plan:\n"}} {
 				path := filepath.Join(dir, file.name)
 				if size == -2 {
-					continue // Open failure suppresses the label.
+					continue
 				}
 				want = append(want, file.label...)
 				if size == -1 {
 					if err := os.Mkdir(path, 0o700); err != nil {
 						t.Fatal(err)
 					}
-					continue // Read failure after open retains the label.
+					continue
 				}
 				data := bytes.Repeat(all, (size+255)/256)[:size]
 				if err := os.WriteFile(path, data, 0o600); err != nil {

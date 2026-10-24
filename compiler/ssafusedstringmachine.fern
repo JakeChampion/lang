@@ -1,21 +1,14 @@
-// Supplied-text fused-string count-one effects under explicit memory permissions.
-// No public decoded/arithmetic record is accepted as an effect certificate.
 import "./ssacapacityisa" as isa;
 import "./ssastringvalue" as value;
 import "./ssacapacitymachine" as capacity;
 import "./ssalargepushmachine" as large;
 
-// Half kinds: invalid, numeric, original GPR, S+offset, outer return,
-// arbitrary original cell, P+offset, small freelist, old head, inner return,
-// large freelist.
 struct Half { kind: i32, identity: i32, part: i32, number: value.Value }
 
 struct Word { low: Half, high: Half }
 
 struct Flags { order: value.Comparison, signed: value.Comparison, sign: i32 }
 
-// `grown` selects the grown box's layout (#8770): the GROW shape, the
-// block's capacity in words at P-16..P-9, and the block based at P-16.
 struct State { regs: Word[], cells: Half[], flags: Flags, ok: boolean, zeros: i32, links: i32, slots: i32, call_return: i32, grown: boolean }
 
 function token(kind: i32, identity: i32, part: i32): Half {
@@ -70,8 +63,6 @@ function unknown_flags(): Flags {
   return Flags { order: unknown_order(), signed: unknown_order(), sign: -1 };
 }
 
-// The fused box's block starts at P-8 and is three words over its bytes;
-// the grown box's starts at P-16 and is its recorded capacity.
 function base_at(grown: boolean): i32 {
   return if (grown) { -16 } else { -8 };
 }
@@ -535,7 +526,6 @@ function expected_scratch(s: State, r: value.Interval): Half[] {
   return expected.cells;
 }
 
-// A block over 256 words takes the class call.
 function big(r: value.Interval, grown: boolean): boolean {
   return r.low + (if (grown) { 0 } else { 3 }) as i64 > 256 as i64;
 }
@@ -576,7 +566,6 @@ function finished(s: State, r: value.Interval, register_entry: boolean): boolean
     }
     i = i + 1;
   }
-  // Plain RET consumes the original word at proven S, ending S+8.
   return true;
 }
 
@@ -584,12 +573,6 @@ function in_program(p: isa.ArrayProgram, pc: i32): boolean {
   return pc >= 0 && pc < p.ops.len();
 }
 
-// The `.u` entry is reached on the register path with the entry state, apart
-// from the flags of the floor test it skips and the scratch registers the
-// body may clobber, the argument excepted. Those go back to their entry
-// values and the flags are forgotten, so the rest of the walk is the walk
-// from `.u`, which the caller enters having tested the floor, and proves the
-// body for every value a prefix could leave in a scratch register.
 function unguarded(s: State, original: State, r: value.Interval): State {
   let regs = s.regs;
   let i = 0;
@@ -649,17 +632,6 @@ function path(p: isa.ArrayProgram, r: value.Interval, register_entry: boolean, g
   return false;
 }
 
-// Preconditions: canonical aligned disjoint header P-8..P-1, readable
-// length P+8..P+15, stack S-40..S+15 and the selected freelist slot. Header,
-// scratch and slot are writable; outer return and argument are readable.
-// P>=65536, RC=1, fused shape1934589965 and explicit length/allocation bounds
-// described by internally generated fused intervals. The .r argument is
-// arbitrary. No buffer-word read is permitted. Valid allocation/metadata,
-// linked permissions, caller credits and freelist integrity remain unproved.
-// Oversized no recycling is not a proven free.
-// A grown box (shape 1196576599) adds a readable capacity word P-16..P-9 and
-// a writable link word there; its length is arbitrary and is not read, and
-// its block is P-16 at its capacity, over the separate-buffer word intervals.
 pub function check(output: string): boolean {
   let p = isa.string_program(output);
   if (p.error != "" || p.register_entry < 0 || p.unguarded_entry < 0 || !capacity.check(output) || !large.check(output)) {

@@ -2,14 +2,6 @@ package componenttype
 
 import "testing"
 
-// TestClassify checks the canonical-ABI classifier reproduces the lowering
-// kinds the composer hard-codes (internal/wasm/component/compose_unified.go),
-// derived purely from the fern world's decoded signatures. It covers all
-// three kinds and the subtle cases: a no-heap result that still needs memory
-// because it returns indirectly (read-via-stream, start-bind), a scalar
-// handle return that does not (subscribe, instance-network, get-stdout), a
-// heap param (write), and heap results (blocking-read, get-directories,
-// get-random-bytes).
 func TestClassify(t *testing.T) {
 	w, err := DecodeWorld("fern")
 	if err != nil {
@@ -72,13 +64,6 @@ func lookupSig(wi WorldInterface, name string) WorldFunc {
 	return WorldFunc{}
 }
 
-// A type a `use` brings in from another interface classifies as what it is:
-// `outgoing-handler.handle` of the proxy world answers `result<own, error-code>`
-// with `error-code` declared in wasi:http/types, whose cases carry strings, so
-// the lowering needs realloc exactly as `future-incoming-response.get`, which
-// reads the same variant from inside the types interface, does. Before the
-// owner resolution the `use`d slot read as an opaque scalar and the lowering
-// dropped the realloc option the canonical ABI requires.
 func TestClassifyUsedTypeFromAnotherInterface(t *testing.T) {
 	w, err := DecodeWorld("proxy")
 	if err != nil {

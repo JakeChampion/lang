@@ -8,96 +8,46 @@ import (
 	"testing"
 )
 
-// Return-type-directed instantiation of a generic CONSTRUCTOR. A no-argument
-// generic function whose type parameter appears only in its return type
-// (`mk[T](): Box[T]`) is bound from the call-site annotation (`let b: Box[i32]
-// = mk()`) — the arguments alone can't. The monomorphiser (parser.fern):
-//  1. promotes such a return-only unbounded type var into type_params (it is
-//     bindable from the annotation, not just from a param),
-//  2. binds it via infer_inst_ret in the annotated-var position (mono_var_init),
-//  3. retypes the constructor's `return Box { xs: [] }` generic struct literal
-//     — whose empty-array field yields no element type to infer from — using
-//     the function's concrete return type (ms_stmt StmtReturn).
-//
-// Without all three the template stays un-monomorphised and its
-// `Box { xs: [] }` cannot lower. std/set's `set_new` → `set_of` has this shape.
-// Each case is oracle-checked against the interpreter and routing-pinned to
-// "ir".
 var genericCtorIRCases = []struct {
 	name string
 	src  string
 }{
-	// A struct named with a single capital letter is a NOMINAL, not a type
-	// variable: `twice(v)` with `v: P` must bind T = P and instantiate the
-	// bounded template, or main is left calling a dropped symbol
-	// (conformance/cases/trait_method_bound_wins). 5 + 5 + 33 = 43.
 	{"one_letter_struct_binds_bounded_generic", `struct P { x: i32 }
 trait A { function scale(self: Self): i32; }
 impl A for P { function scale(self: Self): i32 { return self.x; } }
 function twice[T: A](v: T): i32 { return v.scale() + v.scale(); }
 function main(): i32 { let v: P = P { x: 5 }; return twice(v) + 33; }`},
-	// A generic array method used as a RECEIVER: `a.map(inc)` types as `U[]`
-	// with U ERASED (an unbounded method param is never monomorphised), and
-	// `.fold` binds its element var to that erased U — the convention every
-	// chained combinator rests on. A guard refusing "concrete types that mention
-	// a variable" left the chain generic (conformance
-	// generic_array_method_chain). [2, 3] folded = 5, + 30 = 35.
 	{"array_method_chain_receiver", `import "std/array";
 function inc(x: i32): i32 { return x + 1; }
 function add(a: i32, b: i32): i32 { return a + b; }
 function main(): i32 { let a: i32[] = [1, 2]; return a.map(inc).fold(0, add) + 30; }`},
-	// The minimal failing shape: a no-arg constructor with an empty-array field,
-	// instantiated from the var annotation. len 0 + 40 = 40.
 	{"empty_ctor_i32", `struct Box[T] { xs: T[] }
 function mk[T](): Box[T] { return Box { xs: [] }; }
 function main(): i32 { let b: Box[i32] = mk(); return b.xs.len() + 40; }`},
-	// A string element type: the clone must carry the concrete `string[]` field.
 	{"empty_ctor_string", `struct Box[T] { xs: T[] }
 function mk[T](): Box[T] { return Box { xs: [] }; }
 function main(): i32 { let b: Box[string] = mk(); return b.xs.len() + 41; }`},
-	// Nested: a generic function calling ANOTHER no-arg constructor with its own
-	// (already-concrete) type param supplied by the local annotation — the exact
-	// `set_of` → `set_new` shape. len 0 + 42 = 42.
 	{"nested_ctor", `struct Bag[T] { xs: T[] }
 function empty[T](): Bag[T] { return Bag { xs: [] }; }
 function make[T](x: T): Bag[T] { let b: Bag[T] = empty(); return b; }
 function main(): i32 { let b: Bag[i32] = make(3); return b.xs.len() + 42; }`},
-	// The constructed value is actually used: append then read back → 1*100+7.
 	{"ctor_then_use", `struct Box[T] { xs: T[] }
 function mk[T](): Box[T] { return Box { xs: [] }; }
 function main(): i32 { let b: Box[i32] = mk(); let ys = b.xs.append(7); return ys.len() * 100 + ys[0]; }`},
-	// RETURN position: `return mk()` binds the constructor from the ENCLOSING
-	// function's declared return type — not a var annotation. Since the return-
-	// only type param is now promoted (template dropped), an unresolved call
-	// here is an undefined reference, so this position must resolve too. len 0
-	// + 20 = 20.
 	{"return_position", `struct Box[T] { xs: T[] }
 function mk[T](): Box[T] { return Box { xs: [] }; }
 function two(): Box[i32] { return mk(); }
 function main(): i32 { let b = two(); return b.xs.len() + 20; }`},
-	// The real-world case: std/set's set_of builds through set_new (a no-arg
-	// generic constructor) — distinct count of {1,2,3} = 3.
 	{"std_set_of", `import "std/set";
 function main(): i32 { let s = set.set_of([1, 2, 2, 3, 3, 3]); return s.len(); }`},
-	// A payload-less variant in a PAYLOAD position of a multi-param generic
-	// enum: the enum pass flows each declared field type, instantiated, into
-	// the construction's args, so the bare `Leaf` pins to `Leaf__i32__string`
-	// instead of dangling as an undefined function value. 1 + 40 = 41.
 	{"nullary_variant_payload_arg", `enum Tree[K, V] { Leaf, Node(Tree[K, V], K, V, Tree[K, V], i32) }
 function one[K, V](k: K, v: V): Tree[K, V] { return Node(Leaf, k, v, Leaf, 1); }
 function main(): i32 { let t: Tree[i32, string] = one(1, "a"); match (t) { Node(l, k, v, r, s) => { return s + 40; }, Leaf => { return 0; } } }`},
-	// The same bare variant in a generic STRUCT's field position, pinned from
-	// the struct clone's concrete field type. 0 + 43 = 43.
 	{"nullary_variant_struct_field", `enum Tree[K, V] { Leaf, Node(Tree[K, V], K, V, Tree[K, V], i32) }
 struct TMap[K, V] { root: Tree[K, V], size: i32 }
 function tmap_new[K, V](): TMap[K, V] { return TMap { root: Leaf, size: 0 }; }
 function h[K, V](t: Tree[K, V]): i32 { match (t) { Leaf => { return 0; }, Node(l, k, v, r, hh) => { return hh; } } }
 function main(): i32 { let m: TMap[i32, string] = tmap_new(); return h(m.root) + 43; }`},
-	// A recursive generic over an enum whose payload is an ARRAY OF ITSELF:
-	// the match binding `kids` is typed from the variant's declared field
-	// (`H[T][]` under `H[i32]`), so the indexed element binds the recursive
-	// call's T. The enum is deliberately one letter — an applied `H[...]` must
-	// not read as a type variable. depth 3 + 39 = 42.
 	{"recursive_indexed_self_array_payload", `enum H[T] { Leaf(T), Br(H[T][]) }
 function depth[T](n: H[T]): i32 {
     match (n) {
@@ -106,8 +56,6 @@ function depth[T](n: H[T]): i32 {
     }
 }
 function main(): i32 { let a: H[i32] = Leaf(1); let b: H[i32] = Br([a, Leaf(2)]); let c: H[i32] = Br([b]); return depth(c) + 39; }`},
-	// Same, iterating the payload with `for ... in`: the loop var carries the
-	// array's element type. depth 3 + 30 = 33.
 	{"recursive_for_in_self_array_payload", `enum H[T] { Leaf(T), Br(H[T][]) }
 function depth[T](n: H[T]): i32 {
     match (n) {
@@ -116,17 +64,11 @@ function depth[T](n: H[T]): i32 {
     }
 }
 function main(): i32 { let a: H[i32] = Leaf(1); let b: H[i32] = Br([a, Leaf(2)]); let c: H[i32] = Br([b]); return depth(c) + 30; }`},
-	// A FIELD READ of a generic-struct value (`sp.lt` on `Split[string, i32]`)
-	// recovers the field's instantiated type, so `size(sp.lt)` binds K, V.
-	// 7 * 10 + 0 + 4 = 74.
 	{"generic_struct_field_read_arg", `enum Tree[K, V] { Leaf, Node(Tree[K, V], K, V, Tree[K, V], i32) }
 struct Split[K, V] { lt: Tree[K, V], gt: Tree[K, V] }
 function size[K, V](t: Tree[K, V]): i32 { match (t) { Leaf => { return 0; }, Node(l, k, v, r, s) => { return s; } } }
 function mk[K, V](k: K, v: V): Split[K, V] { return Split { lt: Node(Leaf, k, v, Leaf, 7), gt: Leaf }; }
 function main(): i32 { let sp: Split[string, i32] = mk("a", 1); return size(sp.lt) * 10 + size(sp.gt) + 4; }`},
-	// A match binding of the clone enum is the ONLY argument that pins K, V —
-	// the callee's other params are `own K[]`, not bare K / V. 3 keys:
-	// 3 * 10 + 1 + 3 * 2 = 37.
 	{"match_binding_pins_recursion_own_array_param", `enum Tree[K, V] { Leaf, Node(Tree[K, V], K, V, Tree[K, V], i32) }
 function keys_into[K, V](t: Tree[K, V], own acc: K[]): K[] {
     match (t) {
@@ -140,8 +82,6 @@ function main(): i32 {
     ks = keys_into(t, ks);
     return ks.len() * 10 + ks[0] + ks[2] * 2;
 }`},
-	// Same with a closure param `(A, K, V) => A` and an erased accumulator
-	// type param. 30 + 5 + 7 = 42.
 	{"match_binding_pins_recursion_closure_param", `enum Tree[K, V] { Leaf, Node(Tree[K, V], K, V, Tree[K, V], i32) }
 function fold[K, V, A](t: Tree[K, V], init: A, f: (A, K, V) => A): A {
     match (t) {
@@ -150,9 +90,6 @@ function fold[K, V, A](t: Tree[K, V], init: A, f: (A, K, V) => A): A {
     }
 }
 function main(): i32 { let t: Tree[string, i32] = Node(Node(Leaf, "a", 5, Leaf, 1), "b", 7, Leaf, 2); return fold(t, 30, (a: i32, k: string, v: i32) => a + v); }`},
-	// The persistent-tree acceptance program (#6794): insert / split / fold /
-	// key collection over a `Tree[string, i32]`, every shape above in one
-	// module. 42 when all four checks hold.
 	{"persistent_tree_p13", `import "core/cmp";
 import "std/i64";
 import "std/i32";
@@ -226,11 +163,6 @@ function main(): i32 {
     if (ks.len() == 200 && total == 19900 && hitv == 65 && size(sp.lt) + size(sp.gt) == 199) { return 42; }
     return 1;
 }`},
-	// A generic-struct method with its OWN extra type param (`W`) bound only
-	// through a fn param's return, forwarding that fn param to a free generic:
-	// the clone's env carries the param as `fn => i32`, so `mv(m.root, f)`
-	// binds W from it instead of leaving the callee un-instantiated.
-	// 20 + 22 = 42.
 	{"method_fn_param_forwarded_to_generic", `enum Tree[K, V] { Leaf, Node(K, V) }
 struct M[K, V] { root: Tree[K, V] }
 function mv[K, V, W](t: Tree[K, V], f: (V) => W): Tree[K, W] {
@@ -242,8 +174,6 @@ function main(): i32 {
     let n: M[i32, i32] = m.map_values((v: i32) => v + 22);
     match (n.root) { Node(k, v) => { return v; }, Leaf => { return 0; } }
 }`},
-	// Specialization must update callback signatures and recheck captures in
-	// the concrete scope. Values above 32 bits expose argument/return truncation.
 	{"receiver_callback_preserves_wide_signature", `struct Box[T] { value: T }
 pub function (b: Box[T]) apply(f: (T) => T): T {
     let callback: (T) => T = f;
@@ -268,8 +198,6 @@ function main(): i32 {
     if (callback(b.value) == 4294967338i64) { return 42; }
     return 1;
 }`},
-	// Receiver-qualified closure names keep the two filter methods distinct.
-	// 3 * 10 + 3 + 9 = 42.
 	{"closure_named_per_receiver", `struct A[T] { xs: T[] }
 struct B[T] { xs: T[] }
 function keep[T](xs: T[], p: (T) => boolean): T[] {
@@ -317,9 +245,7 @@ func TestSelfHostGenericCtorIR(t *testing.T) {
 			if err := os.WriteFile(entry, []byte(tc.src+"\n"), 0o644); err != nil {
 				t.Fatalf("write entry: %v", err)
 			}
-			// Oracle: the native interpreter's exit code.
 			_, want := runFixtureInterp(t, entry, "")
-			// The whole point of the fix is that these route IR, not AST.
 			if out, _ := runDriver(entry, root, "-decide"); strings.TrimSpace(out) != "ir" {
 				t.Errorf("%s decide = %q, want \"ir\"", tc.name, strings.TrimSpace(out))
 			}
@@ -342,10 +268,6 @@ func TestSelfHostGenericCtorIR(t *testing.T) {
 	}
 }
 
-// The wasm leg: the monomorphiser fixes live in the shared parser.fern
-// front-end, so the wasm IR backend must instantiate the same clones. Drives
-// the full fern.fern driver with the stdlib root (several cases import) and
-// runs under wasmtime. Case table shared with the x86-64 leg.
 func TestSelfHostGenericCtorWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping generic-ctor wasm IR e2e")

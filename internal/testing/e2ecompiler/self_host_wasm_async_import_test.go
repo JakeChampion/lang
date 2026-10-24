@@ -8,10 +8,6 @@ import (
 	"testing"
 )
 
-// asyncImportProvider exports test:dep/d and test:dep/e, the interfaces
-// TestSelfHostWasmAsyncImport's consumer imports. compute and note yield
-// before task.return, so the consumer's call of them is still pending when
-// its lower returns and the wrapper has to wait for it.
 const asyncImportProvider = `(component
   (core func $tr_s32 (canon task.return (result s32)))
   (core func $tr_u64 (canon task.return (result u64)))
@@ -54,12 +50,6 @@ const asyncImportProvider = `(component
   (export "test:dep/e" (instance $e)))
 `
 
-// TestSelfHostWasmAsyncImport pins the self-host's async imports: an
-// `@import(iface, name) async function` of an interface the fern world does
-// not declare becomes an import of that interface, lowered with the async
-// option, and its call waits for the result. The consumer is linked with
-// asyncImportProvider by `wasm-tools compose`, and each async export that
-// calls an import runs under wasmtime's async features.
 func TestSelfHostWasmAsyncImport(t *testing.T) {
 	requireWasmTools(t)
 	cli := buildSelfHostCLI(t)
@@ -98,10 +88,6 @@ function main(): i32 { return 0; }
 	}
 }
 
-// asyncMemProvider exports test:dep/m, whose functions pass strings, lists
-// and a tuple in memory. Its memory and realloc live in a core module of
-// their own, so the lifts and the string / list task.returns can name them
-// before the module that uses them is instantiated.
 const asyncMemProvider = `(component
   (core module $mm
     (memory (export "mem") 1)
@@ -166,10 +152,6 @@ const asyncMemProvider = `(component
   (export "test:dep/m" (instance $x)))
 `
 
-// TestSelfHostWasmAsyncImportMemory pins the async imports whose values cross
-// in memory: string, list and tuple parameters, and string and list results,
-// which the host writes into the consumer's memory through its cabi_realloc.
-// echo yields, so its string result arrives after the lower has returned.
 func TestSelfHostWasmAsyncImportMemory(t *testing.T) {
 	requireWasmTools(t)
 	cli := buildSelfHostCLI(t)
@@ -212,8 +194,6 @@ function main(): i32 { return 0; }
 	}
 }
 
-// linkAsyncProvider assembles the WAT provider and links it into consumer
-// with `wasm-tools compose`, returning the linked component's path.
 func linkAsyncProvider(t *testing.T, dir, consumer, providerWat string) string {
 	t.Helper()
 	watPath, provider, linked := filepath.Join(dir, "provider.wat"), filepath.Join(dir, "provider.wasm"), filepath.Join(dir, "linked.wasm")
@@ -229,9 +209,6 @@ func linkAsyncProvider(t *testing.T, dir, consumer, providerWat string) string {
 	return linked
 }
 
-// TestSelfHostWasmAsyncImportRefusals pins what an async import cannot lower
-// yet, and that one naming an interface the fern world declares is refused:
-// the component would import that interface twice.
 func TestSelfHostWasmAsyncImportRefusals(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	dir := t.TempDir()

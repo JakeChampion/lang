@@ -2,42 +2,6 @@ package e2e
 
 import "testing"
 
-// #4417 request-loop leak guard. The Perceus model has no cycle collector by
-// design (cycles are meant to be unconstructible under value-immutability), and
-// the rc-correctness corpus catches over-RELEASES (__rc_underflow_count) but
-// explicitly NOT leaks. This is the complementary gate the issue asks for: a
-// simulated edge-handler request loop that fails if per-request heap growth
-// stops being bounded — the signature of a regression that constructs a cycle,
-// compounds a leak across requests, or disables reclamation.
-//
-// WHY IT'S COARSE (and deliberately so). The native backends currently carry
-// pervasive DOCUMENTED safe-leaks — `int_to_string` / slicing leak their buffer
-// (docs/RC-STRINGS-PLAN.md), and every incremental build (`s = s + x`,
-// `xs = xs.append(v)` in a loop) and struct-with-string-fields threads leak a
-// bounded amount per call. Measured baselines for the handler below: 176 B/req
-// on x86-64 + wasm, 352 B/req on arm64 (arm64's two-word strings leak more) —
-// all perfectly LINEAR (constant per request, `__rc_underflow_count() == 0`).
-// So a *flat* leak assertion is impossible until that safe-leak cleanup lands;
-// this guard therefore checks the three things that ARE backend-robust today:
-//
-//  1. Value correctness — both loop halves compute the same result (a drop
-//     that corrupted data would diverge).
-//  2. No rc under-release — __rc_underflow_count() stays 0 (the corpus's gate,
-//     folded in here too since a request loop is a good exerciser).
-//  3. BOUNDED, LINEAR growth — the second batch of N requests must not grow
-//     meaningfully more than the first (catches a compounding leak or a
-//     cross-request cycle, which accelerate), and per-request growth must sit
-//     under an absolute ceiling of 700 B (catches a gross per-request leak or
-//     reclamation broken for a class — e.g. an injected 300-element
-//     append-churn handler measures 1632 B/req and trips it, while the ~176 /
-//     352 B/req safe-leak baseline clears it with 2-4x margin). It TOLERATES a
-//     documented linear safe-leak below ~700 B/req; catching those is the
-//     RC-STRINGS-PLAN cleanup's job, and when that lands this ceiling should
-//     drop toward zero.
-//
-// Runs on the three native backends that share the bump-allocator + freelist
-// memory model; the interp backend uses Go GC (it reported 0 growth for the
-// same program) so it is not a meaningful participant here.
 const rcRequestLoopLeakGuard = `
 import "core/int";
 import "std/string";

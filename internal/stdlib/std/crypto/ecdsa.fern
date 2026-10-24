@@ -1,14 +1,4 @@
-// std/crypto/ecdsa — ECDSA signature verification over NIST P-256 and
-// P-384 (FIPS 186-5, SEC 1), the curves TLS certificates and handshake
-// signatures use.
-//
-//   let key: ecdsa.PublicKey = ecdsa.public_key(ecdsa.P256, sec1_point)?;
-//   if (ecdsa.verify(key, sha2.Sha256, message, der_signature)) { … }
-//
-// Verification handles only public values, so it is built on `core/bigint`
-// rather than constant-time limbs; signing, which needs those, is a later
-// slice of #9858.
-
+// This module provides ECDSA operations for the NIST P-256 and P-384 curves.
 import "core/bigint";
 import "std/crypto";
 import "std/crypto/sha2";
@@ -22,15 +12,10 @@ pub enum Curve {
   P384,
 }
 
-// EcdsaError — why a public key was refused.
 pub enum EcdsaError {
-  // Not an uncompressed SEC 1 point (04 || x || y) of the curve's size.
   Encoding,
-  // The coordinates are out of range or the point is not on the curve.
   NotOnCurve,
-  // A private scalar of the wrong length, or not in [1, n).
   ScalarRange,
-  // Signing over SHA-512, which TLS never asks of these curves.
   SigningHash,
 }
 
@@ -60,15 +45,10 @@ pub function (e: EcdsaError) message(): string {
   return "";
 }
 
-// PublicKey — a point on the curve, in affine coordinates.
 pub struct PublicKey { curve: Curve, x: bigint.BigInt, y: bigint.BigInt }
 
-// A curve's field prime, group order, b (a is -3 on both), base point and
-// size in bytes.
 struct Params { p: bigint.BigInt, n: bigint.BigInt, b: bigint.BigInt, g: Point, bytes: i32 }
 
-// A point in Jacobian coordinates: (X/Z^2, Y/Z^3), the point at infinity
-// when Z is 0.
 struct Point { x: bigint.BigInt, y: bigint.BigInt, z: bigint.BigInt }
 
 function __hex_int(s: string): bigint.BigInt {
@@ -94,8 +74,6 @@ function __bytes_int(bytes: [u8]): bigint.BigInt {
   return value;
 }
 
-// A curve's constants: its field prime, order, b, base point and size in
-// bytes.
 struct CurveData { p: string, n: string, b: u8[], gx: u8[], gy: u8[], bytes: i32 }
 
 function __curve_data(c: Curve): CurveData {
@@ -139,7 +117,6 @@ function __mul(a: bigint.BigInt, b: bigint.BigInt, m: bigint.BigInt): bigint.Big
   return __mod(a.mul(b), m);
 }
 
-// __inv is a^(m-2) mod m, the inverse of a for a prime m.
 function __inv(a: bigint.BigInt, m: bigint.BigInt): bigint.BigInt {
   let e: bigint.BigInt = m.sub(__int(2));
   let r: bigint.BigInt = __int(1);
@@ -164,7 +141,6 @@ function __from_be(b: [u8], from: i32, len: i32): bigint.BigInt {
   return v;
 }
 
-// __on_curve is whether y^2 = x^3 - 3x + b mod p, both below p.
 function __on_curve(c: Params, x: bigint.BigInt, y: bigint.BigInt): boolean {
   let p: bigint.BigInt = c.p;
   if (x.cmp(p) >= 0 || y.cmp(p) >= 0) {
@@ -174,8 +150,6 @@ function __on_curve(c: Params, x: bigint.BigInt, y: bigint.BigInt): boolean {
   return __mul(y, y, p).eq(rhs);
 }
 
-// public_key(curve, point) — the key an uncompressed SEC 1 point on
-// `curve` encodes, as a certificate's SubjectPublicKeyInfo carries it.
 pub function public_key(curve: Curve, point: [u8]): Result[PublicKey, EcdsaError] {
   let c: Params = __params(curve);
   if (point.len() != 1 + 2 * c.bytes || point[0] != 4 as u8) {
@@ -189,7 +163,6 @@ pub function public_key(curve: Curve, point: [u8]): Result[PublicKey, EcdsaError
   return Ok(PublicKey { curve: curve, x: x, y: y });
 }
 
-// __double is 2P, the curve's a being -3.
 function __double(p: bigint.BigInt, q: Point): Point {
   if (q.z.is_zero() || q.y.is_zero()) {
     return __infinity();
@@ -204,7 +177,6 @@ function __double(p: bigint.BigInt, q: Point): Point {
   return Point { x: x3, y: y3, z: z3 };
 }
 
-// __add is P + Q, doubling when the two are the same point.
 function __add(p: bigint.BigInt, a: Point, b: Point): Point {
   if (a.z.is_zero()) {
     return b;
@@ -235,8 +207,6 @@ function __add(p: bigint.BigInt, a: Point, b: Point): Point {
   return Point { x: x3, y: y3, z: z3 };
 }
 
-// __combine is u1*G + u2*Q by one double-and-add over both scalars
-// (Shamir's trick).
 function __combine(c: Params, u1: bigint.BigInt, u2: bigint.BigInt, q: Point): Point {
   let p: bigint.BigInt = c.p;
   let gq: Point = __add(p, c.g, q);
@@ -258,9 +228,6 @@ function __combine(c: Params, u1: bigint.BigInt, u2: bigint.BigInt, q: Point): P
   return r;
 }
 
-// __der_int reads a DER INTEGER of at most `max` bytes at `at` in sig: its
-// value and the offset after it, or nothing when it is malformed or not
-// minimally encoded.
 function __der_int(sig: [u8], at: i32, max: i32): Option[(bigint.BigInt, i32)] {
   if (at + 2 > sig.len() || sig[at] != 2 as u8) {
     return None;
@@ -278,8 +245,6 @@ function __der_int(sig: [u8], at: i32, max: i32): Option[(bigint.BigInt, i32)] {
   return Some((__from_be(sig, at + 2, len), at + 2 + len));
 }
 
-// __verify_rs is whether (r, s) is key's ECDSA signature over msg's
-// digest, a digest longer than the order cut to its leftmost bytes.
 function __verify_rs(c: Params, key: PublicKey, hash: sha2.Hash, msg: [u8], r: bigint.BigInt, s: bigint.BigInt): boolean {
   let n: bigint.BigInt = c.n;
   if (r.is_zero() || s.is_zero() || r.cmp(n) >= 0 || s.cmp(n) >= 0) {
@@ -304,9 +269,6 @@ function __verify_rs(c: Params, key: PublicKey, hash: sha2.Hash, msg: [u8], r: b
   return __mod(ax, n).eq(r);
 }
 
-// verify(key, hash, msg, sig) — whether sig, a DER ECDSA-Sig-Value
-// (SEQUENCE { r INTEGER, s INTEGER }) as TLS and X.509 carry it, is key's
-// signature over msg.
 pub function verify(key: PublicKey, hash: sha2.Hash, msg: [u8], sig: [u8]): boolean {
   if (sig.len() < 8 || sig.len() > 129 || sig[0] != 48 as u8 || sig[1] as i32 != sig.len() - 2) {
     return false;
@@ -330,22 +292,10 @@ pub function verify(key: PublicKey, hash: sha2.Hash, msg: [u8], sig: [u8]): bool
   return false;
 }
 
-// Signing. Everything a secret reaches runs over std/crypto/p256 for P-256
-// and std/crypto/montgomery for P-384: no branch on and no index by a secret
-// value. Points are projective (X:Y:Z),
-// added by the complete formula for a = -3 of Renes, Costello and Batina
-// (eprint 2015/1060), which has no exceptional case to branch on, so it
-// doubles too. The nonce is RFC 6979's, so a signature is deterministic.
-
-// PrivateKey — a scalar d in [1, n), big-endian at the curve's size.
 pub struct PrivateKey { curve: Curve, d: u8[] }
 
-// A point (X:Y:Z) with coordinates in Montgomery form; Z = 0 is the
-// identity.
 struct Proj { x: i64[], y: i64[], z: i64[] }
 
-// The field and the order as Montgomery moduli, b in Montgomery form, the
-// base point and the size in bytes.
 struct Signer { fp: mont.Modulus, fn: mont.Modulus, b: i64[], g: Proj, bytes: i32 }
 
 function __signer(c: Curve): Signer {
@@ -355,7 +305,6 @@ function __signer(c: Curve): Signer {
   return Signer { fp: fp, fn: mont.modulus(h.n, h.bytes), b: mont.from_bytes(fp, h.b), g: g, bytes: h.bytes };
 }
 
-// private_key(curve, d) — d checked to be in [1, n) at the curve's size.
 pub function private_key(curve: Curve, d: [u8]): Result[PrivateKey, EcdsaError] {
   if (!__scalar_ok(curve, d)) {
     return Err(ScalarRange);
@@ -363,7 +312,6 @@ pub function private_key(curve: Curve, d: [u8]): Result[PrivateKey, EcdsaError] 
   return Ok(PrivateKey { curve: curve, d: __copy(d) });
 }
 
-// __scalar_ok is whether d is in [1, n) at the curve's size.
 function __scalar_ok(curve: Curve, d: [u8]): boolean {
   match (curve) {
     P256 => {
@@ -383,7 +331,6 @@ function __copy(b: [u8]): u8[] {
   return out;
 }
 
-// (k).public_point() — [d]G as an uncompressed SEC 1 point.
 pub function (k: PrivateKey) public_point(): u8[] {
   match (k.curve) {
     P256 => {
@@ -403,10 +350,6 @@ pub function (k: PrivateKey) public_point(): u8[] {
   return out;
 }
 
-// ecdh(key, peer) — the x-coordinate of [d]Q, Q the uncompressed SEC 1
-// point `peer` on the key's curve: the shared secret of ECDHE (RFC 8446
-// §7.4.1), big-endian at the curve's size. Constant time in d, as signing
-// is; the peer's point is public and checked to lie on the curve.
 pub function ecdh(key: PrivateKey, peer: [u8]): Result[u8[], EcdsaError] {
   match (public_key(key.curve, peer)) {
     Ok(_) => {},
@@ -425,8 +368,6 @@ pub function ecdh(key: PrivateKey, peer: [u8]): Result[u8[], EcdsaError] {
   return Ok(__affine(s, __scalar_mul(s, q, key.d)).0);
 }
 
-// sign(key, hash, msg) — the DER ECDSA-Sig-Value over msg's digest, with
-// RFC 6979's nonce. SHA-256 and SHA-384 only.
 pub function sign(key: PrivateKey, hash: sha2.Hash, msg: [u8]): Result[u8[], EcdsaError] {
   match (hash) {
     sha2.Sha512 => {
@@ -451,9 +392,6 @@ pub function sign(key: PrivateKey, hash: sha2.Hash, msg: [u8]): Result[u8[], Ecd
   return Ok(__sign_loop(hash, key.d, mont.to_bytes(s.fn, e), (k: u8[]): i64 => mont.in_range(s.fn, k), (k: u8[]): (u8[], u8[]) => __sign_with(s, key.d, e, k)));
 }
 
-// __sign_loop is the DER signature for the reduced digest e under the key
-// d, drawing RFC 6979's nonces until one is in range and gives an r and s
-// that are both nonzero; rs_of signs with a nonce.
 function __sign_loop(hash: sha2.Hash, d: [u8], e: [u8], in_range: (u8[]) => i64, rs_of: (u8[]) => (u8[], u8[])): u8[] {
   let drbg: Drbg = __drbg_new(hash, d, e);
   while (true) {
@@ -462,7 +400,6 @@ function __sign_loop(hash: sha2.Hash, d: [u8], e: [u8], in_range: (u8[]) => i64,
     let k: u8[] = next.1;
     if (__revealed(in_range(k))) {
       let rs: (u8[], u8[]) = rs_of(k);
-      // r and s are the signature, public once returned.
       __ct_public(rs.0);
       __ct_public(rs.1);
       if (!__all_zero(rs.0) && !__all_zero(rs.1)) {
@@ -474,7 +411,6 @@ function __sign_loop(hash: sha2.Hash, d: [u8], e: [u8], in_range: (u8[]) => i64,
   return [];
 }
 
-// __sign_with is (r, s) for nonce k: r the x of [k]G mod n, s = (e + r d)/k.
 function __sign_with(s: Signer, d: [u8], e: [i64], k: [u8]): (u8[], u8[]) {
   let x: u8[] = __affine(s, __base_mul(s, k)).0;
   let r: i64[] = mont.from_bytes(s.fn, x);
@@ -483,8 +419,6 @@ function __sign_with(s: Signer, d: [u8], e: [i64], k: [u8]): (u8[], u8[]) {
   return (mont.to_bytes(s.fn, r), mont.to_bytes(s.fn, sm));
 }
 
-// __revealed declassifies a secret-derived 0 or 1 to branch on it: whether
-// a scalar is in range says nothing of its value worth hiding.
 function __revealed(flag: i64): boolean {
   let verdict: u8[] = [flag as u8];
   __ct_public(verdict);
@@ -500,8 +434,6 @@ function __all_zero(b: [u8]): boolean {
   return true;
 }
 
-// __padd is p1 + p2 by the complete formula for a = -3 (eprint 2015/1060,
-// algorithm 4).
 function __padd(s: Signer, p1: Proj, p2: Proj): Proj {
   let m: mont.Modulus = s.fp;
   let t0: i64[] = mont.mul(m, p1.x, p2.x);
@@ -531,14 +463,10 @@ function __padd(s: Signer, p1: Proj, p2: Proj): Proj {
   return Proj { x: x3, y: y3, z: z3 };
 }
 
-// __base_mul is [k]G for a secret big-endian k.
 function __base_mul(s: Signer, k: [u8]): Proj {
   return __scalar_mul(s, s.g, k);
 }
 
-// __scalar_mul is [k]P for a secret big-endian k: four doublings and one
-// addition per 4-bit digit, the digit's multiple of P taken from all
-// sixteen by mask.
 function __scalar_mul(s: Signer, point: Proj, k: [u8]): Proj {
   let table: Proj[] = [__identity(s), point];
   let i: i32 = 2;
@@ -561,7 +489,6 @@ function __times16(s: Signer, p: Proj): Proj {
   return __padd(s, r, r);
 }
 
-// __add_digit is r plus table[digit], the entry chosen by mask.
 function __add_digit(s: Signer, r: Proj, table: Proj[], digit: i64): Proj {
   let pick: Proj = table[0];
   let j: i32 = 1;
@@ -577,13 +504,11 @@ function __identity(s: Signer): Proj {
   return Proj { x: mont.zero(s.fp), y: s.fp.one, z: mont.zero(s.fp) };
 }
 
-// __affine is (X/Z, Y/Z) as big-endian bytes.
 function __affine(s: Signer, p: Proj): (u8[], u8[]) {
   let zinv: i64[] = mont.inv(s.fp, p.z);
   return (mont.to_bytes(s.fp, mont.mul(s.fp, p.x, zinv)), mont.to_bytes(s.fp, mont.mul(s.fp, p.y, zinv)));
 }
 
-// __der is SEQUENCE { INTEGER r, INTEGER s }, each minimal.
 function __der(r: [u8], s: [u8]): u8[] {
   let ri: u8[] = __der_integer(r);
   let si: u8[] = __der_integer(s);
@@ -617,7 +542,6 @@ function __der_integer(v: [u8]): u8[] {
   return out;
 }
 
-// RFC 6979 §3.2's HMAC_DRBG: K and V, over the signature's hash.
 struct Drbg { hash: sha2.Hash, k: u8[], v: u8[] }
 
 function __mac(h: sha2.Hash, key: [u8], msg: [u8]): u8[] {
@@ -646,8 +570,6 @@ function __cat3(a: [u8], tag: i32, b: [u8], c: [u8]): u8[] {
   return out;
 }
 
-// __drbg_new seeds the generator with the private scalar and the digest
-// reduced mod n (steps b to g).
 function __drbg_new(h: sha2.Hash, x: [u8], h1: [u8]): Drbg {
   let size: i32 = h.size();
   let v: u8[] = [];
@@ -665,7 +587,6 @@ function __drbg_new(h: sha2.Hash, x: [u8], h1: [u8]): Drbg {
   return Drbg { hash: h, k: k, v: v };
 }
 
-// __drbg_next is the next candidate nonce of `bytes` bytes (step h).
 function __drbg_next(g: Drbg, bytes: i32): (Drbg, u8[]) {
   let v: u8[] = g.v;
   let t: u8[] = [];
@@ -680,7 +601,6 @@ function __drbg_next(g: Drbg, bytes: i32): (Drbg, u8[]) {
   return (Drbg { ...g, v: v }, t);
 }
 
-// __drbg_reseed moves past a candidate that was refused.
 function __drbg_reseed(g: Drbg): Drbg {
   let k: u8[] = __mac(g.hash, g.k, __cat3(g.v, 0, [], []));
   return Drbg { ...g, k: k, v: __mac(g.hash, k, g.v) };

@@ -10,22 +10,6 @@ import (
 	"testing"
 )
 
-// `color_enabled()` is the gate every coloriser in `std/cli` consults.
-// It is decided by the environment AND by whether stdout is a terminal, so
-// it cannot be pinned by a conformance case (the case format can set
-// neither) and it needs the real CLI rather than an in-process check.
-//
-// Four signals, in precedence order: FORCE_COLOR forces colour on, NO_COLOR
-// forces it off, TERM=dumb turns it off, and otherwise stdout must be a
-// terminal. FORCE_COLOR wins over NO_COLOR because it is the more
-// deliberate signal — NO_COLOR is usually exported once in a profile,
-// FORCE_COLOR is set for one run. The tty test comes last because the three
-// variables are overrides: a user who exported one has said something more
-// specific than the stream shape has.
-//
-// Every row runs twice, against a pipe and against a real pseudo-terminal,
-// because the whole point of the tty clause is that those two disagree when
-// nothing else has been said.
 func TestCliColorGateHonoursTheConventions(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
@@ -42,8 +26,8 @@ function main(): i32 {
 	cases := []struct {
 		name string
 		env  []string
-		pipe bool // colour when stdout is a pipe
-		tty  bool // colour when stdout is a terminal
+		pipe bool
+		tty  bool
 	}{
 		{"unset", nil, false, true},
 		{"NO_COLOR disables", []string{"NO_COLOR=1"}, false, false},
@@ -69,12 +53,6 @@ function main(): i32 {
 	}
 }
 
-// runColorGate runs the gate program with the given environment, wiring its
-// stdout either to a pipe or to a real pty, and reports whether it decided
-// colour was on (exit status 1).
-//
-// The base environment is deliberately minimal: a CI runner's own TERM or
-// NO_COLOR would otherwise decide the row instead of the row deciding it.
 func runColorGate(t *testing.T, bin, src string, env []string, tty bool) bool {
 	t.Helper()
 	cmd := exec.Command(bin, "-interp", src)
@@ -92,8 +70,6 @@ func runColorGate(t *testing.T, bin, src string, env []string, tty bool) bool {
 	}
 	defer master.Close()
 	cmd.Stdout = slave
-	// Drain the master while the child writes: a pty buffer is small
-	// enough that an undrained one can block the writer.
 	done := make(chan struct{})
 	go func() {
 		_, _ = io.Copy(io.Discard, master)
@@ -108,16 +84,6 @@ func runColorGate(t *testing.T, bin, src string, env []string, tty bool) bool {
 	return cmd.ProcessState.ExitCode() == 1
 }
 
-// The gate above proves the DECISION; this proves the decision reaches the
-// bytes, through the native `__fern_isatty` helper rather than Go's. A
-// coloured CLI must emit SGR escapes to a terminal and none at all when its
-// output is redirected — the redirect case being the bug `isatty` exists to
-// fix (#6387), where every other ecosystem treats "stdout is not a
-// terminal" as the primary signal and Fern had only the overrides.
-//
-// Both native backends run it: each grew its own ioctl-based helper, and a
-// helper that answers "no" unconditionally would pass a test that only
-// checked the redirected half.
 func TestColouredCliStripsEscapesWhenRedirected(t *testing.T) {
 	const src = `import "std/cli";
 function main(): i32 {
@@ -134,15 +100,8 @@ function main(): i32 {
 	})
 }
 
-// assertColourFollowsTheStream runs the coloured program twice — redirected
-// and on a pty — and requires plain text from the first and SGR escapes from
-// the second. `newCmd` builds a fresh command each time because a *exec.Cmd
-// cannot be reused.
 func assertColourFollowsTheStream(t *testing.T, newCmd func() *exec.Cmd) {
 	t.Helper()
-	// TERM is set so the run cannot pass for the wrong reason: with TERM
-	// unset the tty leg would still be expected to colour, but the
-	// redirected leg would have two independent reasons to be plain.
 	env := []string{"PATH=" + os.Getenv("PATH"), "TERM=xterm"}
 
 	var piped bytes.Buffer

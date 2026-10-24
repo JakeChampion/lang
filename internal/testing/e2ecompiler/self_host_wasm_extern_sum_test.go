@@ -5,25 +5,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostWasmExternSum pins the wasm backend's flat-sum extern type checks
-// (compiler/wasm_ir.fern's extern_sum_param_supported /
-// extern_sum_param_is_option — SH-021, docs/SELF-HOST-AUDIT.md T2). Both now
-// decode an Option[…] / Result[…, …] spelling via the structured TypeRef
-// (parser.parse_type_ref) instead of the magic-byte `Option[` / `Result[`
-// prefix + top-level-comma depth scan.
-//
-// The wasm_extern_sum_run driver runs the REAL (imported) functions against a
-// frozen copy of the FORMER magic-byte logic over a corpus spanning every branch
-// (Option/Result of i32/u32 vs of string/struct/nested-generic; single/two/three-
-// arg arities; arrays incl. Option[i32][]; the degenerate Option[]; bare
-// Option/Result; plain scalars/structs), and exits with the mismatch count. The
-// golden below (all "ok", mismatches=0) is the byte-identical guard: because the
-// two are pure boolean functions, identical output over this corpus proves the
-// wasm codegen is unchanged, so a regression in the TypeRef decode (or in
-// parse_type_ref feeding it) fails here rather than silently mis-classifying a
-// WIT extern param.
-//
-// The driver is built natively via the Go x86-64 backend; its stdout is the map.
 func TestSelfHostWasmExternSum(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {

@@ -5,23 +5,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostTupleElemTag pins the tuple element-tag decoder
-// (compiler/irtables.fern's tuple_type_elem_tag — SH-021,
-// docs/SELF-HOST-AUDIT.md T2). It now extracts element n of a tuple type spelling
-// "(t0, t1, …)" via the structured TypeRef (parser.parse_type_ref) instead of a
-// hand-rolled depth-tracking top-level-comma scan.
-//
-// The tuple_elem_tag_run driver runs the REAL (imported) function against a frozen
-// copy of the FORMER scan over a corpus spanning every branch — plain tuples,
-// tuples with nested-generic / nested-tuple / array elements (whose inner commas
-// the depth scan must not split on), single-element tuples, out-of-range and
-// negative indices, non-tuples, and a tuple-array "(a, b)[]" — for each element
-// index, and exits with the mismatch count. The golden below (all "ok",
-// mismatches=0) is the byte-identical guard: a regression in the TypeRef decode
-// (or in parse_type_ref feeding it) fails here rather than silently mis-reading a
-// tuple field type.
-//
-// The driver is built natively via the Go x86-64 backend; its stdout is the map.
 func TestSelfHostTupleElemTag(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {

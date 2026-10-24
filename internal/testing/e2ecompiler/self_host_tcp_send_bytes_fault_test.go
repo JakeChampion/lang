@@ -12,8 +12,6 @@ import (
 	"time"
 )
 
-// Execute both compilers' byte-array bridges against deterministic stream
-// errors. Check accepted progress, exact bytes, chunk bounds and owned errors.
 func TestSelfHostTCPSendBytesFaults(t *testing.T) {
 	for _, tool := range []string{"wasm-tools", "wasmtime"} {
 		if _, err := exec.LookPath(tool); err != nil {

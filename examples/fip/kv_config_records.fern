@@ -1,4 +1,3 @@
-// Ordinary representations decode immutable records and build response bytes.
 import "std/string";
 
 pub struct Request {

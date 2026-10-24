@@ -12,18 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExternRecordParamNestedCustomProvider is the P4c nested-record parameter
-// gate (docs/WIT-BRING-YOUR-OWN.md): a Fern struct with a field that is itself a
-// (flattenable) struct, passed to an `@import` extern whose WIT record nests
-// another record. The canonical ABI flattens a nested record **inline**, so
-// `record line { p: point, q: point }` flattens to (p.x, p.y, q.x,
-// q.y). A Fern struct field of struct type is a pointer, so a nested leaf is
-// reached by loading the inner value pointer at the outer field offset then the
-// leaf at the inner offset (ir.ExternRecordField.DerefPath, a one-element chain
-// here; deeper nesting extends the chain — see the deep-nested test).
-//
-// The provider exports `sum-line: func(l: line) -> s32` summing the 4 flattened
-// coords; the Fern side passes Line{p:{1,2}, q:{3,4}} and expects 10.
 func TestExternRecordParamNestedCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -50,8 +38,6 @@ func TestExternRecordParamNestedCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export sink; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// sum-line receives the nested record flattened to (p.x, p.y, q.x,
-	// q.y) — four i32 params — and returns their sum.
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)
   (func (export "local:test/sink@0.1.0#sum-line") (param $a i32) (param $b i32) (param $c i32) (param $d i32) (result i32)

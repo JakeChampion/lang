@@ -5,19 +5,6 @@ import (
 	"testing"
 )
 
-// One pattern grammar at every irrefutable binding site (#5356). The `for`
-// header and the `let` destructure now take the same pattern heads a
-// destructured parameter does — a struct pattern, and an `@` binding naming
-// the whole value beside either shape.
-//
-// On the self-host a pattern-shaped `for` header desugars to the plain foreach
-// plus a destructure of the element (parse_for_stmt), which is the shape
-// already built for `for (a, b) in xs`; the `@` binding uses that
-// destructure's marker channel and names the temp holding the whole value.
-// These build the self-host x86-64 IR driver and assert the compiled binary
-// agrees with the interpreter oracle — so a divergence between the self-host's
-// desugar and native's ForEach/AtName lowering fails here rather than silently
-// dropping a binding.
 var selfHostPatternBindingSiteCases = []struct {
 	name string
 	src  string
@@ -73,9 +60,6 @@ function main(): i32 {
 }`},
 }
 
-// TestSelfHostPatternBindingSitesX86_64 compiles each program through the
-// self-host x86-64 IR path (asm_ir_run) and checks the exit code against
-// the native interpreter oracle.
 func TestSelfHostPatternBindingSitesX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
@@ -106,9 +90,6 @@ func TestSelfHostPatternBindingSitesX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostPatternBindingSitesArm64 — CI-gated arm64 counterpart. The
-// desugar and the `@` holder naming are shared lowering analysis, so both
-// register backends inherit them; the driver is built x86 and emits arm64 asm.
 func TestSelfHostPatternBindingSitesArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

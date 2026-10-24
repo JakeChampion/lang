@@ -9,17 +9,6 @@ import (
 	"testing"
 )
 
-// --- `.with` on a string[] must not leak the receiver (#6407) ------
-//
-// `arr.with(i, v)` on a `string[]` must release the overwritten element and
-// retain the stored value, whether it lowers as an in-place arr_set on a
-// sole-owned slot or a clone plus arr_set on an aliased one; otherwise one
-// `.with` strands a block per element every round.
-//
-// It is the delta that this asserts, not a byte count. Whatever the self-host
-// leaks for unrelated reasons appears in both columns and cancels, so this
-// cannot become a byte budget — while still failing the moment a `.with`
-// starts costing a per-round block.
 func strArrayWithChurnSrc(rounds int, with bool) string {
 	set := ""
 	if with {
@@ -82,8 +71,6 @@ func testSelfHostStrArrayWithReclaim(t *testing.T, target string) {
 			t.Fatalf("%s did not exit normally: %v\n%s", name, err, out)
 		}
 		stderr, code := string(out), cmd.ProcessState.ExitCode()
-		// Eight elements and a 21-byte string are observed per round. All
-		// replacements preserve that length; 99 reports any RC underflow.
 		if want := rounds * (8 + 21) % 7; code != want {
 			t.Fatalf("%s: exit %d, want %d (88 = wrong value, 99 = RC underflow): %s", name, code, want, stderr)
 		}
@@ -107,10 +94,6 @@ func testSelfHostStrArrayWithReclaim(t *testing.T, target string) {
 		return live
 	}
 
-	// The `.with` DELTA against the identical loop without it, at two round
-	// counts. Subtracting the control is what keeps this from becoming a byte
-	// budget for the rest of the goal-2 port: whatever the self-host leaks
-	// for unrelated reasons appears in both columns and cancels.
 	base100 := liveOf(t, "strbase100", 100, "")
 	base200 := liveOf(t, "strbase200", 200, "")
 	for _, tc := range []struct{ name, update string }{

@@ -1,19 +1,3 @@
-// The `stty` corpus. Every case runs with a REAL pseudo-terminal on fd 0,
-// because that is the only descriptor shape the utility can answer for: on a
-// pipe every invocation is `Inappropriate ioctl for device` and a piped
-// corpus would prove one message and nothing else.
-//
-// `ttyState` is what makes the setting half gateable. `stty -echo` writes
-// nothing at all, so without the terminal's own state in the comparison its
-// case would compare two empty streams and pass on a utility that parsed the
-// operand and made no call. With it, the four flag words, the line
-// discipline, every control character and the size all have to match.
-//
-// `ttyPre` gives a case a starting state, established by the reference
-// binary on the same terminal, so the deviations `stty` prints are the ones
-// the case means rather than a fresh pty's. Several settings are only
-// reachable that way: `-brkint` from a state where brkint is on, `raw`
-// undoing an `iutf8`, the min/time line in the default form.
 package coreutils
 
 import (
@@ -25,9 +9,6 @@ import (
 	"testing"
 )
 
-// The boolean flags, in the order `-a` prints them. Every one is exercised
-// set and cleared; the two a pseudo-terminal refuses — `parenb` and `-cread`
-// — are exercised too, for their error rather than for their bit.
 func sttyFlags() []string {
 	return strings.Fields(`
 		parenb parodd cmspar hupcl cstopb cread clocal crtscts
@@ -39,15 +20,12 @@ func sttyFlags() []string {
 		hup tandem ctlecho crterase crtkill prterase`)
 }
 
-// The multi-valued sets: the character size and the six delay styles. None
-// takes a `-` spelling, which is half of what their cases check.
 func sttyGroups() []string {
 	return strings.Fields(`
 		cs5 cs6 cs7 cs8 nl0 nl1 cr0 cr1 cr2 cr3 tab0 tab1 tab2 tab3
 		bs0 bs1 vt0 vt1 ff0 ff1`)
 }
 
-// The combination settings, each of which expands to a list of the above.
 func sttyCombos() []string {
 	return strings.Fields(`
 		sane raw -raw cooked -cooked cbreak -cbreak ek evenp -evenp oddp -oddp
@@ -61,13 +39,8 @@ func sttyControlChars() []string {
 		werase lnext discard flush`)
 }
 
-// The starting states a case can ask for. Each is reachable with one
-// reference invocation, and between them they turn every flag `sane` names
-// both ways, so a `-brkint` case has a brkint to clear.
 func sttyDelayPre() []string {
 	args := []string{"nl1", "cr3", "tab3", "-opost"}
-	// Darwin has no OLCUC. Keep its set/clear rejection cases, but use
-	// supported settings when establishing a starting state for another case.
 	if runtime.GOOS != "darwin" {
 		args = append(args, "olcuc")
 	}
@@ -106,22 +79,16 @@ func sttyCases(t *testing.T) []invocation {
 		cases = append(cases, invocation{name: name, args: args, ttyIn: true, ttyState: true, ttyPre: pre})
 	}
 
-	// Every flag, set and cleared, from a fresh terminal and from `raw` —
-	// which has most of them the other way round, so the pair covers both
-	// directions of every bit.
 	for _, f := range sttyFlags() {
 		add("set "+f, f)
 		add("clear "+f, "-"+f)
 		addFrom("raw then "+f, []string{"raw"}, f)
 		addFrom("raw then -"+f, []string{"raw"}, "-"+f)
 	}
-	// Every member of every multi-valued set, and the `-` spelling none of
-	// them accepts.
 	for _, g := range sttyGroups() {
 		add("set "+g, g)
 		add("negate "+g, "-"+g)
 	}
-	// Every combination, from each starting state that makes it interesting.
 	for _, c := range sttyCombos() {
 		add("combo "+c, c)
 		addFrom("combo "+c+" from raw", []string{"raw"}, c)
@@ -129,7 +96,6 @@ func sttyCases(t *testing.T) []invocation {
 		addFrom("combo "+c+" from iflags", []string{"ixoff", "iutf8", "-icrnl"}, c)
 		addFrom("combo "+c+" from chars", []string{"erase", "X", "intr", "^A", "eof", "Z"}, c)
 	}
-	// Every control character, through every spelling a value has.
 	for _, c := range sttyControlChars() {
 		for _, v := range []string{"^C", "^?", "^-", "undef", "", "Z", "9", "0", "0x41", "65", "0177", "255", "^@", "^i"} {
 			add("cchar "+c+" "+v, c, v)
@@ -140,7 +106,6 @@ func sttyCases(t *testing.T) []invocation {
 		add("cchar "+c+" past the parse limit", c, "1073741824")
 		add("cchar "+c+" missing", c)
 	}
-	// Every speed, as the bare form and through both halves.
 	for _, s := range strings.Fields(`0 50 75 110 134 134.5 150 200 300 600 1200 1800 2400
 		4800 9600 19200 exta 38400 extb 57600 115200 230400 460800 500000 576000 921600
 		1000000 1152000 1500000 2000000 2500000 3000000 3500000 4000000`) {
@@ -148,10 +113,6 @@ func sttyCases(t *testing.T) []invocation {
 		add("ispeed "+s, "ispeed", s)
 		add("ospeed "+s, "ospeed", s)
 	}
-	// A speed is a number strtoul reads, not a name looked up, so one speed
-	// has many spellings and a fraction is rounded to nearest with ties to
-	// even. The empty string is among them: strtoul consumes nothing and
-	// answers zero, which is a speed.
 	for _, s := range strings.Fields(`+9600 00009600 9600. 9600.0 9600.00 9600.4 9600.5
 		9600.49 9600.50 9600.500 9600.51 9600.6 9600.9 134.4 134.5 134.6 134.50 134.51
 		133.5 135.5 0.0 0.5 0.6 -0 -9600 9600x 9600.x 9600.5x 9600..0 96e2 0x2580 09600
@@ -167,9 +128,6 @@ func sttyCases(t *testing.T) []invocation {
 		add("ospeed "+strconv.Quote(s), "ospeed", s)
 	}
 
-	// The valued settings, over the values that decide which diagnostic they
-	// reach: the kernel's own truncation, the two parse limits, and the two
-	// range messages.
 	for _, k := range []string{"rows", "cols", "columns", "line", "min", "time"} {
 		for _, v := range []string{"0", "1", "40", "255", "256", "65535", "65536",
 			"1073741823", "1073741824", "2147483647", "2147483648",
@@ -187,8 +145,6 @@ func sttyCases(t *testing.T) []invocation {
 	return cases
 }
 
-// The three print forms, from every starting state: the default's deviations
-// from `sane`, `-a`'s full dump, and `-g`'s hex line.
 func sttyOutputStyleCases() []invocation {
 	var cases []invocation
 	for name, pre := range sttyPres() {
@@ -206,16 +162,10 @@ func sttyOutputStyleCases() []invocation {
 	return cases
 }
 
-// The option scan, which is not a getopt call: an element that looks like an
-// option and is not becomes a mode, whole, and `--` means one thing before
-// the first mode and another after it.
 func sttyOptionScanCases() []invocation {
 	args := [][]string{
 		{"--all"}, {"--save"}, {"--al"}, {"--s"}, {"--a"},
 		{"-ag"}, {"-ga"}, {"-a", "-g"}, {"-a", "-echo"}, {"-echo", "-a"},
-		// `--h` and `--v` are not here: they print help and version, whose
-		// comparison is the two exemptions in docs/COREUTILS.md rather than
-		// byte-for-byte parity. TestSttyHelpVersion has them.
 		{"erase", "-a"}, {"-aecho"}, {"-igna"}, {"-e"}, {"-x"}, {"--bogus"},
 		{"-"}, {"--"}, {"--", "-echo"}, {"-echo", "--"}, {"-echo", "--", "-icanon"},
 		{"erase", "X", "--"}, {"-a", "--"}, {"-a", "--", "-echo"},
@@ -236,8 +186,6 @@ func sttyOptionScanCases() []invocation {
 	return cases
 }
 
-// The `-g` round trip, which is the reason the words are the kernel's and not
-// a numbering of ours: the line it prints has to be readable back.
 func sttySavedFormCases() []invocation {
 	const saved = "500:5:bf:8a3b:3:1c:7f:15:4:0:1:0:11:13:1a:0:12:f:17:16:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0"
 	f := strings.Split(saved, ":")
@@ -267,9 +215,6 @@ func sttySavedFormCases() []invocation {
 	return cases
 }
 
-// Sequences, where the order decides what lands before the failure: the
-// window size goes in as it is read while the flags go in once at the end,
-// and one pass reads every value except the window size's.
 func sttySequenceCases() []invocation {
 	args := [][]string{
 		{"rows", "40", "bogus"}, {"rows", "40", "cs7"}, {"rows", "40", "rows", "-1"},
@@ -296,10 +241,6 @@ func sttySequenceCases() []invocation {
 	return cases
 }
 
-// `-F DEVICE` reads and writes a terminal the utility opened ITSELF, which is
-// the half that needs the handle forms of the four primitives: a Reader
-// surrenders no descriptor number. Every case here leaves fd 0 a pipe, so
-// nothing could be answered by the standard descriptors instead.
 func sttyDeviceCases(t *testing.T) []invocation {
 	t.Helper()
 	dir := t.TempDir()
@@ -325,18 +266,7 @@ func sttyDeviceCases(t *testing.T) []invocation {
 		{"--file=/dev/null", "--file=/dev/null"},
 		{"-echo", "-F", "/dev/null"}, {"bogus", "-F", "/dev/null"},
 		{"-a", "bogus", "-F", "/dev/null"}, {"-F", "/dev/tty"},
-		// With no -F at all, fd 0 is a pipe: the one message a non-terminal
-		// has, under the name the utility uses when it was given none.
 		nil, {"-a"}, {"-g"}, {"-echo"}, {"size"}, {"speed"},
-		// /dev/ptmx is a terminal a case can have WITHOUT the harness's
-		// pty: every open of it is a fresh pseudo-terminal MASTER, which
-		// answers TCGETS, TCSETS and TIOCGWINSZ and dies with the process.
-		// So these are the only cases that drive the whole of `-F` — the
-		// print forms and the SETS — against something that answers, where
-		// /dev/null answers ENOTTY to all of it. The master's own state is
-		// gone by the time the run ends, so what they compare is the output
-		// and the status; a fresh master's size is 0x0, which is what makes
-		// them deterministic.
 		{"-F", "/dev/ptmx", "-a"}, {"-F", "/dev/ptmx", "-g"},
 		{"-F", "/dev/ptmx"}, {"-F", "/dev/ptmx", "size"},
 		{"-F", "/dev/ptmx", "speed"}, {"-F", "/dev/ptmx", "-echo"},
@@ -361,8 +291,6 @@ func sttyDeviceCases(t *testing.T) []invocation {
 func TestSttyHelpVersion(t *testing.T) {
 	requireHelp(t, "stty", []string{"--help"}, 0)
 	requireVersion(t, "stty", []string{"--version"}, 0)
-	// The unique-prefix spellings reach the same two, through the scan's own
-	// long-option matching rather than through glibc's.
 	requireHelp(t, "stty", []string{"--h"}, 0)
 	requireVersion(t, "stty", []string{"--v"}, 0)
 }

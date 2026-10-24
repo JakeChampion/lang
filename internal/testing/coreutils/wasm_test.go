@@ -11,14 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// TestWasmSmoke runs a few utilities built for wasm32-wasi under wasmtime
-// and holds them to the native build of the same source. It is not a GNU
-// parity gate — the corpora are that — but the proof that the tree runs on
-// the wasm target at all (#9070): argv and stdout reach the host, a stdio
-// handle answers stat, a path with no preopened directory is an error
-// rather than a trap, and exit codes survive wasi:cli/exit, which carries
-// one bit — so a non-zero native status is compared as non-zero, not by
-// value.
 func TestWasmSmoke(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -47,11 +39,9 @@ func TestWasmSmoke(t *testing.T) {
 	}
 
 	cases := []struct {
-		util  string
-		args  []string
-		stdin string
-		// preopen mounts the working directory; without it the guest
-		// has no directory at all, which the e2e suite covers.
+		util    string
+		args    []string
+		stdin   string
 		preopen bool
 	}{
 		{util: "true", args: []string{"--version"}},
@@ -69,10 +59,6 @@ func TestWasmSmoke(t *testing.T) {
 		{util: "wc", stdin: "a\nb\n"},
 		{util: "wc", args: []string{"in.txt", "-"}, stdin: "q\n", preopen: true},
 		{util: "wc", args: []string{"-l", "nosuch"}},
-		// dd is the one utility here that WRITES a file, which on wasm
-		// is a preopened directory's `path_open` and then the write
-		// loop; its report lands on stderr, so the record counts are
-		// compared as well as the bytes.
 		{util: "dd", args: []string{"if=in.txt", "of=ddout", "bs=2", "status=noxfer"}, preopen: true},
 		{util: "dd", args: []string{"bs=3", "status=noxfer"}, stdin: "abcdefg"},
 		{util: "dd", args: []string{"if=nosuch", "status=noxfer"}, preopen: true},

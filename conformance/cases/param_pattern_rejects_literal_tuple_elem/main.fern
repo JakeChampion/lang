@@ -1,4 +1,4 @@
-// A destructuring parameter binds unconditionally, so it reads only the
-// irrefutable half of the shared pattern grammar (#5356).
+
+
 function f((1, b): (i32, i32)): i32 { return b; }
 function main(): i32 { return 0; }

@@ -8,62 +8,23 @@ import (
 	"testing"
 )
 
-// #8527: `x = f(…, x, …)` where f hands its parameter back must still release x
-// at exit.
-//
-// A callee that returns its parameter gives the box back with no counted
-// reference (the convention #8240 settled: a returned param is an UNCOUNTED
-// alias). A self-rebind makes no second name for that box: one slot, one claim
-// across the call, so the exit sweep owes exactly one release — and withholding
-// it strands the whole value.
-//
-// THE EXIT CODE DOES NOT MOVE. A leak reads the same answer and never trips
-// __rc_underflow_count(), so the register legs below are here to catch a
-// miscompile, not the leak: the LEAKCHECK leg is the gate.
-//
-// Every case uses a plain array field. A nested-struct or rc-payload-enum field
-// leaks through a different hole (#8538, the shallow field release), which would
-// confound these rows.
 var selfHostHandbackRebindCases = []struct {
 	name string
 	src  string
 }{
-	// The reported shape, at its smallest: an `own` callee that returns its
-	// parameter unchanged.
 	{"own-handback-self-rebind", "struct Asm { bad: i32[], n: i32 }\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    return a;\n}\nfunction main(): i32 {\n    let a: Asm = Asm { bad: [1], n: 0 };\n    a = step(a, 1);\n    return a.bad.len() + __rc_underflow_count();\n}"},
 
-	// The same with the callee superseding a field first. The supersede was in
-	// every row of the original #8527 report and is irrelevant to the defect —
-	// this row is what says so.
 	{"own-handback-supersede", "struct Asm { bad: i32[], n: i32 }\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    a = Asm { ...a, bad: [v] };\n    return a;\n}\nfunction main(): i32 {\n    let a: Asm = Asm { bad: [], n: 0 };\n    a = step(a, 1);\n    return a.bad.len() + __rc_underflow_count();\n}"},
 
-	// Two rounds, so a per-round leak accumulates rather than resting on one
-	// missed release.
 	{"own-handback-twice", "struct Asm { bad: i32[], n: i32 }\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    a = Asm { ...a, bad: [v] };\n    return a;\n}\nfunction main(): i32 {\n    let a: Asm = Asm { bad: [], n: 0 };\n    a = step(a, 1);\n    a = step(a, 2);\n    return a.bad.len() + __rc_underflow_count();\n}"},
 
-	// A BORROWED parameter handed back. The caller never moved its claim, so it
-	// still holds exactly one and still owes one release — the same arithmetic,
-	// reached without `own`.
 	{"borrowed-handback-self-rebind", "struct Asm { bad: i32[], n: i32 }\n@noinline\nfunction keepit(a: Asm, v: i32): Asm {\n    return a;\n}\nfunction main(): i32 {\n    let a: Asm = Asm { bad: [1], n: 0 };\n    a = keepit(a, 1);\n    return a.bad.len() + __rc_underflow_count();\n}"},
 
-	// Control: the callee returns a FRESH box instead of its parameter, so no
-	// handback is involved and the credit was never in question. Clean before
-	// and after.
 	{"fresh-return-control", "struct Asm { bad: i32[], n: i32 }\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    return Asm { bad: [v], n: a.n };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { bad: [], n: 0 };\n    a = step(a, 1);\n    return a.bad.len() + __rc_underflow_count();\n}"},
 
-	// Control: no call at all. The in-body rebind reclaims correctly, which is
-	// what says the defect is the handback rather than the rebind.
 	{"no-call-control", "struct Asm { bad: i32[], n: i32 }\nfunction main(): i32 {\n    let a: Asm = Asm { bad: [], n: 0 };\n    a = Asm { ...a, bad: [1] };\n    a = Asm { ...a, bad: [1, 2] };\n    return a.bad.len() + __rc_underflow_count();\n}"},
 }
 
-// TestSelfHostHandbackRebindLeakCheck is the gate: every case clean under
-// FERN_LEAKCHECK on BOTH compilers, with native as the oracle.
-//
-// The four handback rows all leak without the fix — measured on `main`, where
-// the caller emits no release for the slot at all — while the two controls are
-// clean either way. A rule that granted the credit unconditionally would show up
-// here as an over-release on some other row, not as a leak, which is why the
-// exit code is asserted alongside the verdict.
 func TestSelfHostHandbackRebindLeakCheck(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	cli := buildLangBinForInterp(t)
@@ -89,9 +50,6 @@ func TestSelfHostHandbackRebindLeakCheck(t *testing.T) {
 	}
 }
 
-// TestSelfHostHandbackRebindX86_64 — the answers, against the interpreter
-// oracle. Vacuous for the leak itself; it is the miscompile guard on a change
-// that adds a release where there was none.
 func TestSelfHostHandbackRebindX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
@@ -121,9 +79,6 @@ func TestSelfHostHandbackRebindX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostHandbackRebindArm64 — the credit is shared lowering analysis, so
-// this leg is what would catch the added release landing on one register
-// backend.
 func TestSelfHostHandbackRebindArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -149,8 +104,6 @@ func TestSelfHostHandbackRebindArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostHandbackRebindWasmIR — the wasm leg emits its own exit sweep, so
-// a credit granted in shared analysis needs proving there too.
 func TestSelfHostHandbackRebindWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping the wasm leg")

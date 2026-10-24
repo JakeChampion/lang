@@ -5,20 +5,6 @@ import (
 	"testing"
 )
 
-// --- Append-built struct-array element reclaim (#6127) -------------
-//
-// A fresh, non-escaping struct array built by `ps = ps.append(P { .. })` must
-// free each element STRUCT BOX and then the outer buffer, exactly as the
-// literal-built form of the same array does. The append is a reassignment, so
-// it must not cost the array its freshness, or the array leaks one element box
-// per append.
-//
-// The free is SHALLOW — it releases element boxes, not their fields — so it is
-// sound only while the array solely owns each box: an element that is a no-base
-// struct literal, or a call to a function whose every return is one. Element
-// structs with scalar, `string` or `fn` fields are covered (#6461); the hazard
-// cases below pin the shapes that must still leak rather than free a shared box.
-
 const structArrAppendChurnSrc = `struct P { x: i32, y: i32 }
 
 function round(): i32 {
@@ -35,8 +21,6 @@ function main(): i32 {
     return t / 100;
 }`
 
-// TestSelfHostStructArrAppendReclaimX86_64 — an append-built struct array
-// reclaims its element boxes.
 func TestSelfHostStructArrAppendReclaimX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -73,11 +57,6 @@ func TestSelfHostStructArrAppendReclaimX86_64(t *testing.T) {
 	}
 }
 
-// A string-fielded element struct: the element BOXES must be reclaimed, leaving
-// only the string boxes live. Asserted against the LITERAL-built form of the
-// same array rather than a byte count — the two ways of building one value have
-// to agree, which is the property that was broken (28800 vs 9600 over 100
-// rounds) and the one that survives any change in box sizes.
 const structArrAppendStrFieldSrc = `struct N { s: string, n: i32 }
 
 function round(i: i32): i32 {
@@ -108,9 +87,6 @@ function main(): i32 {
     return t / 100;
 }`
 
-// TestSelfHostStructArrAppendStrFieldReclaimX86_64 — an append-built struct
-// array whose element carries a `string` field reclaims its element boxes, to
-// the same live_bytes as the literal-built form of the identical array.
 func TestSelfHostStructArrAppendStrFieldReclaimX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -154,12 +130,6 @@ func TestSelfHostStructArrAppendStrFieldReclaimX86_64(t *testing.T) {
 	}
 }
 
-// An element built by a CALL rather than an inline literal (#6461). A callee
-// whose every return is a strict-fresh struct literal hands back an rc=1 box no
-// one else holds, which is the same freshness the inline literal has one frame
-// out — so the array is still its sole owner and the element boxes must be
-// reclaimed. Before this the call form fell out of the credit entirely, taking
-// the element boxes, and everything they own, with it.
 const structArrAppendCallElemSrc = `struct P { x: i32, y: i32 }
 
 function mk(i: i32): P { return P { x: i, y: i }; }
@@ -178,9 +148,6 @@ function main(): i32 {
     return t / 100;
 }`
 
-// TestSelfHostStructArrAppendCallElemReclaimX86_64 — an append-built struct
-// array whose elements come from a strict-fresh-returning CALL reclaims its
-// element boxes, exactly as the inline-literal form does.
 func TestSelfHostStructArrAppendCallElemReclaimX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -217,10 +184,6 @@ func TestSelfHostStructArrAppendCallElemReclaimX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStructArrAppendHazardsX86_64 — the shapes the credit must still
-// REFUSE. A wrongly-granted credit frees an element box something else still
-// points at, so these are asserted through behaviour: the failure mode is a
-// wrong answer or a crash, not a leak.
 func TestSelfHostStructArrAppendHazardsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -233,7 +196,6 @@ func TestSelfHostStructArrAppendHazardsX86_64(t *testing.T) {
 		want int
 	}{
 		{
-			// A bound ELEMENT aliases a box the reclaim would free.
 			name: "element_alias",
 			src: `struct P { x: i32, y: i32 }
 function main(): i32 {
@@ -246,8 +208,6 @@ function main(): i32 {
 			want: 4,
 		},
 		{
-			// The appended element is an IDENT, so the array does not solely
-			// own the box; freeing it would dangle `shared`.
 			name: "ident_element",
 			src: `struct P { x: i32, y: i32 }
 function main(): i32 {
@@ -260,8 +220,6 @@ function main(): i32 {
 			want: 11,
 		},
 		{
-			// A `...base` copy shares the base's field pointers, so the element
-			// is not a fresh sole owner.
 			name: "base_copy_element",
 			src: `struct P { x: i32, y: i32 }
 function main(): i32 {
@@ -274,7 +232,6 @@ function main(): i32 {
 			want: 5,
 		},
 		{
-			// A non-append reassignment must still sink the credit outright.
 			name: "rebound_to_other",
 			src: `struct P { x: i32, y: i32 }
 function main(): i32 {
@@ -288,7 +245,6 @@ function main(): i32 {
 			want: 10,
 		},
 		{
-			// The array ESCAPES by return, so the callee must not free it.
 			name: "escaping_return",
 			src: `struct P { x: i32, y: i32 }
 function build(): P[] {
@@ -301,11 +257,6 @@ function main(): i32 { let r: P[] = build(); return r[2].x + r.len(); }`,
 			want: 5,
 		},
 		{
-			// A string field is now ADMITTED (the element box is freed, the
-			// string leaks). Reading a field back out of a reclaimed-class
-			// array must still be correct — this is the shape that broke
-			// self-compilation when the fully loose guard was used (#6129), so
-			// it stays pinned behaviourally even though it now takes the credit.
 			name: "string_field_admitted",
 			src: `struct N { name: string, n: i32 }
 function main(): i32 {
@@ -317,9 +268,6 @@ function main(): i32 {
 			want: 5,
 		},
 		{
-			// A bound ELEMENT of a string-fielded array aliases a box the
-			// reclaim would free — the element-escape gate must still refuse
-			// the credit now that the field type no longer does.
 			name: "string_field_element_alias",
 			src: `struct N { name: string, n: i32 }
 function main(): i32 {
@@ -332,11 +280,6 @@ function main(): i32 {
 			want: 8,
 		},
 		{
-			// A CALL element whose callee is NOT strict-fresh-returning: it
-			// hands back the caller's own box, so the array does not own it and
-			// freeing the elements would dangle `shared`. The registry lookup
-			// is the whole guard, and this is the shape that proves it is
-			// consulted rather than assumed.
 			name: "passthrough_call_element",
 			src: `struct N { name: string, n: i32 }
 @noinline function passthru(p: N): N { return p; }
@@ -350,10 +293,6 @@ function main(): i32 {
 			want: 7,
 		},
 		{
-			// A METHOD call element declines outright — the receiver type is
-			// not known at the scan, so the "<Base>.<method>" registry key
-			// cannot be looked up and the credit must not be granted on a
-			// guess.
 			name: "method_call_element",
 			src: `struct N { name: string, n: i32 }
 struct Src { base: i32 }
@@ -368,10 +307,6 @@ function main(): i32 {
 			want: 14,
 		},
 		{
-			// A closure FIELD is admitted now (#6461), so the element boxes are
-			// freed and — when the type also routes field reclaim — the closure
-			// box with them. Calling a field closure back out of the reclaimed
-			// array must still be correct.
 			name: "closure_field_admitted",
 			src: `struct C { name: string, f: (i32) => i32 }
 function main(): i32 {
@@ -383,9 +318,6 @@ function main(): i32 {
 			want: 6,
 		},
 		{
-			// An IDENT element of a string-fielded array: the array does not
-			// solely own the box, so freeing it would dangle `shared` — and
-			// `shared.name` must survive the array's reclaim.
 			name: "string_field_ident_element",
 			src: `struct N { name: string, n: i32 }
 function main(): i32 {

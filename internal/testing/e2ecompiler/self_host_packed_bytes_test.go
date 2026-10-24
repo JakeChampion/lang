@@ -10,18 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// A u8[] the typed lowering builds is packed a byte an element on every
-// backend (#9634, #10987): every element op, push, slice and allocation
-// carries the byte stride, and each runtime helper that makes or reads a u8[]
-// works on the packed bytes. Each program below runs on all three targets and
-// must print its expected output with the heap balanced.
-
-// packedBytesElementsSrc: literals, pushes past a grow, `.with`, slices,
-// string bytes both ways, __alloc_u8, random_bytes, a digest over a string
-// that crosses many blocks, and the heap cost of a 4 MiB byte array. Packed
-// it is 5 MiB after the large tier's rounding; a 4-byte slot per byte would
-// round to 20 MiB and an 8-byte one to 40 MiB, so the 12 MB threshold
-// separates packed from unpacked on every target.
 const packedBytesElementsSrc = `import "std/i32";
 import "std/crypto";
 
@@ -67,9 +55,6 @@ const packedBytesElementsWant = "lit 3 253\ngrown 1000 124716 231\nwith 77 88 4\
 	"bytes 12 1160 hello, world\nas_bytes 1160\nalloc 13 9\nrandom 37\n" +
 	"22fb1d9f8b2574684a11d8fa40d94d55cabfcac2d327d9373491be51ad3be467\nheap true"
 
-// packedBytesContainersSrc: a u8[] as a map's keys and values (the runtime
-// map's snapshot is repacked), a generic callee, a record field grown in
-// place, nested arrays, a tuple, an Option and a for-in rebuild.
 const packedBytesContainersSrc = `import "std/i32";
 import "std/array";
 import "core/map";
@@ -114,10 +99,6 @@ function main(): i32 {
 
 const packedBytesContainersWant = "keys 3 9090\nvals 405\nrev 2946\nrec 9 4005\nnested 2946\ntuple 7 1026\nopt 2946\niter 2946"
 
-// packedBytesRuntimeSrc: the buffer pushes that read a u8[] table (mapped,
-// filtered, expanded, and a table shorter than the bytes it maps), the two
-// set scans, read_file_bytes, and a write_file_bytes round trip long enough
-// that the read grows its buffer.
 const packedBytesRuntimeSrc = `import "std/i32";
 import "std/io_buffered";
 
@@ -184,11 +165,6 @@ function main(): i32 {
 
 const packedBytesRuntimeWant = "HELLO, WORLD\nfbarb\na<->b<->c\nabc\nscan 3 7 19\nruns 3\nfile 6 69807\nbig 10000 270744"
 
-// packedBytesConstSrc: a constant u8[] literal whose length is not a
-// multiple of 8, appended to on every evaluation. The constant has no spare
-// capacity, so each append copies; with room in its padding the first append
-// grew the constant in place and every later evaluation read the byte and
-// the length it had written (#10647).
 const packedBytesConstSrc = `import "std/i32";
 
 function mk(): u8[] { return [1, 2, 3]; }
@@ -209,9 +185,6 @@ function main(): i32 {
 
 const packedBytesConstWant = "const 12 3 7 1"
 
-// packedBytesComponentSrc: the runtime case's write_file_bytes round trip,
-// built as a wasm component, whose preview-2 read_file_bytes gathers the
-// stream's 4096-byte chunks into the array and grows it twice on the way.
 const packedBytesComponentSrc = `import "std/i32";
 
 function main(): i32 {

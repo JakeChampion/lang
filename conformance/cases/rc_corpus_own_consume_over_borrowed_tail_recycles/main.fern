@@ -1,11 +1,11 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// The same shape run in a loop, so the cells the walk frees are
-// recycled before the caller reads them. The single-shot case above
-// catches the reuse of a still-reachable cell; this one catches it
-// having been handed to a later allocation, which is the form the
-// defect takes in a real traversal.
+
+
+
+
+
+
+
+
 import "core/int";
 enum List { Cons(i32, List), Nil }
 function build(n: i32): List {

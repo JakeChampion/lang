@@ -13,19 +13,10 @@ import "std/string";
 import "std/http/router";
 import "std/http/accesslog";
 
-// tests/stdlib/sim_platform_test.fern — a handler's platform over the
-// simulation (#9855): the sim platform answers the clock, randomness,
-// configuration and outbound HTTP from the `Sim`, the scripted network and
-// what the test set, with the same shapes the host and the mock answer.
-//
-// Run:  fern -interp tests/stdlib/sim_platform_test.fern
-
 const ORIGIN: string = "93.184.216.34";
 
 const MS: i64 = 1000000;
 
-// A network where `example.test` listens after 5 ms and answers "hi" 20 ms
-// after each request, keeping the connection.
 function __net(d: sim.Sim): sim_fetch.Net {
   return sim_fetch.net(d).host("example.test", [ORIGIN]).listen(ORIGIN, 80, 5).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "hi").after(20).kept()]);
 }
@@ -47,7 +38,6 @@ function __message(got: Result[HttpResponse, fetch.FetchError]): string {
   return "";
 }
 
-// The handler under test: every capability through its platform.
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
   let region: string = "nowhere";
   match (plat.config("REGION")) {
@@ -173,12 +163,8 @@ function test_http_reaches_only_the_allow_list(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
-// A forward proxy on a private address, which only the deployment chose.
 const PROXY: string = "10.0.0.9";
 
-// `http` goes through the proxy the env the test set names, in absolute
-// form, and reaches a host `no_proxy` names directly; neither lookup is a
-// call the handler made.
 function test_http_goes_through_the_proxy_the_env_names(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __net(d).listen(PROXY, 3128, 5).route(PROXY, 3128, "http://example.test/", [sim_fetch.reply(203, "via proxy")]);
@@ -224,8 +210,6 @@ function test_a_secret_is_logged_by_name_only(): test.TestOutcome {
   return test.pass();
 }
 
-// A handler that works in 10 ms steps until its platform says the request
-// is cancelled, reporting how far it got and the bound it was given.
 function __until_cancelled(plat: platform.Platform): string {
   let steps: i32 = 0;
   while (!plat.cancelled() && steps < 100) {
@@ -251,7 +235,6 @@ function test_the_deadline_cancels_on_the_sims_clock(): test.TestOutcome {
   return test.assert_eq(__until_cancelled(__plat(1)), "100 steps, no deadline");
 }
 
-// The traceparent `plat.http` sent upstream, as the network saw it.
 function __sent_traceparent(n: sim_fetch.Net): string {
   let text: string = "";
   match (utf8.from_bytes(n.sent(n.sent_count() - 1))) {
@@ -292,17 +275,11 @@ function test_a_handler_runs_over_the_simulation(): test.TestOutcome {
   return test.assert_body(resp, "eu-west 25 status 200");
 }
 
-// The served side of a route: the user's id, under the access log.
 function __user(req: HttpRequest, params: router.Params, plat: sim_platform.SimPlatform): Result[HttpResponse, dyn http.ToResponse] {
   use logged <- accesslog.logged(req, plat);
   return Ok(http.ok("user " + params.values[0]));
 }
 
-// A router with its middleware served in memory on the simulated network:
-// the client side's `plat.http` reaches it through the whole client, the
-// server side's platform records the access log line the middleware wrote
-// for the route it ran on (the router's own 404 runs no middleware), and
-// no socket is opened.
 function test_router_served_in_memory(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let server_plat: sim_platform.SimPlatform = sim_platform.new(d, sim_fetch.net(d));

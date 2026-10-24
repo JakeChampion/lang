@@ -1,33 +1,33 @@
 // spec: AL-01
-//
-// The AL-01 shape for a value read OUT of a container that dies at the
-// read: `mk()[0]` and `mk().field`. Nothing names the container, so the
-// only place it can be reclaimed is the read itself — which also has to
-// keep the extracted element alive, because the element aliases the
-// buffer being freed.
-//
-// A sibling of alloc_flat_under_reclaim rather than a duplicate of it:
-// that case lets the whole allocation die, so a lowering that simply
-// never reclaims a container passes it. Here the element survives and
-// the container does not, and getting only half of that right is a leak
-// in one direction and a use-after-free in the other.
-//
-// Both consumers are covered because they reclaim by different routes:
-// a BINDING takes the value as a move, while a borrowing `.len()`
-// reclaims the temp after reading it. The index half leaked 304 B a
-// round until the retain-and-deep-drop pair landed; the field half
-// leaked 64 B a round in the borrowing shape alone.
-//
-// The case prints the SHAPE, never a byte count — see
-// docs/ALLOCATION-OBSERVABLE.md.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import "std/i32";
 import "std/i64";
 import "std/string";
 
 struct Box { name: string, k: i32 }
 
-// Past the small-string threshold, so every element is a real heap
-// buffer the container's deep drop has to reach.
+
+
 function wide(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
 
 function strs(n: i32): string[] {
@@ -62,7 +62,7 @@ function main(): i32 {
 
     print(x.to_string());
     print(y.to_string());
-    // Twice the work must not cost more fresh memory.
+
     if ((b2 - b1) > (b1 - b0)) { print("grows"); } else { print("flat"); }
     return 0;
 }

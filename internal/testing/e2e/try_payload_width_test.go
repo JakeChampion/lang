@@ -2,10 +2,6 @@ package e2e
 
 import "testing"
 
-// A `?` reads its source box at the source payload's width, whatever the
-// destination reads the result at, and a literal payload settles to that
-// destination (#10614). These run on the self-host compiler; the native
-// checker's half is TestTryOpTypeIsTheSourcePayload.
 func TestTryPayloadWidthIsTheSources(t *testing.T) {
 	cases := []struct{ name, src string }{
 		{"i32_into_i64", `function f(o: Option[i32]): Option[i64] { return Some((o)? as i64); }

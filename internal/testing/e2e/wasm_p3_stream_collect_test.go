@@ -10,13 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/component"
 )
 
-// p3StreamEOFProducerCore is the PRODUCER for the collect e2e: `prod` ()->()
-// creates a stream<u8> (stream.new — readable=low32 / writable=high32),
-// task.returns the readable end, writes [10,20,12], AWAITS the write (a write
-// with no reader BLOCKs; dropping a busy writable traps), then
-// stream.drop-writable to signal EOF. Imports under "" : tr/snew/sw/sdw/wsn/wj/
-// wsw/wsd; exports "mem" + "prod". (sw + wsw are 2-slot-trampolined over its own
-// memory by the composer.) Generated from WAT via wasm-tools 1.240.
 var p3StreamEOFProducerCore = []byte{
 	0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x22, 0x07, 0x60,
 	0x01, 0x7f, 0x00, 0x60, 0x00, 0x01, 0x7e, 0x60, 0x03, 0x7f, 0x7f, 0x7f,
@@ -45,16 +38,6 @@ var p3StreamEOFProducerCore = []byte{
 	0x02, 0x02, 0x77, 0x72, 0x03, 0x02, 0x72, 0x73, 0x04, 0x02, 0x77, 0x73,
 }
 
-// p3StreamCollectConsumerCore is the COLLECT consumer: `run` ()->() lowers the
-// stream-returning import `prodl` (retptr@mem[0]), reads the returned readable
-// handle, then collect-loops stream.read (chunk @ mem[8], cap 64) — on a BLOCKED
-// read (0xffffffff) it waits on the readable handle (joined to a waitable-set)
-// and takes the completed result from the event area (mem[84] = (count<<4)|code)
-// — summing each chunk's bytes until code != 0 (CLOSED), then unjoins +
-// stream.drop-readables, drops the set, and task.returns the sum. Imports "" :
-// tr/prodl/sr/sdr/wsn/wj/wsw/wsd and ("mem","m"); exports "run". This is the
-// hand-built mirror of the wasmbin collect-wrapper (buildExternAsyncStreamResultWrapper).
-// Generated from WAT via wasm-tools 1.240.
 var p3StreamCollectConsumerCore = []byte{
 	0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x23, 0x07, 0x60,
 	0x01, 0x7f, 0x00, 0x60, 0x01, 0x7f, 0x01, 0x7f, 0x60, 0x03, 0x7f, 0x7f,
@@ -90,11 +73,6 @@ var p3StreamCollectConsumerCore = []byte{
 	0x73, 0x64, 0x04, 0x02, 0x73, 0x6c,
 }
 
-// p3Stream2SlotTramp / p3Stream2SlotFixup are the producer's 2-slot gMem
-// trampoline (slot 0 = stream.write, slot 1 = waitable-set.wait, both over the
-// producer's own memory) and its fixup — the same circularity break the P2 gMem
-// lowerings use, here for the two memory-carrying canon funcs the producer
-// imports. Generated from WAT via wasm-tools 1.240.
 var p3Stream2SlotTramp = []byte{
 	0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x0e, 0x02, 0x60,
 	0x03, 0x7f, 0x7f, 0x7f, 0x01, 0x7f, 0x60, 0x02, 0x7f, 0x7f, 0x01, 0x7f,
@@ -117,19 +95,8 @@ var p3Stream2SlotFixup = []byte{
 	0x65, 0x01, 0x09, 0x02, 0x00, 0x02, 0x66, 0x30, 0x01, 0x02, 0x66, 0x31,
 }
 
-// TestWasmP3StreamCollect is the colorless `Stream[T]` COLLECT demonstration, assembled
-// through the Go composer (component.BuildStreamCollectComponent): a nested
-// producer exports `prod: async func() -> stream<u8>` and write-awaits + drops
-// the writable end (EOF); the consumer lowers that import and collect-loops
-// stream.read (with the await-via-event machinery, growing a u8[] until CLOSED),
-// sums the collected bytes, and re-returns the total from its async export `run`.
-// Runs under wasmtime's async features → 42 (10+20+12). This converts the proven
-// two-sided stream collect loop into a permanent, CI-tested artifact exercising
-// the full stream canon-builtin set (stream.new/read/write/drop-readable/
-// drop-writable) end to end — the consumer half mirrors the wasmbin
-// collect-wrapper (slice 3a). See docs/STREAM-TYPE-SURFACE.md.
 func TestWasmP3StreamCollect(t *testing.T) {
-	skipIfPreview2Missing(t) // ensures wasmtime on PATH
+	skipIfPreview2Missing(t)
 
 	comp := component.BuildStreamCollectComponent(
 		p3StreamEOFProducerCore, p3StreamCollectConsumerCore, p3PendMemCore,

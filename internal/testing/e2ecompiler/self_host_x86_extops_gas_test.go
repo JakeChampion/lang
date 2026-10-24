@@ -8,32 +8,11 @@ import (
 	"github.com/jakechampion/lang/internal/tables/x86tbl"
 )
 
-// These tests byte-check the #7893 port of the #7886 instruction surface
-// to the self-host x86-64 assembler (compiler/x86_native.fern,
-// AT&T dialect) against GNU as, through the in-process bench driver — the
-// same encodings-only pattern as the arm64 twin
-// (self_host_arm64_extops_gas_test.go). Every `want` below is what
-// /usr/bin/as emits for the same AT&T line (read back with objdump —
-// never hand-derived, since a wrong field placement usually still
-// assembles as some other valid instruction). Families are checked at low
-// AND extended register numbers, and unencodable near-miss shapes must be
-// REFUSED (recorded in `unknown`), never folded into a wrong width — the
-// silent-widening class this port audits for.
-//
-// Two deliberate, documented divergences from as are NOT pinned here, both
-// places where the self-host picks a uniform encoding over as's special
-// case: the accumulator-immediate short forms (04/05/…/A8/A9 for
-// al/ax/eax/rax) and the movq xmm<->m64 forms (as picks F3 0F 7E /
-// 66 0F D6; the self-host uses 66 REX.W 0F 6E/7E). Rows use
-// non-accumulator registers.
-
-// pinnedX86 is one AT&T instruction line with its GNU-as byte sequence.
 type pinnedX86 struct {
 	asm  string
 	want []byte
 }
 
-// buildX86AsmBenchDriver builds the stdin->bytes bench driver once per test.
 func buildX86AsmBenchDriver(t *testing.T, gcc string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -41,9 +20,6 @@ func buildX86AsmBenchDriver(t *testing.T, gcc string) string {
 	return buildSelfHostBin(t, gcc, dir, "drivers/x86_asm_bench_run.fern", "x86_asm_bench")
 }
 
-// assembleSelfHostX86 feeds GAS text to the driver and returns the
-// assembled .text bytes. A refusal (a.unknown) is a failure here: the
-// byte stream would be short and every later comparison would misalign.
 func assembleSelfHostX86(t *testing.T, bin string, runner []string, snippet string) []byte {
 	t.Helper()
 	out := runX86BenchDriver(t, bin, runner, snippet, "-bytes")
@@ -76,17 +52,11 @@ func runX86BenchDriver(t *testing.T, bin string, runner []string, snippet string
 	return string(out)
 }
 
-// refusalsForX86 assembles a snippet the assembler is EXPECTED to reject
-// and returns what it refused.
 func refusalsForX86(t *testing.T, bin string, runner []string, snippet string) []string {
 	t.Helper()
 	return asmRefusals(runX86BenchDriver(t, bin, runner, snippet))
 }
 
-// checkPinnedX86 assembles the cases as one program and walks the byte
-// stream case by case, naming the diverging source line, against `want`
-// sequences taken from GNU as. x86 instructions are variable-length, so each
-// case advances the cursor by its own length.
 func checkPinnedX86(t *testing.T, bin string, runner []string, cases []pinnedX86) {
 	t.Helper()
 	var b strings.Builder
@@ -116,8 +86,6 @@ func checkPinnedX86(t *testing.T, bin string, runner []string, cases []pinnedX86
 	}
 }
 
-// checkRefusedX86 feeds each line separately and requires the assembler to
-// record a refusal for it.
 func checkRefusedX86(t *testing.T, bin string, runner []string, lines []string) {
 	t.Helper()
 	for _, ln := range lines {
@@ -127,24 +95,13 @@ func checkRefusedX86(t *testing.T, bin string, runner []string, lines []string) 
 	}
 }
 
-// TestSelfHostX86MovzbWidthGas pins movzb at BOTH destination widths. The
-// value a movzbl produces is identical to a movzbq's — writing a 32-bit
-// register clears the upper half either way — so routing movzbl to the
-// 64-bit encoder was invisible to every execution test and to the snippet
-// rows, and put a REX.W in front of every byte load a program does. The
-// whole-program gate caught it; these rows keep it caught. Bytes are as +
-// objdump output for this exact text.
 func TestSelfHostX86MovzbWidthGas(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	bin := buildX86AsmBenchDriver(t, gcc)
 	checkPinnedX86(t, bin, runner, []pinnedX86{
 		{"movzbl %al, %eax", []byte{0x0f, 0xb6, 0xc0}},
-		// spl/bpl/sil/dil need a bare REX even at 32 bits, or the number
-		// names ah/ch/dh/bh instead.
 		{"movzbl %spl, %esi", []byte{0x40, 0x0f, 0xb6, 0xf4}},
 		{"movzbl %r9b, %r10d", []byte{0x45, 0x0f, 0xb6, 0xd1}},
-		// A memory source has no byte REGISTER, so no forced REX: the reg
-		// field here is the 32-bit destination.
 		{"movzbl (%rax,%rcx), %esi", []byte{0x0f, 0xb6, 0x34, 0x08}},
 		{"movzbl 8(%rdi), %eax", []byte{0x0f, 0xb6, 0x47, 0x08}},
 		{"movzbq %al, %rax", []byte{0x48, 0x0f, 0xb6, 0xc0}},
@@ -153,22 +110,6 @@ func TestSelfHostX86MovzbWidthGas(t *testing.T) {
 	})
 }
 
-// TestSelfHostX86CarryAluGas: adc/sbb at all four widths and every ALU
-// operand form, plus the 83 short-immediate selection the whole group-1
-// family now shares (an imm8 previously always took the 7-byte 81 form).
-// TestSelfHostX86ConvertExtendGas pins #8020: the scalar converts, movss, the
-// sign-extending byte/word loads, and the flags moves and rep conditionals —
-// the 13 mnemonics the retired Go assembler took and this one did not.
-//
-// The sign-extend rows share the trap the movzb ones already pin: a byte
-// SOURCE of spl/bpl/sil/dil needs a bare REX even when nothing else does, or
-// those numbers name ah/ch/dh/bh instead. A WORD source has no such
-// ambiguity, so movswl must NOT force one — which is why both are here.
-//
-// The convert rows pin the two axes that are easy to cross: the prefix picks
-// the precision (F2 double, F3 single) and the opcode picks truncating (2C)
-// from rounding (2D), so getting either wrong yields a valid instruction that
-// converts the wrong thing.
 func TestSelfHostX86ConvertExtendGas(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	bin := buildX86AsmBenchDriver(t, gcc)
@@ -180,8 +121,6 @@ func TestSelfHostX86ConvertExtendGas(t *testing.T) {
 		{"cvtss2siq %xmm1, %rax", []byte{0xf3, 0x48, 0x0f, 0x2d, 0xc1}},
 		{"cvttss2sil %xmm1, %eax", []byte{0xf3, 0x0f, 0x2c, 0xc1}},
 		{"cvttss2siq %xmm9, %r11", []byte{0xf3, 0x4d, 0x0f, 0x2c, 0xd9}},
-		// The double-precision pair already existed; they are here so the
-		// generalised encoder is pinned against its own starting point.
 		{"cvttsd2sil %xmm1, %eax", []byte{0xf2, 0x0f, 0x2c, 0xc1}},
 		{"cvttsd2siq %xmm1, %rax", []byte{0xf2, 0x48, 0x0f, 0x2c, 0xc1}},
 		{"cvtsi2ssl %eax, %xmm1", []byte{0xf3, 0x0f, 0x2a, 0xc8}},
@@ -199,11 +138,6 @@ func TestSelfHostX86ConvertExtendGas(t *testing.T) {
 		{"movsbq 8(%rdi), %rax", []byte{0x48, 0x0f, 0xbe, 0x47, 0x08}},
 		{"movswl %ax, %ecx", []byte{0x0f, 0xbf, 0xc8}},
 		{"movswl %r9w, %r10d", []byte{0x45, 0x0f, 0xbf, 0xd1}},
-		// %si / %di / %bp are word registers 4..7 — the numbers that, as
-		// BYTE registers, would name ah/ch/dh/bh and so force a bare REX.
-		// There is no such ambiguity at word width, so these must carry NO
-		// prefix. Without these rows the force rule can be widened to every
-		// width and nothing fails.
 		{"movswl %si, %ecx", []byte{0x0f, 0xbf, 0xce}},
 		{"movswl %bp, %eax", []byte{0x0f, 0xbf, 0xc5}},
 		{"movswq %di, %rcx", []byte{0x48, 0x0f, 0xbf, 0xcf}},
@@ -213,8 +147,6 @@ func TestSelfHostX86ConvertExtendGas(t *testing.T) {
 		{"pushfq", []byte{0x9c}},
 		{"popfq", []byte{0x9d}},
 		{"ud2", []byte{0x0f, 0x0b}},
-		// rep and repe are the same F3 byte; repne/repnz are F2, a different
-		// prefix rather than an alias.
 		{"repe cmpsb", []byte{0xf3, 0xa6}},
 		{"repz cmpsb", []byte{0xf3, 0xa6}},
 		{"repne scasb", []byte{0xf2, 0xae}},
@@ -272,7 +204,6 @@ func TestSelfHostX86CarryAluGas(t *testing.T) {
 		{"movw %dx, (%rbx)", []byte{0x66, 0x89, 0x13}},
 		{"movw $7, (%rbx)", []byte{0x66, 0xc7, 0x03, 0x07, 0x00}},
 	})
-	// Width mismatches must refuse, not encode at the wrong width.
 	checkRefusedX86(t, bin, runner, []string{
 		"addq %eax, %rbx",
 		"adcq $1, %ecx",
@@ -282,10 +213,6 @@ func TestSelfHostX86CarryAluGas(t *testing.T) {
 	})
 }
 
-// TestSelfHostX86UnaryIncDecTestGas: the F6/F7 one-operand group (not/neg/
-// mul/one-operand imul/div/idiv), the two- and three-operand imul, the
-// FE/FF inc/dec matrix, and test with memory operands both directions and
-// mem,imm — F6/F7 selection by suffix, 66 prefix for the w forms.
 func TestSelfHostX86UnaryIncDecTestGas(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	bin := buildX86AsmBenchDriver(t, gcc)
@@ -360,10 +287,6 @@ func TestSelfHostX86UnaryIncDecTestGas(t *testing.T) {
 	})
 }
 
-// TestSelfHostX86ShiftBtCmovGas: all seven shift/rotate ops at all widths
-// (imm, the $1 short form, %cl; register and memory destinations),
-// shld/shrd, the bt/bts/btr/btc group in AT&T operand order, bswap, and
-// the full 30-alias cmovcc table at W/L/W16 widths with memory sources.
 func TestSelfHostX86ShiftBtCmovGas(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	bin := buildX86AsmBenchDriver(t, gcc)
@@ -454,12 +377,6 @@ func TestSelfHostX86ShiftBtCmovGas(t *testing.T) {
 	})
 }
 
-// TestSelfHostX86AtomicsStringMiscGas: xadd/cmpxchg at all widths, the
-// validated lock prefix, xchg with memory, push imm8/imm32 and push/pop
-// memory, indirect call/jmp through registers and SIB memory, the cbtw
-// sign-extend family, the bare and rep-prefixed string ops, the fixed
-// misc set (std/nop/int3/leave/pause/fences), and the movb register forms
-// that previously misencoded as stores through %rdi.
 func TestSelfHostX86AtomicsStringMiscGas(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	bin := buildX86AsmBenchDriver(t, gcc)
@@ -539,24 +456,14 @@ func TestSelfHostX86AtomicsStringMiscGas(t *testing.T) {
 		{"rep scasb", []byte{0xf3, 0xae}},
 		{"rep cmpsl", []byte{0xf3, 0xa7}},
 		{"rep movsl", []byte{0xf3, 0xa5}},
-		// The operand-size prefix goes BEFORE the repeat prefix. gas
-		// assembles `rep movsw` as 66 F3 A5; emitting F3 66 A5 decodes to
-		// the same instruction, so only a byte-level oracle sees it — and
-		// every rep case pinned here before #7903 phase 3 happened to be a
-		// width with no 66. A REX is NOT moved: `rep movsq` stays F3 48 A5.
 		{"rep movsw", []byte{0x66, 0xf3, 0xa5}},
 		{"rep stosw", []byte{0x66, 0xf3, 0xab}},
 		{"rep scasw", []byte{0x66, 0xf3, 0xaf}},
 		{"rep cmpsw", []byte{0x66, 0xf3, 0xa7}},
 		{"repne scasw", []byte{0x66, 0xf2, 0xaf}},
 		{"rep movsq", []byte{0xf3, 0x48, 0xa5}},
-		// The two non-string idioms gas takes after rep: `rep ret` is the
-		// AMD branch-prediction workaround and `rep nop` IS pause.
 		{"rep ret", []byte{0xf3, 0xc3}},
 		{"rep nop", []byte{0xf3, 0x90}},
-		// The Intel spellings gas accepts in AT&T syntax too — one
-		// instruction under two names, which is how eight of these went
-		// missing from one assembler without any byte test noticing.
 		{"cbw", []byte{0x66, 0x98}},
 		{"cwde", []byte{0x98}},
 		{"cdqe", []byte{0x48, 0x98}},
@@ -576,15 +483,9 @@ func TestSelfHostX86AtomicsStringMiscGas(t *testing.T) {
 		"lock movq $1, (%rdi)",
 		"lock btq $1, (%rdi)",
 		"rep frob",
-		// gas: "invalid instruction `leave' after `rep'". The prefix is not
-		// a no-op in front of these — it is refused, so accepting it would
-		// emit a byte the CPU reads as part of an instruction it does not
-		// belong to.
 		"rep leave",
 		"rep cld",
 		"repne addq $1, %rax",
-		// The dword string ops are spelled with `l` in AT&T; the `d`
-		// spellings are Intel-only and gas rejects them here.
 		"stosd",
 		"lodsd",
 		"scasd",
@@ -593,10 +494,6 @@ func TestSelfHostX86AtomicsStringMiscGas(t *testing.T) {
 	})
 }
 
-// TestSelfHostX86SsePackedGas: the movdqu/movdqa store direction (the load
-// was the only encoded one), movups/movupd, the whole packed-integer
-// table, and the vector shifts in both the by-register and 0F 71/72/73
-// by-immediate forms.
 func TestSelfHostX86SsePackedGas(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	bin := buildX86AsmBenchDriver(t, gcc)
@@ -677,18 +574,12 @@ func TestSelfHostX86SsePackedGas(t *testing.T) {
 		{"pslldq $8, %xmm1", []byte{0x66, 0x0f, 0x73, 0xf9, 0x08}},
 		{"psrldq $4, %xmm2", []byte{0x66, 0x0f, 0x73, 0xda, 0x04}},
 	})
-	// pslldq/psrldq exist only with an immediate count.
 	checkRefusedX86(t, bin, runner, []string{
 		"pslldq %xmm1, %xmm2",
 		"psrldq %xmm1, %xmm2",
 	})
 }
 
-// TestSelfHostX86SseFloatExtGas: packed pd/ps arithmetic, the ss scalars,
-// the cvtdq2pd family, round/pcmp*stri, the 0F 38 min/max group + pmulld +
-// ptest, the shuffles, pextr/pinsr (register and memory, the C5/C4 legacy
-// forms where GNU as picks them), crc32 at every width, and the sign-bit
-// gathers.
 func TestSelfHostX86SseFloatExtGas(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	bin := buildX86AsmBenchDriver(t, gcc)
@@ -745,27 +636,17 @@ func TestSelfHostX86SseFloatExtGas(t *testing.T) {
 		{"roundsd $2, %xmm8, %xmm9", []byte{0x66, 0x45, 0x0f, 0x3a, 0x0b, 0xc8, 0x02}},
 		{"pcmpistri $0, %xmm1, %xmm2", []byte{0x66, 0x0f, 0x3a, 0x63, 0xd1, 0x00}},
 		{"pcmpestri $1, %xmm2, %xmm3", []byte{0x66, 0x0f, 0x3a, 0x61, 0xda, 0x01}},
-		// The carry-less multiply, at all four half-selecting immediates. gas
-		// disassembles each under its own alias name (pclmullqlqdq,
-		// pclmulhqhqdq, …), so a wrong immediate is a valid different
-		// instruction rather than a rejected one.
 		{"pclmulqdq $0, %xmm1, %xmm2", []byte{0x66, 0x0f, 0x3a, 0x44, 0xd1, 0x00}},
 		{"pclmulqdq $17, %xmm9, %xmm10", []byte{0x66, 0x45, 0x0f, 0x3a, 0x44, 0xd1, 0x11}},
 		{"pclmulqdq $16, %xmm3, %xmm4", []byte{0x66, 0x0f, 0x3a, 0x44, 0xe3, 0x10}},
 		{"pclmulqdq $1, %xmm0, %xmm15", []byte{0x66, 0x44, 0x0f, 0x3a, 0x44, 0xf8, 0x01}},
-		// AES-NI, in the baseline since std/crypto/aes_gcm: the rounds and
-		// the key-schedule assist, whose immediate is the round constant.
 		{"aesenc %xmm1, %xmm0", []byte{0x66, 0x0f, 0x38, 0xdc, 0xc1}},
 		{"aesenc %xmm15, %xmm3", []byte{0x66, 0x41, 0x0f, 0x38, 0xdc, 0xdf}},
 		{"aesenclast %xmm9, %xmm10", []byte{0x66, 0x45, 0x0f, 0x38, 0xdd, 0xd1}},
 		{"aeskeygenassist $1, %xmm1, %xmm0", []byte{0x66, 0x0f, 0x3a, 0xdf, 0xc1, 0x01}},
 		{"aeskeygenassist $54, %xmm11, %xmm2", []byte{0x66, 0x41, 0x0f, 0x3a, 0xdf, 0xd3, 0x36}},
-		// palignr takes the schedule words that straddle two registers in
-		// the SHA-256 kernel; SSSE3.
 		{"palignr $4, %xmm1, %xmm2", []byte{0x66, 0x0f, 0x3a, 0x0f, 0xd1, 0x04}},
 		{"palignr $8, %xmm9, %xmm10", []byte{0x66, 0x45, 0x0f, 0x3a, 0x0f, 0xd1, 0x08}},
-		// pshufb is the byte-lane shuffle the 16-byte reverse a CRC fold
-		// needs; SSSE3, and so inside the declared baseline.
 		{"pshufb %xmm1, %xmm2", []byte{0x66, 0x0f, 0x38, 0x00, 0xd1}},
 		{"pshufb %xmm9, %xmm10", []byte{0x66, 0x45, 0x0f, 0x38, 0x00, 0xd1}},
 		{"ptest %xmm1, %xmm2", []byte{0x66, 0x0f, 0x38, 0x17, 0xd1}},
@@ -822,25 +703,20 @@ func TestSelfHostX86SseFloatExtGas(t *testing.T) {
 	})
 }
 
-// TestSelfHostX86AlignPadsText pins .p2align/.balign/.align NOP padding in
-// .text byte-for-byte against GNU as (binutils' alt_patt multi-byte NOPs,
-// an 11-byte fill repeated then one shorter fill), including the max-skip
-// third argument. The self-host assembler used to IGNORE .align/.p2align
-// in .text, which was only safe while nothing depended on code alignment.
 func TestSelfHostX86AlignPadsText(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	bin := buildX86AsmBenchDriver(t, gcc)
 	src := ".text\n_start:\n" +
 		"    ret\n" +
-		"    .p2align 4\n" + // 15 bytes: the 11-byte fill + the 4-byte one
+		"    .p2align 4\n" +
 		"    ret\n" +
-		"    .balign 8\n" + // 7 bytes
+		"    .balign 8\n" +
 		"    ret\n" +
-		"    .align 4\n" + // byte-count semantics: 3 bytes
+		"    .align 4\n" +
 		"    ret\n" +
-		"    .p2align 3,,2\n" + // pad would be 3 > max-skip 2: skipped
+		"    .p2align 3,,2\n" +
 		"    ret\n" +
-		"    .p2align 5\n" + // 2 bytes: 66 90
+		"    .p2align 5\n" +
 		"    ret\n"
 	want := []byte{
 		0xc3,
@@ -866,10 +742,6 @@ func TestSelfHostX86AlignPadsText(t *testing.T) {
 	}
 }
 
-// TestSelfHostX86IndirectRip: call/jmp through a rip-relative memory slot
-// (`*sym(%rip)`, FF /2 and /4 with a resolved disp32). The expected
-// displacements follow the self-host layout: 12 bytes of .text pad to 16,
-// where the .rodata quad lands, so the two disp32s are 10 and 4.
 func TestSelfHostX86IndirectRip(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	bin := buildX86AsmBenchDriver(t, gcc)
@@ -892,25 +764,12 @@ func TestSelfHostX86IndirectRip(t *testing.T) {
 	}
 }
 
-// TestSelfHostX86ConditionSpellingsGas pins the three condition families
-// against GNU as, spelling by spelling.
-//
-// The self-host dispatches these by matching a prefix and looking the rest up
-// in the 28-entry x86tbl table, so there is no per-mnemonic literal for the
-// coverage test's source scan to compare. The self-host once hand-listed 13
-// jCC and 14 setCC spellings and recorded the other eleven and twelve as
-// unknown. The condition code is four bits inside the opcode, so a wrong one
-// is a valid instruction that tests the wrong flag.
 func TestSelfHostX86ConditionSpellingsGas(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	bin := buildX86AsmBenchDriver(t, gcc)
 
 	var lines []string
 	for _, cond := range x86tbl.CondSpellings() {
-		// The jCC row is a zero-distance BACKWARD branch to its own label, the
-		// one shape every assembler settles on rel8, so the condition nibble
-		// is the only thing that can differ. The label is per-row: the rows
-		// are assembled as one program.
 		lbl := "lc_" + cond
 		lines = append(lines,
 			lbl+":\nj"+cond+" "+lbl,

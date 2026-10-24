@@ -4,19 +4,6 @@ import (
 	"testing"
 )
 
-// Statement-temporary reclamation, stage (a): a discarded bare-ExprStmt
-// whose value is a FRESH owned rc temporary (a literal / string concat /
-// string slice) is now DEC'd at the statement boundary instead of being
-// OpDrop'd and discarded. Before this slice nothing reclaimed it — a bare
-// `[i, i + 1];` or `a + b;` in a loop leaked its box every iteration
-// (unbounded), since emitVarReinitDropOld only sees DECLARED vars.
-// See docs/RC-PERCEUS-PLAN.md "Statement-temporary reclamation".
-//
-// The probe discards an array literal (arrays heap-allocate on every
-// backend, so the bump high-water is non-zero and meaningfully bounded on
-// x86_64 / arm64 / wasm alike). With the dec in place each iteration's box
-// returns to the freelist, so N=50 and N=5000 report the SAME growth.
-
 func stmtTempArrBumpSrc(n string) string {
 	return `function main(): i32 {
     let before: i32 = (__heap_bump_bytes() as i32);
@@ -29,10 +16,6 @@ func stmtTempArrBumpSrc(n string) string {
 }`
 }
 
-// Value-correct + no over-release: a discarded owned array temp must
-// reclaim its OWN box without touching the live `xs` built from the same
-// loop-variable operands — a wrong "owned" verdict that freed a shared
-// buffer would over-release (>0) or corrupt the sum (999).
 const stmtTempArrUnderflowSrc = `function main(): i32 {
     let i: i32 = 0;
     let acc: i32 = 0;
@@ -48,10 +31,6 @@ const stmtTempArrUnderflowSrc = `function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// String-concat discard (wasm two-word heap path is the meaningful one;
-// natives keep short concats SSO-inline so str_dec no-ops). The discarded
-// `a + b;` must reclaim its buffer without over-releasing `a` / `b`, which
-// are reused in the bound `s` concat that drives `acc`.
 const stmtTempStrUnderflowSrc = `function main(): i32 {
     let a: string = "hello";
     let b: string = "world";

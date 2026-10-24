@@ -9,11 +9,6 @@ import (
 	"testing"
 )
 
-// flat_map in core/iter (#2691 / the "flat_map too" note in #2689) — applies a
-// `(T) => U[]` closure to each value and concatenates the per-element arrays into
-// one fresh `U[]`. The closure RETURNS an array (a move) and its result is
-// iterated with an inner `for y in ys`; both lower on the self-host IR path. All
-// oracles stay < 256 so the i32 result survives the process exit code.
 const iterFlatMapPrelude = `pub trait Iterator[T] { function next(self: Self): Option[(T, Self)]; }
 pub struct Range { lo: i32, hi: i32 }
 pub function range(lo: i32, hi: i32): Range { return Range { lo: lo, hi: hi }; }
@@ -35,20 +30,14 @@ var iterFlatMapCases = []struct {
 	main string
 	want int
 }{
-	// fan each x to [x, x*10] over [1,4): [1,10,2,20,3,30]; sum 66 + len 6 = 72.
 	{"fan-out", `function main(): i32 { let r = flat_map(range(1, 4), (x: i32): i32[] => { return [x, x * 10]; }); let s = 0; for v in r { s = s + v; } return s + r.len(); }`, 72},
-	// drop evens (return []), keep odds over [0,6): [1,3,5]; sum 9 + len 3 = 12.
 	{"drop-and-keep", `function main(): i32 { let r = flat_map(range(0, 6), (x: i32): i32[] => { if (x % 2 == 0) { return []; } return [x]; }); let s = 0; for v in r { s = s + v; } return s + r.len(); }`, 12},
-	// every element maps to [] → empty result; len 0 + 5 = 5.
 	{"all-empty", `function main(): i32 { let r = flat_map(range(0, 4), (x: i32): i32[] => { return []; }); return r.len() + 5; }`, 5},
-	// flat_map over an empty source → empty; len 0 + 8 = 8.
 	{"empty-source", `function main(): i32 { let r = flat_map(range(3, 3), (x: i32): i32[] => { return [x, x]; }); return r.len() + 8; }`, 8},
 }
 
 func iterFlatMapProg(mainBody string) string { return iterFlatMapPrelude + mainBody + "\n" }
 
-// TestNativeIterFlatMap runs the inline flat_map programs on the native interp /
-// x86-64 / wasm backends, oracle-checked.
 func TestNativeIterFlatMap(t *testing.T) {
 	for _, tc := range iterFlatMapCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -66,7 +55,6 @@ func TestNativeIterFlatMap(t *testing.T) {
 	}
 }
 
-// TestNativeIterFlatMapArm64 is the arm64 leg (CI-gated; qemu).
 func TestNativeIterFlatMapArm64(t *testing.T) {
 	for _, tc := range iterFlatMapCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -78,8 +66,6 @@ func TestNativeIterFlatMapArm64(t *testing.T) {
 	}
 }
 
-// TestNativeIterFlatMapModule exercises the shipped `import "core/iter"` module's
-// lazy flat_map method over real `range` iterators on the native backends.
 func TestNativeIterFlatMapModule(t *testing.T) {
 	src := `import "core/iter" as iter;
 function main(): i32 {
@@ -102,8 +88,6 @@ function main(): i32 {
 	}
 }
 
-// TestSelfHostIterFlatMapIRX86_64 routes each inline case through the self-hosted
-// x86-64 IR driver, pins routing to "ir", and oracle-checks it.
 func TestSelfHostIterFlatMapIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -137,7 +121,6 @@ func TestSelfHostIterFlatMapIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostIterFlatMapIRWasm runs the same cases through the wasm IR backend.
 func TestSelfHostIterFlatMapIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host iter flat_map wasm IR e2e")

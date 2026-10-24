@@ -8,12 +8,6 @@ import (
 	"testing"
 )
 
-// The wasm runtime's I/O helpers gave back none of their scratch (#9305): the
-// string builder abandoned every outgrown buffer, stat and fd_stat their
-// 64-byte record, and
-// remove_dir_all a 4 KiB readdir buffer per directory, every child path, the
-// name array and every recursive result box. Each program below touches one
-// helper and has to balance.
 func TestSelfHostWasmIOScratchReleased(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm I/O scratch")

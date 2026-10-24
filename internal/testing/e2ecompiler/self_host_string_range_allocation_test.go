@@ -6,8 +6,6 @@ import (
 	"testing"
 )
 
-// Allocation metadata follows operation identity when a merge renumbers
-// extension tags. The range constructor copies; the byte sum only reads.
 func TestSelfHostStringRangeAllocationMarker(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

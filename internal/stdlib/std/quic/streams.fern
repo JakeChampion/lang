@@ -1,17 +1,4 @@
-// std/quic/streams — QUIC's streams (RFC 9000 §2–4) as a value with no IO:
-// every stream's send and receive halves, the limits on how many each side
-// may open, and flow control per stream and for the connection.
-// std/quic/conn owns one table, hands it the stream frames it receives and
-// the ACKs and losses of what it sent, and asks it to fill packets; the
-// application reaches it through conn's stream methods.
-//
-// A stream ID's low two bits are its type (§2.1): bit 0 the side that
-// opened it (0 client, 1 server), bit 1 whether it is unidirectional.
-//
-// Every bound is a limit this endpoint advertised: stream data beyond a
-// stream's window or the connection's is FLOW_CONTROL_ERROR, a stream past
-// the advertised count is STREAM_LIMIT_ERROR, and out-of-order data is held
-// without overlap, so a peer resending what it already sent costs nothing.
+// This module controls QUIC streams and flow limits.
 
 import "std/quic/frames";
 import "std/quic/params";
@@ -19,21 +6,16 @@ import "std/quic/recovery";
 import "std/option";
 import "std/i64";
 
-// Reassembly — bytes arriving at offsets, delivered in order: those taken
-// so far, those ready to take, and the segments held past a gap, sorted and
-// never overlapping.
 pub struct Reassembly { taken: i64, ready: u8[], held_at: i64[], held: u8[][], held_bytes: i64 }
 
 pub function reassembly(): Reassembly {
   return Reassembly { taken: 0 as i64, ready: [], held_at: [], held: [], held_bytes: 0 as i64 };
 }
 
-// delivered is the offset up to which every byte has arrived.
 pub function (r: Reassembly) delivered(): i64 {
   return r.taken + r.ready.len() as i64;
 }
 
-// add takes `data` at `offset`, keeping only the bytes not already here.
 pub function (r: Reassembly) add(offset: i64, data: u8[]): Reassembly {
   let front: i64 = r.delivered();
   let end: i64 = offset + data.len() as i64;
@@ -47,19 +29,14 @@ pub function (r: Reassembly) add(offset: i64, data: u8[]): Reassembly {
   return __drain(Reassembly { ...r, ready: __append_range(r.ready, data, skip, data.len()) });
 }
 
-// take answers the bytes ready, in order, and forgets them.
 pub function (r: Reassembly) take(): (Reassembly, u8[]) {
   return (Reassembly { ...r, taken: r.delivered(), ready: [] }, r.ready);
 }
 
-// __discard forgets buffered bytes, not the bytes the application already
-// took: a later RESET_STREAM credits only final_size - taken to the connection.
 function (r: Reassembly) __discard(): Reassembly {
   return Reassembly { ...r, ready: [], held_at: [], held: [], held_bytes: 0 as i64 };
 }
 
-// __hold inserts the parts of a segment past the delivered offset that no
-// held segment covers yet.
 function __hold(r: Reassembly, offset: i64, data: u8[]): Reassembly {
   let end: i64 = offset + data.len() as i64;
   let cur: i64 = offset;
@@ -89,7 +66,6 @@ function __hold(r: Reassembly, offset: i64, data: u8[]): Reassembly {
   return Reassembly { ...r, held_at: at, held: held, held_bytes: __total(held) };
 }
 
-// __drain moves the held segments the delivered offset now reaches.
 function __drain(r: Reassembly): Reassembly {
   let cur: Reassembly = r;
   while (cur.held.len() > 0 && cur.held_at[0] <= cur.delivered()) {
@@ -106,12 +82,6 @@ function __drain(r: Reassembly): Reassembly {
   return cur;
 }
 
-// === streams ================================================================
-
-// Send — a stream's sending half: the bytes written and not yet
-// acknowledged from `base` on, how far they have been sent, the ranges
-// acknowledged above `base` and those to send again, the peer's limit, and
-// the FIN and any reset.
 struct Send {
   buf: u8[],
   base: i64,
@@ -127,9 +97,6 @@ struct Send {
   blocked_at: i64,
 }
 
-// Recv — a stream's receiving half: the data in order, the highest offset
-// seen, the final size once known, the limit advertised and the window it
-// is kept open by, any reset by the peer, and any STOP_SENDING sent.
 struct Recv {
   data: Reassembly,
   highest: i64,
@@ -143,7 +110,6 @@ struct Recv {
   fin_read: boolean,
 }
 
-// The states of a reset or STOP_SENDING this side sends.
 const NONE: i32 = 0;
 
 const TO_SEND: i32 = 1;
@@ -152,29 +118,10 @@ const SENT: i32 = 2;
 
 const ACKED: i32 = 3;
 
-// `closed` marks a stream both of whose halves are done and whose
-// credit the peer has been given back; `__sweep` drops it from the list.
 struct Stream { id: i64, has_send: boolean, send: Send, has_recv: boolean, recv: Recv, closed: boolean }
 
-// Event — what changed on a stream as the table took frames: the peer
-// opened it, data or its end can be read, the peer reset its sending half
-// (with an application error code), or the peer asked this side to stop
-// sending, which resets this side's sending half with the same code.
 pub enum Event { Opened(i64), Readable(i64), ResetByPeer(i64, i64), StopRequested(i64, i64) }
 
-// Streams — the table. Limits and counts are per stream type, indexed by
-// the ID's low two bits: for the peer's types, how many it may open and
-// has opened; for this side's, how many the peer allows and have been
-// opened.
-//
-// Every operation hands the table back whole, with its outcome in the
-// fields after `events`: `refused` says why an `open`, `write`, `read`,
-// `reset` or `stop` did nothing ("" when it was done), `failed` is the
-// transport error a frame drew, `last_opened` the stream `open` made,
-// `read_data` and `read_fin` what `read` took, and `filled` and `resend`
-// what `fill` wrote (`fit` is the last frame's, between its stages). A
-// table returned inside a Result or a tuple would be copied with its list
-// on the way out.
 pub struct Streams {
   server: boolean,
   list: Stream[],
@@ -203,17 +150,10 @@ pub struct Streams {
   resend: recovery.Resend[],
   fit: boolean,
   retired: i32,
-  // The position in `list`, plus one, of the bidirectional stream with key
-  // `base + k` (__bidi_key) at `index[k]`; 0 for none. `base` is at or
-  // below the key of every bidirectional stream live or yet to be opened,
-  // so the index spans the live window only. The few unidirectional
-  // streams live for the connection and are found by scanning.
   index: i32[],
   base: i64,
 }
 
-// table is a side's streams before the peer's transport parameters are
-// known: the peer may open what `local` allows, and this side nothing yet.
 pub function table(server: boolean, local: params.Params): Streams {
   let none: params.Params = params.defaults();
   let s: Streams = Streams { server: server, list: [], local: local, peer: none, limits: [0 as i64, 0 as i64, 0 as i64, 0 as i64], opened: [0 as i64, 0 as i64, 0 as i64, 0 as i64], limits_dirty: [false, false, false, false], open_blocked: [0 - 1 as i64, 0 - 1 as i64, 0 - 1 as i64, 0 - 1 as i64], recv_max: local.initial_max_data, recv_window: local.initial_max_data, recv_highest: 0 as i64, recv_taken: 0 as i64, recv_max_dirty: false, send_max: 0 as i64, send_sent: 0 as i64, blocked_at: 0 - 1 as i64, next: 0, events: [], refused: "", failed: None, last_opened: 0 - 1 as i64, read_data: [], read_fin: false, filled: [], resend: [], fit: false, retired: 0, index: [], base: 0 as i64 };
@@ -221,8 +161,6 @@ pub function table(server: boolean, local: params.Params): Streams {
   return Streams { ...s, limits: s.limits.with(bidi, local.initial_max_streams_bidi).with(bidi + 2, local.initial_max_streams_uni) };
 }
 
-// with_peer takes the peer's transport parameters: how many streams this
-// side may open, and the windows its streams start with.
 pub function (s: Streams) with_peer(p: params.Params): Streams {
   let mine: i32 = s.__local_type(false);
   let cur: Streams = Streams { ...s, peer: p, send_max: __max(s.send_max, p.initial_max_data), limits: s.limits.with(mine, __max(s.limits[mine], p.initial_max_streams_bidi)).with(mine + 2, __max(s.limits[mine + 2], p.initial_max_streams_uni)) };
@@ -237,7 +175,6 @@ pub function (s: Streams) with_peer(p: params.Params): Streams {
   return Streams { ...cur, list: list };
 }
 
-// The type of a stream this side opens, and of one the peer opens.
 function (s: Streams) __local_type(uni: boolean): i32 {
   let t: i32 = 0;
   if (s.server) {
@@ -261,8 +198,6 @@ function __is_uni(id: i64): boolean {
   return (id & 2) != 0;
 }
 
-// The windows a stream starts with (§18.2): what this side lets the peer
-// send on it, and what the peer lets this side send.
 function (s: Streams) __recv_window(id: i64): i64 {
   if (__is_uni(id)) {
     return s.local.initial_max_stream_data_uni;
@@ -291,7 +226,6 @@ function (s: Streams) __new_stream(id: i64): Stream {
   return Stream { id: id, has_send: local || !__is_uni(id), send: send, has_recv: !local || !__is_uni(id), recv: recv, closed: false };
 }
 
-// __find is the position of the stream `id`, -1 for none or a closed one.
 function (s: Streams) __find(id: i64): i32 {
   if ((id & 2) != 0) {
     let i: i32 = s.list.len() - 1;
@@ -320,9 +254,6 @@ function (s: Streams) __find(id: i64): i32 {
   return i;
 }
 
-// __scan is __find for a stream below the index's window, which only a
-// peer opening a bidirectional stream of its own long after this side's
-// reaches, from the end of the list.
 function (s: Streams) __scan(id: i64): i32 {
   let i: i32 = s.list.len() - 1;
   while (i >= 0) {
@@ -337,16 +268,10 @@ function (s: Streams) __scan(id: i64): i32 {
   return 0 - 1;
 }
 
-// __bidi_key orders the bidirectional streams of both sides as one
-// sequence: the client's 4k at 2k, the server's 4k + 1 at 2k + 1.
 function __bidi_key(id: i64): i64 {
   return (id >> 2) * 2 + (id & 1);
 }
 
-// __indexed is `s` with the bidirectional stream `id` at position `pos`
-// of its list; a unidirectional stream, or one below the window, leaves
-// the index as it is. The index is updated in place: it is written only
-// through the table that owns it.
 function (s: Streams) __indexed(id: i64, pos: i32): Streams {
   if ((id & 2) != 0) {
     return s;
@@ -362,8 +287,6 @@ function (s: Streams) __indexed(id: i64, pos: i32): Streams {
   return Streams { ...s, index: s.index.with(k as i32, pos + 1) };
 }
 
-// __grown is a fresh index holding `index`, with room for `n` entries and
-// as much again.
 function __grown(index: i32[], n: i32): i32[] {
   let size: i32 = n * 2;
   if (size < 16) {
@@ -382,23 +305,15 @@ function (s: Streams) __put(i: i32, st: Stream): Streams {
   return Streams { ...s, list: s.list.with(i, st) };
 }
 
-// === what the application does =============================================
-
-// can_open reports whether the peer's limit lets this side open another
-// stream of the kind.
 pub function (s: Streams) can_open(uni: boolean): boolean {
   let t: i32 = s.__local_type(uni);
   return s.opened[t] < s.limits[t];
 }
 
-// __refuse records why an operation did nothing.
 function (s: Streams) __refuse(why: string): Streams {
   return Streams { ...s, refused: why };
 }
 
-// open starts a stream of this side's, its ID in `last_opened`, or refuses
-// when the peer's limit is reached. The caller can then use blocked_open
-// to request STREAMS_BLOCKED.
 pub function (s: Streams) open(uni: boolean): Streams {
   let t: i32 = s.__local_type(uni);
   if (s.opened[t] >= s.limits[t]) {
@@ -409,7 +324,6 @@ pub function (s: Streams) open(uni: boolean): Streams {
   return cur.__indexed(id, cur.list.len() - 1);
 }
 
-// write queues `data` on a stream's sending half, and with `fin` ends it.
 pub function (s: Streams) write(id: i64, data: [u8], fin: boolean): Streams {
   let i: i32 = s.__find(id);
   if (i < 0 || !s.list[i].has_send) {
@@ -426,9 +340,6 @@ pub function (s: Streams) write(id: i64, data: [u8], fin: boolean): Streams {
   return s.__refuse("").__put(i, Stream { ...st, send: Send { ...st.send, buf: buf, fin: fin } });
 }
 
-// read takes what can be read of a stream, in order, into `read_data`, and
-// whether its end has been reached into `read_fin`; reading opens the
-// windows again.
 pub function (s: Streams) read(id: i64): Streams {
   let i: i32 = s.__find(id);
   if (i < 0 || !s.list[i].has_recv) {
@@ -444,7 +355,6 @@ pub function (s: Streams) read(id: i64): Streams {
   return cur.__retire_done(i);
 }
 
-// reset abandons a stream's sending half with an application error code.
 pub function (s: Streams) reset(id: i64, code: i64): Streams {
   let i: i32 = s.__find(id);
   if (i < 0 || !s.list[i].has_send) {
@@ -453,8 +363,6 @@ pub function (s: Streams) reset(id: i64, code: i64): Streams {
   return s.__refuse("").__put(i, __reset_send(s.list[i], code));
 }
 
-// stop asks the peer to stop sending on a stream, with an application
-// error code; what arrives after is dropped.
 pub function (s: Streams) stop(id: i64, code: i64): Streams {
   let i: i32 = s.__find(id);
   if (i < 0 || !s.list[i].has_recv) {
@@ -467,8 +375,6 @@ pub function (s: Streams) stop(id: i64, code: i64): Streams {
   return s.__refuse("").__put(i, Stream { ...st, recv: Recv { ...st.recv, stop: code, stop_state: TO_SEND, data: st.recv.data.__discard() } });
 }
 
-// buffered is how many bytes written to a stream the peer has not yet
-// acknowledged.
 pub function (s: Streams) buffered(id: i64): i64 {
   let i: i32 = s.__find(id);
   if (i < 0) {
@@ -477,8 +383,6 @@ pub function (s: Streams) buffered(id: i64): i64 {
   return s.list[i].send.buf.len() as i64;
 }
 
-// events_taken is the table with its events handed on: read `events`
-// first, then take them.
 pub function (s: Streams) events_taken(): Streams {
   return Streams { ...s, events: [] };
 }
@@ -490,9 +394,6 @@ function __reset_send(st: Stream, code: i64): Stream {
   return Stream { ...st, send: Send { ...st.send, buf: [], lost: [], acked: [], base: st.send.sent, reset: code, reset_state: TO_SEND } };
 }
 
-// === frames from the peer ===================================================
-
-// owns reports whether a frame is the table's to take.
 pub function owns(f: frames.Frame): boolean {
   match (f) {
     frames.StreamFrame(_) | frames.ResetStreamFrame(_) | frames.StopSending(_, _) | frames.MaxData(_) | frames.MaxStreamData(_, _) | frames.MaxStreams(_, _) | frames.DataBlocked(_) | frames.StreamDataBlocked(_, _) | frames.StreamsBlocked(_, _) => {
@@ -504,8 +405,6 @@ pub function owns(f: frames.Frame): boolean {
   }
 }
 
-// on_frame takes one of the frames `owns` names; a frame the table refuses
-// leaves the error in `failed`.
 pub function (s: Streams) on_frame(f: frames.Frame): Streams {
   let cur: Streams = Streams { ...s, failed: None };
   match (f) {
@@ -535,9 +434,6 @@ function (s: Streams) __fail(e: frames.FrameError): Streams {
   return Streams { ...s, failed: Some(e) };
 }
 
-// __on_connection_frame takes the frames about the connection as a whole:
-// limits only ever rise, and the peer's blocked signals need no answer, as
-// windows open as data is read.
 function (s: Streams) __on_connection_frame(f: frames.Frame): Streams {
   match (f) {
     frames.MaxData(v) => {
@@ -553,11 +449,6 @@ function (s: Streams) __on_connection_frame(f: frames.Frame): Streams {
   }
 }
 
-// __stream_for finds the stream a frame names, opening the peer's streams
-// up to it (§3.2), and checks it has the half the frame acts on: `recv`
-// for one carrying data to this side, else the sending half. A stream
-// already closed answers -1, and so does a frame the table refuses, with
-// the error in `failed`. `kind` is the frame type, for the error.
 function (s: Streams) __stream_for(id: i64, recv: boolean, kind: i64): (Streams, i32) {
   let local: boolean = s.__is_local(id);
   if (__is_uni(id) && local == recv) {
@@ -579,7 +470,6 @@ function (s: Streams) __stream_for(id: i64, recv: boolean, kind: i64): (Streams,
   return (cur, i);
 }
 
-// __peer_opens opens the peer's streams of type `t` up to number `n`.
 function (s: Streams) __peer_opens(t: i32, n: i64): Streams {
   let cur: Streams = s;
   let k: i64 = s.opened[t];
@@ -613,8 +503,6 @@ function (s: Streams) __on_stream(d: frames.StreamData): Streams {
   }
   let before: i64 = r.data.delivered();
   let data: Reassembly = r.data.add(d.offset, d.data);
-  // A retransmitted FIN is still checked above, but an EOF the application
-  // already consumed must not make its retired message parser run again.
   let readable: boolean = data.delivered() > before || d.fin && !r.fin_read && data.delivered() == r.final_size;
   let events: Event[] = next.events;
   if (readable) {
@@ -623,8 +511,6 @@ function (s: Streams) __on_stream(d: frames.StreamData): Streams {
   return Streams { ...next, events: events }.__put(i, Stream { ...st, recv: Recv { ...r, data: data, highest: r.highest + more } });
 }
 
-// __final_error checks data ending at `end` against the stream's final
-// size (§4.5): nothing may pass it, and a FIN may not move it.
 function __final_error(r: Recv, end: i64, fin: boolean, kind: i64): Option[frames.FrameError] {
   if (r.final_size >= 0 && (end > r.final_size || fin && end != r.final_size)) {
     return Some(__error(frames.FINAL_SIZE_ERROR, kind, "data past the stream's final size, or a different final size"));
@@ -635,8 +521,6 @@ function __final_error(r: Recv, end: i64, fin: boolean, kind: i64): Option[frame
   return None;
 }
 
-// __with_final is the receiving half with its final size set by a FIN at
-// `end`, once `__final_error` has allowed it.
 function __with_final(r: Recv, end: i64, fin: boolean): Recv {
   if (fin) {
     return Recv { ...r, final_size: end };
@@ -644,9 +528,6 @@ function __with_final(r: Recv, end: i64, fin: boolean): Recv {
   return r;
 }
 
-// __credit_error refuses data ending at `end` that passes the stream's
-// window or the connection's (§4.1); the highest offset rises by
-// `end - r.highest` when it does not.
 function (s: Streams) __credit_error(r: Recv, end: i64, kind: i64): Option[frames.FrameError] {
   if (end > r.max) {
     return Some(__error(frames.FLOW_CONTROL_ERROR, kind, "stream data past the stream's window"));
@@ -658,8 +539,6 @@ function (s: Streams) __credit_error(r: Recv, end: i64, kind: i64): Option[frame
   return None;
 }
 
-// __on_reset takes RESET_STREAM: the receiving half ends at its final size,
-// which counts as read for the connection's window.
 function (s: Streams) __on_reset(rs: frames.ResetStream): Streams {
   let (cur, i) = s.__stream_for(rs.stream, true, frames.RESET_STREAM);
   if (i < 0) {
@@ -682,8 +561,6 @@ function (s: Streams) __on_reset(rs: frames.ResetStream): Streams {
   return next.__put(i, Stream { ...st, recv: Recv { ...r, highest: r.highest + more, reset: rs.code, data: reassembly() } }).__retire_done(i);
 }
 
-// __on_stop takes STOP_SENDING: the sending half is reset with the code
-// the peer gave (§3.5).
 function (s: Streams) __on_stop(id: i64, code: i64): Streams {
   let (cur, i) = s.__stream_for(id, false, frames.STOP_SENDING);
   if (i < 0) {
@@ -709,23 +586,14 @@ function __error(code: i64, kind: i64, reason: string): frames.FrameError {
   return frames.FrameError { code: code, frame_type: kind, reason: reason };
 }
 
-// === filling packets ========================================================
-
-// fill adds frames to `out` in at most `room` bytes: resets and
-// STOP_SENDING first, then window updates and blocked signals, then stream
-// data, lost ranges before new, the streams taken in turn. The bytes come
-// back in `filled`, and what to resend if the packet is lost in `resend`;
-// the caller takes both with `fill_taken`.
 pub function (s: Streams) fill(out: u8[], room: i32): Streams {
   return Streams { ...s, filled: out, resend: [], fit: false }.__signals(room).__window_updates(room).__data(room);
 }
 
-// fill_taken is the table with what `fill` wrote handed on.
 pub function (s: Streams) fill_taken(): Streams {
   return Streams { ...s, filled: [], resend: [] };
 }
 
-// __add puts frame `f` in `filled` when it fits, saying so in `fit`.
 function (s: Streams) __add(room: i32, f: frames.Frame): Streams {
   let bytes: u8[] = frames.encode(f);
   if (s.filled.len() + bytes.len() > room) {
@@ -734,7 +602,6 @@ function (s: Streams) __add(room: i32, f: frames.Frame): Streams {
   return Streams { ...s, filled: s.filled.concat(bytes), resend: s.resend.append(recovery.Again(f)), fit: true };
 }
 
-// __signals adds each stream's owed RESET_STREAM and STOP_SENDING.
 function (s: Streams) __signals(room: i32): Streams {
   let cur: Streams = s;
   let i: i32 = 0;
@@ -758,8 +625,6 @@ function (s: Streams) __signals(room: i32): Streams {
   return cur;
 }
 
-// __window_updates opens the windows again once half of one has been read
-// (§4.2), and raises the peer's stream limits as its streams close.
 function (s: Streams) __window_updates(room: i32): Streams {
   let cur: Streams = s.__opened_windows();
   if (cur.recv_max_dirty) {
@@ -777,7 +642,6 @@ function (s: Streams) __window_updates(room: i32): Streams {
   return cur.__stream_windows(room);
 }
 
-// __opened_windows moves each window that half its size has been read from.
 function (s: Streams) __opened_windows(): Streams {
   let cur: Streams = s;
   let want: i64 = s.recv_taken + s.recv_window;
@@ -813,8 +677,6 @@ function (s: Streams) __stream_windows(room: i32): Streams {
   return cur;
 }
 
-// __data adds stream data, starting each packet at the stream after the
-// one the last began with, so streams share the connection in turn.
 function (s: Streams) __data(room: i32): Streams {
   let n: i32 = s.list.len();
   if (n == 0) {
@@ -831,9 +693,6 @@ function (s: Streams) __data(room: i32): Streams {
   return Streams { ...cur, next: start + 1 }.__blocked(room);
 }
 
-// __stream_data adds one stream's lost ranges, then its new data as far as
-// both windows allow, then a FIN not yet sent. A stream with nothing to
-// send is left as it is.
 function (s: Streams) __stream_data(i: i32, room: i32): Streams {
   let st: Stream = s.list[i];
   if (!st.has_send || st.send.reset >= 0 || !__sendable(st.send)) {
@@ -849,18 +708,14 @@ function (s: Streams) __stream_data(i: i32, room: i32): Streams {
   return cur.__put(i, Stream { ...st, send: snd2 });
 }
 
-// __written is the offset one past the last byte written.
 function __written(snd: Send): i64 {
   return snd.base + snd.buf.len() as i64;
 }
 
-// __sendable reports whether a sending half has anything for a packet: a
-// lost range, bytes not yet sent, or a FIN not yet sent.
 function __sendable(snd: Send): boolean {
   return snd.lost.len() > 0 || __written(snd) > snd.sent || snd.fin && !snd.fin_sent;
 }
 
-// __resend_lost sends the lost ranges that fit, keeping the rest.
 function __resend_lost(id: i64, snd: Send, out: u8[], room: i32, resend: recovery.Resend[]): (Send, u8[], recovery.Resend[]) {
   if (snd.lost.len() == 0) {
     return (snd, out, resend);
@@ -889,8 +744,6 @@ function __resend_lost(id: i64, snd: Send, out: u8[], room: i32, resend: recover
   return (Send { ...snd, lost: kept }, o, rs);
 }
 
-// __send_new sends new data below `credit`, and the FIN once everything
-// written has gone.
 function __send_new(id: i64, snd: Send, credit: i64, own out: u8[], room: i32, resend: recovery.Resend[]): (Send, u8[], recovery.Resend[]) {
   let avail: i64 = __min(__written(snd), credit) - snd.sent;
   let fit: i64 = (room - out.len() - frames.stream_overhead(id, snd.sent, avail as i32)) as i64;
@@ -908,14 +761,10 @@ function __send_new(id: i64, snd: Send, credit: i64, own out: u8[], room: i32, r
   return (next, o, resend.append(recovery.StreamRange(id, snd.sent, n as i32, fin)));
 }
 
-// __blocked adds STREAM_DATA_BLOCKED for a stream, DATA_BLOCKED for the
-// connection, and STREAMS_BLOCKED, each once per limit that holds data or a
-// stream back (§4.1, §4.6).
 function (s: Streams) __blocked(room: i32): Streams {
   return s.__stream_data_blocked(room).__data_blocked(room).__streams_blocked(room);
 }
 
-// __held reports whether a stream has data written and not yet sent.
 function __held(st: Stream): boolean {
   return st.has_send && st.send.reset < 0 && __written(st.send) > st.send.sent;
 }
@@ -963,16 +812,11 @@ function (s: Streams) __streams_blocked(room: i32): Streams {
   return cur;
 }
 
-// blocked_open notes that this side wanted another stream of the kind and
-// the peer's limit refused it, so STREAMS_BLOCKED is owed.
 pub function (s: Streams) blocked_open(uni: boolean): Streams {
   let t: i32 = s.__local_type(uni);
   return Streams { ...s, open_blocked: s.open_blocked.with(t, s.limits[t]) };
 }
 
-// === what became of what was sent ===========================================
-
-// acked takes an item of a packet the peer acknowledged.
 pub function (s: Streams) acked(item: recovery.Resend): Streams {
   match (item) {
     recovery.StreamRange(id, offset, len, fin) => {
@@ -997,8 +841,6 @@ pub function (s: Streams) acked(item: recovery.Resend): Streams {
   }
 }
 
-// __acked_range records an acknowledged range, and frees the bytes below
-// the lowest offset not yet acknowledged.
 function __acked_range(snd: Send, offset: i64, len: i32, fin: boolean): Send {
   if (snd.reset >= 0) {
     return snd;
@@ -1013,7 +855,6 @@ function __acked_range(snd: Send, offset: i64, len: i32, fin: boolean): Send {
   return Send { ...snd, acked: acked, base: base, buf: __slice_range(snd.buf, drop, snd.buf.len()), fin_acked: snd.fin_acked || fin };
 }
 
-// __merge adds [lo, hi) to sorted, disjoint ranges held as lo, hi pairs.
 function __merge(ranges: i64[], lo: i64, hi: i64): i64[] {
   let out: i64[] = [];
   let a: i64 = lo;
@@ -1043,9 +884,6 @@ function __merge(ranges: i64[], lo: i64, hi: i64): i64[] {
   return out;
 }
 
-// lost takes an item of a packet declared lost: stream data is sent again,
-// a FIN with it, a reset or STOP_SENDING again, and a window update with
-// the window as it is now.
 pub function (s: Streams) lost(item: recovery.Resend): Streams {
   match (item) {
     recovery.StreamRange(id, offset, len, fin) => {
@@ -1103,7 +941,6 @@ function (s: Streams) __lost_stream_frame(f: frames.Frame): Streams {
   }
 }
 
-// __restate owes a stream's reset (`send`) or STOP_SENDING again.
 function (s: Streams) __restate(id: i64, send: boolean): Streams {
   let i: i32 = s.__find(id);
   if (i < 0) {
@@ -1119,12 +956,6 @@ function (s: Streams) __restate(id: i64, send: boolean): Streams {
   return s;
 }
 
-// === closed streams =========================================================
-
-// __retire_done closes stream `i` once both its halves are done: each of
-// the peer's lets it open one more (§4.6). Closed streams stay in the list
-// until half of it is closed, when `__sweep` drops them, so a finished
-// request does not rebuild the list.
 function (s: Streams) __retire_done(i: i32): Streams {
   let st: Stream = s.list[i];
   if (st.closed || !__done(st)) {
@@ -1136,17 +967,12 @@ function (s: Streams) __retire_done(i: i32): Streams {
     cur = Streams { ...cur, limits: cur.limits.with(t, cur.limits[t] + 1), limits_dirty: cur.limits_dirty.with(t, true) };
   }
   cur = cur.__put(i, Stream { ...st, closed: true });
-  // Sweep only once enough are closed, so a stream at a time does not
-  // rebuild a one-element list.
   if (cur.retired >= 32 && cur.retired * 2 >= cur.list.len()) {
     return cur.__sweep();
   }
   return cur;
 }
 
-// __sweep drops the closed streams from the list and rebuilds the index
-// from the lowest bidirectional key still live, or the next the client
-// opens when none is.
 function (s: Streams) __sweep(): Streams {
   let base: i64 = s.opened[0] * 2;
   let top: i64 = base;
@@ -1192,8 +1018,6 @@ function __recv_done(st: Stream): boolean {
   return !st.has_recv || st.recv.fin_read || st.recv.reset >= 0;
 }
 
-// === helpers ================================================================
-
 function __total(held: u8[][]): i64 {
   let n: i64 = 0;
   for h in held {
@@ -1222,8 +1046,6 @@ function __rest_i64(xs: i64[]): i64[] {
   return out;
 }
 
-// __append_range is `out` followed by `src[from:to]`, in one fresh array
-// filled by the byte builder's copies rather than a byte at a time.
 function __append_range(out: u8[], src: u8[], from: i32, to: i32): u8[] {
   let b: usize = buf_new(out.len() + (to - from));
   buf_push_bytes_range(b, out, 0, out.len());
@@ -1233,7 +1055,6 @@ function __append_range(out: u8[], src: u8[], from: i32, to: i32): u8[] {
   return grown;
 }
 
-// __slice_range is a fresh copy of `src[from:to]`.
 function __slice_range(src: u8[], from: i32, to: i32): u8[] {
   return __bytes_range(src, from, to);
 }

@@ -8,26 +8,11 @@ import (
 	"testing"
 )
 
-// One generic array-receiver method used at SEVERAL element types in the same
-// program, on the self-host IR path.
-//
-// `register_array_method_generics` folds `(xs: T[]) m(args)` into a free
-// generic `__arrm_m[T]` and the free-generic worklist clones one
-// `__arrm_m__<elem>` per element type. Every instantiation must be cloned, not
-// only the first: a call left in method form does not lower, so a program
-// calling `xs.map(f)` on both `i32[]` and `string[]` would not compile.
-//
-// Each case asserts three things together: the module decides `ir`, a distinct
-// `__arrm_<name>__<elem>` clone is emitted for EVERY element type used (one
-// clone reaching the asm while another call kept the method form is the
-// failure shape), and the binary agrees with the interpreter.
 var arrayMethodMultiElemIRCases = []struct {
 	name string
 	src  string
 	syms []string
 }{
-	// map at two element types: [1,2,3] doubled indexes 6 at [2], plus a
-	// 2-element string[] -> 6 + 2 = 8.
 	{"map-i32-string", `import "std/array";
 function dbl(x: i32): i32 { return x * 2; }
 @noinline function id_s(s: string): string { return s; }
@@ -39,7 +24,6 @@ function main(): i32 {
     return a[2] + b.len();
 }`, []string{"__arrm_map__i32", "__arrm_map__string"}},
 
-	// Three element types through one method, including a wide (i64) element.
 	{"map-i32-string-i64", `import "std/array";
 function dbl(x: i32): i32 { return x * 2; }
 @noinline function id_s(s: string): string { return s; }
@@ -51,9 +35,6 @@ function main(): i32 {
     return xs.map(dbl)[2] + ss.map(id_s).len() + (ls.map(id_l)[0] as i32);
 }`, []string{"__arrm_map__i32", "__arrm_map__string", "__arrm_map__i64"}},
 
-	// concat — a 2-param `T[]`-only helper. This is the shape the old guard
-	// named as crashing at two element types; it lowers and runs correctly now.
-	// The i32 call takes the runtime's sized copy and the string call the clone.
 	{"concat-i32-string", `import "std/array";
 function main(): i32 {
     let xs: i32[] = [1, 2];
@@ -65,8 +46,6 @@ function main(): i32 {
     return a.len() * 10 + b.len();
 }`, []string{"__fern_arr_concat", "__arrm_concat__string"}},
 
-	// An Ord-BOUNDED receiver method at two element types: the bound resolves
-	// `i32.cmp` in one clone and `string.cmp` in the other.
 	{"is_sorted-bounded", `import "std/array";
 function main(): i32 {
     let xs: i32[] = [1, 2, 3];
@@ -77,8 +56,6 @@ function main(): i32 {
     return 9;
 }`, []string{"__arrm_is_sorted__i32", "__arrm_is_sorted__string"}},
 
-	// An Eq-bounded receiver-only method (no `T`-typed argument to infer from,
-	// so the element type comes from the receiver alone).
 	{"dedup-bounded", `import "std/array";
 function main(): i32 {
     let xs: i32[] = [1, 1, 2];
@@ -86,13 +63,6 @@ function main(): i32 {
     return xs.dedup().len() * 10 + ss.dedup().len();
 }`, []string{"__arrm_dedup__i32", "__arrm_dedup__string"}},
 
-	// `rotate_left(n: i32)` has no `T`-typed argument, so it was throttled like
-	// the rest — but its mis-dispatch target `i32.rotate_left` HAPPENS to exist
-	// (std/i32's BITWISE rotate, i32.fern), so the string arm silently called
-	// the bitwise routine with an array pointer instead of failing. Strict-IR
-	// was satisfied because a symbol of that name resolved. Only the oracle
-	// comparison catches that shape, which is why this case pins the answer as
-	// well as both clones.
 	{"rotate_left-silent-misdispatch", `import "std/array";
 function main(): i32 {
     let xs: i32[] = [1, 2, 3];
@@ -102,11 +72,6 @@ function main(): i32 {
     return a[0] * 10 + b[0].len() + b.len();
 }`, []string{"__arrm_rotate_left__i32", "__arrm_rotate_left__string"}},
 
-	// A chained pipeline per element type — the surface #2663 asks for. Only
-	// `map` clones per element here: `filter`'s receiver is a call expression
-	// rather than a bare local, so it takes the erased uniform-width path on
-	// one shared clone. That is correct for a callback-driven verb (the body
-	// never names the element type) and the oracle check is what pins it.
 	{"chained-pipeline", `import "std/array";
 function dbl(x: i32): i32 { return x * 2; }
 function big(x: i32): boolean { return x > 2; }
@@ -120,9 +85,6 @@ function main(): i32 {
     return a.len() * 10 + b.len();
 }`, []string{"__arrm_map__i32", "__arrm_map__string", "__arrm_filter__"}},
 
-	// The same verb at four element widths in one program, narrow and wide:
-	// a shared erased `filter` clone has to stay correct across a 4-byte i32,
-	// an 8-byte i64 / f64 and a 16-byte string.
 	{"filter-narrow-and-wide", `import "std/array";
 function bigi(x: i32): boolean { return x > 1; }
 function bigl(x: i64): boolean { return x > 1i64; }

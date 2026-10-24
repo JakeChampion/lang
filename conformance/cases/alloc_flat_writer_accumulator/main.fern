@@ -1,20 +1,20 @@
 // spec: AL-01
-//
-// The AL-01 shape for a string accumulator declared inside a match arm and
-// handed to `Writer.write`: every piece is appended in place and the
-// accumulator is released when the arm ends, so doubling the round count
-// cannot cost more fresh memory.
-//
-// `w.write(out)` is the occurrence that matters. The single-word string ABI
-// taints a string local passed to a call it cannot see through, and
-// `__method_Writer_write` is a copying builtin — the bytes go to the fd and
-// nothing retains them. Without that credit `out` was not owned, so each
-// `out = out + piece` copied the whole accumulator afresh and the superseded
-// copy was decremented but never freed: quadratic time and an unbounded leak
-// (#8394).
-//
-// The case prints the SHAPE, never a byte count — see
-// docs/ALLOCATION-OBSERVABLE.md.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import "std/i32";
 import "std/i64";
 import "std/string";
@@ -58,7 +58,7 @@ function main(): i32 {
 
     print(x.to_string());
     print(y.to_string());
-    // Twice the work must not cost more fresh memory.
+
     if ((b2 - b1) > (b1 - b0)) { print("grows"); } else { print("flat"); }
     return 0;
 }

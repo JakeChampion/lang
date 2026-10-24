@@ -2,12 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/string.find_all — the start indices of every
-// non-overlapping occurrence of a substring (the positions count() tallies).
-// Exercises multiple matches, non-overlapping semantics ("aaaa".find_all("aa")
-// == [0, 2]), no-match, empty-needle, and the length==count invariant. Returns
-// 42 iff every check holds across interp / x86-64 / wasm / arm64; each leg skips
-// itself when its toolchain is absent.
 const stringFindAllProg = `
 import "std/string";
 function main(): i32 {

@@ -2,25 +2,6 @@ package e2e
 
 import "testing"
 
-// Deleting an entry orphaned its boxed KEY cell.
-//
-// `__map_delete_keyed_impl` freed the value cell, tombstoned the bucket and
-// swapped the last entry into the hole — which overwrites the key slot, so the
-// cell it pointed at became unreachable. `__drop_map_str_keys` only ever walks
-// LIVE entries, so nothing ever returned it: 16 B per delete hit on the two
-// boxing ABIs (#8493).
-//
-// The three rows are what identify it, and each rules out a different explanation:
-//
-//   - a delete MISS is clean, so it is not the lookup box or anything about
-//     probing;
-//   - an i32 KEY is clean, so it is the key column and not the entry;
-//   - x86-64 is clean either way, because it stores a string key as its data
-//     pointer with no cell at all — which is also why this hid for so long.
-//
-// Absolute on all three backends. The surrounding map reclaims fully since
-// #8276, so 16 bytes finally has somewhere to show up; before that it was
-// buried under six figures of unrelated leak and unmeasurable.
 func TestMapDeleteReclaimsTheKeyCell(t *testing.T) {
 	src := func(decl, del string) string {
 		return `

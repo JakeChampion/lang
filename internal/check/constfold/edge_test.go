@@ -1,18 +1,5 @@
 package constfold
 
-// Edge-case coverage for the constant-folding pass, complementing the
-// basics in constfold_test.go. These exercise the deeper reaches of
-// evalConst / foldBinary / foldUnary that the main tests skip:
-//
-//   - multi-level const chains (A -> B -> C) collapsing to one literal,
-//   - the full comparison-operator set producing BoolLits,
-//   - bitwise / shift operators on integer consts,
-//   - unary minus folded through a const reference (not a bare literal),
-//   - const substitution into struct-field and array-element positions,
-//   - the mixed-scalar rejection paths beyond the single i32/f32 case
-//     the basics cover (the asymmetric "operands aren't both numbers"
-//     diagnostic when an integer literal meets a bool / float operand).
-
 import (
 	"strings"
 	"testing"
@@ -20,10 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/ast"
 )
 
-// A three-link const chain folds to a single literal: B reads A, C
-// reads B, and main() returns C as a fully-resolved NumberLit. This
-// guards the "earlier consts feed later consts" invariant past the
-// two-level depth the basics reach.
 func TestFoldChainThreeLevels(t *testing.T) {
 	prog := fold(t, `const A: i32 = 2;
 const B: i32 = A + 1;
@@ -36,14 +19,11 @@ function main(): i32 { return C; }`)
 	if !ok {
 		t.Fatalf("return should be NumberLit, got %T", returnLit(t, prog))
 	}
-	if lit.Value != 6 { // (2 + 1) * 2
+	if lit.Value != 6 {
 		t.Errorf("got %d, want 6", lit.Value)
 	}
 }
 
-// A float const chain folds with division: B = A / 4.0 over the
-// earlier float const A. Confirms the float arithmetic path chains the
-// same way the integer path does.
 func TestFoldChainFloatDivision(t *testing.T) {
 	prog := fold(t, `const A: f32 = 2.0;
 const B: f32 = A / 4.0;
@@ -57,8 +37,6 @@ function main(): f32 { return B; }`)
 	}
 }
 
-// Every integer comparison operator folds to a BoolLit. Parameterised
-// so a regression in any single operator is named at its row.
 func TestFoldComparisonOperators(t *testing.T) {
 	cases := []struct {
 		op   string
@@ -93,8 +71,6 @@ func TestFoldComparisonOperators(t *testing.T) {
 	}
 }
 
-// Float comparisons fold to BoolLits too, including the equality and
-// ordering operators over an earlier float const.
 func TestFoldComparisonFloat(t *testing.T) {
 	prog := fold(t, `const X: f32 = 1.5;
 const Y: boolean = X == 1.5;
@@ -108,9 +84,6 @@ function main(): boolean { return Y; }`)
 	}
 }
 
-// String equality / inequality fold to BoolLits (the only comparison
-// operators strings accept). Concatenation is already covered by the
-// basics; this pins the == / != arms.
 func TestFoldComparisonString(t *testing.T) {
 	prog := fold(t, `const A: string = "a";
 const EQ: boolean = A == "a";
@@ -125,10 +98,6 @@ function main(): boolean { return EQ; }`)
 	}
 }
 
-// Bitwise and shift operators fold over integer consts: AND, OR, XOR,
-// left/right shift. Each row resolves to a NumberLit. The bitwise ops
-// take Go's semantics directly; the shifts deliberately do not, because
-// Go does not mask the count.
 func TestFoldBitwiseAndShift(t *testing.T) {
 	cases := []struct {
 		name string
@@ -140,11 +109,6 @@ func TestFoldBitwiseAndShift(t *testing.T) {
 		{"xor", "0x0F ^ 0x03", 0x0C},
 		{"shl", "1 << 4", 16},
 		{"shr", "256 >> 2", 64},
-		// A shift masks its count to the operand width, so a count at or past
-		// the width wraps rather than annihilating the value. The pass folds in
-		// int64, so the rule here is `& 63`. Go's own `1 << 64` is 0, which is
-		// what this used to compile `const A: i32 = 1 << 64` to while the same
-		// expression evaluated to 1 at runtime.
 		{"shl_count_64", "1 << 64", 1},
 		{"shl_count_65", "1 << 65", 2},
 		{"shr_count_65", "256 >> 65", 128},
@@ -166,9 +130,6 @@ func TestFoldBitwiseAndShift(t *testing.T) {
 	}
 }
 
-// Unary minus folds through a const reference, not just a bare
-// literal: -A where A is an earlier i32 const. The basics fold `!`
-// over a bool but never apply a unary to a *referenced* const.
 func TestFoldUnaryMinusOverConst(t *testing.T) {
 	prog := fold(t, `const A: i32 = 10;
 const N: i32 = -A;
@@ -182,11 +143,6 @@ function main(): i32 { return N; }`)
 	}
 }
 
-// A const lands in struct-field and array-element initialiser
-// positions and is fully substituted away. This complements
-// TestFoldSubstitutesAcrossExpressionPositions by adding the struct-
-// literal field path (StructLit.Fields[i].Value) and confirming the
-// const value also resolves an array-index return.
 func TestFoldSubstitutesStructAndArray(t *testing.T) {
 	prog := fold(t, `struct Pt { x: i32, y: i32 }
 const N: i32 = 4;
@@ -200,10 +156,6 @@ function main(): i32 {
 	}
 }
 
-// Mixing an integer literal with a bool operand is rejected. Because
-// the left operand is a NumberLit the pass takes the integer path, so
-// the diagnostic is the asymmetric "operands aren't both numbers"
-// rather than a bool-path message — a path the basics never reach.
 func TestFoldRejectsNumberBoolMix(t *testing.T) {
 	got := foldErr(t, `const X: i32 = 1 < true;`)
 	if !strings.Contains(got, "aren't both numbers") {
@@ -211,10 +163,6 @@ func TestFoldRejectsNumberBoolMix(t *testing.T) {
 	}
 }
 
-// Mixing an integer literal with a float literal is rejected even
-// though both are numeric: the pass demands explicit conversions. The
-// left NumberLit drives the integer path, so the float operand trips
-// the same "operands aren't both numbers" check.
 func TestFoldRejectsIntFloatMix(t *testing.T) {
 	got := foldErr(t, `const X: f32 = 1 + 1.5;`)
 	if !strings.Contains(got, "aren't both numbers") {
@@ -222,9 +170,6 @@ func TestFoldRejectsIntFloatMix(t *testing.T) {
 	}
 }
 
-// A bool operand combined with a non-bool right side is rejected via
-// the bool path's dedicated diagnostic, distinct from the number-path
-// message above.
 func TestFoldRejectsBoolNonBoolMix(t *testing.T) {
 	got := foldErr(t, `const X: i32 = true + 1;`)
 	if !strings.Contains(got, "bool and non-bool") {
@@ -232,8 +177,6 @@ func TestFoldRejectsBoolNonBoolMix(t *testing.T) {
 	}
 }
 
-// itoa renders a signed int64 without pulling strconv into the test's
-// import set for a single call site.
 func itoa(v int64) string {
 	if v == 0 {
 		return "0"

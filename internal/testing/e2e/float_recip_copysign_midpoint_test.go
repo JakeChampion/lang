@@ -2,13 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/f64.recip / copysign / midpoint — three
-// purely-arithmetic helpers (no libm primitive), so unlike the transcendentals
-// they lower on ALL FOUR backends including wasmbin. recip is 1/x, copysign
-// takes the magnitude of the receiver with the sign of the argument, midpoint
-// is the overflow-safe halfway point a*0.5 + b*0.5. Both f64 and f32. Returns
-// 42 iff every check holds across interp / x86-64 / wasm / arm64; each leg
-// skips itself when its toolchain is absent.
 const floatRecipCopysignMidpointProg = `
 import "std/f64";
 function approx(a: f64, b: f64): boolean { let d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.0001; }

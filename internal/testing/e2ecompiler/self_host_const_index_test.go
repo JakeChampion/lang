@@ -8,10 +8,6 @@ import (
 	"testing"
 )
 
-// A constant index into an array or a string is an immediate (ssa.imm_use):
-// the element is read or written at a displacement and the bounds test
-// compares the length with the constant, so the index never takes a register.
-// A closure call reads its body's address this way, out of slot 0.
 const constIndexProg = `@noinline function third(xs: i64[]): i64 { return xs[2]; }
 @noinline function second_byte(s: string): i32 { return s[1] as i32; }
 @noinline function packed(bs: u8[]): i32 { return bs[1] as i32; }
@@ -26,7 +22,6 @@ function main(): i32 {
 }
 `
 
-// The same read past the end still traps.
 const constIndexOOBProg = `@noinline function fifth(xs: i32[]): i32 { return xs[4]; }
 function main(): i32 { return fifth([1, 2]); }
 `
@@ -42,7 +37,6 @@ func TestSelfHostConstIndexImmediate(t *testing.T) {
 	if err := os.WriteFile(oob, []byte(constIndexOOBProg), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// What each function's body must hold, and the indexed form it must not.
 	want := map[string]map[string]string{
 		"x86-64-linux": {"third": "24(%", "put": "16(%", "packed": "9(%", "second_byte": "1(%rdx)", "apply": "8(%"},
 		"arm64-linux":  {"third": "#24]", "put": "#16]", "packed": "#9]", "second_byte": "#1]", "apply": "#8]"},

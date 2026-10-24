@@ -2,18 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// formatSpecIRCases exercise std/format's Rust-style
-// `{:[fill]align[sign][0]width.precision}` format specs (issue #2684) through the
-// self-host IR path on x86-64 + wasm — including the `+` sign and sign-aware `0`
-// zero-pad flags (the latter slices a leading sign off with `slice_unchecked`).
-// (TestSelfHostFormatStringIR already covers the bare `{}` substitution.) The
-// whole format + spec machinery is inlined as `fmt_format` and helpers; this
-// verifies the constructs the spec path lowers to compile on the IR path:
-// forward `}`-scan with `slice_unchecked`, byte compares on `spec[p]`,
-// `boolean`-returning helpers with `||`, an int-coded align switch, and the
-// fill-repeat concat loop. Each program returns the rendered string's length
-// (kept <= 126) and is oracle-checked against the reference interpreter.
-// FEATURE-AUDIT std/format row.
 const formatSpecIRPrelude = `function fmt_is_align(c: i32): boolean {
     return c == 60 || c == 62 || c == 94;
 }
@@ -128,33 +116,19 @@ var formatSpecIRCases = []struct {
 	name string
 	main string
 }{
-	// right-align width 8: "[{:>8}]" + ["hi"] -> "[      hi]" (10).
 	{"right", `let a: string[] = ["hi"]; return fmt_format("[{:>8}]", a).len();`},
-	// left-align width 8: "[{:<8}]" + ["hi"] -> "[hi      ]" (10).
 	{"left", `let a: string[] = ["hi"]; return fmt_format("[{:<8}]", a).len();`},
-	// center width 7: "[{:^7}]" + ["hi"] -> "[  hi   ]" (9).
 	{"center", `let a: string[] = ["hi"]; return fmt_format("[{:^7}]", a).len();`},
-	// custom fill '*' right-align: "[{:*>6}]" + ["ab"] -> "[****ab]" (8).
 	{"fill", `let a: string[] = ["ab"]; return fmt_format("[{:*>6}]", a).len();`},
-	// precision (truncate): "[{:.3}]" + ["hello"] -> "[hel]" (5).
 	{"precision", `let a: string[] = ["hello"]; return fmt_format("[{:.3}]", a).len();`},
-	// precision + width: "[{:>8.3}]" + ["hello"] -> "[     hel]" (10).
 	{"prec-width", `let a: string[] = ["hello"]; return fmt_format("[{:>8.3}]", a).len();`},
-	// non-spec braces render literally, consuming no arg: "{x}" + [] -> "{x}" (3).
 	{"literal-braces", `let a: string[] = []; return fmt_format("{x}", a).len();`},
-	// underflow with a spec emits the placeholder verbatim: "{:>4}" + [] -> "{:>4}" (5).
 	{"underflow-spec", `let a: string[] = []; return fmt_format("{:>4}", a).len();`},
-	// plain `{}` still works: "{}" + ["x"] -> "x" (1).
 	{"plain", `let a: string[] = ["x"]; return fmt_format("{}", a).len();`},
-	// sign flag: "[{:+}]" + ["42"] -> "[+42]" (5).
 	{"sign-plus", `let a: string[] = ["42"]; return fmt_format("[{:+}]", a).len();`},
-	// sign flag is a no-op on a value that already carries '-': "[{:+}]" + ["-7"] -> "[-7]" (4).
 	{"sign-neg", `let a: string[] = ["-7"]; return fmt_format("[{:+}]", a).len();`},
-	// zero-pad: "[{:05}]" + ["42"] -> "[00042]" (7).
 	{"zero-pad", `let a: string[] = ["42"]; return fmt_format("[{:05}]", a).len();`},
-	// sign-aware zero-pad keeps '-' leading: "[{:05}]" + ["-42"] -> "[-0042]" (7).
 	{"zero-pad-neg", `let a: string[] = ["-42"]; return fmt_format("[{:05}]", a).len();`},
-	// sign + zero-pad combine: "[{:+06}]" + ["42"] -> "[+00042]" (8).
 	{"sign-zero-pad", `let a: string[] = ["42"]; return fmt_format("[{:+06}]", a).len();`},
 }
 
@@ -162,8 +136,6 @@ func formatSpecIRSrc(mainBody string) string {
 	return formatSpecIRPrelude + "\nfunction main(): i32 { " + mainBody + " }\n"
 }
 
-// TestSelfHostFormatSpecIR compiles each case with the self-host CLI for
-// x86-64 and wasm and checks the exit code against the interpreter.
 func TestSelfHostFormatSpecIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	interpBin := buildLangBinForInterp(t)

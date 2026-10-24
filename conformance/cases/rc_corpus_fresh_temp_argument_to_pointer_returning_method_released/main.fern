@@ -1,14 +1,14 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// A fresh struct temp passed to a POINTER-returning method —
-// `s.concat(mk(2))` — has only the per-position admission to
-// release it, which asks whether the callee retains that parameter
-// counted. `other.tail[0]` and `other.get_or(i, …)` were refused:
-// a scalar element read out of an array field, and the receiver of
-// a method whose own reads are the same shape. Two blocks per call
-// (the struct box and its array) until both reads counted as the
-// value copies they are (#8057).
+
+
+
+
+
+
+
+
+
+
+
 struct Vec { len: i32, tail: i32[] }
 
 @noinline

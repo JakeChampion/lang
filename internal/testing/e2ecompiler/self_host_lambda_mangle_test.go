@@ -5,26 +5,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostLambdaMangleX86_64 pins the self-host module loader's
-// (flatten.fern) handling of lambdas inside a MANGLED module — the
-// self-host sibling of the native #4802 fix and of
-// TestSelfHostLocalShadowsImportedDecl's top-level shadow rule:
-//
-//   - a module-local function called from inside a lambda body must be
-//     rewritten to its mangled name (flatten already descended into
-//     lambda bodies, unlike the native rewriter);
-//   - a bare module-local function reference in arg position must be
-//     rewritten (flatten's ExprIdent case);
-//   - a lambda PARAM or lambda-body LOCAL that shadows a module-level
-//     decl must NOT be rewritten (the lambda-scope shadow fix: the
-//     body rewrites under ctx.locals extended with the lambda's own
-//     bindings);
-//   - an ENCLOSING function's local captured by the lambda stays
-//     visible and unmangled inside the body.
-//
-// Compiled through the self-host file-loading modload driver (which
-// runs flatten's mangle pass), run natively; exit 0 = every shape
-// resolved and computed correctly.
 func TestSelfHostLambdaMangleX86_64(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 

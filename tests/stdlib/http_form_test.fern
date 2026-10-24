@@ -4,11 +4,6 @@ import "std/http/form";
 import "std/headers";
 import "std/stream";
 
-// tests/stdlib/http_form_test.fern — std/http/form: a urlencoded body as
-// its fields (a repeated name, `+` and `%XX` decoded), the media type with
-// and without parameters, another media type refused 415, and a body that
-// is not UTF-8 refused 400 through the body's own error.
-
 function posted(ct: string, body: string): HttpRequest {
   let r: HttpRequest = http.request("POST", "/login").with_body(body);
   if (ct.len() == 0) {

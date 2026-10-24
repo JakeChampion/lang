@@ -1,10 +1,10 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// `.append` on an array bound out of a NON-consuming match of a
-// borrowed enum grew the caller's buffer in place when it had room
-// (`.with` had the guard, `.append` did not): 33 is right, 34 was
-// the bug. Interpreter and natives now agree.
+
+
+
+
+
+
+
 enum N { L(i32), B(i32, N[]) }
 function grow(n: N, v: i32): N {
     match (n) {

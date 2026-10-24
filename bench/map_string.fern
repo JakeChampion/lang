@@ -1,10 +1,6 @@
 import "core/map";
 import "std/i32";
 
-// map_string — string-keyed Map: build once, then look every key up
-// repeatedly. Each lookup re-hashes the whole key (keys carry no cached
-// hash) and confirms the hit with a byte compare, so this is the cost model
-// a symbol table pays.
 function main(): i32 {
   let m: Map[string, i32] = Map { };
   let keys: string[] = [];

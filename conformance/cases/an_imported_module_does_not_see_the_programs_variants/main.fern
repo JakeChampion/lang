@@ -1,5 +1,5 @@
-// The program declares a variant named like a builtin one. It must qualify it
-// itself, but a module it imports still reads a bare `Ok` as Result's.
+
+
 import "lib";
 
 enum Reply {

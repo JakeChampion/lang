@@ -4,18 +4,6 @@ import (
 	"testing"
 )
 
-// Array-of-(rc-inner-array) reclamation (RC-Perceus). The string[][]
-// slice reclaimed string inner arrays; this generalises the array-of-
-// array recursion to ANY rc-tracked inner element — struct[][] (`P[][]`),
-// array-of-array-of-array (`i32[][][]`), etc. Before, these kept the flat
-// __fern_drop_arr_ptr (outer buffer freed, inner buffers leaked):
-// `P[][]` grew 4864 B → 480064 B, `i32[][][]` 6464 B → 640064 B. Now
-// arrElemStructDropName routes an rc-inner-array through a generated
-// __drop_arr_of_<perElem> loop whose per-element call is the INNER
-// array's own deep drop (__drop_arr_struct_<E> for P[][], __drop_arr_arr_n
-// for i32[][][]), recursively — each is_unique-gated, so shared inner
-// arrays only dec.
-
 func arrOfStructBumpSrc(n string) string {
 	return `struct P { x: i32, y: i32 }
 function main(): i32 {
@@ -45,7 +33,6 @@ func arrOf3DBumpSrc(n string) string {
 }`
 }
 
-// Both shapes value-correct + no over-release across many iterations.
 const arrOfRcUnderflowSrc = `struct P { x: i32, y: i32 }
 function main(): i32 {
     let i: i32 = 0;
@@ -61,11 +48,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// runArrOfRc asserts bounded reclamation (N=50 high-water == N=5000) for
-// both shapes. `requireNonZero` is set only for wasm — its two-word /
-// no-SSO heap layout always allocates, so the bump plateaus at a non-zero
-// value; natives can reclaim to a flat 0 high-water (perfect freelist
-// reuse), which is equally bounded.
 func runArrOfRc(t *testing.T, run func(*testing.T, string) int, requireNonZero bool) {
 	for name, src := range map[string]func(string) string{"struct[][]": arrOfStructBumpSrc, "i32[][][]": arrOf3DBumpSrc} {
 		small := run(t, src("50"))

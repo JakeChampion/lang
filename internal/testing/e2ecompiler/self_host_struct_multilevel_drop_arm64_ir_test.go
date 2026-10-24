@@ -4,14 +4,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostStructMultiLevelDropIRArm64 is the arm64 leg of the MULTI-LEVEL
-// deep-drop (the x86 sibling is TestSelfHostStructMultiLevelDropIRX86_64): a
-// struct whose field is a non-leaf struct releases the whole chain. The
-// decision is target-independent, so arm64 must answer the same.
-//
-// Under qemu the reclaim is proven by CORRECTNESS (a wrong free of a live buffer
-// down the chain corrupts the read-back) plus a balanced arm64 census. Heavy
-// churn is left to the x86 path (too slow under qemu).
 func TestSelfHostStructMultiLevelDropIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -26,11 +18,6 @@ func TestSelfHostStructMultiLevelDropIRArm64(t *testing.T) {
 		}
 	}
 
-	// MULTI-LEVEL shape + value: a 3-level chain `A -> B -> C{ items }`, every struct a
-	// fresh sole-owned literal (rc 1). The deep value is read back before the drop; a
-	// premature free of a live buffer would corrupt it. items[0..15] sum 136 + b.bt 2 +
-	// a.at 7 = 145.
-	// Both probes use a runtime element to keep the array and boxes on the heap.
 	run(t, `struct C { items: i32[] }
 struct B { c: C, bt: i32 }
 struct A { b: B, at: i32 }
@@ -42,8 +29,6 @@ function main(): i32 {
     return sum + a.b.bt + a.at;
 }`, "struct_multilevel_drop_arm64_value", 145)
 
-	// LIGHT CHURN: a small alloc->drop loop confirming the multi-level chain terminates
-	// (no runaway recursion) and stays correct under repetition. mk returns 26; exit 0.
 	run(t, `struct C { items: i32[] }
 struct B { c: C, bt: i32 }
 struct A { b: B, at: i32 }

@@ -2,15 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for the integer saturating_div / saturating_neg /
-// saturating_abs helpers, completing the saturating_ family. saturating_div is on
-// all four types (std/i32, std/i64, std/u32, std/u64); saturating_neg /
-// saturating_abs are signed-only (std/i32, std/i64), matching Rust. These clamp
-// the one overflowing case — MIN / -1, -MIN, |MIN| — to MAX instead of wrapping
-// it to MIN. Checks a normal divide, the MIN/-1 → MAX clamp, MIN negation /
-// magnitude → MAX, and the always-exact unsigned divide. Returns 42 iff every
-// check holds across interp / x86-64 / wasm / arm64; each leg skips itself when
-// its toolchain is absent.
 const intSaturatingDivProg = `
 import "std/i32";
 import "std/i64" as i64m;

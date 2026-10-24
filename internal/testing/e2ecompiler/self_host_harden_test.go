@@ -13,9 +13,6 @@ import (
 	"testing"
 )
 
-// Every indirect call the arm64 backend emits: a closure, a top-level
-// function passed as a value, a combinator calling its element function and
-// dyn dispatch.
 const selfHostHardenSrc = `import "std/i32";
 
 trait Shape { function area(self: Self): i32; }
@@ -65,12 +62,6 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostHardenArm64 pins -harden on arm64-linux: the image carries the
-// GNU property note asking for BTI, the program runs with the kernel
-// enforcing it, and the landing pads are what keeps it running — the same
-// image with its pads turned into NOPs dies on the first indirect call. Its
-// frames sign their return address: authenticating one that was never signed
-// faults, and a backtrace still prints plain addresses.
 func TestSelfHostHardenArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	armgcc, qemu := arm64Tooling(t)
@@ -226,11 +217,6 @@ func TestSelfHostHardenArm64(t *testing.T) {
 	})
 }
 
-// cpuEnforces reports whether a binary run through `qemu` gets the feature
-// whose /proc/cpuinfo flag is `flag` (" bti", " paca"): qemu's linux-user
-// mode emulates both, and native hardware has BTI only from ARMv8.5-A and
-// pointer authentication only from ARMv8.3-A, which the baseline does not
-// require.
 func cpuEnforces(qemu, flag string) bool {
 	if qemu != "" {
 		return true
@@ -239,8 +225,6 @@ func cpuEnforces(qemu, flag string) bool {
 	return err == nil && bytes.Contains(info, []byte(flag))
 }
 
-// btiNote reports whether the ELF at path has a PT_GNU_PROPERTY whose
-// GNU_PROPERTY_AARCH64_FEATURE_1_AND property sets the BTI bit.
 func btiNote(t *testing.T, path string) bool {
 	t.Helper()
 	f, err := elf.Open(path)

@@ -6,9 +6,6 @@ import (
 	"testing"
 )
 
-// random_bytes gives back the scratch getrandom writes into (#9478): the
-// helper frees it through the string box it wraps the scratch in, so a bound
-// result balances on both lowerings, fifty calls in a loop.
 const randomBytesScratchSrc = `function main(): i32 {
     let t: i32 = 0; let i: i32 = 0;
     while (i < 50) { let b: u8[] = random_bytes(16); t = t + b.len(); i = i + 1; }

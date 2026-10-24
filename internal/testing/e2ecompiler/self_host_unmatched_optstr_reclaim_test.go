@@ -5,38 +5,6 @@ import (
 	"testing"
 )
 
-// --- An unmatched Option[string] / Result[string, _] (#6360) -----------------
-//
-// A local that is NEITHER reassigned NOR consumed by a match must still be
-// released. Bytes left behind over 100 rounds, with the payload varied and
-// everything else held fixed:
-//
-//	Option[i32[]]          0
-//	Result[i32[], i32]     0
-//	Result[i32[], string]  6400     Err strings, still open — see SCOPE
-//	Option[string]         22400    this file
-//
-// ×2.0 per doubling. The string release is `__fern_str_free` rather than the
-// flat rc-dec: a string box carries a separate data buffer and a different
-// block class, so the array dec would free it wrongly.
-//
-// FRESHNESS IS ESSENTIAL HERE. An Option stores its payload uncounted and a
-// string assignment is a borrow, so an aliased payload would be released under
-// a live reference. Admission therefore demands a literal or a
-// syntactically-fresh producer.
-//
-// THE EXIT SWEEP ALONE IS NOT ENOUGH. A loop-declared `let v` re-stores to the
-// SAME slot each iteration, so a function-exit sweep releases only the final
-// value and every earlier iteration still leaks (22400 improves only to
-// 18400). The store is where the previous value has to go.
-//
-// The inline constructors hand `v` to an out-of-line `keep`, so the Option
-// is built: a construction nothing reads is not built at all (semdead).
-//
-// SCOPE: `Result[i32[], string]` strands its Err strings (6400) and stays open:
-// an Err payload is never reached — stranded, not dangled — and releasing it
-// needs its own whole-body verdict.
-
 func TestSelfHostUnmatchedOptStrReclaimX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -73,12 +41,8 @@ func TestSelfHostUnmatchedOptStrReclaimX86_64(t *testing.T) {
 		return allocs, frees, live
 	}
 
-	// Reclaimed to an exact balance.
 	for _, tc := range []struct{ name, src string }{
 		{
-			// The main row: 22400 -> 0.
-			// Loop-declared, so it also covers the per-iteration store path that the
-			// exit sweep alone cannot reach.
 			name: "option_string_from_a_call",
 			src: `function mk(i: i32): Option[string] {
     if (i % 3 == 0) { return None; }
@@ -102,8 +66,6 @@ function main(): i32 {
 }`,
 		},
 		{
-			// Inline constructor rather than a call — admitted on the payload being a
-			// fresh concat, not on registry membership.
 			name: "option_string_inline_concat",
 			src: `@noinline function keep(v: Option[string]): i32 { return 0; }
 function round(r: i32): i32 {
@@ -124,8 +86,6 @@ function main(): i32 {
 }`,
 		},
 		{
-			// A bare literal payload: `__fern_str_free`'s heap-base guard no-ops on
-			// .rodata data, so the box is released and the data is left alone.
 			name: "option_string_literal",
 			src: `@noinline function keep(v: Option[string]): i32 { return 0; }
 function round(r: i32): i32 {
@@ -146,7 +106,6 @@ function main(): i32 {
 }`,
 		},
 		{
-			// `Result[string, i32]` — success payload string, scalar Err.
 			name: "result_string_ok_scalar_err",
 			src: `function mk(i: i32): Result[string, i32] {
     if (i % 3 == 0) { return Err(i); }
@@ -170,8 +129,6 @@ function main(): i32 {
 }`,
 		},
 		{
-			// The ARRAY row #6463 landed, kept here as the control: this class must
-			// not disturb it, and its credit is a different tag.
 			name: "option_array_control",
 			src: `function mk(i: i32): Option[i32[]] {
     if (i % 3 == 0) { return None; }
@@ -206,15 +163,8 @@ function main(): i32 {
 		})
 	}
 
-	// Each keeps a live reference a premature release would dangle; the exit
-	// agreement is the guard, and each balances on the typed lowering.
-	// The first two churn same-shaped strings before the aliased read, because
-	// otherwise the freed box is not recycled and the probe exits correctly with the
-	// bug present.
 	for _, tc := range []struct{ name, src string }{
 		{
-			// Producer hands back its ARGUMENT — flagged "a", so the payload aliases
-			// the caller's box.
 			name: "aliased_producer_payload",
 			src: `function wrap(s: string): Option[string] { return Some(s); }
 function round(r: i32): i32 {
@@ -242,8 +192,6 @@ function main(): i32 {
 }`,
 		},
 		{
-			// Inline ctor over a bare local — the same alias, reached without a
-			// producer at all.
 			name: "inline_ctor_over_a_bare_local",
 			src: `function round(r: i32): i32 {
     let base: string = "ab" + "cd";
@@ -270,8 +218,6 @@ function main(): i32 {
 }`,
 		},
 		{
-			// Not actually dead: the box is aliased outward and matched after the
-			// loop, so it must stay out of the credit entirely.
 			name: "box_read_after_the_loop",
 			src: `function mk(i: i32): Option[string] { return Some("v" + "x"); }
 function round(r: i32): i32 {

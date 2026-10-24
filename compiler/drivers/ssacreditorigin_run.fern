@@ -117,8 +117,6 @@ function controls(f: ssa.SFunc, shape: string, refs: boolean[]): void {
   expect(ssa.SFunc { ...f, name: "__fern_spoof" }, shape, refs, "unsupported allocation producer boundary", 46);
   expect(ssa.SFunc { ...f, blocks: [b, b] }, shape, refs, "unsupported allocation producer boundary", 47);
   expect(ssa.SFunc { ...f, blocks: [ssa.SBlock { ...b, preds: [b.id] }] }, shape, refs, "unsupported allocation producer graph", 48);
-  // A copy of the actual returned allocation carries the same origin, not a
-  // second allocation or ownership credit. Sparse block IDs need no allocation.
   let copied = b.insts.append(ssa.SInst { kind_tag: 7, result: f.nvals, args: [b.term.value], imm: 0, str: "" });
   expect(ssa.SFunc { ...f, name: "renamed", entry: 2147483647, nvals: f.nvals + 1, blocks: [ssa.SBlock { ...b, id: 2147483647, insts: copied, term: ssa.STerm { ...b.term, value: f.nvals } }] }, shape, refs, "", 49);
   expect(f, shape, refs, "", 50);

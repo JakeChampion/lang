@@ -7,16 +7,6 @@ import (
 	"testing"
 )
 
-// #4357 (enum sibling of the struct/tuple loop-local reclaim #4733/#4735/#4736):
-// a fresh rc-payload enum loop-local consumed by a match in the loop body
-// (`while { let b = Full([i, i+1]); match (b) { Full(xs) => xs[0], … } }`) has
-// its payload and box released every iteration, so the loop's heap growth is
-// the same at N=50 and N=5000.
-//
-// SOUNDNESS: an enum stored to an outer var and an arm that MOVES an rc payload
-// out must both keep their values, with __rc_underflow_count() at 0. Both are
-// exercised below.
-
 func rcEnumLoopLocalSrc(n string) string {
 	return `enum Box { Full(i32[]), Empty }
 function main(): i32 {
@@ -32,7 +22,6 @@ function main(): i32 {
 }`
 }
 
-// per iter reads xs[0..2] = i + (i+1) + (i+2) = 3i+3; sum 0..199 = 3*19900+600 = 60300.
 const rcEnumLoopLocalDetectorSrc = `enum Box { Full(i32[]), Empty }
 function main(): i32 {
     let i: i32 = 0; let acc: i32 = 0;
@@ -45,8 +34,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// An enum that ESCAPES (stored into an outer `keep`) must NOT be reclaimed at the
-// loop-rebind — `keep` still references the payload. __rc_underflow_count == 0 proves it.
 const rcEnumEscapeSafetySrc = `enum Box { Full(i32[]), Empty }
 function main(): i32 {
     let keep: Box = Empty;

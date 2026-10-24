@@ -11,30 +11,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostWasmIncrementalCache is the test #5331 exists for.
-//
-// Everything before it — #5499, #5500, #5501, #5502, #5503 — was enabling work,
-// verified by byte-identity (nothing broke) or by the N=2 probe (two units link
-// and run). None of it demonstrated the actual claim: that after editing ONE
-// module, the others are not re-emitted.
-//
-// wasm_modload_run keys each module's object-cache entry on its own source hash
-// folded with the SIGNATURE hashes of the modules it imports
-// (modloader.module_cache_key). The asymmetry that buys is what the four cases
-// below pin, and it is the whole design:
-//
-//   - a body-only edit re-emits that module ALONE — its importers' call-site
-//     tagging cannot have changed, so their keys are untouched
-//   - unless an importer inlined the body: the typed lowering inlines a small
-//     callee across modules, so that importer's unit changed and must re-emit
-//   - a signature edit re-emits that module AND its importers — their tagging
-//     DOES depend on it, so reusing their old units would ship stale codegen
-//
-// The negative case matters as much as the positive one. A cache that always
-// hits would pass "body edit reuses the importer" while being catastrophically
-// wrong; a cache that never hits would pass "signature edit invalidates" while
-// being useless. Only asserting both directions distinguishes a correct cache
-// from either failure.
 func TestSelfHostWasmIncrementalCache(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
@@ -42,7 +18,6 @@ func TestSelfHostWasmIncrementalCache(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_modload_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_modload_run.fern", "wasm_modload_run")
 
-	// A two-module program: entry calls into leaf.
 	proj := t.TempDir()
 	cacheDir := filepath.Join(proj, "cache")
 	if err := os.Mkdir(cacheDir, 0o755); err != nil {
@@ -59,13 +34,8 @@ function main(): i32 { return leaf.value() + leaf.small() + leaf.take([1, 2, 3])
 	if err := os.WriteFile(filepath.Join(proj, "entry.fern"), []byte(entry), 0o644); err != nil {
 		t.Fatalf("write entry.fern: %v", err)
 	}
-	// value is kept out of line so a body edit to it leaves entry's unit alone;
-	// small is inlined into entry. holder is a struct no function uses.
 	const holder = "pub struct Holder { f: (i32) => i32 }"
 	const holderI64 = "pub struct Holder { f: (i32) => i64 }"
-	// take only reads its argument, so the typed lowering infers a borrowed
-	// parameter; takeOwn consumes it, which moves that mode and nothing in the
-	// signature.
 	const take = "@noinline pub function take(xs: i32[]): i32 { return xs.len(); }\n"
 	const takeOwn = "@noinline pub function take(xs: i32[]): i32 { let ys: i32[] = xs.append(4); return ys.len(); }\n"
 	writeLeaf(t, take+"@noinline pub function value(): i32 { return 10; }\npub function small(): i32 { return 1; }\n"+holder)
@@ -89,15 +59,11 @@ function main(): i32 { return leaf.value() + leaf.small() + leaf.take([1, 2, 3])
 		return stdout.String(), stderr.String()
 	}
 
-	// How many modules? Guards the rest: if resolution silently found one
-	// module, every "the other module was reused" assertion below is vacuous.
 	countOut, _ := run(t, entryPath, "-per-module-count")
 	if strings.TrimSpace(countOut) != "2" {
 		t.Fatalf("module count = %q, want \"2\" — import resolution did not find both modules, so the reuse assertions would be meaningless", strings.TrimSpace(countOut))
 	}
 
-	// emitBoth emits both units and reports, per module ns, whether it was a
-	// cache hit or a miss.
 	emitBoth := func(t *testing.T) map[string]string {
 		t.Helper()
 		got := map[string]string{}
@@ -113,11 +79,6 @@ function main(): i32 { return leaf.value() + leaf.small() + leaf.take([1, 2, 3])
 		return got
 	}
 
-	// entryVerdict returns the verdict for the ENTRY module — whichever ns is
-	// not "leaf". The bundler mangles the entry's namespace, so looking it up by
-	// source filename silently yields "" and every assertion below passes
-	// vacuously. Derived rather than hardcoded so a mangling change fails loudly
-	// here instead of silently disabling the test.
 	entryVerdict := func(t *testing.T, got map[string]string) string {
 		t.Helper()
 		for ns, verdict := range got {
@@ -150,8 +111,6 @@ function main(): i32 { return leaf.value() + leaf.small() + leaf.take([1, 2, 3])
 		}
 	})
 
-	// THE CLAIM. leaf's body changes; its signature does not. leaf must be
-	// re-emitted and entry must NOT be.
 	t.Run("body_only_edit_reemits_only_that_module", func(t *testing.T) {
 		writeLeaf(t, take+"@noinline pub function value(): i32 { return 20 + 2 - 2; }\npub function small(): i32 { return 1; }\n"+holder)
 		got := emitBoth(t)
@@ -163,8 +122,6 @@ function main(): i32 { return leaf.value() + leaf.small() + leaf.take([1, 2, 3])
 		}
 	})
 
-	// A body edit to a callee entry INLINED: entry's own code changed, so
-	// reusing its unit would ship the old body.
 	t.Run("inlined_body_edit_also_invalidates_the_importer", func(t *testing.T) {
 		writeLeaf(t, take+"@noinline pub function value(): i32 { return 20 + 2 - 2; }\npub function small(): i32 { return 2; }\n"+holder)
 		got := emitBoth(t)
@@ -176,10 +133,6 @@ function main(): i32 { return leaf.value() + leaf.small() + leaf.take([1, 2, 3])
 		}
 	})
 
-	// A struct-only edit that moves no signature and no lowered body: the
-	// function type of an unused struct's field. The emit reads the struct
-	// table whole, so every unit's key covers all of it, and re-emitting every
-	// unit on a struct edit is deliberate.
 	t.Run("struct_only_edit_also_invalidates_the_importer", func(t *testing.T) {
 		writeLeaf(t, take+"@noinline pub function value(): i32 { return 20 + 2 - 2; }\npub function small(): i32 { return 2; }\n"+holderI64)
 		got := emitBoth(t)
@@ -191,10 +144,6 @@ function main(): i32 { return leaf.value() + leaf.small() + leaf.take([1, 2, 3])
 		}
 	})
 
-	// A callee body edit that moves the ownership the typed lowering infers for
-	// its parameter, with the signature unchanged. entry's lowering of the call
-	// reads that mode, so reusing entry's unit would release the argument the
-	// old way.
 	t.Run("ownership_edit_also_invalidates_the_importer", func(t *testing.T) {
 		writeLeaf(t, takeOwn+"@noinline pub function value(): i32 { return 20 + 2 - 2; }\npub function small(): i32 { return 2; }\n"+holderI64)
 		got := emitBoth(t)
@@ -206,14 +155,6 @@ function main(): i32 { return leaf.value() + leaf.small() + leaf.take([1, 2, 3])
 		}
 	})
 
-	// The other direction: leaf's SIGNATURE changes, so entry's call-site
-	// tagging depends on it and entry must be re-emitted too. Without this a
-	// cache that never reused anything would pass the case above.
-	//
-	// The edit gains a defaulted PARAMETER rather than changing the return type,
-	// so `leaf.value()` in the unchanged entry still type-checks: an edit that
-	// leaves the importer unable to lower is refused at emit, and the verdicts
-	// this asserts are never reached.
 	t.Run("signature_edit_also_invalidates_the_importer", func(t *testing.T) {
 		writeLeaf(t, take+"@noinline pub function value(bump: i32 = 5): i32 { return 20 + bump; }\npub function small(): i32 { return 2; }\n"+holderI64)
 		got := emitBoth(t)
@@ -226,18 +167,6 @@ function main(): i32 { return leaf.value() + leaf.small() + leaf.take([1, 2, 3])
 	})
 }
 
-// TestSelfHostWasmLinkFromCache closes the loop #5331 opened: a module assembled
-// from CACHED units, after only one of them was re-emitted, must still run and
-// give the right answer.
-//
-// The incremental test above proves which modules get re-emitted. That is not the
-// same as proving the result is usable — a cache that reuses stale or truncated
-// units would pass it while producing a module that traps, or refuses to parse.
-// Only linking the cached objects and RUNNING the result distinguishes those.
-//
-// The sequence deliberately mirrors a real edit-rebuild cycle: build cold, edit
-// one module's body, rebuild, and require BOTH that the untouched module was
-// reused AND that the linked output still computes the new answer.
 func TestSelfHostWasmLinkFromCache(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -268,7 +197,6 @@ function main(): i32 { return leaf.value() + 5; }`), 0o644); err != nil {
 			t.Fatalf("write leaf: %v", err)
 		}
 	}
-	// Out of line, so a body edit to it leaves entry's unit alone.
 	writeLeaf(t, `@noinline pub function value(): i32 { return 10; }`)
 	entryPath := filepath.Join(proj, "entry.fern")
 
@@ -290,11 +218,6 @@ function main(): i32 { return leaf.value() + 5; }`), 0o644); err != nil {
 		return stdout.String(), stderr.String()
 	}
 
-	// rebuild is the real orchestration loop: emit EVERY module (a cache hit for
-	// the unchanged, a rebuild for the changed), then hit-only -link. It returns
-	// the linked module's exit code plus the emits' stderr so a test can see
-	// which modules were reused. This is exactly what a build tool would do —
-	// one emit process per module, then a link that builds nothing.
 	countOut, _ := drive(t, "-per-module-count")
 	nmod, err := strconv.Atoi(strings.TrimSpace(countOut))
 	if err != nil || nmod < 2 {
@@ -307,7 +230,6 @@ function main(): i32 { return leaf.value() + 5; }`), 0o644); err != nil {
 			_, se := drive(t, "-per-module-emit", strconv.Itoa(i), "-cache-dir", cacheDir)
 			reuse.WriteString(se)
 		}
-		// Only the emits' verdicts: -link reports a hit for every unit it reads.
 		wat, _ := drive(t, "-link", "-cache-dir", cacheDir)
 		watPath := filepath.Join(dir, tag+".wat")
 		if err := os.WriteFile(watPath, []byte(wat), 0o644); err != nil {
@@ -329,7 +251,6 @@ function main(): i32 { return leaf.value() + 5; }`), 0o644); err != nil {
 		return code, reuse.String()
 	}
 
-	// Cold: every module emitted, link builds nothing, the result runs.
 	code, reuse := rebuild(t, "cold")
 	if code != 15 {
 		t.Fatalf("cold build returned %d, want 15 (10 + 5)", code)
@@ -338,9 +259,6 @@ function main(): i32 { return leaf.value() + 5; }`), 0o644); err != nil {
 		t.Fatalf("cold build engaged no cache: %s", reuse)
 	}
 
-	// Warm: nothing edited. Every emit is a hit, so nothing re-emits, and the
-	// module still runs — which proves the cached units round-tripped through the
-	// object format intact, not merely that files were found on disk.
 	code, reuse = rebuild(t, "warm")
 	if code != 15 {
 		t.Errorf("module rebuilt entirely from cache returned %d, want 15 — cached units did not round-trip correctly", code)
@@ -349,9 +267,6 @@ function main(): i32 { return leaf.value() + 5; }`), 0o644); err != nil {
 		t.Errorf("warm rebuild re-emitted something with nothing edited: %s", reuse)
 	}
 
-	// Incremental: leaf's body changes. Only leaf re-emits, entry is REUSED, and
-	// the linked result reflects the new value. A stale-unit bug shows up here as
-	// the OLD answer, which no hit/miss assertion could catch.
 	writeLeaf(t, `@noinline pub function value(): i32 { return 30; }`)
 	code, reuse = rebuild(t, "incremental")
 	if code != 35 {
@@ -365,14 +280,6 @@ function main(): i32 { return leaf.value() + 5; }`), 0o644); err != nil {
 	}
 }
 
-// TestSelfHostWasmLinkHitOnly pins that -link builds no unit: a module with no
-// cached object is an error naming it, not an in-process build.
-//
-// This is not a niceties test. At whole-compiler scale a build-on-miss link
-// lowers every uncached module in one process and exhausts the bump arena
-// (exit 137, which looks like a SIGKILL). Erroring instead keeps that
-// failure unreachable by construction and gives the orchestrator an actionable
-// message rather than an opaque OOM.
 func TestSelfHostWasmLinkHitOnly(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
@@ -409,8 +316,6 @@ function main(): i32 { return leaf.value() + 1; }`), 0o644); err != nil {
 		return so.String(), se.String(), err
 	}
 
-	// Cold cache: -link must FAIL (non-zero) and name the missing modules,
-	// having emitted no module text at all.
 	out, stderr, err := drive("-link", "-cache-dir", cacheDir)
 	if err == nil {
 		t.Fatalf("-link succeeded on a cold cache; it should have errored on the missing units\nstdout len=%d", len(out))
@@ -421,12 +326,10 @@ function main(): i32 { return leaf.value() + 1; }`), 0o644); err != nil {
 	if !strings.Contains(stderr, "no cached object") {
 		t.Errorf("-link error does not name the missing units; got: %q", stderr)
 	}
-	// The cache dir must be untouched: a hit-only link writes no objects.
 	if ents, _ := os.ReadDir(cacheDir); len(ents) != 0 {
 		t.Errorf("-link populated the cache with %d objects; it must never build", len(ents))
 	}
 
-	// Emit each module (its own process), then -link succeeds and builds nothing.
 	countOut, _, _ := drive("-per-module-count")
 	n, err := strconv.Atoi(strings.TrimSpace(countOut))
 	if err != nil || n < 2 {

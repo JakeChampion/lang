@@ -1,37 +1,3 @@
-// compiler/wasm_modload_run.fern — the per-module wasm driver
-// (#5331 step 4c). The wasm sibling of asm_modload_run.fern.
-//
-// Whole-program wasm emit re-emits everything on every build. Steps 1-3 removed a
-// module's dependence on its siblings' string literals, funcref indices, and type
-// ids; step 4a/4b split the emitter into a link scope and per-unit bodies; the
-// N=2 probe showed two units link into a working module. This driver is what
-// turns that into incremental builds.
-//
-// Modes:
-//
-//   -per-module-count           how many modules the entry pulls in
-//   -per-module-manifest        one line per module: ns|src_hash|sig_hash|deps
-//   -per-module-emit N          emit module N's unit (function bodies) to stdout
-//     [-cache-dir DIR]          serve it from / populate an object cache
-//   -per-module-emit-all        emit every unit of the link plan into the cache
-//     -cache-dir DIR [-plan F]  in one process, which lowers the program once
-//
-// Every key starts from a module's own source hash folded with the SIGNATURE
-// hashes of everything it depends on, plus the function window the unit
-// covers.
-//
-// The units and their keys are the asm drivers':
-// ircore.split_units and ircore.unit_cache_key, which adds a hash of the unit's
-// lowered bodies and of the view the emit reads beyond its dependencies
-// (UnitKeys.view). That lowering is whole-program: it inlines callees and infers ownership across modules. So a
-// body-only edit re-emits just that module only when it moves no other
-// module's lowered body; an edit to a body an importer inlined re-emits the
-// importer too. Every emit and link lowers the whole program once, and a hit
-// skips only the emit.
-//
-// hit/miss is reported on stderr (one ns per line) so a build orchestrator, or a
-// test, can observe the reuse set; stdout stays exactly the unit text.
-
 import "../util";
 import "../lexer";
 import "../parser";
@@ -45,12 +11,6 @@ import "../modloader";
 import "./wasm_objfile";
 import "../semlower";
 
-// unit_ns namespaces module `idx`'s base globals. Module 0 keeps the historical
-// unnamespaced names so a single-module program's unit is byte-identical to the
-// whole-program build's bodies; the rest get a `$m<idx>` suffix. A partial shard
-// (lo > 0) gets a further `_s<lo>` suffix so each window's $__str_base /
-// $__fn_base and string labels stay distinct at link — mirroring the asm side's
-// shard_ns (#3425 / #5508).
 function unit_ns(idx: i32, lo: i32): string {
   let base: string = "";
   if (idx != 0) {
@@ -72,18 +32,8 @@ function whole_program_view(parts: flatten.PerModule[]): parser.Module[] {
   return wasm_ir.lift_lambdas_parts(mods);
 }
 
-// ShardRef names one link unit: module `idx` over its [lo, hi) function window
-// (hi < 0 = whole module). The link plan is a list of these.
 struct ShardRef { idx: i32, lo: i32, hi: i32 }
 
-// parse_plan reads a link plan and returns its ShardRefs. The text is a flat
-// stream of integers — `idx lo hi` per unit — separated by ANY whitespace
-// (newline-per-line is the convention, but the parser only cares about the int
-// sequence, so it needs no split helper). Every three consecutive integers form
-// one unit. This is how the orchestrator tells -link the shard layout it chose
-// from -per-module-func-counts — the wasm analogue of the asm build passing an
-// explicit .s file list to the linker (#5508). A `-` sign is honoured so hi can
-// be -1 (whole module to the end).
 function parse_plan(text: string): ShardRef[] {
   let nums: i32[] = [];
   let i: i32 = 0;
@@ -118,8 +68,6 @@ function parse_plan(text: string): ShardRef[] {
   return out;
 }
 
-// whole_module_plan is the default when no -plan is given: one whole-module unit
-// per module, preserving the pre-sharding link behaviour exactly.
 function whole_module_plan(nmods: i32): ShardRef[] {
   let out: ShardRef[] = [];
   let i: i32 = 0;
@@ -130,9 +78,6 @@ function whole_module_plan(nmods: i32): ShardRef[] {
   return out;
 }
 
-// unit_obj emits a unit's lowered bodies and packages them with the metadata
-// link needs. cache[i] lowers unit.funcs[i]; entries past them are bodies with
-// no declaration.
 function unit_obj(ns: string, unit: parser.Module, cache: irtables.LowerResult[], all_funcs: parser.FuncDecl[], all_stab: irtables.StructTab): wasm_objfile.UnitObj {
   return wasm_objfile.UnitObj {
     strs: wasm_ir.str_values(cache),
@@ -144,7 +89,6 @@ function unit_obj(ns: string, unit: parser.Module, cache: irtables.LowerResult[]
   };
 }
 
-// write_cached stores a unit built on a miss; an empty path is a unit with no key.
 function write_cached(cf: string, ns: string, obj: wasm_objfile.UnitObj): void {
   if (cf.len() == 0) {
     return;
@@ -162,11 +106,6 @@ function read_cached(cf: string, ns: string): wasm_objfile.MaybeUnit {
   if (cf.len() > 0) {
     match (read_file(cf)) {
       Ok(cached) => {
-        // An object written by an older compiler carries an older
-        // magic. The key hashes sources and signatures, not the object
-        // FORMAT, so nothing else here would tell the two apart — and
-        // decode reads its sections positionally, so a stale file would
-        // yield a wrong-but-plausible unit rather than an error.
         if (!wasm_objfile.is_current(cached)) {
           eprint("cache-stale " + ns);
           return wasm_objfile.MaybeUnit { found: false, obj: wasm_objfile.empty_unit() };
@@ -180,11 +119,6 @@ function read_cached(cf: string, ns: string): wasm_objfile.MaybeUnit {
   return wasm_objfile.MaybeUnit { found: false, obj: wasm_objfile.empty_unit() };
 }
 
-// read_plan is the link plan: one whole-module unit per module, or the exact
-// shard windows the orchestrator chose (-plan). A big module that OOMs emitted
-// whole is split into function windows, each a separate unit here — the
-// assembly is identical whether a module arrived as one unit or several, since
-// every unit carries its own namespaced bases (#5508).
 function read_plan(plan_file: string, nmods: i32): ShardRef[] {
   if (plan_file.len() == 0) {
     return whole_module_plan(nmods);
@@ -200,8 +134,6 @@ function read_plan(plan_file: string, nmods: i32): ShardRef[] {
   return [];
 }
 
-// Linked is a link's units in plan order, the union of what their objects
-// need, and the units the cache did not have.
 struct Linked { units: wasm_ir.WasmUnit[], needs: string[], fn_sigs: string[], missing: string }
 
 function no_units(): Linked {
@@ -231,16 +163,10 @@ function link_missing(l: Linked): boolean {
   return true;
 }
 
-// link_text is the linked module.
 function link_text(l: Linked, merged: parser.Module): string {
   return wasm_ir.emit_ir_module_units(l.units, merged, l.needs, l.fn_sigs, 0, asmcore.env_switches());
 }
 
-// Typed is the program the typed lowering built, whole, cut into units by
-// ircore.split_units (the split the asm drivers use). The typed lowering is
-// whole-program (a body reads the ownership inferred for every function it
-// calls), so every typed step lowers the whole program once and keeps the
-// units it asked for. `keys` are derived only when a cache is configured.
 struct Typed { g: ircore.Gated, u: ircore.Units, keys: ircore.UnitKeys }
 
 function typed_units(parts: flatten.PerModule[], d: semlower.Driven, cache_dir: string): Typed {
@@ -265,7 +191,6 @@ function typed_units(parts: flatten.PerModule[], d: semlower.Driven, cache_dir: 
   let u: ircore.Units = ircore.split_units(g, raw, entry_at);
   let keys: ircore.UnitKeys = ircore.no_unit_keys();
   if (cache_dir.len() > 0) {
-    // A unit's lowering reads its callees' contracts, so their rows key it.
     keys = ircore.unit_keys(u, stab, d.sub.contracts);
   }
   return Typed { g: g, u: u, keys: keys };
@@ -273,8 +198,6 @@ function typed_units(parts: flatten.PerModule[], d: semlower.Driven, cache_dir: 
 
 struct TypedUnit { mod: parser.Module, cache: irtables.LowerResult[] }
 
-// typed_unit is unit idx's functions [lo, hi) with their bodies. The window
-// that ends a unit also carries its cache tail.
 function typed_unit(t: Typed, idx: i32, lo: i32, hi: i32): TypedUnit {
   let m: parser.Module = t.u.mods[idx];
   let whole: irtables.LowerResult[] = t.u.caches[idx];
@@ -321,8 +244,6 @@ function run_typed(entry_path: string, entry: parser.Module, loaded: flatten.Loa
     return 0;
   }
   if (pm_mode == "link") {
-    // Hit-only, as the AST link is: a unit's key hashes its lowered bodies,
-    // so link lowers to find each object, but it builds none.
     let l: Linked = no_units();
     for u in read_plan(plan_file, parts.len()) {
       l = add_found(l, parts, u, read_cached(typed_file(entry_path, parts, t, u.idx, u.lo, u.hi, cache_dir), parts[u.idx].ns));
@@ -347,8 +268,6 @@ function run_typed(entry_path: string, entry: parser.Module, loaded: flatten.Loa
   return 0;
 }
 
-// typed_obj is unit u's object, served from the cache when its key matches and
-// emitted, and cached, otherwise.
 function typed_obj(entry_path: string, parts: flatten.PerModule[], t: Typed, u: ShardRef, cache_dir: string): wasm_objfile.UnitObj {
   let cf: string = typed_file(entry_path, parts, t, u.idx, u.lo, u.hi, cache_dir);
   let lk: wasm_objfile.MaybeUnit = read_cached(cf, parts[u.idx].ns);
@@ -412,7 +331,6 @@ function main(): i32 {
       plan_file = a[ai + 1];
       ai = ai + 1;
     } else if (a[ai] == "-func-range" && ai + 1 < a.len()) {
-      // "LO:HI" — digits_to_i32 stops at ':' for LO; slice past it for HI.
       let rng: string = a[ai + 1];
       let ci: i32 = 0;
       while (ci < rng.len() && rng[ci] != b':') {

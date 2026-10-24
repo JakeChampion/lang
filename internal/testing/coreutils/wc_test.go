@@ -20,21 +20,11 @@ func init() {
 	registerCorpus("wc", wcCases)
 }
 
-// wcCases is wc(1)'s corpus.
-//
-// The counts themselves are the easy half. The two that need the whole
-// corpus are the COLUMN WIDTH — computed from the sizes of the operands
-// that stat as regular files, before a byte is read, and skipped
-// entirely for one input printing one count — and the C-locale ISPRINT
-// rule that decides what a word is and what a line's display width is.
 func wcCases(t *testing.T) []invocation {
 	dir := t.TempDir()
 	f1 := wcFile(t, dir, "f1", "a\nb\n")
 	one := wcFile(t, dir, "one", "x")
-	// 12345 bytes: five digits, so the width is visibly not 1.
 	big := wcFile(t, dir, "big", strings.Repeat("\x00", 12345))
-	// 10,000,000 bytes: eight digits, wider than the 7-column minimum a
-	// non-regular operand imposes, so the two rules are seen to combine.
 	wide := filepath.Join(dir, "wide")
 	if err := os.WriteFile(wide, nil, 0o644); err != nil {
 		t.Fatal(err)
@@ -56,7 +46,6 @@ func wcCases(t *testing.T) []invocation {
 		t.Fatal(err)
 	}
 
-	// --files0-from lists, including the malformed ones.
 	names2 := wcFile(t, dir, "n2", f1+"\x00"+one+"\x00")
 	namesBig := wcFile(t, dir, "nbig", big+"\x00")
 	namesOne := wcFile(t, dir, "n1", f1+"\x00")
@@ -70,7 +59,6 @@ func wcCases(t *testing.T) []invocation {
 	namesDir := wcFile(t, dir, "ndir", d+"\x00")
 
 	return []invocation{
-		// Counts and their fixed print order.
 		{name: "default", args: []string{f1}},
 		{name: "bytes", args: []string{"-c", f1}},
 		{name: "lines", args: []string{"-l", f1}},
@@ -86,12 +74,9 @@ func wcCases(t *testing.T) []invocation {
 		{name: "long words", args: []string{"--words", f1}},
 		{name: "long max line length", args: []string{"--max-line-length", f1}},
 		{name: "repeated option", args: []string{"-l", "-l", f1}},
-		// --debug is not in the help text but is a real option.
 		{name: "debug", args: []string{"--debug", f1}},
 		{name: "debug with bytes", args: []string{"--debug", "-c", f1}},
 
-		// The width: digits of the summed size of the regular operands,
-		// 7 when any operand is not one, and 1 when nothing is statted.
 		{name: "width from one file", args: []string{big}},
 		{name: "width from two files", args: []string{one, big}},
 		{name: "one input one count is never padded", args: []string{"-c", big}},
@@ -110,7 +95,6 @@ func wcCases(t *testing.T) []invocation {
 		{name: "one count from stdin", args: []string{"-w"}, stdin: "a b c\n"},
 		{name: "two counts from stdin", args: []string{"-Lw"}, stdin: "a\tb\n"},
 
-		// --total=WHEN, including argmatch's abbreviations.
 		{name: "total only", args: []string{"--total=only", f1, f1}},
 		{name: "total only one file", args: []string{"--total=only", f1}},
 		{name: "total only big", args: []string{"--total=only", big}},
@@ -129,8 +113,6 @@ func wcCases(t *testing.T) []invocation {
 		{name: "total takes the next argument", args: []string{"--total", f1}},
 		{name: "total needs an argument", args: []string{"--total"}},
 
-		// Words and the longest line: C-locale ISPRINT, tabs to the
-		// next multiple of eight, CR and FF restart the line.
 		{name: "words with runs of blanks", args: []string{"-w", words}},
 		{name: "max line length with a tab", args: []string{"-L", words}},
 		{name: "empty input", stdin: ""},
@@ -160,7 +142,6 @@ func wcCases(t *testing.T) []invocation {
 		{name: "lines across read blocks", args: []string{"-l"}, stdin: strings.Repeat("x\n", 40000)},
 		{name: "a word split across read blocks", args: []string{"-w"}, stdin: strings.Repeat("x", 20000) + " " + strings.Repeat("y", 20000)},
 
-		// Operands and their diagnostics.
 		{name: "empty operand", args: []string{""}},
 		{name: "empty operand before a file", args: []string{"", f1}},
 		{name: "empty operand after a file", args: []string{f1, ""}},
@@ -181,7 +162,6 @@ func wcCases(t *testing.T) []invocation {
 		{name: "dashdash", args: []string{"--"}, stdin: "a\n"},
 		{name: "dashdash then a name", args: []string{"--", f1}},
 
-		// --files0-from.
 		{name: "files0 two names", args: []string{"--files0-from=" + names2}},
 		{name: "files0 one name", args: []string{"--files0-from=" + namesOne}},
 		{name: "files0 one name one count", args: []string{"-c", "--files0-from=" + namesBig}},
@@ -204,7 +184,6 @@ func wcCases(t *testing.T) []invocation {
 		{name: "files0 needs an argument", args: []string{"--files0-from"}},
 		{name: "files0 as a separate argument", args: []string{"--files0-from", names2}},
 
-		// getopt.
 		{name: "invalid short option", args: []string{"-x", f1}},
 		{name: "invalid short option in a cluster", args: []string{"-lx", f1}},
 		{name: "unrecognized long option", args: []string{"--foo", f1}},
@@ -227,24 +206,13 @@ func wcCases(t *testing.T) []invocation {
 		{name: "posix operand then option", args: []string{f1, "-l"}, env: []string{"POSIXLY_CORRECT=1"}},
 		{name: "posix option before the operand", args: []string{"-l", f1}, env: []string{"POSIXLY_CORRECT=1"}},
 
-		// Write failures. wc flushes its counts itself, so a full
-		// stdout has already taken the error by the time fclose runs and
-		// there is no errno left to name.
 		{name: "stdout closed", args: []string{f1}, stdout: stdoutClosed},
 		{name: "stdout full", args: []string{f1}, stdout: stdoutFull},
 		{name: "stdout closed with no input", stdin: "", stdout: stdoutClosed},
 		{name: "stdout closed with a missing file", args: []string{missing}, stdout: stdoutClosed},
 		{name: "stdout full with many files", args: []string{f1, f1, f1}, stdout: stdoutFull},
-		// A colon is shell-safe in gnulib's plain quoting styles and special
-		// in quotef, which quotes for a diagnostic that puts one after the
-		// name; the two must not be conflated again.
 		{name: "missing file with a colon", args: []string{"no:such"}},
 		{name: "directory with a colon", args: []string{"d:ir"}},
-		// --- the width when stdin is a regular file -------------------------
-		// GNU fstats fd 0 for `-` and for no operand at all, so a redirected
-		// regular file sizes the columns and a pipe or a character device
-		// widens them to 7; a non-regular operand raises the minimum to 7
-		// but a wider regular total still wins.
 		{name: "redirected regular stdin", stdinPath: f1},
 		{name: "dash on a redirected regular stdin", args: []string{"-"}, stdinPath: f1},
 		{name: "file and dash on a redirected regular stdin", args: []string{f1, "-"}, stdinPath: big},

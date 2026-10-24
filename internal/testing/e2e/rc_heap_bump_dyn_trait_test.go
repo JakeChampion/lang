@@ -1,16 +1,3 @@
-// RC of `dyn Trait` values on the wasm backend (Perceus slice 4a — see
-// docs/DYN-TRAITS.md §4.4). Before this slice every compiled `dyn Trait`
-// value LEAKED: the concrete `data` object behind the fat pointer was
-// never dec'd. This slice teaches the Perceus dec/drop sweep to treat a
-// `dyn` value as owning and reclaim it at scope exit through the
-// per-trait-set `__drop_dyn_<set>` helper, which reads the vtable's
-// trailing drop slot and dispatches the erased concrete destructor.
-//
-// The proof shape mirrors TestWASMDestructureHeapBumpBounded: a loop that
-// creates + drops many `dyn` values and asserts the bump high-water stays
-// FLAT (reclaim works) rather than growing with the iteration count (a
-// leak). wasm only — the natives still leak `dyn` (slices 4b/4c), so no
-// native counterpart here.
 package e2e
 
 import (
@@ -18,12 +5,6 @@ import (
 	"testing"
 )
 
-// Every probe here passes its tag through `ids`, which hides the literal from
-// the static-box plan, so each struct behind the `dyn` is a heap box.
-
-// dynTraitBumpGrowthSrc creates + drops a `dyn Shape` over a struct that
-// transitively owns a heap String each iteration. With reclaim the box +
-// the String both free per iteration, so the high-water is bounded.
 func dynTraitBumpGrowthSrc(n string) string {
 	return `import "std/i32";
 trait Shape {
@@ -47,12 +28,6 @@ function main(): i32 {
 }`
 }
 
-// TestWASMDynTraitHeapBumpBounded: the core leak/reclaim proof. A loop
-// creating + dropping a `dyn Shape` over a String-bearing struct must
-// report the SAME bump growth at N=50 and N=5000 — a leak would grow with
-// N. Proves BOTH the box and the transitively-owned String reclaim
-// (otherwise the per-iteration String buffer alone would grow the
-// high-water unboundedly).
 func TestWASMDynTraitHeapBumpBounded(t *testing.T) {
 	e2eharness.BoxedProbes(t)
 	small := runWasm(t, dynTraitBumpGrowthSrc("50"))
@@ -65,9 +40,6 @@ func TestWASMDynTraitHeapBumpBounded(t *testing.T) {
 	}
 }
 
-// TestWASMDynTraitNoUnderflow: the same loop must not over-release (no
-// double-free of the box or the inner String between the dyn drop and any
-// other reference). __rc_underflow_count() must be 0.
 func TestWASMDynTraitNoUnderflow(t *testing.T) {
 	src := `import "std/i32";
 trait Shape {
@@ -93,10 +65,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMDynTraitMultiTraitDrop: a merged `dyn A + B` value reclaims
-// through the merged-vtable drop slot (at index = the MERGED method count,
-// 3 here: a1, b1, b2). The loop must stay bump-bounded, proving the drop
-// slot is read at the right merged offset.
 func TestWASMDynTraitMultiTraitDrop(t *testing.T) {
 	e2eharness.BoxedProbes(t)
 	src := func(n string) string {
@@ -132,12 +100,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMDynTraitBorrowedParamNoDrop: a `dyn` parameter that is only
-// dispatched on (never stored or returned) stays BORROWED — the callee
-// must NOT drop it (the caller owns it). A double-free would surface as a
-// non-zero __rc_underflow_count(); a premature drop would corrupt the
-// caller's value (and the loop's bump would diverge). The caller still
-// reclaims its own `dyn` local each iteration, so the loop stays bounded.
 func TestWASMDynTraitBorrowedParamNoDrop(t *testing.T) {
 	mk := func(tail string) string {
 		return `import "std/i32";
@@ -157,7 +119,6 @@ function main(): i32 {
     ` + tail + `
 }`
 	}
-	// Underflow check: borrowed param dropped twice would underflow.
 	underflow := mk(`let i: i32 = 0;
     let sum: i32 = 0;
     while (i < 200) {
@@ -169,8 +130,6 @@ function main(): i32 {
 	if got := runWasm(t, underflow); got != 0 {
 		t.Errorf("borrowed dyn param over-releases = %d, want 0", got)
 	}
-	// Bounded check: the caller's local still reclaims; no leak from the
-	// borrow.
 	bumped := func(n string) string {
 		return mk(`let before: i32 = (__heap_bump_bytes() as i32);
     let i: i32 = 0;

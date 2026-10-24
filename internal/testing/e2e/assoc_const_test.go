@@ -8,10 +8,6 @@ import (
 	"testing"
 )
 
-// Associated constants (docs/ASSOCIATED-TYPES.md) read on a concrete type,
-// through a bound with an explicit instantiation, as `Self` inside an impl,
-// on a primitive, and from a trait default, on every engine. The sum is
-// 2 + 1 + 4 + 3 + 20 + 1 + 2 = 33, printed; main exits 0 when it holds.
 const assocConstSrc = `import "std/i32";
 trait Lanes {
     const LANES: i32;

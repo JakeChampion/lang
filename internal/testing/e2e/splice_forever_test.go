@@ -1,14 +1,7 @@
-// `w.splice_forever(block)` where the kernel cannot take the block: the
-// interpreter, both WASI previews and XNU refuse with Unsupported, which
-// promises nothing reached the writer, so the caller writes the block itself.
-// The Linux backends' vmsplice path is driven through a pipe in
-// e2ecompiler's TestSelfHostSpliceForever.
 package e2e
 
 import "testing"
 
-// spliceForeverRefusedSource exits 0 when the call answers Unsupported, and
-// 1 for any other error or 2 for None, which the method never returns.
 const spliceForeverRefusedSource = `function main(): i32 {
     match (stdout().splice_forever("y\n")) {
         Err(e) => {
@@ -42,7 +35,6 @@ func TestWASMSpliceForeverUnsupported(t *testing.T) {
 	}
 }
 
-// XNU has no vmsplice. Built everywhere, run on Apple Silicon.
 func TestArm64DarwinSpliceForeverUnsupported(t *testing.T) {
 	buildAndRunDarwin(t, t.TempDir(), spliceForeverRefusedSource)
 }

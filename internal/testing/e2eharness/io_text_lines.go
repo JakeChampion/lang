@@ -58,7 +58,6 @@ function main(): i32 {
 }
 `
 
-// Reuse the byte-reader target harness while checking the text contract.
 func IOTextLineCases() []IOByteLineCase {
 	var cases []IOByteLineCase
 	for _, chunk := range []int{1, 2, 3, 4, 7, 4096} {

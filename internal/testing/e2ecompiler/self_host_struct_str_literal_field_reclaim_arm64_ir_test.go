@@ -4,18 +4,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostStructStrLiteralFieldReclaimIRArm64 is the arm64 port of the #6127
-// string-LITERAL struct-field reclaim (x86 sibling:
-// TestSelfHostStructStrLiteralFieldReclaimIRX86_64). arm64's const_str boxes a
-// literal through __fern_str_box exactly as x86-64 does, so the same fresh rc=1
-// box was pinned at rc=2 by the construction retain; and its __fern_str_free
-// carries the same __fern_heap_base lower-bound guard, so releasing the box
-// leaves the .rodata bytes alone. Lighter churn under qemu.
-//
-// There is deliberately no wasm port: on wasm a literal lowers to a
-// data-section pointer with no heap box at all, so the leak does not exist
-// there and the change is inert — a wasm port would pass on an unfixed
-// compiler and gate nothing.
 func TestSelfHostStructStrLiteralFieldReclaimIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -37,7 +25,6 @@ func TestSelfHostStructStrLiteralFieldReclaimIRArm64(t *testing.T) {
 		}
 	}
 
-	// SINGLE BIND, no rebind — the shape the leak was measured on.
 	run(t, `struct B { name: string, n: i32 }
 function round(i: i32): i32 { let b: B = B { name: "abc", n: i }; return b.n; }
 function main(): i32 {
@@ -54,7 +41,6 @@ function main(): i32 {
     return 0;
 }`, "str-literal-field-single-bind-flat-arm64", 0)
 
-	// Carried field (functional update) stays readable, no double-free.
 	run(t, `struct B { name: string, n: i32 }
 function bump(b: B): B { return B { ...b, n: b.n + 1 }; }
 function main(): i32 {
@@ -67,9 +53,6 @@ function main(): i32 {
     return 0;
 }`, "str-literal-field-carried-safe-arm64", 0)
 
-	// ESCAPE — container store. The whole-program scan must exclude B, leaving
-	// every stored string readable (the hazard class that made the sibling
-	// nested-struct release a use-after-free).
 	run(t, `struct B { name: string, n: i32 }
 function mk(i: i32): B { return B { name: "leaf", n: i }; }
 function main(): i32 {

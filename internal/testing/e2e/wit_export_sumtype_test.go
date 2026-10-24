@@ -12,14 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// runSumTypeExportCase drives the P6 sum-type (`option`/`result`) result export
-// flow for one single-function interface (docs/WIT-BRING-YOUR-OWN.md): a Fern
-// reactor `@export`s a function returning an Option/Result, the composer emits
-// the `option`/`result` component type and the wasmbin wrapper writes the
-// canonical (disc, payload) return area; a Fern consumer `@import`s it, and the
-// two are linked with `wasm-tools compose` and run under wasmtime. `iface` is
-// the interface body (e.g. `interface maybe { half: func(...) -> option<s32>; }`),
-// `short`/`fqn`/`dep` its names, `expFern`/`userFern` the two programs.
 func runSumTypeExportCase(t *testing.T, iface, short, fqn, dep, expFern, userFern, want string) {
 	t.Helper()
 	wasmtime, err := exec.LookPath("wasmtime")
@@ -38,7 +30,6 @@ func runSumTypeExportCase(t *testing.T, iface, short, fqn, dep, expFern, userFer
 		}
 	}
 
-	// --- exporter: Fern reactor. ---
 	expWit := filepath.Join(dir, "expwit")
 	if err := os.MkdirAll(expWit, 0o755); err != nil {
 		t.Fatalf("mkdir expwit: %v", err)
@@ -72,7 +63,6 @@ func runSumTypeExportCase(t *testing.T, iface, short, fqn, dep, expFern, userFer
 	}
 	run(wasmtools, "validate", exporter)
 
-	// --- consumer: Fern. ---
 	userWit := filepath.Join(dir, "userwit")
 	if err := os.MkdirAll(userWit, 0o755); err != nil {
 		t.Fatalf("mkdir userwit: %v", err)
@@ -125,9 +115,6 @@ func runSumTypeExportCase(t *testing.T, iface, short, fqn, dep, expFern, userFer
 	}
 }
 
-// TestExportOptionResultRunsViaConsumer covers the Option result export (the
-// remapped discriminant: Fern Some=0/None=1 ↔ canonical none=0/some=1). A Fern
-// reactor `@export half(n): Option[i32]` and a consumer matching Some/None.
 func TestExportOptionResultRunsViaConsumer(t *testing.T) {
 	const exp = `@export("local:test/maybe@0.1.0", "half")
 function half(n: i32): Option[i32] {
@@ -150,9 +137,6 @@ function main(): i32 {
 		"maybe", "local:test/maybe@0.1.0", "maybe.wit", exp, user, "opt-ok")
 }
 
-// TestExportResultResultRunsViaConsumer covers the Result result export (no
-// discriminant remap: Ok=0/Err=1 matches canonical). A Fern reactor
-// `@export checked_div(a,b): Result[i32,i32]` and a consumer matching Ok/Err.
 func TestExportResultResultRunsViaConsumer(t *testing.T) {
 	const exp = `@export("local:test/checked@0.1.0", "checked-div")
 function checked_div(a: i32, b: i32): Result[i32, i32] {

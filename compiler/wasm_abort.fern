@@ -5,7 +5,6 @@ pub function texts(): string[] {
   return [aborts.arr_oob() + "\n", aborts.str_oob() + "\n", aborts.slice_range() + "\n", aborts.alloc_size() + "\n", aborts.oom() + "\n"];
 }
 
-// The return area and iovec use reserved low memory. A fatal report allocates nothing.
 pub function helpers(offsets: i32[], mode: i32): string {
   let names: string[] = ["arr", "str", "slice", "alloc", "oom"];
   let messages: string[] = texts();

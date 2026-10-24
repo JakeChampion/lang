@@ -7,13 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// TestSelfHostWasiHttpOutgoing is the gate for std/fetch on the
-// `wasm32-wasi-http` target, where the client sends through the host's
-// wasi:http/outgoing-handler: a handler compiled by the self-host answers
-// `/run` under `wasmtime serve` with one line per case against the scripted
-// loopback origin, the same lines TestFetchClient's program prints for the
-// cases the hosted route shares (e2eharness.FetchHostedSource says which it
-// does not).
 func TestSelfHostWasiHttpOutgoing(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {

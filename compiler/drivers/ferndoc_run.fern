@@ -1,16 +1,7 @@
-// compiler/ferndoc_run.fern — driver for the doc-comment association pass
-// (ferndoc.fern, #6642): it runs the pass's own assertions, the
-// both-directions case set, and its exit code names the failing case.
-
 import "../lexer";
 import "../ferndoc";
 import "../util";
 
-// ---- self-checks -------------------------------------------------------
-
-// c builds a comment at `line` so the walker cases read as positions, which is
-// the only thing take_doc looks at. Column is irrelevant to association and is
-// fixed at 1 to say so.
 function c(line: i32, text: string): lexer.Comment {
   return lexer.Comment { line: line, col: 1, text: text, trailing: false };
 }
@@ -19,9 +10,7 @@ function took(cs: lexer.Comment[], cursor: i32, decl_line: i32): string {
   return ferndoc.take_doc(cs, cursor, decl_line).doc;
 }
 
-// self_checks returns 0, or the id of the failing case.
 function self_checks(): i32 {
-  // ---- 1. trim_space -------------------------------------------------
   if (ferndoc.trim_space("  hi  ") != "hi") {
     return 1;
   }
@@ -34,51 +23,39 @@ function self_checks(): i32 {
   if (ferndoc.trim_space("") != "") {
     return 4;
   }
-  // Interior space survives — only the ends are trimmed.
   if (ferndoc.trim_space("  a  b  ") != "a  b") {
     return 5;
   }
 
-  // ---- 2. the run directly above -------------------------------------
   let one: lexer.Comment[] = [c(4, " doc")];
   if (took(one, 0, 5) != "doc") {
     return 10;
   }
-  // One blank line is enough to detach it.
   if (took(one, 0, 6) != "") {
     return 11;
   }
-  // A comment BELOW the declaration is not its doc.
   if (took(one, 0, 3) != "") {
     return 12;
   }
-  // A comment on the declaration's own line is a trailing comment.
   if (took(one, 0, 4) != "") {
     return 13;
   }
 
-  // ---- 3. runs join, gaps split --------------------------------------
   let run: lexer.Comment[] = [c(3, " first"), c(4, " second")];
   if (took(run, 0, 5) != "first\nsecond") {
     return 20;
   }
-  // A gap inside means only the run touching the declaration is taken.
   let split: lexer.Comment[] = [c(2, " far"), c(4, " near")];
   if (took(split, 0, 5) != "near") {
     return 21;
   }
-  // ...and the cursor lands past it, so nothing is handed out twice.
   if (ferndoc.take_doc(split, 0, 5).cursor != 2) {
     return 22;
   }
-  // The detached run is not claimed by a later declaration either.
   if (took(split, 2, 9) != "") {
     return 23;
   }
 
-  // ---- 4. the cursor is the whole state ------------------------------
-  // Two documented declarations in a row: each takes its own run, and the
-  // second must not see the first's.
   let two: lexer.Comment[] = [c(1, " a"), c(4, " b")];
   let t1: ferndoc.TakeResult = ferndoc.take_doc(two, 0, 2);
   if (t1.doc != "a" || t1.cursor != 1) {
@@ -88,7 +65,6 @@ function self_checks(): i32 {
   if (t2.doc != "b" || t2.cursor != 2) {
     return 31;
   }
-  // Asking from an exhausted cursor is empty, not a crash.
   if (took(two, 2, 9) != "") {
     return 32;
   }
@@ -96,38 +72,26 @@ function self_checks(): i32 {
     return 33;
   }
 
-  // A declaration on line 1 has no line above it. `decl_line - 1` is 0 and
-  // no comment can sit there, so the answer is empty rather than the first
-  // comment in the file.
   if (took([c(1, " x")], 0, 1) != "") {
     return 34;
   }
 
-  // ---- 5. module intro -----------------------------------------------
-  // A header run followed by a blank line is the intro, a line per comment.
   let hdr: lexer.Comment[] = [c(1, " Package foo."), c(2, " Second line.")];
   if (ferndoc.module_intro(hdr, 5) != "Package foo.\nSecond line.") {
     return 40;
   }
-  // Running straight into the first declaration makes it that declaration's
-  // doc instead — line 3 is directly below a run ending at line 2.
   if (ferndoc.module_intro(hdr, 3) != "") {
     return 41;
   }
-  // Not starting at line 1 is not a header.
   if (ferndoc.module_intro([c(2, " later")], 9) != "") {
     return 42;
   }
   if (ferndoc.module_intro([], 9) != "") {
     return 43;
   }
-  // No declarations at all: the header stands.
   if (ferndoc.module_intro(hdr, 0) != "Package foo.\nSecond line.") {
     return 44;
   }
-  // The page description is the intro's first sentence, as the docs
-  // site shows it: label dropped, capitalised unless the first word
-  // carries an upper-case letter or a digit.
   if (ferndoc.module_summary("std/csv — CSV escape / join (RFC 4180).\n\nMore.") != "CSV escape / join (RFC 4180).") {
     return 45;
   }
@@ -143,11 +107,9 @@ function self_checks(): i32 {
   if (ferndoc.module_summary("") != "") {
     return 49;
   }
-  // Only the first paragraph counts, read as one line, even unpunctuated.
   if (ferndoc.module_summary("Wrapped\nfirst line\n\nSecond paragraph.") != "Wrapped first line") {
     return 90;
   }
-  // A first word with a capital or a digit is kept as written.
   if (ferndoc.module_summary("std/x — iOS-style toggles. Etc.") != "iOS-style toggles.") {
     return 91;
   }
@@ -155,9 +117,6 @@ function self_checks(): i32 {
     return 92;
   }
 
-  // ---- 6. end to end -------------------------------------------------
-  // The shape the whole pass exists for: a header, a private declaration
-  // between two public ones, and a blank line detaching a comment.
   let src: string = "// Header line.\n"
     + "\n"
     + "// Adds.\n"
@@ -179,8 +138,6 @@ function self_checks(): i32 {
   if (dm.decls[0].name != "add" || dm.decls[0].doc != "Adds.") {
     return 52;
   }
-  // `bare`'s comment is one blank line up, so it documents nothing — and the
-  // private declaration's comment never leaks onto it either.
   if (dm.decls[1].name != "bare" || dm.decls[1].doc != "") {
     return 53;
   }
@@ -188,8 +145,6 @@ function self_checks(): i32 {
     return 54;
   }
 
-  // Structs and enums are collected too, in source order rather than list
-  // order — the parser hands back a separate list per decl kind.
   let src2: string = "// Point.\n"
     + "pub struct P { x: i32 }\n"
     + "\n"
@@ -199,7 +154,6 @@ function self_checks(): i32 {
     + "// Maker.\n"
     + "pub function make(): i32 { return 0; }\n";
   let dm2: ferndoc.DocModule = ferndoc.docs_of(src2);
-  // The header runs straight into `struct P`, so it is P's doc, not an intro.
   if (dm2.intro != "") {
     return 60;
   }
@@ -225,8 +179,6 @@ function self_checks(): i32 {
     return 67;
   }
 
-  // A private declaration is not documented at all, and neither is a
-  // `__`-prefixed public one.
   let src3: string = "// Hidden.\n"
     + "function priv(): i32 { return 0; }\n"
     + "// Also hidden.\n"
@@ -241,10 +193,6 @@ function self_checks(): i32 {
     return 71;
   }
 
-  // A const arrives as a zero-arg FuncDecl, so the only thing separating it
-  // from the function below it is `is_const`. Both directions matter: the
-  // const must not be reported as a function, and the function must not be
-  // swept up as a const.
   let src4: string = "// Limit.\n"
     + "pub const MAX: i32 = 10;\n"
     + "// Zero.\n"
@@ -268,8 +216,6 @@ function self_checks(): i32 {
     return 84;
   }
 
-  // The `__` filter is native's, and native applies it to its funcs list
-  // alone — a `__`-prefixed const has no such filter and is documented.
   let src5: string = "// Kept.\n"
     + "pub const __RAW: i32 = 2;\n";
   let dm5: ferndoc.DocModule = ferndoc.docs_of(src5);
@@ -280,10 +226,6 @@ function self_checks(): i32 {
     return 86;
   }
 
-  // A page renders `pub const NAME: T` with no initialiser, and drops the
-  // type clause entirely when the source did not write one — `?` is what an
-  // absent type renders as elsewhere, and a const without one is a different
-  // fact.
   let page: string = ferndoc.render_page("pub const A: i32 = 1;\npub const B = 2;\n", "std/x");
   if (!util.contains(page, "## `const A`\n\n```fern\npub const A: i32\n```\n")) {
     return 87;

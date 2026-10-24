@@ -1,24 +1,9 @@
-// std/zstd — Zstandard (RFC 8878) in pure Fern: a decoder for every
-// frame a dictionary-free encoder writes, and an encoder.
-//
-// The decoder's shape is the reference educational decoder's: a frame's
-// blocks decoded in turn into one output buffer, which is also the window
-// a match reaches back into; each compressed block a literals section
-// (raw, run-length or Huffman-coded in one or four streams) and a
-// sequences section of FSE-coded literal lengths, match lengths and
-// offsets read from a backward bitstream. `decompress` takes `max_out`,
-// the most bytes it will produce, and fails with `ZstdTooLarge` past it.
-
+// This module encodes and decodes Zstandard data without dictionaries.
 import "std/deflate";
 import "std/hash";
 import "core/cmp";
 import "std/error";
 
-// `ZstdError` — why a stream could not be decoded: it ends inside a frame
-// (`ZstdTruncated`); it breaks the format, with what was wrong
-// (`ZstdMalformed`); its output passes `max_out` (`ZstdTooLarge`); its
-// checksum does not match (`ZstdChecksum`); or it needs what this decoder
-// does not do (`ZstdUnsupported`: a dictionary).
 pub enum ZstdError { ZstdTruncated, ZstdMalformed(string), ZstdTooLarge, ZstdChecksum, ZstdUnsupported(string) }
 
 pub function (e: ZstdError) to_string(): string {
@@ -50,8 +35,6 @@ pub function (e: ZstdError) message(): string {
   return "zstd";
 }
 
-// `decompress(input, max_out)` — every frame in `input` decoded and their
-// outputs joined, skippable frames passed over, at most `max_out` bytes.
 pub function decompress(input: [u8], max_out: i32): Result[u8[], ZstdError] {
   if (input.len() == 0) {
     return Err(ZstdTruncated);
@@ -79,7 +62,6 @@ pub function decompress(input: [u8], max_out: i32): Result[u8[], ZstdError] {
   return Ok(out);
 }
 
-// __le(buf, at, n) — the `n`-byte little-endian integer at `at`.
 function __le(buf: [u8], at: i32, n: i32): i64 {
   let v: i64 = 0;
   let i: i32 = n - 1;
@@ -99,15 +81,8 @@ function __highbit(x: i32): i32 {
   return k;
 }
 
-// ---------------------------------------------------------------------------
-// Frames and blocks
-
-// __Frame — a decoded frame: its output, and where in the input it ended.
 struct __Frame { out: u8[], end: i32 }
 
-// __Header — a frame header: the content size when it says one (-1
-// otherwise), whether the frame carries a checksum, and where its first
-// block starts.
 struct __Header { size: i64, checksum: boolean, at: i32 }
 
 function __frame(input: [u8], at: i32, max_out: i32): Result[__Frame, ZstdError] {
@@ -134,8 +109,6 @@ function __frame(input: [u8], at: i32, max_out: i32): Result[__Frame, ZstdError]
   return __frame_end(input, pos, out, h);
 }
 
-// __frame_end(input, pos, out, h) — the frame's content size and
-// checksum checked against what it produced.
 function __frame_end(input: [u8], pos: i32, out: u8[], h: __Header): Result[__Frame, ZstdError] {
   if (h.size >= 0 && h.size != out.len() as i64) {
     return Err(ZstdMalformed("content size"));
@@ -153,8 +126,6 @@ function __frame_end(input: [u8], pos: i32, out: u8[], h: __Header): Result[__Fr
   return Ok(__Frame { out: out, end: pos + 4 });
 }
 
-// __frame_header(input, at) — the frame header descriptor and the fields
-// it announces (RFC 8878 §3.1.1.1).
 function __frame_header(input: [u8], at: i32): Result[__Header, ZstdError] {
   if (at >= input.len()) {
     return Err(ZstdTruncated);
@@ -187,8 +158,6 @@ function __frame_header(input: [u8], at: i32): Result[__Header, ZstdError] {
   return Ok(__Header { size: size, checksum: (d & 4) != 0, at: pos + fcs });
 }
 
-// __fcs_width(flag, single) — how many bytes the content size takes: none
-// for flag 0 unless the frame is a single segment, which needs one.
 function __fcs_width(flag: i32, single: boolean): i32 {
   if (flag == 0 && single) {
     return 1;
@@ -196,9 +165,6 @@ function __fcs_width(flag: i32, single: boolean): i32 {
   return [0, 2, 4, 8][flag];
 }
 
-// __Tables — what a block may reuse from the one before it in the frame:
-// the Huffman table of the last compressed literals, the last FSE table of
-// each sequence field, and the three repeat offsets.
 struct __Tables { huf: __Huf, ll: __Fse, of: __Fse, ml: __Fse, reps: i32[] }
 
 function __tables_none(): __Tables {
@@ -207,8 +173,6 @@ function __tables_none(): __Tables {
   return __Tables { huf: __Huf { max: 0 - 1, sym: none, nb: none }, ll: f, of: f, ml: f, reps: [1, 4, 8] };
 }
 
-// __Block — the frame's output after a block, the tables it leaves, and
-// where in the input the next block starts.
 struct __Block { out: u8[], z: __Tables, end: i32 }
 
 function __block(input: [u8], at: i32, kind: i32, size: i32, out: u8[], z: __Tables, max_out: i32): Result[__Block, ZstdError] {
@@ -255,8 +219,6 @@ function __copied(out: u8[], src: [u8], from: i32, to: i32): u8[] {
   return out;
 }
 
-// __compressed(input, at, end, out, z, max_out) — a compressed block: its
-// literals, then its sequences, executed against the frame's output.
 function __compressed(input: [u8], at: i32, end: i32, out: u8[], z: __Tables, max_out: i32): Result[__Block, ZstdError] {
   let lit: __Literals = __literals(input, at, end, z.huf)?;
   let seq: __Seqs = __sequences(input, lit.end, end, __Tables { ...z, huf: lit.huf })?;
@@ -267,11 +229,6 @@ function __compressed(input: [u8], at: i32, end: i32, out: u8[], z: __Tables, ma
   return Ok(__Block { out: done, z: seq.z, end: end });
 }
 
-// ---------------------------------------------------------------------------
-// Bitstreams
-
-// __fwd(buf, bit, n) — `n` bits from bit `bit` of the little-endian
-// integer `buf` holds, zeros past its end.
 function __fwd(buf: [u8], bit: i32, n: i32): i32 {
   let v: i64 = 0;
   let first: i32 = bit >> 3;
@@ -287,9 +244,6 @@ function __fwd(buf: [u8], bit: i32, n: i32): i32 {
   return (v >> (bit & 7) & (1 as i64 << n) - 1) as i32;
 }
 
-// __back(buf, start, pos, n) — bits `pos - n` to `pos` of the
-// little-endian integer at `buf[start..]`, zeros below its first bit: how
-// a backward bitstream is read, most recently written bits first.
 function __back(buf: [u8], start: i32, pos: i32, n: i32): i32 {
   if (n == 0) {
     return 0;
@@ -304,9 +258,6 @@ function __back(buf: [u8], start: i32, pos: i32, n: i32): i32 {
   return __fwd(buf, start * 8, pos) << 0 - lo;
 }
 
-// __back_start(buf, start, end) — the bit a backward stream over
-// `buf[start..end]` is read down from: below the marker bit its last byte
-// ends with.
 function __back_start(buf: [u8], start: i32, end: i32): Result[i32, ZstdError] {
   if (end <= start || buf[end - 1] == 0) {
     return Err(ZstdMalformed("bitstream end"));
@@ -314,16 +265,8 @@ function __back_start(buf: [u8], start: i32, end: i32): Result[i32, ZstdError] {
   return Ok((end - 1 - start) * 8 + __highbit(buf[end - 1] as i32));
 }
 
-// ---------------------------------------------------------------------------
-// FSE
-
-// __Fse — an FSE decoding table: each state's symbol, the bits read to
-// leave it and the state those bits are added to. `log` -1 for none.
 struct __Fse { log: i32, sym: i32[], nb: i32[], base: i32[] }
 
-// __fse_table(probs, log) — the table for normalized probabilities
-// `probs` (-1 for a less-than-one probability) at accuracy `log`
-// (RFC 8878 §4.1.1).
 function __fse_table(probs: i32[], log: i32): __Fse {
   let next: i32[] = [];
   for p in probs {
@@ -336,8 +279,6 @@ function __fse_table(probs: i32[], log: i32): __Fse {
   return __fse_states(__symbols(probs, log), next, log);
 }
 
-// __symbols(probs, log) — the symbol of each state: the less-than-one
-// symbols at the top of the table, the rest spread across it.
 function __symbols(probs: i32[], log: i32): i32[] {
   let size: i32 = 1 << log;
   let sym: i32[] = __zeros(size);
@@ -353,9 +294,6 @@ function __symbols(probs: i32[], log: i32): i32[] {
   return __spread(sym, probs, size, high);
 }
 
-// __spread(sym, probs, size, high) — each symbol with a probability of
-// one or more placed that many times across the table, a fixed step apart,
-// skipping the slots the less-than-one symbols hold.
 function __spread(own sym: i32[], probs: i32[], size: i32, high: i32): i32[] {
   let step: i32 = (size >> 1) + (size >> 3) + 3;
   let pos: i32 = 0;
@@ -401,14 +339,8 @@ function __zeros(n: i32): i32[] {
   return out;
 }
 
-// __Nc — the state of reading an FSE table description: the probabilities
-// so far, the bit reached, the probability points still to give out, the
-// threshold that sets how many bits the next count takes, and whether the
-// last count was zero (so repeat flags follow).
 struct __Nc { probs: i32[], bit: i32, remaining: i32, threshold: i32, nbits: i32, zero: boolean }
 
-// __read_fse(buf, at, end, max_sym, max_log) — the table description at
-// `buf[at..end]` (RFC 8878 §4.1.1): the table, and the bytes it took.
 function __read_fse(buf: [u8], at: i32, end: i32, max_sym: i32, max_log: i32): Result[(__Fse, i32), ZstdError] {
   if (at >= end) {
     return Err(ZstdTruncated);
@@ -432,8 +364,6 @@ function __read_fse(buf: [u8], at: i32, end: i32, max_sym: i32, max_log: i32): R
   return Ok((__fse_table(c.probs, log), (c.bit + 7 >> 3) - at));
 }
 
-// __nc_zeros(buf, c) — the run of zero probabilities after a zero: two-bit
-// repeat counts, each 3 saying another follows.
 function __nc_zeros(buf: [u8], c: __Nc): __Nc {
   let probs: i32[] = c.probs;
   let bit: i32 = c.bit;
@@ -450,8 +380,6 @@ function __nc_zeros(buf: [u8], c: __Nc): __Nc {
   return __Nc { ...c, probs: probs, bit: bit, zero: false };
 }
 
-// __nc_count(buf, c) — one probability: a count in `nbits` bits, or one
-// fewer when the short form covers it.
 function __nc_count(buf: [u8], c: __Nc): __Nc {
   let max: i32 = 2 * c.threshold - 1 - c.remaining;
   let count: i32 = __fwd(buf, c.bit, c.nbits - 1);
@@ -477,24 +405,14 @@ function __nc_count(buf: [u8], c: __Nc): __Nc {
   return __Nc { probs: c.probs.append(prob), bit: bit, remaining: remaining, threshold: threshold, nbits: nbits, zero: prob == 0 };
 }
 
-// __rle_fse(sym) — the one-state table a run-length mode names.
 function __rle_fse(sym: i32): __Fse {
   return __Fse { log: 0, sym: [sym], nb: [0], base: [0] };
 }
 
-// ---------------------------------------------------------------------------
-// Huffman literals
-
-// __Huf — a Huffman decoding table over the next `max` bits: the symbol
-// each pattern starts with and its code's length. `max` -1 for none.
 struct __Huf { max: i32, sym: i32[], nb: i32[] }
 
-// __Literals — a block's literals, the Huffman table they leave for the
-// next block, and where the sequences section starts.
 struct __Literals { bytes: u8[], huf: __Huf, end: i32 }
 
-// __literals(input, at, end, prev) — the literals section (RFC 8878
-// §3.1.1.3.1).
 function __literals(input: [u8], at: i32, end: i32, prev: __Huf): Result[__Literals, ZstdError] {
   if (at >= end) {
     return Err(ZstdTruncated);
@@ -523,7 +441,6 @@ function __literals(input: [u8], at: i32, end: i32, prev: __Huf): Result[__Liter
   return Ok(__Literals { bytes: bytes, huf: huf, end: start + sizes.1 });
 }
 
-// __plain_literals — raw (`kind` 0) or run-length (1) literals.
 function __plain_literals(input: [u8], at: i32, end: i32, prev: __Huf, kind: i32): Result[__Literals, ZstdError] {
   let b0: i32 = input[at] as i32;
   let format: i32 = b0 >> 2 & 3;
@@ -553,9 +470,6 @@ function __plain_literals(input: [u8], at: i32, end: i32, prev: __Huf, kind: i32
   return Ok(__Literals { bytes: __copied(empty, input, at + head, at + head + size), huf: prev, end: at + head + size });
 }
 
-// __coded_sizes(input, at, end) — a compressed literals header: the
-// regenerated size, the compressed size, the header's length, and the
-// number of streams.
 function __coded_sizes(input: [u8], at: i32, end: i32): Result[(i32, i32, i32, i32), ZstdError] {
   let format: i32 = input[at] as i32 >> 2 & 3;
   let head: i32 = [3, 3, 4, 5][format];
@@ -572,8 +486,6 @@ function __coded_sizes(input: [u8], at: i32, end: i32): Result[(i32, i32, i32, i
   return Ok(((v & mask) as i32, (v >> bits & mask) as i32, head, streams));
 }
 
-// __read_huf(input, at, end) — a Huffman tree description: the table and
-// the bytes it took (RFC 8878 §4.2.1).
 function __read_huf(input: [u8], at: i32, end: i32): Result[(__Huf, i32), ZstdError] {
   if (at >= end) {
     return Err(ZstdTruncated);
@@ -600,8 +512,6 @@ function __read_huf(input: [u8], at: i32, end: i32): Result[(__Huf, i32), ZstdEr
   return Ok((__huf_table(weights)?, 1 + head));
 }
 
-// __fse_weights(input, at, end) — Huffman weights FSE-compressed: the
-// table description, then a backward stream two states decode in turn.
 function __fse_weights(input: [u8], at: i32, end: i32): Result[i32[], ZstdError] {
   let read: (__Fse, i32) = __read_fse(input, at, end, 255, 6)?;
   let t: __Fse = read.0;
@@ -626,8 +536,6 @@ function __fse_weights(input: [u8], at: i32, end: i32): Result[i32[], ZstdError]
   return Err(ZstdMalformed("Huffman weights"));
 }
 
-// __huf_table(weights) — the decoding table for the weights given, the
-// last symbol's implied by what completes the code (RFC 8878 §4.2.1.3).
 function __huf_table(weights: i32[]): Result[__Huf, ZstdError] {
   let sum: i32 = 0;
   for w in weights {
@@ -649,8 +557,6 @@ function __huf_table(weights: i32[]): Result[__Huf, ZstdError] {
   return Ok(__huf_fill(weights.append(__highbit(left) + 1), max));
 }
 
-// __huf_fill(weights, max) — each symbol's codes laid out by weight, the
-// lightest (longest codes) first, symbols in order within a weight.
 function __huf_fill(weights: i32[], max: i32): __Huf {
   let start: i32[] = __zeros(max + 2);
   for w in weights {
@@ -682,8 +588,6 @@ function __huf_fill(weights: i32[], max: i32): __Huf {
   return __Huf { max: max, sym: sym, nb: nb };
 }
 
-// __huf_streams(input, at, end, huf, size, streams) — `size` literals
-// from one Huffman stream, or four behind a jump table of their sizes.
 function __huf_streams(input: [u8], at: i32, end: i32, huf: __Huf, size: i32, streams: i32): Result[u8[], ZstdError] {
   let out: u8[] = [];
   if (streams == 1) {
@@ -719,8 +623,6 @@ function __huf_streams(input: [u8], at: i32, end: i32, huf: __Huf, size: i32, st
   return Ok(out);
 }
 
-// __huf_stream(out, input, at, end, huf, n) — `out` with `n` symbols read
-// down a backward stream, which they must use up exactly.
 function __huf_stream(out: u8[], input: [u8], at: i32, end: i32, huf: __Huf, n: i32): Result[u8[], ZstdError] {
   let pos: i32 = __back_start(input, at, end)?;
   let i: i32 = 0;
@@ -736,15 +638,8 @@ function __huf_stream(out: u8[], input: [u8], at: i32, end: i32, huf: __Huf, n: 
   return Ok(out);
 }
 
-// ---------------------------------------------------------------------------
-// Sequences
-
-// __Seqs — a block's sequences as literal lengths, match lengths and
-// offsets, the bytes the matches add, and the tables they leave.
 struct __Seqs { ll: i32[], ml: i32[], of: i32[], matched: i32, z: __Tables }
 
-// The predefined distributions (RFC 8878 §3.1.1.3.2.2) and each code's
-// baseline and extra bits.
 function __ll_default(): i32[] {
   return [4, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 2, 1, 1, 1, 1, 1, 0 - 1, 0 - 1, 0 - 1, 0 - 1];
 }
@@ -773,8 +668,6 @@ function __ml_bits(): i32[] {
   return [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 3, 3, 4, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
 }
 
-// __sequences(input, at, end, z) — the sequences section (RFC 8878
-// §3.1.1.3.2): the count, each field's table, then the backward stream.
 function __sequences(input: [u8], at: i32, end: i32, z: __Tables): Result[__Seqs, ZstdError] {
   let none: i32[] = [];
   let count: (i32, i32) = __seq_count(input, at, end)?;
@@ -796,8 +689,6 @@ function __sequences(input: [u8], at: i32, end: i32, z: __Tables): Result[__Seqs
   return __decode_seqs(input, pos + ll.1 + of.1 + ml.1, end, count.0, t);
 }
 
-// __seq_count(input, at, end) — the number of sequences, and where the
-// header after it starts.
 function __seq_count(input: [u8], at: i32, end: i32): Result[(i32, i32), ZstdError] {
   if (at >= end) {
     return Err(ZstdTruncated);
@@ -818,13 +709,8 @@ function __seq_count(input: [u8], at: i32, end: i32): Result[(i32, i32), ZstdErr
   return Ok((__le(input, at + 1, 2) as i32 + 0x7F00, at + 3));
 }
 
-// __Field — a sequence field's predefined distribution and its accuracy,
-// its largest code, and the largest accuracy a described table may have.
 struct __Field { probs: i32[], log: i32, max_sym: i32, max_log: i32 }
 
-// __seq_table(input, at, end, mode, prev, f) — a field's table by its
-// mode: predefined, run-length, FSE described, or the previous block's;
-// and the bytes it took.
 function __seq_table(input: [u8], at: i32, end: i32, mode: i32, prev: __Fse, f: __Field): Result[(__Fse, i32), ZstdError] {
   if (mode == 0) {
     return Ok((__fse_table(f.probs, f.log), 0));
@@ -844,16 +730,10 @@ function __seq_table(input: [u8], at: i32, end: i32, mode: i32, prev: __Fse, f: 
   return Ok((prev, 0));
 }
 
-// __Codes — each literal length and match length code's baseline and
-// extra bits, built once a block.
 struct __Codes { llb: i32[], llx: i32[], mlb: i32[], mlx: i32[] }
 
-// __Sd — where a sequence stream has been read down to, and the state of
-// each field's table.
 struct __Sd { pos: i32, ll: i32, of: i32, ml: i32 }
 
-// __decode_seqs(input, start, end, n, t) — `n` sequences from the
-// backward stream at `input[start..end]`, which they must use up.
 function __decode_seqs(input: [u8], start: i32, end: i32, n: i32, t: __Tables): Result[__Seqs, ZstdError] {
   let codes: __Codes = __Codes { llb: __ll_base(), llx: __ll_bits(), mlb: __ml_base(), mlx: __ml_bits() };
   let pos: i32 = __back_start(input, start, end)?;
@@ -882,9 +762,6 @@ function __decode_seqs(input: [u8], start: i32, end: i32, n: i32, t: __Tables): 
   return Ok(__Seqs { ll: lls, ml: mls, of: ofs, matched: matched, z: __Tables { ...t, reps: reps } });
 }
 
-// __seq_values(input, start, d, t, codes) — one sequence's offset value,
-// match length and literal length, read in that order, and the stream
-// position after them.
 function __seq_values(input: [u8], start: i32, d: __Sd, t: __Tables, codes: __Codes): Result[(i32, i32, i32, i32), ZstdError] {
   let oc: i32 = t.of.sym[d.of];
   let mc: i32 = t.ml.sym[d.ml];
@@ -901,8 +778,6 @@ function __seq_values(input: [u8], start: i32, d: __Sd, t: __Tables, codes: __Co
   return Ok((ofv, ml, ll, pos - codes.llx[lc]));
 }
 
-// __seq_update(input, start, d, t) — the three states moved on, literal
-// length first, then match length, then offset.
 function __seq_update(input: [u8], start: i32, d: __Sd, t: __Tables): __Sd {
   let pos: i32 = d.pos;
   let ll: i32 = t.ll.base[d.ll] + __back(input, start, pos, t.ll.nb[d.ll]);
@@ -913,10 +788,6 @@ function __seq_update(input: [u8], start: i32, d: __Sd, t: __Tables): __Sd {
   return __Sd { pos: pos - t.of.nb[d.of], ll: ll, of: of, ml: ml };
 }
 
-// __resolve(ofv, ll, reps) — the offset an offset value names, and the
-// repeat offsets after it (RFC 8878 §3.1.1.5): a value past 3 is an offset
-// plus 3; 1 to 3 name a repeat offset, shifted by one when the sequence
-// has no literals, the fourth being the first repeat offset less one.
 function __resolve(ofv: i32, ll: i32, reps: i32[]): (i32, i32[]) {
   if (ofv > 3) {
     return (ofv - 3, [ofv - 3, reps[0], reps[1]]);
@@ -938,8 +809,6 @@ function __resolve(ofv: i32, ll: i32, reps: i32[]): (i32, i32[]) {
   return (off, [off, reps[0], reps[1]]);
 }
 
-// __execute(out, lits, seq) — the sequences run against the frame's
-// output: each one's literals, then its match, then the literals left.
 function __execute(out: u8[], lits: u8[], seq: __Seqs): Result[u8[], ZstdError] {
   let li: i32 = 0;
   let i: i32 = 0;
@@ -970,16 +839,6 @@ function __execute(out: u8[], lits: u8[], seq: __Seqs): Result[u8[], ZstdError] 
   return Ok(out);
 }
 
-// ---------------------------------------------------------------------------
-// The encoder
-
-// `compress(input)` — `input` as one frame with its content size and an
-// XXH64 checksum: LZ77 matches of 4 bytes or more through a window of up to
-// 1 MiB (a single segment when the input fits in it), with the lazy
-// evaluation std/deflate uses, in blocks of up to 128 KiB each written raw,
-// as one repeated byte, or compressed, whichever is shortest. A compressed
-// block's literals are Huffman-coded and its sequences FSE-coded, each field
-// under the predefined table, a single code or a table built for the block.
 pub function compress(input: [u8]): u8[] {
   let window: i32 = __window_for(input.len());
   let toks: i64[] = __ztokens(input, window);
@@ -1007,8 +866,6 @@ pub function compress(input: [u8]): u8[] {
   return __put_le(out, sum, 4);
 }
 
-// __window_for(n) — the match window: the least power of two from 1 KiB
-// holding the input, at most 1 MiB.
 function __window_for(n: i32): i32 {
   let w: i32 = 1024;
   while (w < n && w < 1048576) {
@@ -1026,10 +883,6 @@ function __put_le(own out: u8[], v: i64, n: i32): u8[] {
   return out;
 }
 
-// __frame_head(n, window) — the magic number and frame header: a single
-// segment when the window holds the whole input, the window descriptor
-// otherwise, the content size in as few bytes as it fits, and the checksum
-// flag.
 function __frame_head(n: i32, window: i32): u8[] {
   let out: u8[] = __put_le([], 0xFD2FB528, 4);
   let flag: i32 = 2;
@@ -1050,13 +903,6 @@ function __frame_head(n: i32, window: i32): u8[] {
   return __put_le(out, size, [1, 2, 4][flag]);
 }
 
-// __ztokens(input, window) — the input as LZ77 tokens: 0 for a literal,
-// a match as its length << 32 | its offset. Each position tries the last
-// match's offset, then the chain of earlier positions sharing its four
-// bytes' hash (32 deep, stopping at 256 bytes) within the window, matches
-// scored as zstd's lazy parser scores them (`__gain`); a match is deferred
-// a byte when the next position scores better by more than a literal
-// costs, and none reaches past the end of the 128 KiB block it starts in.
 function __ztokens(input: [u8], window: i32): i64[] {
   let n: i32 = input.len();
   let head: i32[] = __filled_neg(65536);
@@ -1110,8 +956,6 @@ function __hash4(input: [u8], pos: i32): i32 {
   return (v * 2654435761 >> 16 & 65535) as i32;
 }
 
-// __zmatch_at(input, pos, skip, head, prev, window, rep) — the best
-// match at `pos` that stays in its block, none where a token cannot start.
 function __zmatch_at(input: [u8], pos: i32, skip: i32, head: i32[], prev: i32[], window: i32, rep: i32): (i32, i32) {
   if (pos < skip || pos + 3 >= input.len()) {
     return (0, 0);
@@ -1145,8 +989,6 @@ function __match_len(input: [u8], from: i32, pos: i32, limit: i32): i32 {
   return len;
 }
 
-// __gain(m, rep) — what a match saves, as zstd's lazy parser counts it:
-// four per byte, less its offset's bits, one for the last offset.
 function __gain(m: (i32, i32), rep: i32): i32 {
   if (m.0 < 4) {
     return 0;
@@ -1157,11 +999,8 @@ function __gain(m: (i32, i32), rep: i32): i32 {
   return 4 * m.0 - __highbit(m.1 + 1);
 }
 
-// __Seqb — a block's literals and sequences, and the token after it.
 struct __Seqb { lits: u8[], ll: i32[], ml: i32[], of: i32[], next: i32 }
 
-// __block_seqs(input, toks, t, at, end) — the tokens from `t` covering the
-// block `input[at..end]` as its literals and sequences.
 function __block_seqs(input: [u8], toks: i64[], t: i32, at: i32, end: i32): __Seqb {
   let lits: u8[] = [];
   let ll: i32[] = [];
@@ -1187,9 +1026,6 @@ function __block_seqs(input: [u8], toks: i64[], t: i32, at: i32, end: i32): __Se
   return __Seqb { lits: lits, ll: ll, ml: ml, of: of, next: t };
 }
 
-// __kind(input, at, end, body) — how the block `input[at..end]` is
-// written: one repeated byte (1), compressed as `body` (2) when that is
-// shorter, raw (0) otherwise.
 function __kind(input: [u8], at: i32, end: i32, body: u8[]): i32 {
   if (end - at > 1 && __one_byte(input, at, end)) {
     return 1;
@@ -1200,8 +1036,6 @@ function __kind(input: [u8], at: i32, end: i32, body: u8[]): i32 {
   return 0;
 }
 
-// __put_block(out, input, at, end, body, kind) — the block written as
-// `kind` says, marked last when it ends the input.
 function __put_block(own out: u8[], input: [u8], at: i32, end: i32, body: u8[], kind: i32): u8[] {
   let last: i32 = 0;
   if (end == input.len()) {
@@ -1227,8 +1061,6 @@ function __one_byte(input: [u8], at: i32, end: i32): boolean {
   return true;
 }
 
-// Bits written for a reader that reads them back down: an accumulator of
-// `nb` bits, least significant first, flushed whole bytes at a time.
 function __acc(acc: i64, nb: i32, v: i64, bits: i32): i64 {
   return acc | (v & (1 as i64 << bits) - 1) << nb;
 }
@@ -1242,13 +1074,9 @@ function __flushed(own out: u8[], acc: i64, nb: i32): u8[] {
   return out;
 }
 
-// __closed(out, acc, nb) — the stream ended: the marker bit a backward
-// reader starts below, and the last byte.
 function __closed(own out: u8[], acc: i64, nb: i32): u8[] {
   return __flushed(out, acc | 1 as i64 << nb, nb + 8 >> 3 << 3);
 }
-
-// ---- Literals
 
 function __lit_head(kind: i32, n: i32): u8[] {
   if (n <= 31) {
@@ -1260,8 +1088,6 @@ function __lit_head(kind: i32, n: i32): u8[] {
   return [(kind | 3 << 2 | (n & 15) << 4) as u8, (n >> 4 & 255) as u8, (n >> 12) as u8];
 }
 
-// __lits_section(lits) — the literals section: Huffman-coded when that is
-// shorter than the bytes themselves, one repeated byte as such, or raw.
 function __lits_section(lits: u8[]): u8[] {
   let raw: u8[] = __copied(__lit_head(0, lits.len()), lits, 0, lits.len());
   if (lits.len() < 32) {
@@ -1289,9 +1115,6 @@ function __lits_section(lits: u8[]): u8[] {
   return raw;
 }
 
-// __huf_lits(lits, freq) — the literals under a Huffman code of at most
-// 11 bits built for them: the header, the tree description and one stream,
-// or four behind a jump table once there are more than 1023 literals.
 function __huf_lits(lits: u8[], freq: i32[]): Option[u8[]] {
   let lens: i32[] = deflate.huffman_lengths(freq, 11);
   let max: i32 = 0;
@@ -1314,8 +1137,6 @@ function __huf_lits(lits: u8[], freq: i32[]): Option[u8[]] {
   return __huf_head(lits.len(), body);
 }
 
-// __huf_head(n, body) — the compressed literals header for `n` literals in
-// `body`, in the smallest size format that holds both sizes.
 function __huf_head(n: i32, body: u8[]): Option[u8[]] {
   let format: i32 = 0;
   if (n > 1023) {
@@ -1332,10 +1153,6 @@ function __huf_head(n: i32, body: u8[]): Option[u8[]] {
   return Some(__copied(__put_le([], v, [3, 3, 4, 5][format]), body, 0, body.len()));
 }
 
-// __huf_desc(weights, last) — the tree description: the weights of the
-// symbols before `last`, whose own weight the decoder infers, four bits
-// each when there are 128 or fewer, FSE-compressed otherwise; None when
-// neither form fits.
 function __huf_desc(weights: i32[], last: i32): Option[u8[]] {
   if (last <= 128) {
     let out: u8[] = [(127 + last) as u8];
@@ -1363,8 +1180,6 @@ function __head_of(xs: i32[], n: i32): i32[] {
   return out;
 }
 
-// __huf_codes(weights, max) — each symbol's code: its first slot in the
-// decoding table `__huf_fill` lays out, over the bits its weight leaves.
 function __huf_codes(weights: i32[], max: i32): i32[] {
   let start: i32[] = __zeros(max + 2);
   for w in weights {
@@ -1389,8 +1204,6 @@ function __huf_codes(weights: i32[], max: i32): i32[] {
   return codes;
 }
 
-// __huf_encode(lits, codes, lens) — the literals as one stream, or four
-// behind the jump table of the first three's sizes past 1023 literals.
 function __huf_encode(lits: u8[], codes: i32[], lens: i32[]): u8[] {
   let n: i32 = lits.len();
   let empty: u8[] = [];
@@ -1412,9 +1225,6 @@ function __huf_encode(lits: u8[], codes: i32[], lens: i32[]): u8[] {
   return __copied(sizes, parts, 0, parts.len());
 }
 
-// __huf_one(out, lits, from, to, codes, lens) — `out` with one stream of
-// `lits[from..to]`, last symbol first so a reader going down meets the
-// first first.
 function __huf_one(own out: u8[], lits: u8[], from: i32, to: i32, codes: i32[], lens: i32[]): u8[] {
   let acc: i64 = 0;
   let nb: i32 = 0;
@@ -1433,9 +1243,6 @@ function __huf_one(own out: u8[], lits: u8[], from: i32, to: i32, codes: i32[], 
   return __closed(out, acc, nb);
 }
 
-// __fse_weight_desc(w) — Huffman weights FSE-compressed: the table
-// description, then two states encoding them in turn, read back to check
-// a decoder ends where they do; None past 127 bytes.
 function __fse_weight_desc(w: i32[]): Option[u8[]] {
   let counts: i32[] = __zeros(13);
   for x in w {
@@ -1473,14 +1280,8 @@ function __same(a: i32[], b: i32[]): boolean {
   return true;
 }
 
-// ---- FSE encoding
-
-// __Ct — an FSE encoding table: the state each (state, symbol) step goes
-// to, and per symbol the two deltas that step reads.
 struct __Ct { log: i32, state: i32[], dnb: i32[], dfs: i32[] }
 
-// __ctable(probs, log) — the encoding table for the distribution a
-// decoder builds `__fse_table` from.
 function __ctable(probs: i32[], log: i32): __Ct {
   let size: i32 = 1 << log;
   let sym: i32[] = __symbols(probs, log);
@@ -1526,10 +1327,6 @@ function __ct_next(ct: __Ct, st: i32, sym: i32): i32 {
   return ct.state[(st >> __ct_bits(ct, st, sym)) + ct.dfs[sym]];
 }
 
-// __normalize(counts, total, log) — `counts` scaled to `1 << log` slots,
-// a symbol too rare for one marked -1 (a slot of its own at full
-// precision), the rounding taken up by the most frequent; None when that
-// would leave it without a slot.
 function __normalize(counts: i32[], total: i32, log: i32): Option[i32[]] {
   let size: i32 = 1 << log;
   let probs: i32[] = [];
@@ -1559,8 +1356,6 @@ function __normalize(counts: i32[], total: i32, log: i32): Option[i32[]] {
   return Some(probs.with(big, fixed));
 }
 
-// __write_ncount(probs, log) — the table description `__read_fse` reads
-// (RFC 8878 §4.1.1), as zstd's FSE_writeNCount writes it.
 function __write_ncount(probs: i32[], log: i32): u8[] {
   let out: u8[] = [];
   let acc: i64 = (log - 5) as i64;
@@ -1594,8 +1389,6 @@ function __write_ncount(probs: i32[], log: i32): u8[] {
   return __flushed(out, acc, nb + 7 >> 3 << 3);
 }
 
-// __ncount_field(c) — the value written for the probability at `c.bit`
-// (an index here, not a bit) and how many bits it takes.
 function __ncount_field(c: __Nc): (i32, i32) {
   let p: i32 = c.probs[c.bit];
   let max: i32 = 2 * c.threshold - 1 - c.remaining;
@@ -1609,7 +1402,6 @@ function __ncount_field(c: __Nc): (i32, i32) {
   return (v, c.nbits);
 }
 
-// __nc_after(c) — the writer's state past the probability at `c.bit`.
 function __nc_after(c: __Nc): __Nc {
   let p: i32 = c.probs[c.bit];
   let remaining: i32 = c.remaining - cmp.max(p, 0 - p);
@@ -1622,8 +1414,6 @@ function __nc_after(c: __Nc): __Nc {
   return __Nc { ...c, bit: c.bit + 1, remaining: remaining, threshold: threshold, nbits: nbits, zero: p == 0 };
 }
 
-// __two_state(head, w, ct) — `head` with the weights `w` FSE-encoded by two
-// states in turn, as `__fse_weights` reads them back.
 function __two_state(own head: u8[], w: i32[], ct: __Ct): u8[] {
   let n: i32 = w.len();
   let acc: i64 = 0;
@@ -1663,17 +1453,8 @@ function __two_state(own head: u8[], w: i32[], ct: __Ct): u8[] {
   return __closed(head, acc, nb + 2 * ct.log);
 }
 
-// ---- Sequences
-
-// __Choice — how a sequence field's codes are coded: its mode (0
-// predefined, 1 one code, 2 a table of its own), the table, and the bytes
-// describing it.
 struct __Choice { mode: i32, ct: __Ct, desc: u8[] }
 
-// __seq_section(b, reps) — the sequences section: the count, the modes,
-// each field's table, then the codes and extra bits in a backward stream,
-// the last sequence first (RFC 8878 §3.1.1.3.2); and the repeat offsets
-// after it, which the next block starts from if this one is compressed.
 function __seq_section(b: __Seqb, reps: i32[]): (u8[], i32[]) {
   let n: i32 = b.ll.len();
   let out: u8[] = __seq_head(n);
@@ -1713,8 +1494,6 @@ function __seq_head(n: i32): u8[] {
   return [255 as u8, (n - 0x7F00 & 255) as u8, (n - 0x7F00 >> 8) as u8];
 }
 
-// __code_of(bases, v) — the code whose baseline is the greatest at or
-// below `v`.
 function __code_of(bases: i32[], v: i32): i32 {
   let c: i32 = bases.len() - 1;
   while (c > 0 && bases[c] > v) {
@@ -1723,8 +1502,6 @@ function __code_of(bases: i32[], v: i32): i32 {
   return c;
 }
 
-// __choose(codes, f) — one code as such; the predefined table for a few
-// sequences; a table built for them otherwise.
 function __choose(codes: i32[], f: __Field): __Choice {
   let counts: i32[] = __zeros(f.max_sym + 1);
   let distinct: i32 = 0;
@@ -1759,12 +1536,8 @@ struct __Codes3 { lc: i32[], mc: i32[], oc: i32[] }
 
 struct __Tables3 { ll: __Ct, of: __Ct, ml: __Ct }
 
-// __Enc — the three encoder states and the bits not yet flushed.
 struct __Enc { ll: i32, of: i32, ml: i32, acc: i64, nb: i32 }
 
-// __seq_stream(out, b, c, t, codes) — `out` with the backward stream: the
-// last sequence's states set and its extra bits, then each earlier one's
-// codes and extra bits, then the states, match length's first.
 function __seq_stream(own out: u8[], b: __Seqb, c: __Codes3, t: __Tables3, codes: __Codes): u8[] {
   let n: i32 = b.ll.len();
   let e: __Enc = __Enc { ll: __init_or_zero(t.ll, c.lc[n - 1]), of: __init_or_zero(t.of, c.oc[n - 1]), ml: __init_or_zero(t.ml, c.mc[n - 1]), acc: 0, nb: 0 };
@@ -1794,8 +1567,6 @@ function __init_or_zero(ct: __Ct, sym: i32): i32 {
   return __ct_init(ct, sym);
 }
 
-// __step(e, t, c, i) — sequence `i`'s codes: offset, match length, then
-// literal length, each state moved to it.
 function __step(e: __Enc, t: __Tables3, c: __Codes3, i: i32): __Enc {
   let acc: i64 = e.acc;
   let nb: i32 = e.nb;
@@ -1823,8 +1594,6 @@ function __step(e: __Enc, t: __Tables3, c: __Codes3, i: i32): __Enc {
   return __Enc { ll: ll, of: of, ml: ml, acc: acc, nb: nb };
 }
 
-// __extras(e, b, c, codes, i) — sequence `i`'s extra bits: literal length,
-// match length, then offset (`b.of` holding offset values here).
 function __extras(e: __Enc, b: __Seqb, c: __Codes3, codes: __Codes, i: i32): __Enc {
   let lx: i32 = codes.llx[c.lc[i]];
   let mx: i32 = codes.mlx[c.mc[i]];
@@ -1835,9 +1604,6 @@ function __extras(e: __Enc, b: __Seqb, c: __Codes3, codes: __Codes, i: i32): __E
   return __Enc { ...e, acc: acc, nb: e.nb + lx + mx + ox };
 }
 
-// __rep_value(off, ll, reps) — the offset value naming `off`: a repeat
-// offset's 1 to 3 where one matches (shifted when the sequence has no
-// literals), the offset plus 3 otherwise.
 function __rep_value(off: i32, ll: i32, reps: i32[]): i32 {
   let k: i32 = 0;
   while (k < 3) {

@@ -12,11 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/lexer"
 )
 
-// TestGrammarDerivesSelfHostParsedSources is internal/syntax/grammar's
-// differential with the parser syntax lands in first: every .fern source in
-// the repository that the self-host parser accepts, spec/grammar.ebnf must
-// derive. `fern -fmt` is the probe, since it parses a file on its own and
-// refuses one that does not parse.
 func TestGrammarDerivesSelfHostParsedSources(t *testing.T) {
 	requireSelfHostFixtureLeg(t)
 	gcc, runner := x86_64Tooling(t)
@@ -60,8 +55,6 @@ func TestGrammarDerivesSelfHostParsedSources(t *testing.T) {
 	t.Logf("grammar derived every one of the %d sources the self-host parser accepts", checked)
 }
 
-// repoFernSources is every .fern file in the repository but generated and
-// vendored trees.
 func repoFernSources(t *testing.T) []string {
 	t.Helper()
 	var out []string

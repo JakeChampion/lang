@@ -1,3 +1,4 @@
+// CI-DARK: FERN_CONSTRUCTION_RETAIN_DUMP — This flag regenerates the reference data.
 package e2ecompiler
 
 import (
@@ -11,32 +12,11 @@ import (
 	"github.com/jakechampion/lang/internal/envflag"
 )
 
-// --- The construction-retain matrix ------------------------------------------
-//
-// The killer-drops-fields wave's map. The struct release helpers' field decs
-// are rc-GUARDED (__fern_arr_dec / __fern_str_free / __fern_str_arr_free all
-// dec-or-free by rc), so a release is unsound only when a SHARE of the field
-// went UNCOUNTED — the flatten__RewriteCtx wasm fault was an unbalanced dec
-// from an un-retained string[] field READ, not a blind walk. This matrix
-// enumerates struct-literal FIELD KIND x VALUE SHAPE and pins, per cell,
-// whether each compiler ends census-clean — so every retain hole the wave
-// closes flips a recorded cell deliberately, and a regression flips a clean
-// cell loudly. Exit codes must match between compilers on every cell, and the
-// underflow guard fails hard on either side: an over-release (an uncounted
-// share whose release fired anyway) is a bug in any cell, listed or not.
-//
-// Shapes: fresh (literal/ctor inline — sole-owned, the no-inc baseline),
-// local (bare ident of a fresh local, read after the holder dies), param
-// (bare ident of a param the CALLER keeps live), fieldread (`q.f` off a live
-// sibling struct), call (a producer's result). x86-64 only — the comparison
-// is between compilers, not targets (the leak matrix states the same rule).
-
 type crmCell struct {
 	name string
 	src  string
 }
 
-// crmMain is the shared driver: 100 rounds, checksum, underflow guard.
 const crmMain = `function main(): i32 {
     let t: i32 = 0;
     let r: i32 = 0;
@@ -46,9 +26,6 @@ const crmMain = `function main(): i32 {
 }
 `
 
-// crmMainKeep is the param-shape driver: main builds the source ONCE, keeps
-// it live across every call, and reads it after the loop — the same two
-// origin-probe conditions the leak matrix's alias_param cells state.
 func crmMainKeep(keepInit, keepRead string) string {
 	return `function main(): i32 {
     ` + keepInit + `
@@ -63,15 +40,13 @@ func crmMainKeep(keepInit, keepRead string) string {
 }
 
 func constructionRetainCells() []crmCell {
-	// Per-kind pieces. Every constructed value embeds the loop variable so
-	// neither pipeline const-folds it (the leak matrix's #7364 trap).
 	type kind struct {
 		name  string
-		decls string // aux type + producer decls (P is added per shape)
-		field string // P's field type
-		fresh string // inline fresh value, uses `i`
-		mk    string // producer fn returning the field type, uses arg `i`
-		read  string // i32 expression over `p.f`
+		decls string
+		field string
+		fresh string
+		mk    string
+		read  string
 	}
 	kinds := []kind{
 		{
@@ -123,7 +98,6 @@ function mkv(i: i32): Inner[] { let o: Inner[] = []; o = o.append(Inner { xs: [i
 		holder := "struct P { f: " + k.field + ", n: i32 }\n"
 		decls := holder + k.decls + "\n"
 
-		// fresh: inline construction, sole-owned by the holder.
 		cells = append(cells, crmCell{
 			name: k.name + "__fresh",
 			src: decls + `function round(i: i32): i32 {
@@ -133,8 +107,6 @@ function mkv(i: i32): Inner[] { let o: Inner[] = []; o = o.append(Inner { xs: [i
 ` + crmMain,
 		})
 
-		// local: bare ident of a fresh local; the source is read AFTER the
-		// holder's last use, so both claims are live across the bind.
 		cells = append(cells, crmCell{
 			name: k.name + "__local",
 			src: decls + `function round(i: i32): i32 {
@@ -152,8 +124,6 @@ function mkv(i: i32): Inner[] { let o: Inner[] = []; o = o.append(Inner { xs: [i
 ` + crmMain,
 		})
 
-		// param: the caller keeps the value across every call and reads it
-		// after the loop — an over-release here dangles main's copy.
 		cells = append(cells, crmCell{
 			name: k.name + "__param",
 			src: decls + `function round(src: ` + k.field + `, i: i32): i32 {
@@ -163,11 +133,6 @@ function mkv(i: i32): Inner[] { let o: Inner[] = []; o = o.append(Inner { xs: [i
 ` + crmMainKeep("let keep: "+k.field+" = mkv(7);", "0"),
 		})
 
-		// fieldread: `q.f` off a live sibling holder — the RewriteCtx shape.
-		// A ONCE bind, deliberately: a LOOP-carried rebind of the same field
-		// is a different axis (the rebind's cow skip strands per-iteration
-		// retains — required for spread carries, #6653) and would mask
-		// whether the READ itself is counted.
 		cells = append(cells, crmCell{
 			name: k.name + "__fieldread",
 			src: decls + `function round(i: i32): i32 {
@@ -178,7 +143,6 @@ function mkv(i: i32): Inner[] { let o: Inner[] = []; o = o.append(Inner { xs: [i
 ` + crmMain,
 		})
 
-		// call: the producer's result straight into the field.
 		cells = append(cells, crmCell{
 			name: k.name + "__call",
 			src: decls + `function round(i: i32): i32 {
@@ -219,10 +183,6 @@ func loadConstructionRetainMatrix(t *testing.T) map[string][2]leakVerdict {
 }
 
 func TestSelfHostConstructionRetainMatrixX86_64(t *testing.T) {
-	// CI-DARK: FERN_CONSTRUCTION_RETAIN_DUMP — a regeneration tool, not
-	// coverage: it prints measured matrix-file lines INSTEAD of comparing, so
-	// a lane setting it would disable this gate. The compare path below is
-	// the CI behaviour.
 	dump := envflag.On("FERN_CONSTRUCTION_RETAIN_DUMP")
 	var known map[string][2]leakVerdict
 	if !dump {

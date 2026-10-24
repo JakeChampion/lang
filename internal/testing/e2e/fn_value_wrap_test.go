@@ -10,8 +10,6 @@ import (
 	"testing"
 )
 
-// fnValueWrapSrc takes the same function as a value from three functions, as a
-// call argument and as a local binding.
 const fnValueWrapSrc = `import "std/i32";
 @noinline function twice(x: i32): i32 { return x * 2; }
 @noinline function apply(f: (i32) => i32, x: i32): i32 { return f(x); }
@@ -29,8 +27,6 @@ function main(): i32 {
 
 const fnValueWrapWant = "12\n"
 
-// The env-taking trampoline a bare function value is boxed through is emitted
-// once for the function, however many functions take it.
 func TestFnValueWrapSharedPerFunction(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "prog.fern")
@@ -88,8 +84,6 @@ func TestWasmFnValueWrap(t *testing.T) {
 	}
 }
 
-// Two modules each take the same function as a value: the trampoline named for
-// it must not be defined twice when the modules are linked together.
 func TestFnValueWrapAcrossModules(t *testing.T) {
 	dir := t.TempDir()
 	lib := "@noinline pub function twice(x: i32): i32 { return x * 2; }\n" +

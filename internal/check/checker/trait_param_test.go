@@ -15,8 +15,6 @@ struct Rect { w: i32, h: i32 }
 impl Shape for Rect { function area(self: Rect): i32 { return self.w * self.h; } }
 `
 
-// A parameter typed by a trait is an anonymous type parameter bounded by it,
-// one per parameter, so two such parameters take two different types.
 func TestTraitParamIsAnonymousGeneric(t *testing.T) {
 	src := traitParamDecls + `function total(a: Shape, b: Shape): i32 { return a.area() + b.area(); }
 function main(): i32 { return total(Sq { s: 3 }, Rect { w: 2, h: 5 }); }`
@@ -25,8 +23,6 @@ function main(): i32 { return total(Sq { s: 3 }, Rect { w: 2, h: 5 }); }`
 	}
 }
 
-// A type parameter the function writes itself keeps its meaning even when it
-// shares a trait's name, and the anonymous one steps around a written name.
 func TestTraitParamLeavesWrittenTypeParamsAlone(t *testing.T) {
 	src := traitParamDecls + `function same[Shape](x: Shape): Shape { return x; }
 function pick[T_a](a: Shape, b: T_a): T_a { let n: i32 = a.area(); return b; }
@@ -36,8 +32,6 @@ function main(): i32 { let s: string = same("x"); let k: i32 = pick(Sq { s: 1 },
 	}
 }
 
-// A generic trait with its arguments is the trait too: the parser spells
-// `Sink[i32]` as an EnumType, and the bound keeps the arguments.
 func TestTraitParamWithTypeArguments(t *testing.T) {
 	src := `trait Sink[T] { function put(self: Self, v: T): i32; }
 struct Acc { n: i32 }
@@ -70,9 +64,6 @@ function main(): i32 { return total(5); }`, "type argument T_a = i32 does not im
 function main(): i32 { return 0; }`, "cannot find type \"Shape\" in this scope (`Shape` is a trait"},
 		{"an undeclared type beside a trait-typed parameter", traitParamDecls + `function total(a: Shape, b: Wibble): i32 { return a.area(); }
 function main(): i32 { return 0; }`, "cannot find type \"Wibble\" in this scope"},
-		// A trait's methods are not generic, so an impl's method keeps the
-		// parameter as written and is told what to write instead, rather than
-		// failing conformance against a generated name.
 		{"a trait-typed parameter in an impl method", traitParamDecls + `trait Cmp { function eqto(self: Self, o: Shape): boolean; }
 impl Cmp for Sq { function eqto(self: Sq, o: Shape): boolean { return self.s == o.area(); } }
 function main(): i32 { return 0; }`, "cannot find type \"Shape\" in this scope (`Shape` is a trait"},
@@ -96,8 +87,6 @@ function main(): i32 { return 0; }`, "cannot find type \"Shape\" in this scope (
 	}
 }
 
-// The hint names the spelling the reader can write, not the mangled one an
-// imported module's own trait carries in a type position.
 func TestTraitParamHintDemanglesImportedTrait(t *testing.T) {
 	prog, _, err := modload.LoadSource(`import "core/cmp";
 function make(): cmp.Display { return 1; }

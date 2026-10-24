@@ -5,30 +5,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostTyFromRef pins the self-hosted asmcore type-name decode
-// (compiler/asmcore.fern's ty_from_ref / ty_from_name — SH-021 slice 2,
-// docs/SELF-HOST-AUDIT.md T2). ty_from_name now maps a type STRING to the coarse
-// asmcore Ty via ty_from_ref(parser.parse_type_ref(name)) — a structured tree
-// pattern-match — replacing the former hand-rolled byte scan.
-//
-// The ty_from_ref_run driver decodes a corpus spanning every branch of that
-// decode and prints ty_tag(ty_from_name(s)) for each. The golden below is the
-// EXACT output the old byte-scan produced (captured before the migration), so
-// this test is the byte-identical guard: it locks scalars, the dedicated scalar
-// arrays vs coarse arrays, the Map / MapIter / Cell / Option / Result generics
-// (incl. nested + single-arg degradations), bare `Map` against the user types
-// that merely START with it, unrecognised generics collapsing to coarse array,
-// tuples, and bare / qualified names — so any change to ty_from_ref or the
-// parse_type_ref feeding it that shifts a decoded Ty fails here rather than
-// silently miscompiling a typed path.
-//
-// `MapConfig => unknown` is the one row that is NOT the byte scan's output.
-// The scan matched "Map" as a PREFIX, so every user type spelled MapConfig /
-// MapCloneScan / Maple decoded as a map and had its methods typed as map ops;
-// #8462 made the test an exact match and left this golden pinning the quirk it
-// had just deleted, which is what made the lane red on main.
-//
-// The driver is built natively via the Go x86-64 backend; its stdout is the map.
 func TestSelfHostTyFromRef(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -38,8 +14,6 @@ func TestSelfHostTyFromRef(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/ty_from_ref_run.fern")
 	bin := buildSelfHostBin(t, gcc, dir, "drivers/ty_from_ref_run.fern", "ty_from_ref_run")
 
-	// Golden — the exact ty_tag(ty_from_name(s)) mapping the former byte scan
-	// produced, captured before the ty_from_ref migration. Byte-identical.
 	const want = "i32 => i32\n" +
 		"u32 => u32\n" +
 		"u64 => u64\n" +

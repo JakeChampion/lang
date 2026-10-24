@@ -1,4 +1,4 @@
-// Pins E087: a module-qualified name the module does not export.
+
 import "./lib";
 
 function main(): i32 {

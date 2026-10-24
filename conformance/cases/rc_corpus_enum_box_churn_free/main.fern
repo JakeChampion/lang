@@ -1,11 +1,11 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Enum-box reclamation: a uniform enum (both variants carry one
-// i32[], so the box size + droppable layout are static) frees
-// its box at the last reference. 200 build/free cycles churn
-// the box size class; a corrupted reuse or over-release drifts
-// the checksum. mk(seed)=seed+2; sum_{0..199}(k+2)=19900+400.
+
+
+
+
+
+
+
+
 import "core/int";
 enum Wrap { A(i32[]), B(i32[]) }
 function mk(seed: i32): i32 {

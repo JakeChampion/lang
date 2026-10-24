@@ -1,3 +1,4 @@
+// CI-DARK: FERN_ALLOC_COUNT_DUMP — This flag regenerates the reference data.
 package e2ecompiler
 
 import (
@@ -12,39 +13,12 @@ import (
 	"github.com/jakechampion/lang/internal/envflag"
 )
 
-// --- The allocation-count matrix (#7351) -------------------------------------
-//
-// The companion the leak matrix deliberately declines to be. That gate
-// classifies each cell CLEAN or LEAK, which is layout-free and so cannot see a
-// compiler allocating twice as many blocks as it needs for the same program:
-// 200 allocs against 200 frees at live_bytes 0 is `clean` whatever the count.
-// #7351, every self-host heap string costing a box block AND a data block, was
-// found by hand for exactly that reason.
-//
-// So this gate measures the one thing that is NOT layout: the COUNT of blocks
-// allocated per round. One block per array, one per struct box, one per heap
-// string is a property of the value graph, not of any box's size, so it stays
-// meaningful across capacity schedules and header changes. Each cell's count is
-// pinned in testdata/selfhost-alloc-count-matrix.txt, so a number rising is a
-// volume regression no runtime detector reports. The interpreter's exit code is
-// the oracle that the cell computed the right answer.
-//
-// `TestX86_64AllocScaling` bounds a RATIO inside one compiler and so is blind
-// to a constant factor; this pins the factor. x86-64 only, like the leak
-// matrix. Every cell embeds the loop variable in what it builds, so the folder
-// cannot turn it into a constant.
-
 type allocCell struct {
-	name string
-	src  string
-	// rounds is what the count is divided by, so a pinned number reads as
-	// "blocks per round" rather than a total that moves with the loop bound.
+	name   string
+	src    string
 	rounds int64
 }
 
-// allocMatrixCells is the corpus: the field-isolating probes #7351 was
-// characterised with, plus the composite that surfaced it. Every one runs 100
-// rounds and embeds `i` in what it builds.
 func allocMatrixCells() []allocCell {
 	const rounds = 100
 	return []allocCell{
@@ -77,9 +51,6 @@ function main(): i32 {
     return t % 97;
 }
 `},
-		// The two SSO cells: a result short enough for a small-string form,
-		// which the self-host does not have (#7351). `pick` makes the argument
-		// runtime-varying, so the folder cannot remove the allocation.
 		{name: "bare_str_sso", rounds: rounds, src: `function w(a: string): string { return a + "!"; }
 function pick(i: i32): string { if (i % 2 == 0) { return "p"; } return "q"; }
 function round(i: i32): i32 { let s: string = w(pick(i)); return s.len() + i; }
@@ -103,9 +74,6 @@ function main(): i32 {
     return t % 97;
 }
 `},
-		// Above the inline threshold on both compilers, so the only thing left
-		// to disagree about is how many blocks ONE heap string costs. This is
-		// the cell that read 100 against 200 before #7351 was fixed.
 		{name: "bare_str_heap", rounds: rounds, src: `function w(a: string): string { return a + "!"; }
 function pick(i: i32): string { if (i % 2 == 0) { return "abcdefghijklmnopqrstu"; } return "vwxyzabcdefghijklmnop"; }
 function round(i: i32): i32 { let s: string = w(pick(i)); return s.len() + i; }
@@ -129,10 +97,6 @@ function main(): i32 {
     return t % 97;
 }
 `},
-		// A CAPTURE-FREE function value (#9839), folded to a static cell, so
-		// the only block it costs is the struct box that holds it. The value is
-		// re-made every round rather than hoisted, so the cell measures the
-		// construction and not a loop-invariant.
 		{name: "capture_free_fn_value", rounds: rounds, src: `struct H { f: (i32) => i32 }
 function dbl(x: i32): i32 { return x * 2; }
 function round(i: i32): i32 { let h: H = H { f: dbl }; return h.f(i); }
@@ -144,9 +108,6 @@ function main(): i32 {
     return t % 97;
 }
 `},
-		// A self-append chain, the shape std/http's serialiser is built from
-		// (`hdr_block = hdr_block + name + ": " + value + "\r\n"`). A uniquely
-		// held accumulator grows in place through __fern_str_grow (#10960).
 		{name: "str_self_append_chain", rounds: rounds, src: `function piece(i: i32): string { if (i % 2 == 0) { return "abcdefghij"; } return "klmnopqrst"; }
 function round(i: i32): i32 {
     let s: string = piece(i);
@@ -162,8 +123,6 @@ function main(): i32 {
     return t % 97;
 }
 `},
-		// The composite #7351 was scoped from: one array field and one string
-		// field in the same box.
 		{name: "arr_and_str_heap", rounds: rounds, src: `struct P { xs: i32[], s: string }
 function w(a: string): string { return a + "!"; }
 function pick(i: i32): string { if (i % 2 == 0) { return "abcdefghijklmnopqrstu"; } return "vwxyzabcdefghijklmnop"; }
@@ -179,8 +138,6 @@ function main(): i32 {
 	}
 }
 
-// loadAllocMatrix reads testdata/selfhost-alloc-count-matrix.txt: the blocks
-// each cell allocates per round.
 func loadAllocMatrix(t *testing.T) map[string]int64 {
 	t.Helper()
 	path := filepath.Join("testdata", "selfhost-alloc-count-matrix.txt")
@@ -212,10 +169,6 @@ func loadAllocMatrix(t *testing.T) map[string]int64 {
 	return out
 }
 
-// selfHostAllocCount compiles src with the self-host x86-64 driver, links it
-// and returns the same pair. A refusal fails hard: every cell here is inside
-// the compilable subset, so a driver refusal is a frontend regression, not a
-// matrix update.
 func selfHostAllocCount(t *testing.T, gcc string, runner []string, driverBin, dir, name, src string) (int64, int) {
 	t.Helper()
 	asm := hevCompile(t, runner, driverBin, src, []string{"FERN_LEAKCHECK=1"})
@@ -241,13 +194,7 @@ func allocsFromLeakcheck(t *testing.T, label, stderr string) int64 {
 	return allocs
 }
 
-// TestSelfHostAllocCountMatrixX86_64 is the gate. FERN_ALLOC_COUNT_DUMP=1
-// prints every cell's measured row in matrix-file format instead of comparing,
-// for regenerating the pin after a deliberate change.
 func TestSelfHostAllocCountMatrixX86_64(t *testing.T) {
-	// CI-DARK: FERN_ALLOC_COUNT_DUMP — a regeneration tool, not coverage. It
-	// prints rows INSTEAD of comparing, so a lane setting it would disable this
-	// gate. The compare path below is the CI behaviour.
 	dump := envflag.On("FERN_ALLOC_COUNT_DUMP")
 	var known map[string]int64
 	if !dump {

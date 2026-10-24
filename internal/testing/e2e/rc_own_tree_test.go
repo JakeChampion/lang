@@ -4,13 +4,6 @@ import (
 	"testing"
 )
 
-// Consuming match generalises beyond lists to arbitrary recursive ADTs: a TREE
-// traversal over an `own` parameter reclaims each node's cell as it rebuilds
-// (each child binding is owned and consumed by the recursive call, whose own
-// consuming match frees its node). Two pointer payloads per node — the
-// consuming-match payload move handles both. Zero leak, bounded high-water.
-// This pins that the FBIP win covers nested structures, not just `Cons` lists.
-
 const ownTreeSrc = `enum Tree { Node(Tree, Tree, i32), Leaf }
 function inc(own t: Tree): Tree {
     match (t) {
@@ -52,9 +45,6 @@ func TestWASMOwnTreeMatch(t *testing.T) {
 	if got := runWasm(t, ownTreeSrc); got != 0 {
 		t.Errorf("tree inc: got %d, want 0", got)
 	}
-	// Bounded: each node cell is reclaimed (recycled into the rebuilt node), so
-	// a build→inc→total loop holds a flat high-water rather than leaking a tree
-	// per iteration.
 	bump := func(n string) string {
 		return `enum Tree { Node(Tree, Tree, i32), Leaf }
 function inc(own t: Tree): Tree { match (t) { Node(l,r,v) => { return Node(inc(l), inc(r), v+1); }, Leaf => { return Leaf; } } }

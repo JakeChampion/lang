@@ -10,10 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// TestSelfHostFStringPlaceholderNestDepth: an f-string placeholder is parsed
-// from depth zero, as the Go parser parses it, so nesting outside an f-string
-// and nesting inside its placeholder are each held to the limit on their own.
-// Each side here is about half the limit; together they are well past it.
 func TestSelfHostFStringPlaceholderNestDepth(t *testing.T) {
 	cli := e2eharness.SelfHostCLI(t)
 	root := e2eharness.SelfHostStdlibRoot(t)

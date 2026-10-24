@@ -8,10 +8,6 @@ import (
 	"testing"
 )
 
-// Operator overloading: `+` `-` `*` `/` on a struct/enum desugar to the
-// type's conventionally-named method (add/sub/mul/div), mirroring the
-// existing composite `==` (eq) / `<` (cmp) overloads. Here a 1-D vector:
-// (20+4)=24, -4=20, *4=80, /4=20 → r.x = 20. See #2706.
 const operatorOverloadSrc = `struct V { x: i32 }
 function (self: V) add(o: V): V { return V { x: self.x + o.x }; }
 function (self: V) sub(o: V): V { return V { x: self.x - o.x }; }

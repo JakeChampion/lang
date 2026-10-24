@@ -2,20 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// A fn value passed through a local bound to a bare module-function name
-// (#9010). The lift boxes every fn-value argument whose callee parameter is
-// fn-typed, because a module function's fn-typed parameter dispatches
-// env-first; it found the callee by name in the module table or, for a
-// local holding a lambda, in the lambda's params, and a local bound to a
-// NAMED function matched neither — so the argument went raw through the
-// binding's trampoline into a callee that read slot 0 of a code address.
-// The lift now follows the binding to that function's parameter.
-//
-// The shadowed spelling (`let withRes = taker; use x <- withRes()`) is
-// pinned in internal/testing/e2e's shadowed-generic gate; these are the spellings
-// with no shadow to lean on, which failed before #8982 too. Every row is
-// also run through the interpreter here, so the expected values are not
-// pinned by hand alone.
 const fnLocalAliasArgProlog = "function withRes(cb: (i32) => i32): i32 { return cb(4); }\n" +
 	"function other(cb: (i32) => i32): i32 { return cb(40); }\n" +
 	"function taker(f: (string) => i32): i32 { return f(\"hi\"); }\n" +

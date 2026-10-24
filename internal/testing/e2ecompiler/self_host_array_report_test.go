@@ -178,8 +178,6 @@ func TestSelfHostArrayReportMatchesEmission(t *testing.T) {
 	}
 	assertArrayReportRefusalsPreserved(t, report, disabled, "typed semantic fusion", "fused")
 	for _, text := range []string{report, disabled} {
-		// Each chain has one verdict. In particular its producers must not
-		// claim no-reduction-sink when the same chain ends at a fold.
 		for _, owner := range []string{"maps", "unresolved"} {
 			count := 0
 			for _, line := range strings.Split(text, "\n") {
@@ -206,8 +204,6 @@ func TestSelfHostArrayReportMatchesEmission(t *testing.T) {
 	assertArrayReportRefusalsPreserved(t, report, noReuse, "map storage", "guarded-reuse")
 }
 
-// Preserve the whole site and decision line, including the failing stage,
-// rather than accepting the right tag somewhere else in the histogram.
 func assertArrayReportRefusalsPreserved(t *testing.T, enabled, disabled, kind, success string) {
 	t.Helper()
 	header := "array report: primary Fern compiler, " + kind + "\n"

@@ -4,10 +4,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostArrEnumReclaimIRArm64 is the arm64 port of
-// TestSelfHostArrEnumReclaimIRX86_64: the element walk and its runtime variant
-// dispatch are target-independent IR, so arm64 needs no helper of its own.
-// Case table shared with the x86-64 leg.
 func TestSelfHostArrEnumReclaimIRArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range arrEnumReclaimCases {

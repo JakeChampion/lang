@@ -1,5 +1,3 @@
-// Usage: dsp fip|direct block_size blocks delay_samples unique|shared [samples]
-// Allocation measurement starts with the first callback after construction.
 import "./dsp_core";
 import "./dsp_fip";
 import "./dsp_direct";

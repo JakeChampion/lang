@@ -11,7 +11,6 @@ import (
 	"testing"
 )
 
-// Every public error type must support the common error and display contracts.
 func TestSelfHostStdlibErrorTraits(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	oracle := buildLangBinForInterp(t)

@@ -1,8 +1,8 @@
 import "core/int";
 import "std/json";
 
-// Audit fixture: std/json parse -> getters -> re-encode -> re-parse,
-// across every native backend.
+
+
 
 function main(): i32 {
     match (json.json_parse("{\"a\":1,\"b\":[2,3],\"c\":\"hi\"}")) {

@@ -5,12 +5,6 @@ import (
 	"testing"
 )
 
-// A negative number is a literal, and a literal is a pattern. The sign is a
-// separate token from the digits, so the single-token "does a literal start
-// here" test declined `-1` and the arm was rejected — by a message that
-// listed "literal" among what it accepted.
-//
-// Every arm position that takes a literal takes a negative one.
 func TestNegativeLiteralPatterns(t *testing.T) {
 	sources := []struct {
 		name string
@@ -48,9 +42,6 @@ func TestNegativeLiteralPatterns(t *testing.T) {
 	}
 }
 
-// `-` in arm position only introduces a number. An identifier there is a
-// variant name, not a value to negate, and must stay rejected rather than
-// being read as a negation of something.
 func TestNegativeArmRequiresANumber(t *testing.T) {
 	_, err := Parse(`function f(v: i32): i32 {
     match (v) { -x => { return 1; }, _ => { return 2; } }

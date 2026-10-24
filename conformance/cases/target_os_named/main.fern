@@ -1,8 +1,8 @@
-// What every implementation must agree on about target_os(): the value is
-// one of the documented environment names, and a branch on it takes the
-// arm that name selects — on the interpreter, where the host is the target,
-// as much as on a compile, where the value is a literal and the other arm
-// is pruned. The per-target values are target_os_linux / target_os_wasi.
+
+
+
+
+
 import "core/int";
 import "std/i32";
 

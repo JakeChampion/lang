@@ -2,13 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/f64.round_to(digits) — round to N decimal
-// places, half away from zero (like round). Positive digits round to the
-// fraction, negative digits round to tens / hundreds, and the whole thing scales
-// / rounds / unscales. Both f64 and f32. Uses tolerance bands (the result is the
-// nearest f64 to the rounded decimal). Returns 42 iff every check holds across
-// interp / x86-64 / wasm / arm64; each leg skips itself when its toolchain is
-// absent.
 const floatRoundToProg = `
 import "std/f64";
 function approx(a: f64, b: f64): boolean { let d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.0001; }

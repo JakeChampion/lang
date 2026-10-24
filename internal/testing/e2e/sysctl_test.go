@@ -1,4 +1,3 @@
-// `sysctl(mib)`: Darwin's kernel variables by MIB, refused everywhere else.
 package e2e
 
 import (
@@ -13,7 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// kern.ostype as text, and the load-average record's length.
 const sysctlSource = `function main(): i32 {
     match (sysctl([1, 1])) {
         Ok(bs) => {
@@ -39,7 +37,6 @@ const sysctlSource = `function main(): i32 {
 }
 `
 
-// The build is checked on every host; only Apple Silicon runs it.
 func TestArm64DarwinSysctl(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
@@ -63,8 +60,6 @@ func TestArm64DarwinSysctl(t *testing.T) {
 	}
 }
 
-// Only Darwin grants `sysctl`: Linux removed sysctl(2) and a component has no
-// kernel at all.
 func TestSysctlRefusedOffDarwin(t *testing.T) {
 	prog, err := parser.Parse(`function main(): i32 { match (sysctl([1, 1])) { Ok(_) => { return 0; }, Err(_) => { return 1; } } }`)
 	if err != nil {

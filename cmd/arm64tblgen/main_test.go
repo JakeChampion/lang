@@ -10,9 +10,6 @@ import (
 
 const arm64NativeFern = "../../compiler/arm64_native.fern"
 
-// TestGeneratedFernIsUpToDate is the gate that makes the shared table real:
-// a hand edit to either the table or a generated block fails here rather
-// than surfacing as a mnemonic one assembler accepts and the other drops.
 func TestGeneratedFernIsUpToDate(t *testing.T) {
 	src, err := os.ReadFile(arm64NativeFern)
 	if err != nil {
@@ -27,8 +24,6 @@ func TestGeneratedFernIsUpToDate(t *testing.T) {
 	}
 }
 
-// TestMarkersArePresent keeps the test above from passing vacuously: Rewrite
-// leaves a file with no markers untouched.
 func TestMarkersArePresent(t *testing.T) {
 	src, err := os.ReadFile(arm64NativeFern)
 	if err != nil {
@@ -47,11 +42,6 @@ func TestMarkersArePresent(t *testing.T) {
 	}
 }
 
-// TestScalarRowsAreWellFormed guards the by-name vocabulary's own shape: a
-// mnemonic listed twice would dispatch to one of its two rows, and a probe
-// that does not start with its mnemonic probes some other row. The self-host
-// side of the same probes is internal/testing/e2ecompiler's
-// TestSelfHostArm64TableRowsMatchGas.
 func TestScalarRowsAreWellFormed(t *testing.T) {
 	seen := map[string]bool{}
 	for _, fam := range arm64tbl.Scalar {
@@ -71,9 +61,6 @@ func TestScalarRowsAreWellFormed(t *testing.T) {
 	}
 }
 
-// TestVecRowsAreDistinct: a mnemonic listed twice in a class would dispatch
-// to one of its two rows. The self-host side of the same rows is
-// internal/testing/e2ecompiler's TestSelfHostArm64VecTableRowsMatchGas.
 func TestVecRowsAreDistinct(t *testing.T) {
 	for _, tbl := range arm64tbl.VecTables {
 		seen := map[string]bool{}

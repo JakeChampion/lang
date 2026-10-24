@@ -7,32 +7,11 @@ import (
 	"testing"
 )
 
-// enumPayloadArrReclaimCases pin #6758's recursive half: an enum variant whose
-// payload is an array OF THAT ENUM — the shape every tree type is built from.
-//
-//	enum N { Leaf(i32), Seq(N[]) }
-//
-// The recursive variant must not make the enum unreclaimable, and in
-// particular must not take the scalar `Leaf` variant down with it: `let n: N =
-// Leaf(i)` is flat, like the byte-identical `let m: M = A(i)` on a
-// non-recursive enum.
-//
-// Measured on x86-64, `__heap_bump_bytes()` delta across two identical churn
-// calls, bytes per iteration before -> after #6758:
-//
-//	let n: N = Leaf(i);                              40  -> 0
-//	let n: N = Seq([Leaf(i)]);                      112  -> 0
-//	let kids: N[] = [Leaf(i), Leaf(8)]; Seq(kids);  160  -> 0
-//
-// The nested case, `Seq([Seq([…])])`, is asserted CORRECT rather than flat,
-// since a wrong free there would be a use-after-free rather than a byte count.
 var enumPayloadArrReclaimCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// The scalar variant of a recursive enum. Nothing about this value involves
-	// an array — it leaked only because a sibling variant did.
 	{"recursive-enum-scalar-variant-flat", `enum N { Leaf(i32), Seq(N[]) }
 function main(): i32 {
     let acc: i32 = 0;
@@ -47,7 +26,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// The array-payload variant: buffer plus element boxes, all per iteration.
 	{"recursive-enum-array-payload-flat", `enum N { Leaf(i32), Seq(N[]) }
 function main(): i32 {
     let acc: i32 = 0;
@@ -62,7 +40,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// The payload built in a LOCAL first, which is #6758's third row verbatim.
 	{"recursive-enum-payload-via-local-flat", `enum N { Leaf(i32), Seq(N[]) }
 function main(): i32 {
     let acc: i32 = 0;
@@ -77,10 +54,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// VALUE guard. The payload is read back through a match after the loop has
-	// run many times, so an element freed while still reachable is a wrong
-	// answer (97) or a crash, not a byte count. This is the assertion that
-	// matters most: the release walks a buffer of live boxes.
 	{"recursive-enum-values-readable", `enum N { Leaf(i32), Seq(N[]) }
 function first_leaf(n: N): i32 {
     match (n) {
@@ -104,9 +77,6 @@ function main(): i32 {
     if (acc < 0) { return 96; }
     return 0;
 }`, 0},
-	// NESTED, two levels. Not asserted flat — the one-level release strands the
-	// inner buffer — but asserted CORRECT and over-release-free, which is what
-	// separates "leaks a level" from "frees something still live".
 	{"recursive-enum-nested-correct", `enum N { Leaf(i32), Seq(N[]) }
 function depth_sum(n: N): i32 {
     match (n) {
@@ -136,8 +106,6 @@ function main(): i32 {
 }`, 0},
 }
 
-// TestSelfHostEnumPayloadArrReclaimIRX86_64 drives the cases through the
-// self-hosted x86-64 compiler, heap-bump + underflow + value guarded.
 func TestSelfHostEnumPayloadArrReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -172,9 +140,6 @@ func TestSelfHostEnumPayloadArrReclaimIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostEnumPayloadArrReclaimIRArm64 is the arm64 leg — the other backend
-// that boxes an enum payload, and the one where a wrong release shows as a
-// SIGSEGV under qemu rather than a byte count.
 func TestSelfHostEnumPayloadArrReclaimIRArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range enumPayloadArrReclaimCases {

@@ -7,11 +7,6 @@ import (
 
 const reapFile = "reap-stale-runs.yml"
 
-// reap-stale-runs.yml cancels other people's runs on a schedule, so every guard
-// deciding WHICH run is a correctness boundary — and all of them live in an
-// inline `github-script` body where nothing type-checks them. The failure mode
-// is somebody's live CI cancelled from under them, visible only as a check that
-// never finished.
 func TestReapStaleRunsCancelsSafely(t *testing.T) {
 	src := workflowSource(t, reapFile)
 
@@ -42,11 +37,6 @@ func TestReapStaleRunsCancelsSafely(t *testing.T) {
 		}
 	}
 
-	// A doomed run is spared when the main validation is adopting it: the CI run
-	// at a merged PR's head, the merge having pushed that exact tree, with its
-	// suite under way, for 45 minutes after the merge. The window is a needle
-	// because it has to outlast ci.yml's wait for the run (CI_CHANGES_WAIT_MINUTES,
-	// 30) and no more: past it the run is a dead PR's run again.
 	for _, want := range []struct{ needle, why string }{
 		{"adoptedByMain", "nothing spares the run ci.yml's lane selector is waiting for"},
 		{"age > 45", "the sparing window must outlast ci.yml's 30-minute wait and then close"},
@@ -58,10 +48,6 @@ func TestReapStaleRunsCancelsSafely(t *testing.T) {
 		}
 	}
 
-	// The open pull requests have to be listed BEFORE the runs. In the other
-	// order a pull request opened mid-job has runs that were listed while it did
-	// not yet exist, so they match no open head and get reaped. Same trap
-	// cancel-on-merge.yml documents from the other side.
 	prs := strings.Index(src, "github.rest.pulls.list")
 	runs := strings.Index(src, "listWorkflowRunsForRepo")
 	switch {
@@ -74,9 +60,6 @@ func TestReapStaleRunsCancelsSafely(t *testing.T) {
 			"has its fresh runs matching no open head, and they get cancelled")
 	}
 
-	// Every status a run can sit in without having reached a terminal state. One
-	// missing here is a run that survives the sweep and keeps its slot — the
-	// whole point of the workflow.
 	for _, status := range []string{"requested", "waiting", "pending", "queued", "in_progress"} {
 		if !strings.Contains(src, `"`+status+`"`) {
 			t.Errorf("status %q is never swept: runs in it outlive the pull request "+
@@ -84,15 +67,6 @@ func TestReapStaleRunsCancelsSafely(t *testing.T) {
 		}
 	}
 
-	// The sweep must be startable by something that actually happens here.
-	//
-	// It shipped on a `*/20` cron alone and the cron never fired: 69 minutes and
-	// three slots after it merged, its only run was a manual dispatch. GitHub's
-	// scheduler sheds scheduled runs under load — the same load this sweep
-	// exists to relieve — so the one condition that makes it necessary is the
-	// condition that stops it starting. A repository event does not have that
-	// failure mode, and a merge or a closed pull request is exactly when runs go
-	// stale.
 	on, ok := onBlock(src)
 	if !ok {
 		t.Fatalf("%s has no `on:` block", reapFile)
@@ -107,21 +81,6 @@ func TestReapStaleRunsCancelsSafely(t *testing.T) {
 		}
 	}
 
-	// The sweep must carry NO concurrency group.
-	//
-	// `cancel-in-progress: false` protects the run holding a RUNNER; a run still
-	// waiting for one counts as pending, and GitHub keeps only the newest pending
-	// run per group. On a queue this deep nothing reaches a runner before the next
-	// merge arrives, so a group does not bound the sweep's cost — it guarantees it
-	// never finishes. That is what happened: with a group, runs 3 through 8 were
-	// each cancelled within seconds of the next trigger, having done nothing at
-	// all, and the workflow that exists to drain the queue had never once drained
-	// it.
-	//
-	// A slot per merge is affordable here for the same reason check-sources.yml
-	// gives for going without one: the job is seconds of API calls. Two sweeps
-	// overlapping is harmless — both list the open pull requests before the runs,
-	// and a cancel the other already made returns 409, which is handled above.
 	if _, ok := topLevelBlock(src, "concurrency"); ok {
 		t.Errorf("%s has a concurrency group again. A pending run is not protected by "+
 			"`cancel-in-progress: false`: the newest pending run replaces it, so on a "+

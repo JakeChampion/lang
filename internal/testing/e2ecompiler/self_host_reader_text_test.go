@@ -28,8 +28,6 @@ func checkReaderTextComponent(t *testing.T, compiler string, runner []string, st
 		t.Skip("requires wasmtime")
 	}
 	dir := t.TempDir()
-	// File and Reader text validation share one helper in a component.
-	// Exercise both together so duplicate or missing runtime definitions fail.
 	src = filepath.Join(dir, "mixed.fern")
 	mixed := strings.Replace(f.Source, "function main(): i32 {", `function main(): i32 {
   match (write_file("valid.txt", "é🙂")) { Err(_) => { return 230; }, Ok(_) => {} }
@@ -49,15 +47,11 @@ func checkReaderTextComponent(t *testing.T, compiler string, runner []string, st
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("component compile: %v\n%s", err, out)
 	}
-	// Components return through wasi:cli/run without the command module's
-	// exit-time census. Native/core legs below verify allocation balance.
 	run := exec.Command("wasmtime", "run", "--dir", ".", bin)
 	run.Dir = dir
 	f.Check(t, run)
 }
 
-// Also compile the interpreter with the current backend. The direct CLI
-// checks below cover the interpreter built by the pin's older runtime.
 func checkReaderTextInterpreter(t *testing.T, compiler string, runner []string, target, stdlib string, f e2eharness.ReaderTextFixture) {
 	t.Helper()
 	dir := t.TempDir()

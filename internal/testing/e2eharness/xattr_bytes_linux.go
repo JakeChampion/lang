@@ -7,12 +7,8 @@ import (
 	"testing"
 )
 
-// xattrAbsentText is strerror(ENODATA), what Linux answers for an
-// attribute that is not there.
 const xattrAbsentText = "No data available"
 
-// seedXattrBytesValue sets a user.* attribute. A filesystem that refuses user
-// attributes leaves nothing to read back, so the test cannot run there.
 func seedXattrBytesValue(t *testing.T, path, name, value string) {
 	t.Helper()
 	if err := syscall.Setxattr(path, name, []byte(value), 0); err != nil {
@@ -23,8 +19,6 @@ func seedXattrBytesValue(t *testing.T, path, name, value string) {
 	}
 }
 
-// readXattrBytesValue reads an attribute back through the host, so a probe's write
-// is checked by something other than the probe; ok is false when it is absent.
 func readXattrBytesValue(t *testing.T, path, name string) (string, bool) {
 	t.Helper()
 	buf := make([]byte, 256)

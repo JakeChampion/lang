@@ -5,26 +5,6 @@ import (
 	"testing"
 )
 
-// --- Sweepable rc-tuple reclaim (#6127) -------------------------------------
-//
-// A fresh non-escaping tuple local carrying an rc element — an array literal, a
-// string, a nested tuple, a reclaim-struct — has its FINAL value released at
-// scope exit, not only the values a reassignment replaces. Missed, a SINGLE BIND
-// with no reassignment anywhere leaked both the rc child and the tuple box,
-// every round:
-//
-//	(i32, i32[]) single bind    allocs=200 frees=0    8000
-//	(i32, string) single bind   allocs=200 frees=0    6400
-//
-// The exit release has no init literal to consult and must free by TYPE — see
-// the hazard test below for why that makes it stricter than the rebind.
-
-// TestSelfHostRcTupleSweepReclaimX86_64 — the final value of a sweepable rc-tuple
-// local is deep-freed: rc children first, then the box.
-//
-// allocs == frees is the essential assertion. frees short of allocs is the leak
-// this closes; frees ABOVE allocs would mean the sweep and the rebind path both
-// claimed a box, which is a double free rather than a leak.
 func TestSelfHostRcTupleSweepReclaimX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
@@ -59,15 +39,12 @@ func TestSelfHostRcTupleSweepReclaimX86_64(t *testing.T) {
 		return allocs, frees, live
 	}
 
-	// Every wantExit below was confirmed against bin/fern -interp, never read off
-	// the self-host run under test.
 	for _, tc := range []struct {
 		name string
 		src  string
 		want int
 	}{
 		{
-			// The array-element shape on a single bind.
 			name: "array_elem_single_bind",
 			src: `function round(i: i32): i32 {
     let t: (i32, i32[]) = (i, [i, i + 1]);
@@ -82,8 +59,6 @@ function main(): i32 {
 			want: 4,
 		},
 		{
-			// A string element: construction str_box's it into a fresh sole-owned copy,
-			// so the sweep's rc-aware __fern_str_free is balanced.
 			name: "string_elem_single_bind",
 			src: `function round(i: i32): i32 {
     let t: (i32, string) = (i, "abc");
@@ -98,8 +73,6 @@ function main(): i32 {
 			want: 21,
 		},
 		{
-			// The rc element is never read at all. Pins that the sweep fires on the
-			// binding itself rather than on some use.
 			name: "rc_elem_never_read",
 			src: `function round(i: i32): i32 {
     let t: (i32, string) = (i, "abc");
@@ -128,17 +101,6 @@ function main(): i32 {
 	}
 }
 
-// TestSelfHostRcTupleSweepHazardsX86_64 — the shapes the exit release must
-// still REFUSE.
-//
-// The first case is the use-after-free #6148 was reverted for. The exit release
-// frees by TYPE, dec'ing every rc-typed position BLIND, and `(xs, [i, i+2])`
-// holds a live local's buffer at position 0: sweeping that by type frees `xs`
-// underneath its owner.
-//
-// A wrongly-granted credit produces a wrong answer or a crash, so the exit code
-// comes first; the census must balance as well. Each `want` came from the
-// interpreter.
 func TestSelfHostRcTupleSweepHazardsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -151,9 +113,6 @@ func TestSelfHostRcTupleSweepHazardsX86_64(t *testing.T) {
 		want int
 	}{
 		{
-			// THE trap. An rc-typed position holding a LIVE LOCAL's buffer, read after
-			// the tuple is built. A type-driven sweep would free xs's buffer while xs
-			// still owns it.
 			name: "ident_elem_aliases_live_local",
 			src: `function round(i: i32): i32 {
     let xs: i32[] = [i, i + 1];
@@ -169,8 +128,6 @@ function main(): i32 {
 			want: 28,
 		},
 		{
-			// The rc element is extracted out of the tuple into a local that outlives
-			// the read, so the buffer `keep` names must stay alive.
 			name: "rc_elem_extracted_to_local",
 			src: `function round(i: i32): i32 {
     let t: (i32, i32[]) = (i, [i, i + 1]);
@@ -186,8 +143,6 @@ function main(): i32 {
 			want: 44,
 		},
 		{
-			// The tuple escapes by return — moved to the caller, so the callee must
-			// not sweep it.
 			name: "escaping_return",
 			src: `function mk(i: i32): (i32, i32[]) { let t: (i32, i32[]) = (i, [i, i + 1]); return t; }
 function round(i: i32): i32 { let p: (i32, i32[]) = mk(i); return p.0 + p.1.len(); }
@@ -200,8 +155,6 @@ function main(): i32 {
 			want: 44,
 		},
 		{
-			// The rc element leaves as a bare call argument, so the callee may retain
-			// the buffer.
 			name: "rc_elem_escapes_into_call",
 			src: `function take(a: i32[]): i32 { return a.len(); }
 function round(i: i32): i32 {
@@ -217,7 +170,6 @@ function main(): i32 {
 			want: 44,
 		},
 		{
-			// REASSIGNED: every superseded value and the final one must be released.
 			name: "reassigned",
 			src: `function round(i: i32): i32 {
     let t: (i32, string) = (i, "abc");

@@ -1,36 +1,3 @@
-// tests/proposals/hangman.fern — proposal turn, drawn line 126:
-// "A hangman game with a word list and a guess tracker."
-//
-// A game is usually written as a loop around an input prompt, which is
-// untestable. This is the state machine underneath one: `guess` takes a game
-// and a letter and returns a game, so a play-through is a fold and every
-// intermediate state is a value you can assert about.
-//
-// The guess tracker is the interesting half. Hangman's whole rule set is about
-// what a repeat guess costs (nothing), what an already-finished game does
-// (nothing), and exactly when the two terminal states fire. All four are
-// invisible in a transcript and obvious in a state machine, so they are what
-// the tests are about:
-//
-//   - guessing a letter twice must leave the game BYTE-IDENTICAL, not merely
-//     "not lose a life" — the mask, the wrong count, and the tracker all
-//     unchanged;
-//   - a finished game is absorbing, so a late guess cannot un-win it;
-//   - the win fires on the guess that completes the word, not one after;
-//   - the loss fires on the max_wrong'th wrong guess, not the one before.
-//
-// The independent oracle is a from-scratch recomputation: given the set of
-// letters guessed so far, the mask and the wrong count can be derived directly
-// from the word without stepping through anything. Stepping and deriving must
-// agree at every prefix of every play-through, which is a much stronger claim
-// than agreeing at the end.
-//
-// The tracker is a `Set[string]` from std/set rather than a hand-rolled
-// string, so the app leans on the generic + trait-bound path rather than
-// re-implementing membership.
-//
-// The app writes its report to stderr; stdout carries TAP-13 from std/test.
-
 import "std/test";
 import "std/i32";
 import "std/set";
@@ -63,8 +30,6 @@ function word_has(w: string, c: string): boolean {
   return false;
 }
 
-// The distinct letters of a word, which is what "guessed everything" means —
-// a repeated letter is one thing to find, not two.
 function distinct_letters(w: string): set.Set[string] {
   let s: set.Set[string] = set.set_new();
   for i in 0..w.len() {
@@ -85,9 +50,6 @@ function is_over(g: Game): boolean {
   return is_won(g) || is_lost(g);
 }
 
-// The three rules that make hangman hangman, in the order they apply:
-// a finished game ignores everything; a repeat guess is free; and only a
-// letter that is not in the word costs a life.
 function guess(g: Game, c: string): Game {
   if (is_over(g)) {
     return g;
@@ -122,10 +84,6 @@ function remaining(g: Game): i32 {
   return distinct_letters(g.word).difference(g.guessed).len();
 }
 
-// ---------------------------------------------------------------- oracle
-
-// The mask, derived from the word and a set of letters with no game state in
-// between. `masked` walks the game; this walks the word. They must agree.
 function derived_mask(word: string, letters: string[]): string {
   let out: string = "";
   for i in 0..word.len() {
@@ -145,8 +103,6 @@ function derived_mask(word: string, letters: string[]): string {
   return out;
 }
 
-// The wrong count, derived the same way: how many DISTINCT letters in the
-// sequence are absent from the word, counting a repeat once.
 function derived_wrong(word: string, letters: string[]): i32 {
   let n: i32 = 0;
   for k in 0..letters.len() {
@@ -190,12 +146,6 @@ function alphabet(): string[] {
   return chars_of("abcdefghijklmnopqrstuvwxyz");
 }
 
-// ----------------------------------------------------------------- tests
-
-// THE test. A repeat guess must leave the game BYTE-IDENTICAL — not merely
-// "not cost a life". A tracker that re-adds the letter, or a mask that
-// recomputes differently the second time, passes a life-count assertion and
-// fails this one.
 function test_a_repeated_guess_changes_nothing(): test.TestOutcome {
   let ws: string[] = words();
   for i in 0..ws.len() {
@@ -216,17 +166,6 @@ function test_a_repeated_guess_changes_nothing(): test.TestOutcome {
   return test.pass();
 }
 
-// Stepping and deriving must agree at EVERY PREFIX, not just at the end — a
-// state machine that drifts and re-syncs would pass a final-state check.
-//
-// The derivation is only valid while the game is still running. Once it is
-// over the game stops accepting guesses, so `derived_wrong` — which counts
-// every absent letter in the sequence — deliberately parts company with it.
-// That is not a gap in the test: the two regimes are checked separately, the
-// running one against the derivation and the finished one against itself, and
-// the pair is strictly stronger than either. The first draft asserted the
-// derivation throughout and failed on "banana", which the guess sequence
-// completes with five letters still to come.
 function test_stepping_agrees_with_deriving_at_every_prefix(): test.TestOutcome {
   let ws: string[] = words();
   let seq: string[] = chars_of("aeioubcnrsxyz");
@@ -264,8 +203,6 @@ function test_stepping_agrees_with_deriving_at_every_prefix(): test.TestOutcome 
   return test.pass();
 }
 
-// The win fires on the guess that completes the word — not before, and the
-// game must not already be won at the start of a non-empty word.
 function test_the_win_fires_exactly_on_the_last_letter(): test.TestOutcome {
   let ws: string[] = words();
   for i in 0..ws.len() {
@@ -295,9 +232,6 @@ function test_the_win_fires_exactly_on_the_last_letter(): test.TestOutcome {
   return test.pass();
 }
 
-// The loss fires on the max_wrong'th wrong guess, not the one before it. Off
-// by one in either direction is a different game, and both directions are
-// checked because only one of them is visible from a transcript.
 function test_the_loss_fires_exactly_at_max_wrong(): test.TestOutcome {
   for limit in 1..7 {
     let g: Game = new_game("fern", limit);
@@ -318,9 +252,6 @@ function test_the_loss_fires_exactly_at_max_wrong(): test.TestOutcome {
   return test.pass();
 }
 
-// A finished game is absorbing. Without this a late correct guess can un-lose
-// a game, or a late wrong one can un-win it — both reachable in any UI that
-// does not itself check.
 function test_a_finished_game_ignores_further_guesses(): test.TestOutcome {
   let won: Game = play("fern", 6, chars_of("fern"));
   if (!is_won(won)) {
@@ -345,18 +276,6 @@ function test_a_finished_game_ignores_further_guesses(): test.TestOutcome {
   return test.pass();
 }
 
-// Order must not matter for a game that never ends: the same set of letters,
-// guessed in any order, reaches the same state. A tracker that is
-// order-sensitive — a list compared positionally, say — passes every
-// single-sequence test.
-//
-// "for a game that never ends" is essential, and the first draft left it
-// out and was wrong. Once a game terminates it stops accepting guesses, so a
-// sequence that wins early and one that wins late genuinely differ in how many
-// wrong guesses they recorded — order matters exactly as much as termination
-// does. The letter set here is the alphabet MINUS one letter the word
-// contains, so the word can never be completed, and max_wrong is far above the
-// 25 guesses available. Under those conditions the claim is unconditional.
 function test_the_order_of_guesses_does_not_matter(): test.TestOutcome {
   let ws: string[] = words();
   for i in 0..ws.len() {
@@ -388,8 +307,6 @@ function test_the_order_of_guesses_does_not_matter(): test.TestOutcome {
   return test.pass();
 }
 
-// What is left to find only ever shrinks, and reaches zero exactly when the
-// game is won. Monotonicity is what makes the game finite.
 function test_what_is_left_only_shrinks(): test.TestOutcome {
   let ws: string[] = words();
   let az: string[] = alphabet();
@@ -422,9 +339,6 @@ function test_what_is_left_only_shrinks(): test.TestOutcome {
   return test.pass();
 }
 
-// A word of one repeated letter and a word of all-distinct letters are the two
-// degenerate shapes, and "aaa" is the one where counting occurrences instead
-// of distinct letters gives the wrong answer.
 function test_repeated_letters_count_once(): test.TestOutcome {
   let g: Game = new_game("aaa", 6);
   if (remaining(g) != 1) {
@@ -445,8 +359,6 @@ function test_repeated_letters_count_once(): test.TestOutcome {
   }
   return test.pass();
 }
-
-// ------------------------------------------------------------------- app
 
 function main(): i32 {
   eprint("hangman — a word list and a guess tracker");

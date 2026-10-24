@@ -1,12 +1,12 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// A struct literal consuming an owned string local at its last use
-// moves the string into the field (no field-init inc, no exit-sweep
-// dec). `keep` is the guard on that: its string is read AFTER the
-// literal, so the move must not fire and both readings must still
-// see live characters — a wrong move frees the buffer under the
-// second read. 200 * (16 + 13) for the moved pair, 2 * 14 for keep.
+
+
+
+
+
+
+
+
+
 import "core/int";
 import "std/i32";
 import "std/string";

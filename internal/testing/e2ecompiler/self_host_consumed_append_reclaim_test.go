@@ -9,32 +9,12 @@ import (
 	"testing"
 )
 
-// consumedAppendCases pin #6501's self-host half: an `.append` result handed
-// straight to a borrowing call — `sink(path.append(i))` — is owned by nobody
-// once the callee has read it, so one whole array buffer leaked per call. That
-// is how an immutable trail is threaded down a recursion (backtracking, DFS
-// with a path, subset and permutation enumeration), so the leak was unbounded
-// on the ordinary path.
-//
-// One post-call release covers BOTH of __fern_arr_push_grow's outcomes, which
-// is why no is_unique test is needed: the copy path hands back a fresh buffer
-// at rc 1, which the dec frees, and the in-place path bumps the receiver to
-// rc 2 before handing it back, which the dec nets down to the receiver's own
-// single reference. Reclaiming one the way the other wants is a use-after-free,
-// so every case here reads its receiver again afterwards — a release of the
-// wrong buffer is a wrong ANSWER, not merely a byte count.
-//
-// A pointer-element copy shares the original's elements, so its release must
-// not free them out from under the receiver; pointer-elem-receiver-read-after
-// pins that.
 var consumedAppendCases = []struct {
 	name string
 	src  string
 	want int
 	wasm bool
 }{
-	// The grow COPIES: `full` has no spare capacity, so the temp is a fresh
-	// buffer nobody else holds and the dec frees it. 56 B/round before.
 	{"copy-path-receiver-read-after", `function sink(xs: i32[]): i32 { let s: i32 = 0; let i: i32 = 0; while (i < xs.len()) { s = s + xs[i]; i = i + 1; } return s; }
 function work(n: i32): i32 {
     let full: i32[] = [n, n + 1];
@@ -55,10 +35,6 @@ function main(): i32 {
     return 0;
 }`, 0, true},
 
-	// The grow mutates IN PLACE: `roomy` has spare capacity at rc==1, so the
-	// helper bumps the receiver's count and hands the RECEIVER back. The same
-	// dec must net that bump away and free nothing — `roomy` is summed again
-	// after the call to say so.
 	{"inplace-path-frees-nothing", `function sink(xs: i32[]): i32 { let s: i32 = 0; let i: i32 = 0; while (i < xs.len()) { s = s + xs[i]; i = i + 1; } return s; }
 function work(n: i32): i32 {
     let roomy: i32[] = [];
@@ -82,9 +58,6 @@ function main(): i32 {
     return 0;
 }`, 0, true},
 
-	// The ELEMENT-receiver spelling: the container still owns what the append
-	// read, and `xs[0]` is not an Ident so it reaches the classifier by a
-	// different route than a bare local.
 	{"element-receiver", `function sink(xs: i32[]): i32 { let s: i32 = 0; let i: i32 = 0; while (i < xs.len()) { s = s + xs[i]; i = i + 1; } return s; }
 function work(n: i32): i32 {
     let xs: i32[][] = [[n], [n + 1]];
@@ -105,9 +78,6 @@ function main(): i32 {
     return 0;
 }`, 0, true},
 
-	// The shape the leak class is named for: a PARAM receiver appended once
-	// per iteration and consumed immediately. 8 leaks per call before, so this
-	// is the case that was unbounded in the way a real backtracking search is.
 	{"param-receiver-in-loop", `function sink(xs: i32[]): i32 { let s: i32 = 0; let i: i32 = 0; while (i < xs.len()) { s = s + xs[i]; i = i + 1; } return s; }
 function walk(path: i32[]): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 8) { t = t + sink(path.append(i)); i = i + 1; } return t; }
 function work(n: i32): i32 {
@@ -128,8 +98,6 @@ function main(): i32 {
     return 0;
 }`, 0, true},
 
-	// A string[] receiver: the temp shares its element strings with `ss`,
-	// which is read again after the call.
 	{"pointer-elem-receiver-read-after", `function sink(xs: string[]): i32 { let s: i32 = 0; let i: i32 = 0; while (i < xs.len()) { s = s + xs[i].len(); i = i + 1; } return s; }
 function tag(k: i32): string { if (k == 0) { return "zero"; } return "many"; }
 function work(n: i32): i32 {
@@ -154,8 +122,6 @@ function main(): i32 {
 }`, 0, true},
 }
 
-// TestSelfHostConsumedAppendReclaimX86_64 drives the cases through the
-// self-hosted x86-64 compiler.
 func TestSelfHostConsumedAppendReclaimX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -183,7 +149,6 @@ func TestSelfHostConsumedAppendReclaimX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostConsumedAppendReclaimArm64 is the arm64 leg.
 func TestSelfHostConsumedAppendReclaimArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -207,7 +172,6 @@ func TestSelfHostConsumedAppendReclaimArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostConsumedAppendReclaimWasmIR is the wasm leg.
 func TestSelfHostConsumedAppendReclaimWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping consumed-append reclaim wasm IR e2e")

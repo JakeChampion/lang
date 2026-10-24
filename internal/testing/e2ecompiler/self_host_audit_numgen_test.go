@@ -7,17 +7,11 @@ import (
 	"testing"
 )
 
-// auditNumGenCases isolate sized-int / float numeric features and
-// generics / traits / closures, run through the SELF-HOSTED compiler.
-// Self-host arm of the §A audit (docs/FEATURE-AUDIT.md); the conformance
-// cases `audit_numeric_types` + `audit_generics_traits_closures` cover the
-// same features.
 var auditNumGenCases = []struct {
 	name string
 	src  string
 	exit int
 }{
-	// sized ints + floats
 	{"i64-add", `function main(): i32 { let big: i64 = 5000000000; let big1: i64 = big + 1; return (big1 - big) as i32; }`, 1},
 	{"i64-mul", `function main(): i32 { let prod: i64 = 1000000 * 3; return (prod / 1000000) as i32; }`, 3},
 	{"u8-wrap", `function main(): i32 { let v: i32 = 250 + 10; let w: u8 = v as u8; return w as i32; }`, 4},
@@ -25,7 +19,6 @@ var auditNumGenCases = []struct {
 	{"f64-mul", `function main(): i32 { let fx: f64 = 3.5; return (fx * 2.0) as i32; }`, 7},
 	{"f64-cmp", `function main(): i32 { let a: f64 = 1.5; let b: f64 = 2.5; if (!(a < b) || !(b > a) || (a >= b)) { return 1; } return 9; }`, 9},
 	{"f32-add", `function main(): i32 { let g: f32 = 2.5; let h: f32 = g + 1.5; return h as i32; }`, 4},
-	// generics / traits / closures
 	{"generic-fn", `function id[T](x: T): T { return x; } function main(): i32 { return id(42); }`, 42},
 	{"generic-struct", `struct Box[T] { v: T } function main(): i32 { let b: Box[i32] = Box { v: 33 }; return b.v; }`, 33},
 	{"generic-method", `struct Box[T] { v: T } function (b: Box[i32]) get(): i32 { return b.v; } function main(): i32 { let b: Box[i32] = Box { v: 33 }; return b.get(); }`, 33},
@@ -34,11 +27,9 @@ var auditNumGenCases = []struct {
 	{"closure-capture", `function main(): i32 { let n: i32 = 10; let f: (i32) => i32 = (x: i32): i32 => { return x + n; }; return f(5); }`, 15},
 	{"fn-value", `function dbl(x: i32): i32 { return x * 2; } function main(): i32 { let f: (i32) => i32 = dbl; return f(21); }`, 42},
 	{"higher-order", `function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { let inc: (i32) => i32 = (x: i32): i32 => { return x + 1; }; return apply(inc, 41); }`, 42},
-	{"tail-call", `function sum_to(n: i32, acc: i32): i32 { if (n == 0) { return acc; } return sum_to(n - 1, acc + n); } function main(): i32 { return sum_to(100, 0); }`, 186}, // 5050 mod 256
+	{"tail-call", `function sum_to(n: i32, acc: i32): i32 { if (n == 0) { return acc; } return sum_to(n - 1, acc + n); } function main(): i32 { return sum_to(100, 0); }`, 186},
 }
 
-// TestSelfHostAuditNumGenX86_64 runs each numeric/generics case through
-// the self-hosted x86-64 driver and asserts the exit code.
 func TestSelfHostAuditNumGenX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -72,7 +63,6 @@ func TestSelfHostAuditNumGenX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostAuditNumGenArm64 — CI-gated arm64 counterpart.
 func TestSelfHostAuditNumGenArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range auditNumGenCases {

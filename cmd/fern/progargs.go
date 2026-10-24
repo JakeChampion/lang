@@ -5,17 +5,6 @@ import (
 	"strings"
 )
 
-// programArgs turns the command line remaining after FILE into the vector the
-// program observes through `args()[1:]`. Both engines go through it, so an
-// interpreted run and a compiled binary see the same arguments for the same
-// command tail.
-//
-// One leading `--` separates driver flags from program arguments and is
-// consumed here; a later `--` is ordinary data, so `-- -- x` passes a literal
-// `--` through. Without that separator a leading `-…` is a driver flag written
-// past the point Go's flag package stops parsing: accepting it would silently
-// reinterpret it as program data, so it is refused instead. A bare `-` is the
-// conventional stdin/stdout filename and stays data.
 func programArgs(rest []string) ([]string, error) {
 	if len(rest) == 0 {
 		return nil, nil
@@ -31,9 +20,6 @@ func programArgs(rest []string) ([]string, error) {
 	return rest, nil
 }
 
-// documentArgsError explains a -tangle / -weave / -doctest command line with
-// more than the one document: flags past it are not parsed, so `-o OUT`
-// written after the document would otherwise be dropped without a word.
 func documentArgsError(args []string) string {
 	extra := args[1]
 	if len(extra) > 1 && strings.HasPrefix(extra, "-") {

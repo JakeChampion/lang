@@ -1,30 +1,5 @@
 package e2e
 
-// The accuracy gate for the f64 transcendentals — sin / cos / exp / log / pow
-// — on every lane. They are std/f64's own Fern (one definition every
-// backend compiles and the interpreter runs), so each lane is held to the
-// same bound and, in TestF64TranscendentalBackendsAgree, to the same bits.
-//
-// This exists because its absence was the bug. The kernels shipped for months
-// described in their own comments as accurate to "a few ulp" while actually
-// measuring 3.2e10 ulp (sin), 4.5e7 (exp) and 9844 (log), and the only test
-// covering them asserted `assert_eq_f64_near(..., 0.000001)` — a tolerance
-// loose enough to pass anyway. A relative-epsilon assertion cannot express
-// "correct to the last bit"; ulp distance can, so that is what this measures.
-//
-// The comparison is on RAW BIT PATTERNS via `f64_bits`, not on printed
-// decimals, so a rounding difference in float formatting cannot mask or
-// manufacture a discrepancy.
-//
-// Special values are checked first and separately. They are where the failure
-// mode is qualitative rather than quantitative: before the domain guards,
-// exp(1000) returned -6.1e-183 instead of +Inf (the 2^k reconstruction builds
-// the exponent field as (k+1023)<<52 and silently overflowed into the SIGN
-// bit), log(0) returned -709.09 instead of -Inf, and log(-1) returned 0
-// instead of NaN. None of those are "inaccurate" — they are wrong answers on
-// ordinary inputs, and no ulp bound would have caught them because the
-// sweep that found the accuracy problem never probed there.
-
 import (
 	"fmt"
 	"math"
@@ -40,22 +15,10 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// maxULP is the bound each finite case must meet. The kernels are fdlibm's,
-// which are ~1 ulp by construction; 2 leaves room for the last-place
-// disagreement between two correctly-implemented roundings without leaving
-// room for an algorithmic error.
 const maxULP = 2
 
-// interpULP matches the compiled bound: the interpreter runs std/f64's Fern
-// kernels like any other code rather than delegating to Go's `math`, which is
-// wrong past the bound on all three of sin, exp and log — unbounded in ulp
-// terms near a zero of sine, +Inf across [709.436, 709.7827) for exp, and
-// saturated at ln(2^-1022) for every subnormal argument to log.
 const interpULP = maxULP
 
-// The log kernel's band edges and table shape (std/f64's _fd_log): the near-1
-// path covers bits(x) in [logNear1Lo, logNear1Hi), and table row i covers the
-// z whose bits(z) - logOff has i in its top logTableBits mantissa bits.
 const (
 	logNear1Lo   = 0x3fee000000000000
 	logNear1Hi   = 0x3ff1090000000000
@@ -63,15 +26,6 @@ const (
 	logTableBits = 7
 )
 
-// f64UlpInputs spans the ranges where each function's argument reduction does
-// different work: near zero, around the first few multiples of pi/2 (where
-// sin/cos switch quadrant), far enough out that a single-rounded pi/2
-// reduction visibly loses digits (|x| ~ 10 was where the old kernels shed
-// about seven of them), and past 2^20, where Cody-Waite stops being exact and
-// the Payne-Hanek path takes over (#7878) — up to the top of the exponent
-// range, including 6381956970095103*2^797, the double with the smallest
-// reduced remainder of all. Before those large entries existed, sin(1e18)
-// returned -3.47e18 on every compiled backend and nothing failed.
 var f64UlpInputs = []float64{
 	0, 1e-8, 0.25, 0.5, 0.7853981633974483, 1, 1.5707963267948966,
 	2, 3.141592653589793, 4, 6.283185307179586, 7, 10, 12.5, 25, 100,
@@ -80,45 +34,23 @@ var f64UlpInputs = []float64{
 	5.3193726483265414e+255, math.MaxFloat64,
 	-1e-8, -0.5, -1, -2, -3.141592653589793, -7, -10, -100, -1000,
 	-1e7, -1e10, -1e18, -1e30, -1e300, -math.MaxFloat64,
-	// Results far smaller than the argument, on both reduction paths: the
-	// reduced argument's absolute error is a large relative error there, and
-	// these were 2 to 3 ulp out while the reduction rounded it to one double
-	// (#12042).
 	-8.167959597007928e+21, -9.85526768282372e+21, -2.217216507044164e+21,
 	9.018962311905212e+21, -5.150187184512172e+21, -2.4335988196029356e+21,
 	-4.0537208950325064e+21, -842990.3548382078, -58671.335186358076,
 	727539.9738490027,
 }
 
-// f64UlpPosInputs are the log-only inputs: strictly positive, spanning the
-// smallest normal through the top of the exponent range. The subnormals below
-// it are not here but in f64UlpCases, against literal bit patterns.
 var f64UlpPosInputs = []float64{
 	2.2250738585072014e-308, 1e-300, 1e-30, 1e-5, 0.1, 0.5, 0.9, 1, 1.0000001,
 	1.5, 2, 2.718281828459045, 10, 1e5, 1e30, 1e300, math.MaxFloat64,
 }
 
-// sinCosULP is sin and cos's bound: the reduction carries the reduced
-// argument as y0 + y1 into kernels that take y1 as a correction, which holds
-// both within one ulp of the correctly rounded result on either path.
 const sinCosULP = 1
 
-// powULP is pow's bound: log|x| and y log|x| are carried as hi + lo into an
-// exp that takes lo as a correction, so the result is rounded once from a
-// value within about 0.02 ulp of x^y.
 const powULP = 1
 
-// logULP is log's bound against the correctly rounded result: the table
-// kernel measures 0.53 ulp from the true value, so it rounds to within one of
-// the correctly rounded double everywhere.
 const logULP = 1
 
-// f64LogInputs is the corpus that gates log's two paths where they are
-// weakest: the band around 1, where the result is as small as the table
-// path's absolute error and the near-1 path takes over, stepped through and
-// probed a few ulp either side of both of its bounds and of 1 itself; and
-// both sides of a spread of the table's subinterval edges, at several
-// exponents.
 func f64LogInputs() []float64 {
 	var xs []float64
 	for j := range 81 {
@@ -140,22 +72,15 @@ func f64LogInputs() []float64 {
 	return xs
 }
 
-// refLog computes ln x past double precision and rounds once.
 func refLog(x float64) float64 {
 	out, _ := bigLn(x).Float64()
 	return out
 }
 
-// refPrecLnExp is the working precision of bigLn and bigExp: 256 bits
-// outlasts both the 53 that ln m + e*ln2 can cancel for x just above 1 and the
-// 11 that exp's argument spends on its integer part.
 const refPrecLnExp = 256
 
 func newRef() *big.Float { return new(big.Float).SetPrec(refPrecLnExp) }
 
-// bigLn is ln x for a positive finite x. x = 2^e*m with m in [1, 2),
-// ln m = 2*atanh((m-1)/(m+1)), and the series converges by at least a factor
-// of 9 per term.
 func bigLn(x float64) *big.Float {
 	frac, e := math.Frexp(x)
 	m := newRef().SetFloat64(2 * frac)
@@ -163,7 +88,6 @@ func bigLn(x float64) *big.Float {
 	return newRef().Add(bigAtanh2(t), newRef().Mul(bigLn2(), newRef().SetInt64(int64(e-1))))
 }
 
-// bigAtanh2 is 2*atanh(t) for |t| <= 1/3.
 func bigAtanh2(t *big.Float) *big.Float {
 	t2 := newRef().Mul(t, t)
 	term, sum := newRef().Set(t), newRef().Set(t)
@@ -182,8 +106,6 @@ func bigLn2() *big.Float {
 	return bigAtanh2(newRef().Quo(newRef().SetInt64(1), newRef().SetInt64(3)))
 }
 
-// bigExp is e^v for |v| < 2^20: v = k*ln2 + r with |r| <= ln2/2, and the
-// Taylor series of e^r.
 func bigExp(v *big.Float) *big.Float {
 	ln2 := bigLn2()
 	q, _ := newRef().Quo(v, ln2).Float64()
@@ -201,9 +123,6 @@ func bigExp(v *big.Float) *big.Float {
 	return sum.SetMantExp(sum, int(k))
 }
 
-// refPow is x^y rounded once, for a finite x != 0 whose sign an integral y
-// carries, and |y ln|x|| below the 2^20 bigExp takes. Go's math.Pow is not a
-// usable oracle once |y log x| is large: its own error grows with it.
 func refPow(x, y float64) float64 {
 	sign := 1.0
 	if x < 0 {
@@ -216,53 +135,24 @@ func refPow(x, y float64) float64 {
 	return sign * out
 }
 
-// ---- the reference ----
-//
-// Go's own math.Sin is NOT a usable oracle near a zero of sine. For
-// x = π (as a double), the true sin(x) is π − x = 1.2246467991473531772e-16,
-// so the correctly-rounded double ends …532; Go returns …515, which is ~7 ulp
-// and 1.4e-15 relative. Measuring against it would have failed a CORRECT
-// implementation and, worse, would have passed a subtly wrong one that
-// happened to reproduce Go's error.
-//
-// So sin/cos are referenced against a 1400-bit computation instead: reduce
-// with a 420-digit π, then a Taylor series that converges long before the
-// working precision runs out. exp and log keep Go's math over the range where
-// it is accurate to within the bound, and fall back to a literal bit pattern
-// per row where it is not — exp's two overflow/underflow bands, log's
-// subnormals. pow is referenced against refPow, a 256-bit big.Float log and
-// exp, since math.Pow's own error grows with |y log x|.
-
-// piDigits is 420 significant digits (~1395 bits) and refPrec is sized to
-// match. Both are set by the LARGEST argument the sweep reduces, not by the
-// precision of the answer: r = x - k*(pi/2) cancels away everything but the
-// last few bits, so reducing a value near the top of the exponent range needs
-// pi to ~1024 + 53 bits before the remainder has any correct digits at all.
-// At the previous 350 bits / 101 digits, every input past ~1e19 was reduced
-// against noise, which is why none were in the corpus.
 const piDigits = "3.1415926535897932384626433832795028841971693993751058209749445923078164062862089986280348253421170679821480865132823066470938446095505822317253594081284811174502841027019385211055596446229489549303819644288109756659334461284756482337867831652712019091456485669234603486104543266482133936072602491412737245870066063155881748815209209628292540917153643678925903600113305305488204665213841469519415116094330572703657595919"
 
 const refPrec = 1400
 
 func bigFrom(f float64) *big.Float { return new(big.Float).SetPrec(refPrec).SetFloat64(f) }
 
-// refSinCos computes sin(x) and cos(x) to refPrec bits, then rounds to double.
 func refSinCos(x float64) (sin, cos float64) {
 	pi, _, _ := big.ParseFloat(piDigits, 10, refPrec, big.ToNearestEven)
 	half := new(big.Float).SetPrec(refPrec).Quo(pi, bigFrom(2))
 	bx := bigFrom(x)
 
-	// k = round(x / (π/2)); r = x − k·(π/2), all at refPrec so the
-	// subtraction that matters is not the one that loses the answer. k is a
-	// big.Int because it reaches ~2^1024/(π/2) at the top of the range, where
-	// an int64 silently saturates.
 	q := new(big.Float).SetPrec(refPrec).Quo(bx, half)
 	if q.Sign() >= 0 {
 		q.Add(q, big.NewFloat(0.5))
 	} else {
 		q.Sub(q, big.NewFloat(0.5))
 	}
-	ki, _ := q.Int(nil) // truncation of q±½ is round-half-away
+	ki, _ := q.Int(nil)
 	kb := new(big.Float).SetPrec(refPrec).SetInt(ki)
 	r := new(big.Float).SetPrec(refPrec).Sub(bx, new(big.Float).SetPrec(refPrec).Mul(half, kb))
 	k := new(big.Int).Mod(ki, big.NewInt(4)).Int64()
@@ -282,13 +172,10 @@ func refSinCos(x float64) (sin, cos float64) {
 	return sin, cos
 }
 
-// taylorSinCos sums the two series for |r| <= π/4. The term count follows
-// refPrec: at 1400 bits the tail has to fall below 2^-1400, which 0.785^n/n!
-// reaches around n = 250.
 func taylorSinCos(r *big.Float) (sin, cos *big.Float) {
 	sin = new(big.Float).SetPrec(refPrec)
 	cos = new(big.Float).SetPrec(refPrec)
-	term := new(big.Float).SetPrec(refPrec).SetInt64(1) // r^n / n!
+	term := new(big.Float).SetPrec(refPrec).SetInt64(1)
 	for n := 0; n < 300; n++ {
 		if n > 0 {
 			term.Mul(term, r)
@@ -311,16 +198,14 @@ func taylorSinCos(r *big.Float) (sin, cos *big.Float) {
 }
 
 type f64Case struct {
-	call string  // Fern expression producing the value
-	want float64 // the correctly-rounded reference
+	call string
+	want float64
 }
 
 func f64UlpCases() []f64Case {
 	var cs []f64Case
 	lit := func(v float64) string {
 		s := strings.Replace(strconv.FormatFloat(v, 'g', 17, 64), "e+", "e", 1)
-		// Fern has no unary minus on a literal in every position, and no
-		// bare "1e+06" integer-looking form; normalise both.
 		if !strings.ContainsAny(s, ".e") {
 			s += ".0"
 		}
@@ -335,33 +220,10 @@ func f64UlpCases() []f64Case {
 			f64Case{fmt.Sprintf("fsin(%s)", lit(x)), rs},
 			f64Case{fmt.Sprintf("fcos(%s)", lit(x)), rc},
 		)
-		// exp overflows past ~709; keep the argument in range so this
-		// measures the polynomial, not the overflow guard (covered below).
 		if math.Abs(x) <= 700 {
 			cs = append(cs, f64Case{fmt.Sprintf("fexp(%s)", lit(x)), math.Exp(x)})
 		}
 	}
-	// The two bands #8237's 2^k reconstruction got wrong, one at each end. A
-	// single (k+1023)<<52 exponent field cannot hold k outside [-1022, 1023]:
-	// below it the low bits land in the SIGN bit, so exp(-720) returned
-	// -6.6e+303 — finite, enormous and the wrong sign, which no caller can
-	// detect; above it every argument past ln2*1023.5 = 709.436 returned +Inf
-	// for an ordinary finite answer. ulpDist orders across zero, so the sign
-	// flip shows up as a vast distance rather than being lost in a denormal
-	// ulp count.
-	//
-	// The oracle here is a literal bit pattern per row, because math.Exp is
-	// unusable at BOTH ends: it carries the same k = 1024 overflow across the
-	// whole upper band (#8261), and at the bottom its answer is
-	// HOST-DEPENDENT — an aarch64 runner returns 0 for exp(-745) where amd64
-	// and glibc return the correct 5e-324, and checkF64Output treats a want of
-	// 0 as exact, so such a row demands a flush the fixed backends rightly no
-	// longer perform. Every value below is glibc's, and a 1400-bit computation
-	// agrees with it bit for bit.
-	//
-	// The -744 and -745 rows pin the value but cannot FAIL: the smallest
-	// subnormal is one ulp from zero, so flushing it passes a 2-ulp bound.
-	// -741 and -743 are the gating rows at that end.
 	for _, r := range []struct {
 		x    float64
 		bits uint64
@@ -386,18 +248,6 @@ func f64UlpCases() []f64Case {
 	for _, x := range append(f64UlpPosInputs, f64LogInputs()...) {
 		cs = append(cs, f64Case{fmt.Sprintf("flog(%s)", lit(x)), refLog(x)})
 	}
-	// The subnormal band, where the reduction x = 2^k*m has to prescale
-	// before reading k out of the exponent field — a subnormal stores 0
-	// there and keeps its magnitude in the mantissa's leading zeros. Without
-	// the prescale every argument below 2^-1022 answered ln(2^-1022) =
-	// -709.09 whatever its size, against true values running to -744.44
-	// (#8497).
-	//
-	// The oracle is a literal bit pattern per row because math.Log carries
-	// the identical defect: referencing these against it would pass a
-	// still-saturated backend. Every value below is glibc's, and refLog's
-	// 1400-bit computation in internal/oracle/interp/log_test.go agrees with it bit
-	// for bit.
 	for _, r := range []struct {
 		x    float64
 		bits uint64
@@ -408,34 +258,12 @@ func f64UlpCases() []f64Case {
 	} {
 		cs = append(cs, f64Case{fmt.Sprintf("flog(%s)", lit(r.x)), math.Float64frombits(r.bits)})
 	}
-	// pow: integral and non-integral exponents alike, over both signs of
-	// base where the exponent is integral. The large rows are where the bound
-	// is earned: the rounding error of log|x| is multiplied by y, so plain
-	// exp(y*log|x|) was 162 ulp out on pow(2,280) (#6405) and 193 on the
-	// non-integral row below (#12041), while rows with |y log x| small passed
-	// at any bound.
 	for _, p := range []struct{ x, y float64 }{
 		{3, 2}, {2, 10}, {10, 3}, {5, 4}, {2, -2}, {7, 0}, {2, 0.5}, {9, 0.5},
 		{-2, 3}, {-2, 4}, {-3, 3}, {-2, -2}, {-2, -3}, {-0.5, 3}, {-1, 2},
 		{2, 65}, {2, 280}, {2, 1023}, {10, 67}, {0.5, 1023}, {7, 300},
 		{-3, 100}, {-2, 65}, {-0.5, 67}, {2, -100}, {0.5, -200},
-		// Negative exponents whose result is SUBNORMAL. The rows above all
-		// land on normal results, so they pass while the magnitude is
-		// accumulated and reciprocated at the end: pow(2,-1030) computed
-		// 2^1030, which is +Inf, and 1/Inf flushed a representable answer
-		// to 0 (#8239). Both signs of base, since the fix reciprocates the
-		// base and has to carry the sign through it.
-		//
-		// The GATING rows are the ones off the bottom of the range. A
-		// result of 2^-1074 is the smallest subnormal, which is one ulp
-		// from zero, so flushing it to zero passes a 2-ulp bound: the
-		// -1074 and -1073 rows pin the value but cannot fail. Measured on
-		// the unfixed emitter, 3 of these 5 report, at 17592186044416 and
-		// 2024 ulp.
 		{2, -1074}, {2, -1030}, {10, -320}, {-2, -1073}, {-10, -320},
-		// Non-integral exponents with |y log x| large: near overflow, near
-		// and into the subnormal range, a base within 2^-23 of 1 under a huge
-		// exponent, and a subnormal base.
 		{85.23944470508046, -29.321248316038552}, {2.5, 700.3}, {123.456, 147.3},
 		{0.9999999, 7.1e9}, {1.0000001, 7.0e9}, {3.3e-5, 71.2}, {50.5, -189.5},
 		{1e-310, -0.98}, {1e-310, 0.37}, {0.75, -2400.5}, {1.5, 1749.25},
@@ -448,8 +276,6 @@ func f64UlpCases() []f64Case {
 	return cs
 }
 
-// f64SpecialCases pin the domain edges against the same reference. `bits`
-// rather than a literal, because Fern source has no spelling for Inf or NaN.
 func f64SpecialCases() []f64Case {
 	inf := math.Inf(1)
 	fromBits := func(v float64) string {
@@ -471,46 +297,21 @@ func f64SpecialCases() []f64Case {
 		{fmt.Sprintf("fsin(%s)", fromBits(math.NaN())), math.NaN()},
 		{fmt.Sprintf("fcos(%s)", fromBits(inf)), math.Cos(inf)},
 		{fmt.Sprintf("fcos(%s)", fromBits(math.NaN())), math.NaN()},
-		// pow over a negative base. ln of a negative base is NaN, so before
-		// the sign/magnitude split these returned NaN for an ordinary finite
-		// answer (#7879). |x| == 1 gives an exactly representable result at
-		// every exponent, which is what lets these sit here rather than under
-		// a ulp bound.
 		{"fpow((0.0 - 1.0), 65.0)", math.Pow(-1, 65)},
 		{"fpow((0.0 - 1.0), 100.0)", math.Pow(-1, 100)},
 		{"fpow((0.0 - 1.0), 1023.0)", math.Pow(-1, 1023)},
 		{"fpow((0.0 - 1.0), 1e10)", math.Pow(-1, 1e10)},
 		{fmt.Sprintf("fpow((0.0 - 1.0), %s)", fromBits(inf)), math.Pow(-1, inf)},
 		{fmt.Sprintf("fpow((0.0 - 1.0), %s)", fromBits(-inf)), math.Pow(-1, -inf)},
-		// A non-integral exponent over a negative base is the one case that
-		// really is NaN, so the split must not over-correct into a value.
 		{"fpow((0.0 - 2.0), 0.5)", math.Pow(-2, 0.5)},
 		{"fpow((0.0 - 8.0), (1.0 / 3.0))", math.Pow(-8, 1.0/3.0)},
 		{"fpow((0.0 - 2.0), 2.5)", math.Pow(-2, 2.5)},
-		// The remaining IEEE-754 pow edges, none of which reach ln at all.
 		{"fpow(0.0, (0.0 - 1.0))", math.Pow(0, -1)},
 		{fmt.Sprintf("fpow(1.0, %s)", fromBits(math.NaN())), math.Pow(1, math.NaN())},
 		{fmt.Sprintf("fpow(%s, 0.0)", fromBits(math.NaN())), math.Pow(math.NaN(), 0)},
 	}
 }
 
-// TestRefSinCosLargeArguments gates the ORACLE, which nothing else does.
-//
-// refSinCos is the only trustworthy sin/cos reference in the tree, and every
-// compiled bound below is measured against it — so a silent regression in its
-// precision would relax every one of them at once rather than failing. The
-// expected values here were computed three independent ways that agree to the
-// bit: this reference, a 700-digit Python `decimal` reduction, and glibc's
-// sin/cos via C.
-//
-// They deliberately include the values where Go's math is NOT usable as a
-// check, because that is the point. Go reduces large arguments less
-// accurately than glibc: it is 40 ulp out at 1e30, and at the classic
-// worst-case argument below it returns -4.8435e-19 for a true -4.6872e-19 —
-// a 3% error. That inaccuracy is why std/f64 carries its own reduction, which
-// the interpreter runs, instead of delegating to Go's math, and why this
-// reference, never the interpreter, is the oracle sin/cos are measured against
-// (#7878).
 func TestRefSinCosLargeArguments(t *testing.T) {
 	cases := []struct {
 		x        float64
@@ -519,8 +320,6 @@ func TestRefSinCosLargeArguments(t *testing.T) {
 		{1e30, 0.009331468931175825, -0.9999564608959665},
 		{1e300, -0.8178819121159085, -0.5753861119575491},
 		{math.MaxFloat64, 0.004961954789184062, -0.9999876894265599},
-		// 6381956970095103 * 2^797 — the standard worst case for argument
-		// reduction, whose reduced argument is ~4.6872e-19.
 		{5.3193726483265414e+255, 1.0, -4.687165924254628e-19},
 	}
 	for _, c := range cases {
@@ -537,8 +336,6 @@ func TestRefSinCosLargeArguments(t *testing.T) {
 	}
 }
 
-// f64UlpProg renders the cases into a program that prints one raw bit pattern
-// per line, in order.
 func f64UlpProg(cs []f64Case) string {
 	var b strings.Builder
 	b.WriteString("import \"std/i64\";\nimport \"std/f64\";\n")
@@ -555,9 +352,6 @@ func f64UlpProg(cs []f64Case) string {
 	return b.String()
 }
 
-// ulpDist is the number of representable doubles between a and b. Mapping the
-// sign-magnitude bit pattern onto a monotonic integer makes the subtraction
-// meaningful across zero.
 func ulpDist(a, b float64) int64 {
 	if a == b {
 		return 0
@@ -576,10 +370,6 @@ func ulpDist(a, b float64) int64 {
 	return d
 }
 
-// checkF64Output compares one backend's printed bit patterns against the
-// reference, reporting every violation rather than stopping at the first —
-// a systematic error (a wrong coefficient, a botched reduction) shows up as a
-// pattern across cases, and that pattern is the diagnosis.
 func checkF64Output(t *testing.T, backend, out string, cs []f64Case, bound int64) {
 	t.Helper()
 	lines := strings.Fields(strings.TrimSpace(out))
@@ -596,14 +386,11 @@ func checkF64Output(t *testing.T, backend, out string, cs []f64Case, bound int64
 		got := math.Float64frombits(uint64(raw))
 		switch {
 		case math.IsNaN(c.want):
-			// Any NaN is acceptable; the sign and payload of a NaN are not
-			// specified, and the backends legitimately differ there.
 			if !math.IsNaN(got) {
 				t.Errorf("%s: %s = %v, want NaN", backend, c.call, got)
 				bad++
 			}
 		case math.IsInf(c.want, 0), c.want == 0:
-			// Exact by nature: an infinity or a zero is right or it is not.
 			if got != c.want || math.Signbit(got) != math.Signbit(c.want) {
 				t.Errorf("%s: %s = %v, want %v", backend, c.call, got, c.want)
 				bad++
@@ -624,10 +411,6 @@ func checkF64Output(t *testing.T, backend, out string, cs []f64Case, bound int64
 					backend, c.call, got, c.want, d, b)
 				bad++
 			}
-			// sin/cos are total on the finite doubles with range [-1, 1], so
-			// a result outside it is a hard range violation whatever the ulp
-			// distance says — this is the oracle-free invariant that would
-			// have caught #7878's 1.78e158 on its own.
 			if (strings.HasPrefix(c.call, "fsin(") || strings.HasPrefix(c.call, "fcos(")) && math.Abs(got) > 1 {
 				t.Errorf("%s: %s = %v, outside [-1, 1]", backend, c.call, got)
 				bad++
@@ -641,7 +424,6 @@ func checkF64Output(t *testing.T, backend, out string, cs []f64Case, bound int64
 
 func TestF64TranscendentalUlpInterp(t *testing.T) {
 	cs := append(f64UlpCases(), f64SpecialCases()...)
-	// runLangInterp takes a source PATH, not source text.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "f64ulp.fern")
 	if err := os.WriteFile(path, []byte(f64UlpProg(cs)), 0o644); err != nil {
@@ -663,20 +445,6 @@ func TestF64TranscendentalUlpX86_64(t *testing.T) {
 	checkF64Output(t, "x86-64-linux", out, cs, maxULP)
 }
 
-// TestF64SinCosLargeArgument sweeps the Payne-Hanek path — every argument at
-// or above 2^20, which is where Cody-Waite stops being exact and the old code
-// silently left [-1, 1] entirely (#7878).
-//
-// It is a sweep rather than a handful of literals because the failure it
-// guards is magnitude-dependent: the reduction degrades continuously with the
-// exponent, so a fixed shortlist proves only the exponents in it. 1158
-// arguments at four mantissas across every seventh exponent, both signs.
-//
-// Every lane runs it: both native backends, wasm, and the interpreter, which
-// runs std/f64's reduction rather than Go's math, whose error near a zero of
-// sin/cos is unbounded in ulp terms (617 ulp at 2^728, 3% at the worst-case
-// argument below). The reference, not the interpreter, remains the oracle
-// everything is measured against.
 func TestF64SinCosLargeArgument(t *testing.T) {
 	var xs []float64
 	for e := 20; e <= 1023; e += 7 {
@@ -688,8 +456,6 @@ func TestF64SinCosLargeArgument(t *testing.T) {
 			xs = append(xs, x, -x)
 		}
 	}
-	// 6381956970095103 * 2^797, the argument with the smallest reduced
-	// remainder of any double, plus the values named in #7878.
 	xs = append(xs, 5.3193726483265414e+255, 1e30, 1e300, math.MaxFloat64, 9.2e18, 2147483648.0)
 
 	var cs []f64Case
@@ -727,10 +493,6 @@ func TestF64SinCosLargeArgument(t *testing.T) {
 		}
 		checkF64Output(t, "arm64-linux", out, cs, maxULP)
 	})
-	// Until #7878 the wasm backend did not merely lose accuracy here: its
-	// reduction ran every argument through i64.trunc_f64_s, a TRAPPING
-	// instruction, so |x| >= 2^63*pi/2 aborted the module. This lane holds
-	// both properties — no trap, and the same bound as the register backends.
 	t.Run("wasm32-wasi", func(t *testing.T) {
 		out := compileAndRunWasmCapture(t, prog)
 		checkF64Output(t, "wasm32-wasi", out, cs, maxULP)
@@ -738,13 +500,6 @@ func TestF64SinCosLargeArgument(t *testing.T) {
 	t.Logf("swept %d arguments (%d cases) over the Payne-Hanek path", len(xs), len(cs))
 }
 
-// TestF64PowExactIntegralPowers holds pow to the exact answer wherever x^n is
-// a double: every integral power of a spread of bases, both signs, whose
-// result is exactly representable, subnormal results included. No path of
-// pow special-cases an integral exponent, so this is the error bound doing
-// the work: the value pow rounds is within about 0.02 ulp of x^n, which
-// rounds to x^n itself when x^n is a double. A 1-ulp miss passes the ulp
-// gate's bound, so only this test can see one.
 func TestF64PowExactIntegralPowers(t *testing.T) {
 	var bases []float64
 	for b := 2.0; b <= 24; b++ {
@@ -804,11 +559,6 @@ func TestF64PowExactIntegralPowers(t *testing.T) {
 	t.Logf("%d exactly representable integral powers", len(cs))
 }
 
-// compileAndRunWasmCapture compiles src to a raw wasm32-wasi module via the
-// CLI and returns its stdout from `wasmtime run`. Not runWasmCapturingStdout:
-// that helper strips trailing integer-parseable lines to drop the `--invoke`
-// result line, and this file's programs print nothing BUT integers, so it
-// would strip the entire output.
 func compileAndRunWasmCapture(t *testing.T, src string) string {
 	t.Helper()
 	wasmtime, err := exec.LookPath("wasmtime")
@@ -841,30 +591,12 @@ func TestF64TranscendentalUlpArm64(t *testing.T) {
 	checkF64Output(t, "arm64-linux", out, cs, maxULP)
 }
 
-// TestF64TranscendentalUlpWasm holds the wasm backend to the same bound as
-// the register backends over the full corpus. It had no lane here at all —
-// this file's header used to claim wasm does not implement these builtins,
-// which had been stale since wasmbin gained them — and that absence is why
-// its trig traps and range violations (#7878) went unnoticed.
 func TestF64TranscendentalUlpWasm(t *testing.T) {
 	cs := append(f64UlpCases(), f64SpecialCases()...)
 	out := compileAndRunWasmCapture(t, f64UlpProg(cs))
 	checkF64Output(t, "wasm32-wasi", out, cs, maxULP)
 }
 
-// requireBothRegisterBackends resolves the tooling for BOTH register backends
-// on this one host.
-//
-// That combination exists on exactly one lane — test-e2e-arm64.yml's cross-host
-// job (x86 host + aarch64 cross toolchain + qemu-user) — and until #6849 no lane
-// ran this file at all: the catch-all `test-e2e-other` lane owns the name, its
-// x86 leg has no aarch64 cross toolchain and its aarch64 leg has no qemu-x86_64,
-// so whichever runner it landed on skipped before the first assertion. A test
-// that compares two backends cannot report a one-backend host as coverage.
-//
-// FERN_REQUIRE_CROSS_BACKENDS is set by that job, and turns a missing toolchain
-// from a skip into a failure — otherwise the lane losing a toolchain would put
-// the comparison straight back where it was, silently.
 func requireBothRegisterBackends(t *testing.T) {
 	t.Helper()
 	var missing []string
@@ -885,9 +617,6 @@ func requireBothRegisterBackends(t *testing.T) {
 		"(the lane that has both is test-e2e-arm64.yml's cross-host job)", strings.Join(missing, "; "))
 }
 
-// TestF64TranscendentalBackendsAgree pins the two register backends to each
-// other bit for bit: they compile one definition, and a divergence here means
-// a backend computes an f64 operation differently.
 func TestF64TranscendentalBackendsAgree(t *testing.T) {
 	requireBothRegisterBackends(t)
 	cs := append(f64UlpCases(), f64SpecialCases()...)
@@ -901,9 +630,6 @@ func TestF64TranscendentalBackendsAgree(t *testing.T) {
 	if len(xl) != len(al) {
 		t.Fatalf("line count differs: x86-64 %d, arm64 %d", len(xl), len(al))
 	}
-	// Against len(cs), not just against each other: two EMPTY outputs have equal
-	// length, so the check above passes and the loop below iterates nothing —
-	// the test would report a clean comparison having compared nothing.
 	if len(xl) != len(cs) {
 		t.Fatalf("each backend printed %d values, want one per case (%d)", len(xl), len(cs))
 	}
@@ -913,8 +639,6 @@ func TestF64TranscendentalBackendsAgree(t *testing.T) {
 		if xl[i] == al[i] {
 			continue
 		}
-		// A NaN payload is unspecified, so only disagreement on a non-NaN
-		// value is a fault.
 		xv, _ := strconv.ParseInt(xl[i], 10, 64)
 		av, _ := strconv.ParseInt(al[i], 10, 64)
 		if math.IsNaN(math.Float64frombits(uint64(xv))) && math.IsNaN(math.Float64frombits(uint64(av))) {
@@ -923,23 +647,15 @@ func TestF64TranscendentalBackendsAgree(t *testing.T) {
 		t.Errorf("%s: x86-64 %v, arm64 %v",
 			c.call, math.Float64frombits(uint64(xv)), math.Float64frombits(uint64(av)))
 	}
-	// The corpus is built from package-level input tables, so a shrunken one
-	// means the case builders stopped producing rather than that the backends
-	// agree. Measured at 118; the floor leaves room to add inputs, not to lose
-	// most of them.
 	if compared < 100 {
 		t.Fatalf("compared %d cases, want the full corpus (measured 118)", compared)
 	}
 	t.Logf("compared %d transcendental results bit for bit across both register backends", compared)
 }
 
-// TestF64TranscendentalUlpSelfHostX86_64 holds the self-host driver's x86-64
-// build to the same bound, then pins it to the CLI's bit for bit.
 func TestF64TranscendentalUlpSelfHostX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	// asm_load_run, not asm_ir_run: the program imports std/i64 for the i64
-	// printing, and only the loading driver resolves imports.
 	copySelfHostDriver(t, dir, "drivers/asm_load_run.fern")
 	driver := buildSelfHostBin(t, gcc, dir, "drivers/asm_load_run.fern", "alr")
 	root, err := filepath.Abs("../../stdlib")
@@ -978,7 +694,6 @@ func TestF64TranscendentalUlpSelfHostX86_64(t *testing.T) {
 		}
 		sv, _ := strconv.ParseInt(sl[i], 10, 64)
 		nv, _ := strconv.ParseInt(nl[i], 10, 64)
-		// A NaN payload is unspecified, so only a non-NaN disagreement is a fault.
 		if math.IsNaN(math.Float64frombits(uint64(sv))) && math.IsNaN(math.Float64frombits(uint64(nv))) {
 			continue
 		}
@@ -988,10 +703,6 @@ func TestF64TranscendentalUlpSelfHostX86_64(t *testing.T) {
 	t.Logf("compared %d transcendental results bit for bit, self-host x86-64 vs native x86-64", len(cs))
 }
 
-// TestF64TranscendentalLanesAgree pins the interpreter and wasm to a register
-// backend bit for bit over the whole corpus. Every lane runs std/f64's one
-// definition, so any difference is a lane computing an f64 operation
-// differently, not a difference of algorithm.
 func TestF64TranscendentalLanesAgree(t *testing.T) {
 	cs := append(f64UlpCases(), f64SpecialCases()...)
 	prog := f64UlpProg(cs)

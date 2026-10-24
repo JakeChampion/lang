@@ -1,7 +1,3 @@
-// The server scripts/net-autobahn runs the Autobahn suite against: the
-// echo at /ws with compression on and a 16 MiB message, which the
-// suite's largest cases send; /ok for the readiness probe. PORT names
-// its port, 9001 by default.
 import "std/http";
 import "std/serve";
 import "std/platform";

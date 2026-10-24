@@ -1,9 +1,9 @@
-// Nested match patterns (#5353) desugar at parse time to a flat outer arm that
-// re-matches the payload, so every backend sees only flat arms.
-//
-// A guard on a nested arm; a value whose payload matches the pattern
-// but fails the guard falls to the next arm.
-// exit: 120 + 3
+
+
+
+
+
+
 function g(o: Option[Result[i32, i32]]): i32 {
   match (o) {
     Some(Ok(n)) when n > 10 => { return n + 100; },

@@ -8,23 +8,13 @@ import (
 	"testing"
 )
 
-// TestSelfHostModloadUnresolvedImport pins #10880 on a loading driver
-// (checker_modload_run, through the shared modloader): an import that resolves
-// to no file is reported where it is resolved, naming the import and the file
-// that wrote it, and the driver fails before checking. The one exception is a
-// `std/` or `core/` import where no stdlib was given — no `std/` or `core/`
-// tree beside the importer — which is skipped without a word, as the drivers'
-// stdlib-free test projects rely on.
 func TestSelfHostModloadUnresolvedImport(t *testing.T) {
 	_, runner, driverBin := buildCheckerModloadDriverX86(t)
 
 	cases := []struct {
-		name  string
-		files map[string]string
-		// want is the diagnostic, with DIR standing for the project directory;
-		// empty means the run must be clean and quiet.
-		want string
-		// absent, when set, is all the case checks: the run never says it.
+		name   string
+		files  map[string]string
+		want   string
 		absent string
 	}{
 		{
@@ -43,8 +33,6 @@ func TestSelfHostModloadUnresolvedImport(t *testing.T) {
 			want: `checker_modload_run: DIR/mid.fern:1:1: error[E086]: cannot resolve import "./gone": not found`,
 		},
 		{
-			// A std/ tree is there, so the stdlib was given and a module
-			// missing from it is a mistake, not an absent stdlib.
 			name: "missing-from-given-stdlib",
 			files: map[string]string{
 				"main.fern":      "import \"std/nosuch\";\nfunction main(): i32 { return 0; }\n",
@@ -53,7 +41,6 @@ func TestSelfHostModloadUnresolvedImport(t *testing.T) {
 			want: `checker_modload_run: DIR/main.fern:1:1: error[E086]: unknown stdlib module "std/nosuch"`,
 		},
 		{
-			// An empty path is an import of no file, as any other is.
 			name: "empty-path",
 			files: map[string]string{
 				"main.fern": "import \"\";\nfunction main(): i32 { return 0; }\n",
@@ -61,8 +48,6 @@ func TestSelfHostModloadUnresolvedImport(t *testing.T) {
 			want: `checker_modload_run: DIR/main.fern:1:1: error[E086]: cannot resolve import "": not found`,
 		},
 		{
-			// A path the parser could not read is its diagnostic alone; the
-			// loader is never asked to resolve it.
 			name: "pathless-import",
 			files: map[string]string{
 				"main.fern": "import;\nfunction main(): i32 { return 0; }\n",

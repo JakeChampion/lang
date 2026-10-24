@@ -1,5 +1,5 @@
-// An array of struct literals, iterated with for-in, summing a
-// derived field. 2*5 + 3*4 + 1*10 = 32.
+
+
 struct Item { qty: i32, price: i32 }
 
 function main(): i32 {

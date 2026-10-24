@@ -9,7 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// usizeCase reads one of the conformance corpus's two usize cases.
 func usizeCase(t *testing.T, name string) (src, want string) {
 	t.Helper()
 	dir := filepath.Join(e2eharness.ConformanceCases(), name)
@@ -47,8 +46,6 @@ function main(): i32 {
 }
 `
 
-// `fern -interp` keeps a usize a usize at its host's 64 bits: a borrow wraps
-// to u64::MAX and reads unsigned, rather than becoming the i32 -1.
 func TestSelfHostInterpUsizeIsTheHostWidth(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := filepath.Join(t.TempDir(), "main.fern")
@@ -66,9 +63,6 @@ func TestSelfHostInterpUsizeIsTheHostWidth(t *testing.T) {
 	}
 }
 
-// A usize literal past u32::MAX fits every 64-bit target's usize and none of
-// wasm32's, so the wasm backend refuses it by name rather than emitting an
-// immediate the module cannot hold.
 func TestSelfHostWasmRefusesAUsizeLiteralPast32Bits(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := filepath.Join(t.TempDir(), "main.fern")

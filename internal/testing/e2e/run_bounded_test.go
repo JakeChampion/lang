@@ -13,13 +13,6 @@ import (
 	"time"
 )
 
-// runBounded starts cmd and waits at most timeout for it. A child that
-// outlives the timeout is killed and reported as timedOut with no error;
-// otherwise the Wait error comes back as it would from cmd.Run. The child
-// runs in its own process group and the timeout kills the group, so it
-// reaches what the child forked (a handler program's serve workers) as
-// well: they hold its output pipes, and Wait returns only once every
-// holder is gone.
 func runBounded(cmd *exec.Cmd, timeout time.Duration) (timedOut bool, err error) {
 	if cmd.SysProcAttr == nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
@@ -40,11 +33,6 @@ func runBounded(cmd *exec.Cmd, timeout time.Duration) (timedOut bool, err error)
 	}
 }
 
-// TestRunBoundedClassifiesTimeout pins the three outcomes runBounded
-// separates: a child that exits cleanly, one that exits non-zero, and
-// one that outlives the timeout — the last must come back as timedOut
-// with no error, since that is what keeps a slow machine out of a
-// coverage-gap count.
 func TestRunBoundedClassifiesTimeout(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX sleep/true/false")
@@ -58,9 +46,6 @@ func TestRunBoundedClassifiesTimeout(t *testing.T) {
 	if timedOut, err := runBounded(exec.Command("sleep", "30"), 100*time.Millisecond); !timedOut || err != nil {
 		t.Errorf("outlived the wall: timedOut=%v err=%v, want true and nil", timedOut, err)
 	}
-	// A grandchild holding the child's stdout pipe keeps Wait from returning
-	// until the whole group is killed (#10806). The outer bound turns a
-	// regression into a red test rather than a hang.
 	held := exec.Command("sh", "-c", "sleep 30 & sleep 30")
 	held.Stdout = &bytes.Buffer{}
 	result := make(chan bool, 1)
@@ -78,14 +63,6 @@ func TestRunBoundedClassifiesTimeout(t *testing.T) {
 	}
 }
 
-// x86_64RunnerOrEmpty is how an x86-64 binary runs on this host: natively
-// on amd64 Linux, under qemu-x86_64 elsewhere, or not at all.
-//
-// Deliberately not LookupX86_64Tooling, which reports ok=false without an
-// x86-64 gcc on PATH. A test using this never links with one — `fern -target
-// x86-64-linux -o out` uses the CLI's own in-process linker — so gating on a
-// compiler it does not use would skip its legs on a gcc-less amd64 host,
-// where they run perfectly well.
 func x86_64RunnerOrEmpty() (runner []string, ok bool) {
 	if runtime.GOOS == "linux" && runtime.GOARCH == "amd64" {
 		return nil, true
@@ -96,10 +73,6 @@ func x86_64RunnerOrEmpty() (runner []string, ok bool) {
 	return nil, false
 }
 
-// TestRunSelfHostSeedBoundsAHungCompiler pins that a compiler which never
-// finishes is reported, not waited on, on every leg's seed runner: a mutant
-// compiler that loops held the nightly mutation score until its job timed
-// out, with every result lost.
 func TestRunSelfHostSeedBoundsAHungCompiler(t *testing.T) {
 	saved := selfHostCompileTimeout
 	selfHostCompileTimeout = 200 * time.Millisecond
@@ -133,9 +106,6 @@ func TestRunSelfHostSeedBoundsAHungCompiler(t *testing.T) {
 	}
 }
 
-// TestBisectSelfHostSeedNamesTheDecision runs the x86-64 leg's bisect against
-// a stand-in compiler with three decisions, whose program exits 7 until the
-// second is declined.
 func TestBisectSelfHostSeedNamesTheDecision(t *testing.T) {
 	if _, err := exec.LookPath("gcc"); err != nil || runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
 		t.Skip("links and runs x86-64 Linux asm")

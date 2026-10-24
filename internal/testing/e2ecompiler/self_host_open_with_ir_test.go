@@ -10,16 +10,6 @@ import (
 	"testing"
 )
 
-// open_reader_with / open_writer_with on the self-host IR path, with the
-// flags word carried as an operand and translated by __fern_open_with per
-// target: the create bit creates without truncating, its absence is
-// NotFound, and the non-blocking bit is what lets a FIFO with no peer be
-// opened — the reader's open returns where it would wait, the writer's is
-// ENXIO where it would wait. The seven open-time bits after exclusive
-// (#9242) are the kernel's verdict where it has one (directory on a
-// regular file, nofollow on a symlink) and accepted where it does not;
-// both legs here are Linux, where every bit has a word, so none may come
-// back Unsupported. Every failure returns its own exit code.
 func selfHostOpenWithSource(dir string) string {
 	p := func(name string) string { return filepath.Join(dir, name) }
 	return fmt.Sprintf(`function main(): i32 {
@@ -53,11 +43,6 @@ func selfHostOpenWithSource(dir string) string {
 `, p("w.txt"), p("missing.txt"), p("fifo"), p("excl.txt"), dir, p("lnk"))
 }
 
-// The wasm leg has no FIFO to open; it is the file half under the preopen.
-// The three bits neither preview can spell — direct, noatime, noctty —
-// come back Unsupported before the host is asked, and dsync | sync come
-// back Other with ENOTSUP (95) from wasmtime itself, which refuses either sync
-// flag on an open (step 19 flips when a wasmtime honours them).
 const selfHostOpenWithWasmSource = `function main(): i32 {
     match (open_writer_with("w.txt", 1)) { Ok(w) => { w.write("abc"); w.close(); }, Err(_) => { return 1; } }
     match (open_writer_with("w.txt", 1)) { Ok(w) => { w.write("Z"); w.close(); }, Err(_) => { return 2; } }
@@ -105,9 +90,6 @@ func selfHostOpenWithTree(t *testing.T, dir string, fifo bool) {
 			t.Errorf("fifo is not a named pipe: %v", fi.Mode())
 		}
 	}
-	// The exclusive create's file: its byte, and on a native target its
-	// mode, the create bit's 0666 through the umask rather than
-	// open_exclusive's 0600 (#9237).
 	got, err = os.ReadFile(filepath.Join(dir, "excl.txt"))
 	if err != nil || string(got) != "x" {
 		t.Errorf("excl.txt = %q, %v — the exclusive create did not land", got, err)

@@ -8,7 +8,6 @@ import (
 	"testing"
 )
 
-// noisy scores 3; quiet scores 1.
 const noisySrc = `function noisy(n: i32): i32 {
     if (n > 0) { return 1; }
     if (n < 0) { return 2; }
@@ -37,8 +36,6 @@ func runLintTest(t *testing.T, paths, sets, opts []string) (int, string) {
 	return code, out.String()
 }
 
-// -lint-cover reaches the self-host linter: a run leaving noisy's three
-// lines unexecuted scores it 3^2 + 3 = 12.
 func TestLintForwardsCoverage(t *testing.T) {
 	dir := t.TempDir()
 	f := writeFile(t, dir, "noisy.fern", noisySrc)
@@ -57,8 +54,6 @@ func TestLintExitStatus(t *testing.T) {
 	dir := t.TempDir()
 	f := writeFile(t, dir, "a.fern", noisySrc)
 
-	// A warning reports but leaves the exit status alone; only `deny`
-	// fails the run. That difference is the whole point of severities.
 	code, out := runLintTest(t, []string{f}, nil, []string{"cyclomatic-complexity.max=2"})
 	if code != 0 {
 		t.Errorf("warn exit = %d, want 0", code)
@@ -75,7 +70,6 @@ func TestLintExitStatus(t *testing.T) {
 		t.Errorf("output missing the error:\n%s", out)
 	}
 
-	// Nothing to report is silent, the way a clean `-check` is.
 	code, out = runLintTest(t, []string{f}, nil, nil)
 	if code != 0 || out != "" {
 		t.Errorf("clean run: exit %d, output %q", code, out)
@@ -97,8 +91,6 @@ func TestLintWalksDirectories(t *testing.T) {
 	}
 }
 
-// A path named twice must be linted once, or a `fern -lint . a.fern` run
-// double-reports every finding in a.fern.
 func TestLintDeduplicatesTargets(t *testing.T) {
 	dir := t.TempDir()
 	f := writeFile(t, dir, "a.fern", noisySrc)
@@ -136,8 +128,6 @@ func TestLintUsageErrors(t *testing.T) {
 	}
 }
 
-// A file that does not parse has no shape to lint and fails the run, but must
-// not stop it: linting a tree should report every file it can read.
 func TestLintContinuesPastUnparseableFile(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "a_broken.fern", "function {{{\n")
@@ -165,8 +155,6 @@ func TestLintReadsManifest(t *testing.T) {
 		t.Errorf("manifest severity and option did not both apply:\n%s", out)
 	}
 
-	// A flag beats the manifest — otherwise a checked-in setting could
-	// not be overridden for one run.
 	if code, out := runLintTest(t, []string{f}, []string{"cyclomatic-complexity=allow"}, nil); code != 0 || out != "" {
 		t.Errorf("-lint-set did not override the manifest: exit %d, output %q", code, out)
 	}

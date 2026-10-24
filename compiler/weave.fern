@@ -1,18 +1,7 @@
-// compiler/weave.fern — `-weave`: a literate document rendered for reading.
-//
-// weave writes Markdown: each chunk definition under a `**⟨name⟩≡**` label
-// (`+≡` for a continuation), its references shown as `⟨name⟩`, a note naming
-// the chunks that use it, and a chunk index. weave_html writes one
-// self-contained page of the same: the prose rendered from Markdown, the code
-// highlighted, every reference a link to its chunk, a table of contents and
-// the index.
-
 import "std/string";
 import "./literate";
 import "./util";
 
-// UsedIn pairs each chunk reference with the chunk whose body makes it:
-// refs[i] is used in users[i].
 struct UsedIn { refs: string[], users: string[] }
 
 function used_in(d: literate.Doc): UsedIn {
@@ -32,7 +21,6 @@ function used_in(d: literate.Doc): UsedIn {
   return u;
 }
 
-// users_of names the chunks that use `name`, sorted, each once.
 function users_of(u: UsedIn, name: string): string[] {
   let out: string[] = [];
   let i: i32 = 0;
@@ -84,8 +72,6 @@ function labels(names: string[]): string {
   return s;
 }
 
-// ─── Markdown ─────────────────────────────────────────────────────
-
 pub function weave(src: string): string {
   let d: literate.Doc = literate.parse(src);
   let u: UsedIn = used_in(d);
@@ -136,8 +122,6 @@ function note_md(name: string, users: string[]): string {
   return "*" + label(name) + " is used in " + labels(users) + ".*\n\n";
 }
 
-// index_md lists every chunk with where it is used; a document of one chunk
-// has nothing to index.
 function index_md(src: string, d: literate.Doc, u: UsedIn): string {
   let names: string[] = sorted(literate.defined_chunks(d));
   if (names.len() < 2) {
@@ -159,8 +143,6 @@ function index_md(src: string, d: literate.Doc, u: UsedIn): string {
   }
   return s;
 }
-
-// ─── HTML ─────────────────────────────────────────────────────────
 
 pub function weave_html(src: string): string {
   let d: literate.Doc = literate.parse(src);
@@ -237,8 +219,6 @@ function ref_links(names: string[]): string {
   return s;
 }
 
-// chunk_anchor is a chunk's element id: `chunk-` and its name, every
-// character but an ASCII letter or digit replaced by one `-`.
 function chunk_anchor(name: string): string {
   let buf: u8[] = [];
   let i: i32 = 0;
@@ -282,7 +262,6 @@ function index_html(src: string, d: literate.Doc, u: UsedIn): string {
   return s + "</ul>\n</section>\n";
 }
 
-// html_title is the document's first `# ` heading.
 function html_title(d: literate.Doc): string {
   for b in d.blocks {
     if (b.kind == literate.PROSE) {
@@ -297,8 +276,6 @@ function html_title(d: literate.Doc): string {
   return "Fern literate document";
 }
 
-// toc_html lists the prose's headings, outside fenced code; one heading is no
-// table of contents.
 function toc_html(d: literate.Doc): string {
   let levels: i32[] = [];
   let texts: string[] = [];
@@ -334,7 +311,6 @@ function toc_html(d: literate.Doc): string {
   return s + "</ul>\n</nav>\n";
 }
 
-// strip_fence drops a fenced block's opening and closing fence lines.
 function strip_fence(raw: string): string {
   let lines: string[] = literate.split_lines(raw);
   if (lines.len() < 2 || !util.str_has_prefix(literate.trim(lines[0]), "```")) {
@@ -355,11 +331,6 @@ function strip_fence(raw: string): string {
   }
   return s;
 }
-
-// ─── Markdown to HTML ─────────────────────────────────────────────
-// The subset literate prose uses: paragraphs, fenced code, thematic breaks,
-// ATX headings, block quotes, flat lists, and inline code, links, bold and
-// italic.
 
 pub function html_escape(s: string): string {
   let out: string = "";
@@ -395,7 +366,6 @@ function escape_of(c: u8): string {
   return "";
 }
 
-// Html is markdown_to_html's output so far and its open paragraph's lines.
 struct Html { out: string, para: string[] }
 
 function flush_para(h: Html): Html {
@@ -455,8 +425,6 @@ pub function markdown_to_html(prose: string): string {
   return flush_para(h).out;
 }
 
-// fenced_html renders the fenced block opening at lines[i], returning the
-// index past its closing fence.
 function fenced_html(lines: string[], i: i32): (string, i32) {
   let t: string = literate.trim(lines[i]);
   let open: i32 = run_len(t, b'`');
@@ -548,8 +516,6 @@ function is_unordered_item(t: string): boolean {
   return t.len() >= 2 && (t[0] == b'-' || t[0] == b'*' || t[0] == b'+') && t[1] == b' ';
 }
 
-// ordered_item is the text of a `N. text` list item, or "" for any other
-// line. The item's text is never empty: the line is trimmed.
 function ordered_item(t: string): string {
   let n: i32 = 0;
   while (n < t.len() && t[n] >= b'0' && t[n] <= b'9') {
@@ -569,7 +535,6 @@ function is_space(c: u8): boolean {
   return c == b' ' || c == b'\t' || c == b'\r' || c == 12;
 }
 
-// inline_markdown renders code spans, and links and emphasis outside them.
 pub function inline_markdown(s: string): string {
   let out: string = "";
   let i: i32 = 0;
@@ -596,8 +561,6 @@ pub function inline_markdown(s: string): string {
   return out;
 }
 
-// find_closer is where the next run of exactly `want` backticks from `from`
-// starts, or -1.
 function find_closer(s: string, from: i32, want: i32): i32 {
   let i: i32 = from;
   while (i < s.len()) {
@@ -614,8 +577,6 @@ function find_closer(s: string, from: i32, want: i32): i32 {
   return 0 - 1;
 }
 
-// trim_code_span drops one space from each end of a code span that has text
-// between them.
 function trim_code_span(c: string): string {
   if (c.len() >= 2 && c[0] == b' ' && c[c.len() - 1] == b' ' && literate.trim(c).len() > 0) {
     return slice_unchecked(c, 1, c.len() - 1) + "";
@@ -623,14 +584,10 @@ function trim_code_span(c: string): string {
   return c;
 }
 
-// emphasis escapes a run of prose, then renders its links, bold and italic,
-// in that order.
 function emphasis(seg: string): string {
   return delimited(delimited(links(html_escape(seg)), "**", "<strong>", "</strong>"), "*", "<em>", "</em>");
 }
 
-// delimited renders every `d text d`, text a non-empty run without `*`, as
-// open + text + close.
 function delimited(s: string, d: string, open: string, close: string): string {
   let out: string = "";
   let i: i32 = 0;
@@ -657,8 +614,6 @@ function at(s: string, i: i32, d: string): boolean {
   return i + d.len() <= s.len() && slice_unchecked(s, i, i + d.len()) == d;
 }
 
-// links renders every `[text](url)`: a link to an http, https or mailto URL,
-// or a relative one; just the text for any other scheme.
 function links(s: string): string {
   let out: string = "";
   let i: i32 = 0;
@@ -713,8 +668,6 @@ function safe_link_url(url: string): boolean {
   return true;
 }
 
-// ─── Fern highlighting ───────────────────────────────────────────
-
 function is_keyword(w: string): boolean {
   return has(["function", "fn", "let", "const", "return", "if", "else", "while", "for", "in", "match", "struct", "enum", "type", "pub", "import", "as", "own", "fip", "fbip", "async", "defer", "errdefer", "break", "continue", "true", "false"], w);
 }
@@ -731,8 +684,6 @@ function span(cls: string, text: string): string {
   return "<span class=\"" + cls + "\">" + text + "</span>";
 }
 
-// highlight_fern marks up one line of Fern: comments, strings, numbers,
-// keywords and type names.
 pub function highlight_fern(line: string): string {
   let out: string = "";
   let i: i32 = 0;
@@ -744,9 +695,6 @@ pub function highlight_fern(line: string): string {
   return out;
 }
 
-// token_end is where the token starting at line[i] ends: a comment runs to
-// the end of the line, a string to its closing quote (escapes skipped), a
-// number or a word over its characters, and anything else is one byte.
 function token_end(line: string, i: i32): i32 {
   let n: i32 = line.len();
   let c: u8 = line[i];
@@ -766,8 +714,6 @@ function token_end(line: string, i: i32): i32 {
   return j;
 }
 
-// string_end is where the string literal whose body starts at line[j] ends:
-// past its closing quote, or the end of the line when it has none.
 function string_end(line: string, j: i32): i32 {
   let k: i32 = j;
   while (k < line.len() && line[k] != b'"') {
@@ -782,7 +728,6 @@ function string_end(line: string, j: i32): i32 {
   return k;
 }
 
-// token_html renders one token.
 function token_html(t: string): string {
   let c: u8 = t[0];
   if (t.len() > 1 && c == b'/' && t[1] == b'/') {
@@ -803,7 +748,6 @@ function token_html(t: string): string {
   return html_escape(t);
 }
 
-// weave_css styles the page weave_html writes.
 function weave_css(): string {
   return ":root{--fg:#24292f;--muted:#57606a;--bg:#fff;--code-bg:#f6f8fa;--border:#d0d7de;--accent:#0969da;--kw:#cf222e;--type:#953800;--str:#0a3069;--com:#6e7781;--num:#0550ae}\n"
     + "*{box-sizing:border-box}\n"

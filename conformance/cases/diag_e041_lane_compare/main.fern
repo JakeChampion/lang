@@ -1,5 +1,5 @@
-// E041: a lane value has no `==` or `<`: it compares lane by lane, through
-// the lt and ne builtins, whose result is a mask.
+
+
 import "std/f64";
 
 function main(): i32 {

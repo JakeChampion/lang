@@ -1,9 +1,3 @@
-// A QUIC server over UDP for one connection on ALPN fern-echo: accept the
-// first Initial, handshake, send each stream's data back as it arrives,
-// print what happened, and exit 0 once the connection is done after
-// completing its handshake.
-//   server PORT CERT.pem KEY.pem
-// It prints a line once its socket is bound, which the script waits on.
 import "std/net";
 import "std/quic/conn";
 import "std/quic/packet";
@@ -24,8 +18,6 @@ function now(): i64 {
   return monotonic_ns();
 }
 
-// shown prints what happened, and sends back what each stream has to
-// read, with its end once that arrives.
 function shown(evs: conn.Event[], c: conn.Conn): conn.Conn {
   let cur: conn.Conn = c;
   for e in evs {
@@ -68,8 +60,6 @@ function copied(buf: u8[], n: i32): u8[] {
   return out;
 }
 
-// wait_ms is how long to sleep for a datagram: until the connection's next
-// deadline, between 1 and 100 ms.
 function wait_ms(s: Server): i32 {
   let Some(c) = s.current else {
     return 100;
@@ -88,8 +78,6 @@ function wait_ms(s: Server): i32 {
   return ms as i32;
 }
 
-// accepted starts the connection on a client's first Initial, which must
-// arrive in a datagram of at least 1200 bytes; anything else is dropped.
 function accepted(s: Server, d: u8[], from: net.SocketAddr): Server {
   if (d.len() < packet.MIN_INITIAL_DATAGRAM) {
     return s;
@@ -123,7 +111,6 @@ function drained(s: Server, buf: u8[]): Server {
   return cur;
 }
 
-// sent runs the connection's timer if it is due and sends what it has.
 function sent(s: Server, c: conn.Conn): Server {
   let cur: conn.Conn = c;
   if (cur.deadline() != 0 && now() >= cur.deadline()) {

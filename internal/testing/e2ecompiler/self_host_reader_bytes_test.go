@@ -24,8 +24,6 @@ func TestSelfHostReaderBytes(t *testing.T) {
 	}
 }
 
-// The same program as a preview-2 component, whose stdin() reads wasi:cli/stdin
-// through the component's handle table (#11110).
 func testReaderBytesComponent(t *testing.T, compiler string, runner []string, stdlib string) {
 	t.Helper()
 	t.Run("component", func(t *testing.T) {
@@ -59,7 +57,6 @@ func TestSelfHostReaderBytesOwnership(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 		t.Run(target, func(t *testing.T) {
-			// Require the production ownership lowering to release error payloads.
 			stderr, code := cli.exitOfStdin(t, e2eharness.ReaderBytesProgram, target, e2eharness.ReaderBytesInput(), "FERN_SANITIZE=1", "FERN_LEAKCHECK=1", "FERN_STRICT_IR=1")
 			if code != 0 || strings.Contains(stderr, "fern-sanitizer:") {
 				t.Fatalf("reader bytes: exit %d\n%s", code, stderr)

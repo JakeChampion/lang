@@ -1,11 +1,7 @@
-// Scoped normal-x86 large-push effects, derived only from supplied text.
-// Private halves preserve arbitrary original register and return identities.
 import "./ssacapacityisa" as isa;
 import "./ssalargepushvalue" as value;
 import "./ssalargepushranges" as ranges;
 
-// Kinds: invalid, numeric, original GPR, SP, RET, original block, old head,
-// true unsigned oversized size, block P, freelist L. All tokens retain halves.
 struct Half { kind: i32, identity: i32, part: i32, number: value.Value }
 
 struct Word { low: Half, high: Half }
@@ -113,7 +109,6 @@ function slot(s: State, r: ranges.Interval, op: isa.Op): boolean {
     return false;
   }
   let index = number(r, s.regs[op.index], 64);
-  // Only an actually derived constant class can address the selected slot.
   return value.valid(r, index) && index.factor == 0 && index.offset >= 0 as i64 && index.offset <= 44 as i64 && index.offset == ranges.expected_class(r) as i64;
 }
 
@@ -143,8 +138,6 @@ function read(s: State, r: ranges.Interval, at: i32, width: i32): Word {
 }
 
 function store(s: State, at: i32, width: i32, w: Word): State {
-  // Deliberately require exactly one complete write to each of the two cells.
-  // Return memory, partial writes and oversized writes are not admitted.
   if (s.oversized || width != 64 || at != 0 && at != 2) {
     return State { ...s, ok: false };
   }
@@ -182,7 +175,6 @@ function add_sub(r: ranges.Interval, a: value.Value, b: value.Value, subtract: b
     return value.unknown();
   }
   let v = value.add(r, a, if (subtract) { -b.offset } else { b.offset });
-  // Conservative 32-bit domain: prove no wrap; flags remain unknown.
   return if (width == 64 || nonnegative(r, v)) { v } else { value.unknown() };
 }
 
@@ -254,8 +246,6 @@ function lea(s: State, r: ranges.Interval, op: isa.Op): State {
 }
 
 function comparison(s: State, r: ranges.Interval, op: isa.Op): State {
-  // The oversized family is unsigned [1073741825, UINT64_MAX]. Its high
-  // bit is not a signed negative arithmetic value. Narrowing loses this fact.
   if (op.width == 64 && same_word(s.regs[op.source], identity(7, 0)) && op.immediate >= 0 && op.immediate <= 1073741824) {
     return State { ...s, flags: value.Comparison { less: 0, equal: 0, less_equal: 0 } };
   }
@@ -263,8 +253,6 @@ function comparison(s: State, r: ranges.Interval, op: isa.Op): State {
   if (!nonnegative(r, v) || op.immediate < 0) {
     return State { ...s, flags: unknown_flags() };
   }
-  // Both operands are nonnegative width-fitting bit patterns. These facts
-  // justify unsigned predicates only; no signed/overflow flags are invented.
   return State { ...s, flags: value.compare(r, v, op.immediate as i64) };
 }
 
@@ -357,7 +345,6 @@ function finished(s: State, r: ranges.Interval): boolean {
   let block = if (s.oversized) { identity(5, 0) } else { identity(6, 0) };
   let head = if (s.oversized) { identity(6, 0) } else { identity(8, 0) };
   let writes = if (s.oversized) { 0 } else { 1 };
-  // Plain RET consumes the original word from S and advances SP to S+8.
   return s.block_writes == writes && s.slot_writes == writes && same_word(read(s, r, 0, 64), block) && same_word(read(s, r, 2, 64), head) && same_word(read(s, r, 4, 64), identity(4, 0));
 }
 
@@ -394,16 +381,6 @@ function path(p: isa.Program, r: ranges.Interval, oversized: boolean): boolean {
   return false;
 }
 
-// Explicit preconditions: aligned canonical, mutually disjoint readable and
-// writable block P..P+7 and freelist L..L+20479, and readable return S..S+7.
-// R8=P, RSI=B. Every bounded interval is derived here from the independent
-// ordered capacities. Oversized B spans 1073741825..UINT64_MAX separately.
-// Proves the selected old head at P, P at its slot, AX=class, CX=old head,
-// DX=L and other original registers/bytes preserved. Oversized preserves all
-// original registers and memory. Both return through original RET with SP+8.
-// Oversized is no recycle, not a proven free. Linked permissions, allocation
-// validity, metadata, caller credits and freelist integrity remain obligations.
-// This is supplied-text semantics, not production/default or ARM/WASI proof.
 pub function check(output: string): boolean {
   let p = isa.large_program(output);
   if (p.error != "") {

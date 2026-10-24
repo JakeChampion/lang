@@ -12,9 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// raceLoserSource races a fast upstream against a slow one five times. The
-// native leg returns how many more descriptors are open after the races than
-// before: each loser's socket used to stay open, one per race.
 const raceLoserSource = `import "std/async";
 import "std/fetch";
 import "std/net";
@@ -44,9 +41,6 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostRaceClosesTheLoser requires `race` to close each loser's socket:
-// natively the program ends with no more descriptors open than it started
-// with, and as a wasm component its census balances.
 func TestSelfHostRaceClosesTheLoser(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	pA := e2eharness.StartDelayedUpstream(t, "AAA", 5*time.Millisecond)

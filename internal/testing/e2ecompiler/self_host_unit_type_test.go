@@ -7,20 +7,6 @@ import (
 	"testing"
 )
 
-// unitRuntimeProgram puts the unit through the self-host's WHOLE pipeline, in
-// every position #8759 gave it a type: a local with and without an annotation,
-// a variant payload, a tuple element, and a call argument.
-//
-// The front end is what needs a runtime check. `()` used to type i32 — the
-// constant it lowers to — so no destination spelled void ever saw the value.
-// It types void now, which is what the annotator stamps and the lowering reads
-// to size a slot. One backend is enough to say the slot survived: nothing in the change
-// is target-specific.
-//
-//	Ok arm           →  1
-//	sink × 3         → 21
-//	tuple element .1 →  5
-//	exit             → 27
 const unitRuntimeProgram = `function sink(u: void): i32 { return 7; }
 function fallible(): Result[void, i32] { return Ok(()); }
 function main(): i32 {
@@ -33,9 +19,6 @@ function main(): i32 {
 }
 `
 
-// The CLI driver rather than asm_ir_run, because the checker is half of what
-// this pins: asm_ir_run imports only the lowering chain, so a program it
-// refuses to type still compiles there.
 func TestSelfHostUnitTypeX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {

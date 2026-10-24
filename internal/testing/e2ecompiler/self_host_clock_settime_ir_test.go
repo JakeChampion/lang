@@ -12,17 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// `clock_resolution` / `clock_set` (#9166) through the SELF-HOST IR path, on
-// each backend that emits them: asmcore.rt_src_clock_resolution reached as
-// `call __fn___fern_clock_resolution`, and rt_src_clock_set in the io_error
-// bundle as `call __fn___fern_clock_set`.
-//
-// The resolution is compared with the host's clock_getres, which qemu-user
-// and wasmtime both pass through. The set probe runs without the privilege
-// to move the clock (e2eharness.WithoutClockPrivilege), asks for the current
-// time, and expects EPERM; the two out-of-range nanosecond counts are EINVAL
-// at any privilege. The current seconds are far past 999999999, so operands
-// that arrived swapped would answer EINVAL to the first call too.
 func clockSelfHostSource(t *testing.T) string {
 	return fmt.Sprintf(`function refused(r: Result[void, IoError], want: string): boolean {
     match (r) {
@@ -48,8 +37,6 @@ function main(): i32 {
 }`, linuxClockResolution(t))
 }
 
-// linuxClockResolution is the clock_getres the probes' Linux binaries see,
-// which is the host's only when the host is that Linux.
 func linuxClockResolution(t *testing.T) int64 {
 	t.Helper()
 	if runtime.GOOS != "linux" {
@@ -72,8 +59,6 @@ func runClockProbe(t *testing.T, cmd *exec.Cmd) {
 	}
 }
 
-// TestSelfHostClockSettimeIRX86_64 compiles the probe through the production
-// x86-64 IR driver.
 func TestSelfHostClockSettimeIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -89,9 +74,6 @@ func TestSelfHostClockSettimeIRX86_64(t *testing.T) {
 	runClockProbe(t, runX86_64Bin(runner, buildBin(t, gcc, dir, "clock_prog", string(asm))))
 }
 
-// TestSelfHostClockSettimeIRArm64 is the same probe through the arm64 IR
-// backend under qemu, where the pair is asm-generic 112 (settime) and 114
-// (getres) rather than x86-64's 227 and 229.
 func TestSelfHostClockSettimeIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -113,10 +95,6 @@ func TestSelfHostClockSettimeIRArm64(t *testing.T) {
 	runClockProbe(t, exec.Command(argv[0], argv[1:]...))
 }
 
-// TestSelfHostClockSettimeIRWasm runs both halves under wasmtime: the
-// resolution through preview1 clock_res_get, which answers the host's clock,
-// and the set through a body that answers Unsupported, since a wasm host has
-// a clock and no call that sets it.
 func TestSelfHostClockSettimeIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host clock wasm IR e2e")

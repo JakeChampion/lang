@@ -1,7 +1,3 @@
-// Scoped PRE-CALL facts only. The caller supplies the selected Boolean/three
-// consuming flat-child ABI and matching producer/consumer types and layouts.
-// Sites describe the first consumer call reached by each Boolean ABI case.
-// No consumer effects, returned ownership, runtime uniqueness or reuse are proved.
 import "./ssa";
 import "./ssacreditflowgraph" as graph;
 import "./ssacreditorigin" as origin;
@@ -99,8 +95,6 @@ function consumer_call(s: State, op: ssa.SInst, block: i32, input: i32): State {
     index = index + 1;
   }
   let site = Site { input: input, block: block, call: op.result, consumer: op.str, parameter: 0, argument: op.args[0], incoming: op.args[1], words: 3 };
-  // Stop BEFORE the call. Neither consuming the credits nor a return from the
-  // opaque body is assumed. The exact call/argument identity scopes the fact.
   return State { ...s, sites: [site] };
 }
 

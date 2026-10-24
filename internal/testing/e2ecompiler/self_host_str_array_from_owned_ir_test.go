@@ -6,10 +6,6 @@ import (
 	"testing"
 )
 
-// strArrayFromOwnedSrc binds an owned string[] (std/unicode's graphemes and
-// words, and a user function's) to a declared str[]. The typed lowering
-// retags the array as it retags one string (#10760); the strings stay counted
-// through the view type, so the census balances.
 const strArrayFromOwnedSrc = `import "std/unicode" as unicode;
 import "std/i32";
 function parts(n: i32): string[] {

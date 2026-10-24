@@ -1,18 +1,4 @@
-// std/http/h2/frame — the frames of HTTP/2 (RFC 9113 §4 and §6), read from
-// and written to bytes.
-//
-// `read(buf, from, max_frame)` takes the next frame off a buffer: `Got`
-// with the frame and the bytes it occupied, `More` when the buffer does
-// not yet hold it, or the error the frame is (§6's rules on its length,
-// its stream and its padding, and §6.5.2's on each setting), as the
-// connection or stream error RFC 9113 names. `encode(frame)` is the
-// frame's bytes. Neither keeps state: what a connection must remember across
-// frames (its settings, its windows, a header block spread over
-// CONTINUATION frames) is std/http/h2's.
-//
-// A frame of a type this module does not know comes back as `Unknown`,
-// for the connection to skip (§4.1); its payload is kept so an extension
-// can read it.
+// This module reads and writes HTTP/2 frames under RFC 9113.
 
 import "core/int";
 import "std/array";
@@ -20,7 +6,6 @@ import "std/string";
 import "std/error";
 import "core/cmp";
 
-// The frame types (§6).
 pub const DATA: i32 = 0;
 
 pub const HEADERS: i32 = 1;
@@ -41,7 +26,6 @@ pub const WINDOW_UPDATE: i32 = 8;
 
 pub const CONTINUATION: i32 = 9;
 
-// The error codes (§7).
 pub const NO_ERROR: i32 = 0;
 
 pub const PROTOCOL_ERROR: i32 = 1;
@@ -70,7 +54,6 @@ pub const INADEQUATE_SECURITY: i32 = 12;
 
 pub const HTTP_1_1_REQUIRED: i32 = 13;
 
-// The settings (§6.5.2).
 pub const SETTINGS_HEADER_TABLE_SIZE: i32 = 1;
 
 pub const SETTINGS_ENABLE_PUSH: i32 = 2;
@@ -83,32 +66,22 @@ pub const SETTINGS_MAX_FRAME_SIZE: i32 = 5;
 
 pub const SETTINGS_MAX_HEADER_LIST_SIZE: i32 = 6;
 
-// The smallest and largest SETTINGS_MAX_FRAME_SIZE (§4.2), and the
-// initial one.
 pub const MIN_FRAME_SIZE: i32 = 16384;
 
 pub const MAX_FRAME_SIZE: i32 = 16777215;
 
-// The largest flow-control window (§6.9.1).
 pub const MAX_WINDOW: i32 = 2147483647;
 
-// HEADER_LEN is the bytes of every frame's header (§4.1).
 pub const HEADER_LEN: i32 = 9;
 
-// preface is what a client sends first (§3.4).
 pub function preface(): u8[] {
   return "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".bytes();
 }
 
-// Priority — a stream's dependency (§5.3.1), read and ignored.
 pub struct Priority { exclusive: boolean, dependency: i32, weight: i32 }
 
-// Setting — one identifier and its value; a value is at most 2^31-1 here,
-// since none RFC 9113 defines is larger and a larger one is refused.
 pub struct Setting { id: i32, value: i32 }
 
-// Frame — one frame as a value. `padding` on DATA and HEADERS is the bytes
-// the padding took, pad length included, which flow control counts.
 pub enum Frame {
   Data(DataFrame),
   Headers(HeadersFrame),
@@ -133,8 +106,6 @@ pub struct GoAwayFrame { last_stream: i32, code: i32, debug: u8[] }
 
 pub struct UnknownFrame { kind: i32, flags: i32, stream: i32, payload: u8[] }
 
-// FrameError — what a frame did wrong: the error code to answer with, the
-// stream the error is on (0 for a connection error), and why.
 pub struct FrameError { code: i32, stream: i32, reason: string }
 
 pub function (e: FrameError) to_string(): string {
@@ -156,12 +127,8 @@ function __connection(code: i32, reason: string): FrameError {
   return FrameError { code: code, stream: 0, reason: reason };
 }
 
-// Read — what `read` found: a whole frame and the bytes it took off the
-// buffer, or that more bytes are needed.
 pub enum Read { Got(Frame, i32), More }
 
-// read takes the frame at `from` in `buf`, under the frame size the local
-// SETTINGS_MAX_FRAME_SIZE allows.
 pub function read(buf: u8[], from: i32, max_frame: i32): Result[Read, FrameError] {
   if (buf.len() - from < HEADER_LEN) {
     return Ok(More);
@@ -180,11 +147,6 @@ pub function read(buf: u8[], from: i32, max_frame: i32): Result[Read, FrameError
   return Ok(Got(__frame(kind, flags, stream, payload)?, HEADER_LEN + len));
 }
 
-// plain_headers_at is the payload length of the frame at `from` when it
-// is a HEADERS frame whole in `buf` under `max_frame`, on a stream, with
-// END_HEADERS and without PADDED or PRIORITY: the frame a request starts
-// with, which a connection reads straight off its buffer without the
-// record `read` builds. None for any other frame, or one not yet whole.
 pub function plain_headers_at(buf: u8[], from: i32, max_frame: i32): Option[i32] {
   if (buf.len() - from < HEADER_LEN) {
     return None;
@@ -200,18 +162,14 @@ pub function plain_headers_at(buf: u8[], from: i32, max_frame: i32): Option[i32]
   return Some(len);
 }
 
-// stream_at is the stream of the frame whose header is at `from`.
 pub function stream_at(buf: u8[], from: i32): i32 {
   return __be32(buf, from + 5) & MAX_WINDOW;
 }
 
-// end_stream_at is whether the frame whose header is at `from` carries
-// END_STREAM.
 pub function end_stream_at(buf: u8[], from: i32): boolean {
   return (buf[from + 4] as i32 & 1) != 0;
 }
 
-// __frame reads a payload as the frame its type says.
 function __frame(kind: i32, flags: i32, stream: i32, payload: u8[]): Result[Frame, FrameError] {
   if (kind == DATA) {
     return __data(flags, stream, payload);
@@ -250,9 +208,6 @@ function __frame_rest(kind: i32, flags: i32, stream: i32, payload: u8[]): Result
   return Ok(Unknown(UnknownFrame { kind: kind, flags: flags, stream: stream, payload: payload }));
 }
 
-// __unpadded strips the padding the PADDED flag announces (§6.1): the pad
-// length byte, and that many bytes at the end, which must fit. The bytes
-// the padding took are the payload's length less the body's.
 function __unpadded(flags: i32, stream: i32, payload: u8[]): Result[u8[], FrameError] {
   if ((flags & 8) == 0) {
     return Ok(payload);
@@ -294,7 +249,6 @@ function __headers(flags: i32, stream: i32, payload: u8[]): Result[Frame, FrameE
   return Ok(Headers(HeadersFrame { stream: stream, end_stream: (flags & 1) != 0, end_headers: (flags & 4) != 0, priority: priority, block: block, padding: padding }));
 }
 
-// __priority reads the five bytes of a dependency (§6.3).
 function __priority(payload: u8[], at: i32): Priority {
   let word: i32 = __be32(payload, at);
   return Priority { exclusive: word < 0, dependency: word & MAX_WINDOW, weight: payload[at + 4] as i32 + 1 };
@@ -340,8 +294,6 @@ function __settings(flags: i32, stream: i32, payload: u8[]): Result[Frame, Frame
   return Ok(Settings(ack, settings));
 }
 
-// __setting checks a setting's value as §6.5.2 asks; an unknown setting
-// is kept for the connection to ignore.
 function __setting(id: i32, value: i32): Result[Setting, FrameError] {
   if (id == SETTINGS_ENABLE_PUSH && value != 0 && value != 1) {
     return Err(__connection(PROTOCOL_ERROR, "SETTINGS_ENABLE_PUSH of " + int.int_to_string(value)));
@@ -407,11 +359,6 @@ function __continuation(flags: i32, stream: i32, payload: u8[]): Result[Frame, F
   return Ok(Continuation(stream, (flags & 4) != 0, payload));
 }
 
-// === writing ===============================================================
-
-// encode is `f` as its bytes. A DATA or HEADERS frame is written without
-// padding; the connection splits a payload over the peer's
-// SETTINGS_MAX_FRAME_SIZE before it writes.
 pub function encode(f: Frame): u8[] {
   match (f) {
     Data(d) => {
@@ -483,7 +430,6 @@ function __flag(on: boolean, bit: i32): i32 {
   return 0;
 }
 
-// __framed is the frame header (§4.1) and the payload.
 function __framed(kind: i32, flags: i32, stream: i32, payload: u8[]): u8[] {
   let n: i32 = payload.len();
   let out: u8[] = header_into(__alloc_u8(HEADER_LEN + n), 0, kind, flags, stream, n);
@@ -493,32 +439,19 @@ function __framed(kind: i32, flags: i32, stream: i32, payload: u8[]): u8[] {
   return __bytes_into(out, HEADER_LEN, payload, 0, n);
 }
 
-// header_into is `out` with the header (§4.1) of a frame of `kind`, `flags`
-// and `stream` carrying `len` bytes written over its nine bytes at `at`.
 pub function header_into(own out: u8[], at: i32, kind: i32, flags: i32, stream: i32, len: i32): u8[] {
   out = out.with(at, (len >> 16 & 255) as u8).with(at + 1, (len >> 8 & 255) as u8).with(at + 2, (len & 255) as u8).with(at + 3, kind as u8).with(at + 4, flags as u8);
   return out.with(at + 5, (stream >> 24 & 255) as u8).with(at + 6, (stream >> 16 & 255) as u8).with(at + 7, (stream >> 8 & 255) as u8).with(at + 8, (stream & 255) as u8);
 }
 
-// BLOCK_ROOM is the header block a `headers_room` buffer holds without
-// growing.
 pub const BLOCK_ROOM: i32 = 128;
 
-// headers_room is a buffer for a response sent whole, a HEADERS frame and a
-// DATA frame of `data_len` bytes in one allocation: the HEADERS frame's
-// header is reserved, its block is appended by the caller, and
-// `headers_data` frames both.
 pub function headers_room(data_len: i32): u8[] {
   let out: u8[] = __alloc_u8(HEADER_LEN + BLOCK_ROOM + HEADER_LEN + data_len);
   __arr_set_len(out, HEADER_LEN);
   return out;
 }
 
-// headers_data is `out`, a `headers_room` buffer with its block appended,
-// framed: the HEADERS frame's header written over the reserved bytes with
-// END_HEADERS, and the first `n` bytes of `data` after it as a DATA frame
-// with END_STREAM, or END_STREAM on the HEADERS frame when `n` is 0. A
-// block that outgrew the room is copied into a buffer that fits both.
 pub function headers_data(own out: u8[], stream: i32, data: [u8], n: i32): u8[] {
   let block_len: i32 = out.len() - HEADER_LEN;
   let total: i32 = out.len();
@@ -538,14 +471,10 @@ pub function headers_data(own out: u8[], stream: i32, data: [u8], n: i32): u8[] 
   return __bytes_into(out, HEADER_LEN + block_len + HEADER_LEN, data, 0, n);
 }
 
-// headers_bytes is a HEADERS frame without priority on the wire, as
-// `encode(Headers(…))` writes it: the shape a server sends.
 pub function headers_bytes(stream: i32, end_stream: boolean, end_headers: boolean, block: u8[]): u8[] {
   return __framed(HEADERS, __flag(end_stream, 1) | __flag(end_headers, 4), stream, block);
 }
 
-// data_bytes is an unpadded DATA frame on the wire, as `encode(Data(…))`
-// writes it.
 pub function data_bytes(stream: i32, end_stream: boolean, data: u8[]): u8[] {
   return __framed(DATA, __flag(end_stream, 1), stream, data);
 }
@@ -567,13 +496,10 @@ function __settings_bytes(settings: Setting[]): u8[] {
   return out;
 }
 
-// === bytes =================================================================
-
 function __be24(buf: u8[], at: i32): i32 {
   return buf[at] as i32 << 16 | buf[at + 1] as i32 << 8 | buf[at + 2] as i32;
 }
 
-// __be32 is the big-endian word at `at`, negative when its top bit is set.
 function __be32(buf: u8[], at: i32): i32 {
   return buf[at] as i32 << 24 | buf[at + 1] as i32 << 16 | buf[at + 2] as i32 << 8 | buf[at + 3] as i32;
 }

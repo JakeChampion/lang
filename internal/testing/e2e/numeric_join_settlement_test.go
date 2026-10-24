@@ -2,8 +2,6 @@ package e2e
 
 import "testing"
 
-// Pin independent results in every backend, not just agreement between engines
-// that could all inherit an incorrect literal annotation from the checker.
 const numericJoinSettlementProgram = `
 struct Box { tag: i32 }
 enum Tag { A, B }

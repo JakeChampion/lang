@@ -2,24 +2,6 @@ package e2e
 
 import "testing"
 
-// utf8ValidateProgram pins std/utf8's `is_valid_utf8` against the
-// reference definition (#5634, decision D9).
-//
-// A scan written as a loop over `utf8_decode_at` returns
-// `Option[(i32, i32)]` — so it allocated and refcounted a tuple box per
-// codepoint, ~48 ms for a 346 KB body. It now checks continuation bytes
-// inline. That is only a safe swap if it accepts *exactly* the same
-// language, so this test keeps the old decoder-driven walk as a
-// reference implementation and asserts the two agree.
-//
-// The 1- and 2-byte spaces are checked exhaustively (all 65,792
-// sequences, which covers every stray-continuation, truncated-tail,
-// invalid-lead and overlong-2 case). The 3- and 4-byte spaces are far
-// too large to enumerate, so they get the boundary cases that actually
-// separate the two implementations: overlong forms, the surrogate
-// range, the U+10FFFF ceiling, and truncation at each length.
-//
-// Exits 0 on success, a distinct code per failed step.
 const utf8ValidateProgram = `
 import "std/utf8" as utf8;
 

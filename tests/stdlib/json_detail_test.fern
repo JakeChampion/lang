@@ -1,18 +1,5 @@
 import "std/test";
 
-// tests/stdlib/json_detail_test.fern — batch 33
-// additions to std/test:
-//   * `test.assert_json_has_key(json_text, key)` /
-//     `test.assert_json_lacks_key(json_text, key)` — top-
-//     level JObject key presence checks.
-//   * `test.assert_json_array_len(json_text, n)` /
-//     `test.assert_json_object_size(json_text, n)` —
-//     cardinality checks.
-//
-// All four delegate to `std/json`'s `json_parse` and report
-// distinct diagnostics for invalid JSON, wrong top-level
-// type, and missing/extra entries.
-
 function test_has_key_pass(): test.TestOutcome {
   return test.assert_json_has_key("{\"name\":\"alice\",\"age\":30}", "name");
 }
@@ -46,7 +33,6 @@ function test_has_key_invalid_json(): test.TestOutcome {
 }
 
 function test_has_key_array_top_level(): test.TestOutcome {
-  // Top-level array, not object — distinct diagnostic.
   match (test.assert_json_has_key("[1, 2, 3]", "0")) {
     Pass => {
       return test.fail("array top-level should fail has_key");

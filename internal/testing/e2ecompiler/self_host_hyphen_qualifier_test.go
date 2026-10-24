@@ -8,10 +8,6 @@ import (
 	"testing"
 )
 
-// A package or module named with a `-` binds the qualifier with `_` in its
-// place: `import "my-h";` is called through `my_h`, in both compilers. The
-// module keeps its own name, so a diagnostic about it still says `two-x`, and
-// its private members stay private behind either spelling.
 func TestHyphenatedImportQualifier(t *testing.T) {
 	dir := t.TempDir()
 	write := func(rel, body string) {
@@ -45,7 +41,6 @@ func TestHyphenatedImportQualifier(t *testing.T) {
 	}{
 		{filepath.Join(dir, "main.fern"), 5, ""},
 		{filepath.Join(dir, "app", "main.fern"), 1, "two-x.hidden is `pub(package)` — only modules in the same package as two-x may use it"},
-		// A private member is refused however the qualifier is spelled.
 		{filepath.Join(dir, "priv", "call.fern"), 1, "three-y.hidden is not exported"},
 		{filepath.Join(dir, "priv", "alias.fern"), 1, "three-y.hidden is not exported"},
 		{filepath.Join(dir, "priv", "type.fern"), 1, "three-y.Hid is not exported"},

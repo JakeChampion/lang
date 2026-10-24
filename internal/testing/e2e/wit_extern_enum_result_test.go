@@ -12,16 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExternEnumResultCustomProvider is the P4c WIT-`enum` *result* gate
-// (docs/WIT-BRING-YOUR-OWN.md): an `@import` extern returns a WIT `enum`, lifted
-// into a Fern payloadless (C-style) enum. A WIT enum is returned as a single i32
-// discriminant (by value); the wrapper maps it to the matching static per-tag
-// sentinel `[tag:i32 @0]` via the __enum_sent select-chain helper — no heap
-// allocation, the sentinels are shared immortal data cells.
-//
-// The provider exports `choose: func(n: s32) -> color` over `enum color { red,
-// green, blue }` returning the disc = n. The Fern side `match`es choose(0/1/2)
-// and checks they map to Red/Green/Blue — a full disc→sentinel→tag round-trip.
 func TestExternEnumResultCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -48,7 +38,6 @@ func TestExternEnumResultCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export src; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// choose returns the enum by value as a single i32 discriminant = n.
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)
   (func (export "local:test/src@0.1.0#choose") (param $n i32) (result i32)

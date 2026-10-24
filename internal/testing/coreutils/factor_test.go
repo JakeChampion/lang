@@ -10,12 +10,9 @@ func init() {
 	registerCorpus("factor", factorCases)
 }
 
-// factorCases is the corpus, shared by the GNU parity gate and the
-// self-host leg so neither can test something narrower than the other.
 func factorCases(t *testing.T) []invocation {
 	t.Helper()
 	return []invocation{
-		// Small numbers, and the two that have no factors to print.
 		{name: "twelve", args: []string{"12"}},
 		{name: "zero", args: []string{"0"}},
 		{name: "one", args: []string{"1"}},
@@ -32,7 +29,6 @@ func factorCases(t *testing.T) []invocation {
 		{name: "several operands", args: []string{"12", "15", "7"}},
 		{name: "repeated operand", args: []string{"12", "12"}},
 
-		// The spellings a number may have.
 		{name: "plus sign", args: []string{"+5"}},
 		{name: "leading blank", args: []string{" 5"}},
 		{name: "blank then plus", args: []string{" +5"}},
@@ -42,7 +38,6 @@ func factorCases(t *testing.T) []invocation {
 		{name: "all zeros", args: []string{"000"}},
 		{name: "plus zero", args: []string{"+0"}},
 
-		// 64-bit numbers: trial division, Miller-Rabin, Pollard rho.
 		{name: "nine digit prime", args: []string{"1000000007"}},
 		{name: "semiprime of two nine digit primes", args: []string{"1000000016000000063"}},
 		{name: "fermat number", args: []string{"4294967297"}},
@@ -57,7 +52,6 @@ func factorCases(t *testing.T) []invocation {
 		{name: "twelve digit prime", args: []string{"999999999989"}},
 		{name: "eighteen digit prime", args: []string{"999999999999999989"}},
 
-		// Past sixty four bits.
 		{name: "two to the sixty four", args: []string{"18446744073709551616"}},
 		{name: "twenty nines", args: []string{"99999999999999999999"}},
 		{name: "two to the one twenty eight minus one", args: []string{"340282366920938463463374607431768211455"}},
@@ -73,14 +67,11 @@ func factorCases(t *testing.T) []invocation {
 		{name: "just under two to the one twenty seven", args: []string{"170141183460469231731687303715884105726"}},
 		{name: "just over two to the one twenty seven", args: []string{"170141183460469231731687303715884105728"}},
 
-		// The unbuffered line: a number at or above 2^127 reaches the
-		// descriptor before the buffered ones do.
 		{name: "buffered then unbuffered", args: []string{"15", "340282366920938463463374607431768211455"}},
 		{name: "unbuffered then buffered", args: []string{"340282366920938463463374607431768211455", "15"}},
 		{name: "buffered around unbuffered", args: []string{"15", "340282366920938463463374607431768211455", "21"}},
 		{name: "two unbuffered", args: []string{"340282366920938463463374607431768211455", "170141183460469231731687303715884105728"}},
 
-		// -h: repeated factors as p^e.
 		{name: "exponents", args: []string{"-h", "8"}},
 		{name: "exponents long", args: []string{"--exponents", "12"}},
 		{name: "exponents on a prime", args: []string{"-h", "7"}},
@@ -97,7 +88,6 @@ func factorCases(t *testing.T) []invocation {
 		{name: "exponents on a wide number", args: []string{"-h", "340282366920938463463374607431768211455"}},
 		{name: "exponents on two numbers", args: []string{"-h", "12", "15"}},
 
-		// Numbers that are not numbers: reported, and the rest still run.
 		{name: "letter", args: []string{"x"}},
 		{name: "between two numbers", args: []string{"12", "x", "15"}},
 		{name: "trailing letter", args: []string{"5x"}},
@@ -116,13 +106,10 @@ func factorCases(t *testing.T) []invocation {
 		{name: "newline after the digits", args: []string{"5\n"}},
 		{name: "vertical tab", args: []string{"\v5"}},
 		{name: "operand that is not valid UTF-8", args: []string{"\xff"}},
-		// A NUL cannot reach argv at all — exec refuses it — so the
-		// cut-at-NUL rule is exercised from stdin below.
 		{name: "negative after dashdash", args: []string{"--", "-1"}},
 		{name: "negative after an operand", args: []string{"2", "--", "-h"}},
 		{name: "every operand is invalid", args: []string{"a", "b"}},
 
-		// Getopt faults.
 		{name: "invalid short option", args: []string{"-x"}},
 		{name: "unrecognized long option", args: []string{"--foo"}},
 		{name: "negative number is an option", args: []string{"-1"}},
@@ -135,7 +122,6 @@ func factorCases(t *testing.T) []invocation {
 		{name: "posix stops at the first operand", args: []string{"2", "-h"}, env: []string{"POSIXLY_CORRECT=1"}},
 		{name: "posix options first still apply", args: []string{"-h", "12"}, env: []string{"POSIXLY_CORRECT=1"}},
 
-		// Numbers from stdin.
 		{name: "stdin lines", stdin: "12 15\n7\n"},
 		{name: "stdin tabs and blank lines", stdin: "12\t15  \n\n 7"},
 		{name: "stdin no trailing newline", stdin: "12 15"},
@@ -167,7 +153,6 @@ func factorCases(t *testing.T) []invocation {
 		{name: "stdin mixes the two engines", stdin: "18446744073709551615\n340282366920938463463374607431768211455\n", args: []string{"-h"}},
 		{name: "stdin many numbers", stdin: "2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20\n"},
 
-		// Write failures.
 		{name: "stdout closed", args: []string{"12"}, stdout: stdoutClosed},
 		{name: "stdout full", args: []string{"12"}, stdout: stdoutFull},
 		{name: "stdout closed on an invalid operand", args: []string{"x"}, stdout: stdoutClosed},
@@ -182,7 +167,6 @@ func factorCases(t *testing.T) []invocation {
 		{name: "stdout full past a flush", stdin: numberLines(1, 2000), stdout: stdoutFull},
 		{name: "stdout closed past a flush", stdin: numberLines(1, 2000), stdout: stdoutClosed},
 
-		// Repeated small primes, with and without -h.
 		{name: "repeated small primes", args: []string{"12192768"}},
 		{name: "exponents on repeated small primes", args: []string{"-h", "12192768"}},
 		{name: "power of three", args: []string{"3486784401"}},
@@ -193,8 +177,6 @@ func factorCases(t *testing.T) []invocation {
 		{name: "twice the largest trial prime", args: []string{"1994"}},
 		{name: "twice the first prime past the trial limit", args: []string{"2018"}},
 
-		// Around the trial limit's square, where a remainder stops being
-		// known prime and rho starts.
 		{name: "prime below the limit squared", args: []string{"999983"}},
 		{name: "composite below the limit squared", args: []string{"999999"}},
 		{name: "the limit squared", args: []string{"1000000"}},
@@ -207,12 +189,10 @@ func factorCases(t *testing.T) []invocation {
 		{name: "three primes past the trial limit", args: []string{"1040510891"}},
 		{name: "small prime times a remainder above the table", args: []string{"900021"}},
 
-		// Twenty digits: the bigint parse whose value still fits a word.
 		{name: "twenty digits with leading zeros", args: []string{"018446744073709551615"}},
 		{name: "twenty digits just over ten to the nineteen", args: []string{"10000000000000000019"}},
 		{name: "stdin twenty digit prime", stdin: "18446744073709551557\n"},
 
-		// Tokens between tokens: blanks, signs, NULs and junk on one line.
 		{name: "stdin signs blanks and junk on one line", stdin: "5 +7 \x00 8 x 9 +  -3 ++4 0x5 +0 007\n"},
 		{name: "stdin NUL cuts then more tokens", stdin: "12\x00x 13\n14\x00\n"},
 		{name: "stdin plus then NUL", stdin: "+\x005\n"},
@@ -221,8 +201,6 @@ func factorCases(t *testing.T) []invocation {
 		{name: "stdin two hundred tokens on one line", stdin: numberRow(1, 200)},
 		{name: "stdin exponents on one line", stdin: numberRow(1, 60), args: []string{"-h"}},
 
-		// Enough small numbers for the factor table to be built, and the
-		// boundary it hands back to trial division at.
 		{name: "stdin first twelve hundred numbers", stdin: numberLines(1, 1200)},
 		{name: "stdin first twelve hundred with exponents", stdin: numberLines(1, 1200), args: []string{"-h"}},
 		{name: "stdin across the table bound", stdin: numberLines(261000, 262300)},
@@ -230,18 +208,13 @@ func factorCases(t *testing.T) []invocation {
 		{name: "stdin table then wide", stdin: numberLines(1, 1100) + "18446744073709551615\n340282366920938463463374607431768211455\n"},
 		{name: "stdin table then invalid", stdin: numberLines(1, 1100) + "x\n12\n"},
 
-		// Input longer than one read: a token cut by the chunk boundary, and
-		// an invalid token longer than a chunk.
 		{name: "stdin tokens across a chunk boundary", stdin: strings.Repeat("12345 ", 12000)},
 		{name: "stdin token longer than a chunk", stdin: strings.Repeat("x", 70000) + "\n5\n"},
-		// A token that spans more than two reads: every middle chunk is
-		// carried whole, blank or not.
 		{name: "stdin token spanning four chunks", stdin: strings.Repeat("a", 200000) + "\n"},
 		{name: "stdin tokens around a three-chunk token", stdin: strings.Repeat("b", 140000) + " 15 " + strings.Repeat("c", 70000) + "\n77\n"},
 	}
 }
 
-// numberLines is the numbers lo..hi, one per line.
 func numberLines(lo, hi int) string {
 	var b strings.Builder
 	for n := lo; n <= hi; n++ {
@@ -251,7 +224,6 @@ func numberLines(lo, hi int) string {
 	return b.String()
 }
 
-// numberRow is the numbers lo..hi on one line.
 func numberRow(lo, hi int) string {
 	var b strings.Builder
 	for n := lo; n <= hi; n++ {

@@ -6,14 +6,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/ast"
 )
 
-// `todo;` / `todo("msg");` is a parser-level stub statement that desugars to
-// `loop { eprint("todo[: msg]"); exit(101); }` (see parseTodo). The `loop`
-// wrapper makes the stub diverge for the checker's missing-return (E052) and
-// `let else` analyses; the IsTodo/TodoMsg fields let the formatter re-print
-// the sugar. These tests pin the desugar shape, the site recording, and the
-// contextual-intercept rule (`todo` stays a usable identifier).
-
-// firstStmtOfFunc returns the first statement of the named function's body.
 func firstStmtOfFunc(t *testing.T, prog *ast.Program, name string) ast.Stmt {
 	t.Helper()
 	for _, fn := range prog.Funcs {
@@ -28,8 +20,6 @@ func firstStmtOfFunc(t *testing.T, prog *ast.Program, name string) ast.Stmt {
 	return nil
 }
 
-// requireTodoLoop asserts the statement is the todo desugar: an IsTodo Loop
-// whose body is `eprint(<text>); exit(101);`.
 func requireTodoLoop(t *testing.T, s ast.Stmt, wantMsg bool) *ast.Loop {
 	t.Helper()
 	lp, ok := s.(*ast.Loop)
@@ -46,7 +36,6 @@ func requireTodoLoop(t *testing.T, s ast.Stmt, wantMsg bool) *ast.Loop {
 	if !ok || len(body.Stmts) != 2 {
 		t.Fatalf("todo body = %T with %d stmts, want *ast.Block with 2", lp.Body, len(body.Stmts))
 	}
-	// Stmt 0: eprint(...)
 	es0, ok := body.Stmts[0].(*ast.ExprStmt)
 	if !ok {
 		t.Fatalf("body[0] = %T, want *ast.ExprStmt", body.Stmts[0])
@@ -58,7 +47,6 @@ func requireTodoLoop(t *testing.T, s ast.Stmt, wantMsg bool) *ast.Loop {
 	if id, ok := call0.Callee.(*ast.Ident); !ok || id.Name != "eprint" {
 		t.Fatalf("body[0] callee = %v, want eprint", call0.Callee)
 	}
-	// Stmt 1: exit(101)
 	es1, ok := body.Stmts[1].(*ast.ExprStmt)
 	if !ok {
 		t.Fatalf("body[1] = %T, want *ast.ExprStmt", body.Stmts[1])
@@ -101,8 +89,6 @@ func TestParseTodoWithMessage(t *testing.T) {
 	if !ok || msg.Value != "wide-K maps" {
 		t.Fatalf("TodoMsg = %#v, want StringLit \"wide-K maps\"", lp.TodoMsg)
 	}
-	// The eprint text is "todo: " + msg (a Binary), pinning the runtime
-	// message shape the self-host parser must match byte-for-byte.
 	body := lp.Body.(*ast.Block)
 	call := body.Stmts[0].(*ast.ExprStmt).Expr.(*ast.Call)
 	bin, ok := call.Args[0].(*ast.Binary)
@@ -115,7 +101,6 @@ func TestParseTodoWithMessage(t *testing.T) {
 }
 
 func TestParseTodoEmptyParens(t *testing.T) {
-	// `todo();` is the bare form with parens — same desugar, no message.
 	prog, err := Parse(`function f(): i32 { todo(); }`)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -124,9 +109,6 @@ func TestParseTodoEmptyParens(t *testing.T) {
 }
 
 func TestTodoUsableAsIdentifier(t *testing.T) {
-	// Only the statement-position `todo ;` / `todo (` shapes are
-	// intercepted — `todo` as a variable name, in expressions, and as an
-	// assignment target must keep parsing as an ordinary identifier.
 	prog, err := Parse(`function f(): i32 {
     let todo: i32 = 5;
     todo = todo + 1;

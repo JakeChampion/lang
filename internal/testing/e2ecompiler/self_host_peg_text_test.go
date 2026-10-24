@@ -44,7 +44,6 @@ func checkPegTextComponent(t *testing.T, compiler string, runner []string, stdli
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("component compile: %v\n%s", err, out)
 	}
-	// Components have no exit-time census; native and core legs check it.
 	if out, err := exec.Command("wasmtime", "run", bin).CombinedOutput(); err != nil {
 		t.Fatalf("component run: %v\n%s", err, out)
 	}

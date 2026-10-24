@@ -8,11 +8,6 @@ import (
 	"testing"
 )
 
-// Error-converting `?` (#3234): a `Result[_, E]` propagated through a
-// function returning `Result[_, dyn Trait]` boxes the concrete error `E`
-// into `dyn Trait` when E implements Trait (the `Box<dyn Error>` + `?`
-// idiom). handler(true) → Ok(43); handler(false) → Err(dyn Error) whose
-// .message() is "missing" (len 7). 43 + 7 = 50.
 const tryDynErrorSrc = `trait Error { function message(self: Self): string; }
 struct NotFound { what: string }
 impl Error for NotFound { function message(self: Self): string { return self.what; } }
@@ -65,11 +60,6 @@ func TestWASMTryDynError(t *testing.T) {
 	}
 }
 
-// Multi-trait error-converting `?`: a `Result[_, E]` propagated through a
-// function returning `Result[_, dyn A + B]` boxes E into the multi-trait
-// object when E implements EVERY trait in the set (the impl-all gate). find
-// yields Err(E{c:7}); handler boxes it into `dyn Code + Msg`; the caller reads
-// both methods: 7 + 100 = 107, plus the Ok path 42 = 149.
 const tryDynMultiTraitSrc = `trait Code { function code(self: Self): i32; }
 trait Msg { function msg(self: Self): i32; }
 struct E { c: i32 }
@@ -124,17 +114,6 @@ func TestWASMTryDynMultiTrait(t *testing.T) {
 	}
 }
 
-// Direct construction of `Err(concrete)` into a `Result[_, dyn Trait]` — i.e.
-// boxing the error WITHOUT the `?` operator (#3961). The enum-level coercion
-// `Result[_, Concrete] -> Result[_, dyn Trait]` must box the payload. As a
-// no-op it stores the concrete struct straight into the `dyn` slot and the
-// later match-arm `e.message()` dispatches through a garbage vtable (segfault
-// on the compiled backends; the interpreter is fine). The
-// checker now injects the same `payload as dyn Trait` cast the `?`-desugar uses
-// (maybeWrapForUnion / variantDynPayloadTypes), so the payload boxes into the
-// `[data, vtable]` fat pointer. Two distinct concrete error types prove the
-// per-type boxing; the Ok arm proves the non-dyn payload is untouched.
-// 43 (Ok) + 7 ("missing") + 7 ("timeout") = 57.
 const directDynErrorSrc = `trait Error { function message(self: Self): string; }
 struct NotFound { what: string }
 impl Error for NotFound { function message(self: Self): string { return self.what; } }

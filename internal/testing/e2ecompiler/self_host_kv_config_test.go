@@ -11,8 +11,6 @@ import (
 	"testing"
 )
 
-// The reference stores byte strings in a Go dictionary. It does not reproduce
-// the subject's hash, probe order or backward-shift deletion.
 func kvConfigReference(entries map[string][]byte, input []byte, capacity, keyBytes, valueBytes int) []byte {
 	var output []byte
 	stride := 1 + keyBytes + valueBytes
@@ -167,8 +165,6 @@ func TestSelfHostKVConfigModel(t *testing.T) {
 				}
 				return x
 			}
-			// Full insertion, overwrite at capacity, deletion and reinsertion precede
-			// reproducible mixed requests. All generated keys fit a one-byte universe.
 			for i := 0; i < tc.capacity+2; i++ {
 				actions = append(actions, request(1, i))
 			}
@@ -195,12 +191,9 @@ func TestSelfHostKVConfigModel(t *testing.T) {
 				}{{"input", input}, {"state", kvConfigState(entries)}, {"output", output}} {
 					fixtures.WriteString(kvConfigFixture(fmt.Sprintf("%s%d", fixture.name, step), fixture.data))
 				}
-				// Every fixture is allocated before the marks; unique state must be
-				// allocation-free from its very first operation, with no warm-up.
 				fmt.Fprintf(&body, "if (true) { let input: u8[] = input%d(); let state: u8[] = state%d(); let output: u8[] = output%d();\nlet before: i64 = __heap_alloc_count(); db = kv_config_core.process(db,input,0,%d); let allocations: i64 = __heap_alloc_count()-before;\nif (allocations != 0 || !matches(db,state,output)) { return %d; } }\n", step, step, step, end-at, step+1)
 				step++
 			}
-			// Retain the complete old database and its output across an update.
 			fixtures.WriteString(kvConfigFixture("replacement", request(1, 0)))
 			body.WriteString("let input: u8[] = replacement(); let old: kv_config_core.Db = saved(db); db = kv_config_core.process(db,input,0,1); if (same_snapshot(old,db)) { return 100; }\n")
 			fmt.Fprintf(&body, "if (!matches(old,state%d(),output%d())) { return 101; } return 0; }, None => { return 102; }, } }\n", step-1, step-1)

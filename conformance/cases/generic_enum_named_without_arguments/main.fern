@@ -1,8 +1,8 @@
-// A generic enum written without type arguments (`s: Shape` for `Shape[T]`)
-// as a parameter, a let, a record field, an array element, a return type and
-// a payload. Such a value never holds a payload that spells a parameter, so
-// each parameter settles at never and the payloads that do not spell one are
-// read as declared (#12804).
+
+
+
+
+
 import "std/i32";
 
 enum Shape[T] { Circle(i32), Blank }
@@ -35,7 +35,7 @@ function second(p: Pair): i32 {
     return 0;
 }
 
-// `b` would be a T, which this Pair never holds, so its arm is unreachable.
+
 function plus_one(p: Pair): i32 {
     return 1 + (match (p) { Two(_, b) => b, _ => 2 });
 }

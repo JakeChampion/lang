@@ -11,15 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestSelfHostExportResourceHandleComposes is the self-host parity gate for the
-// P6 Slice 6 resource-handle export shapes (the Go composer side is
-// TestExportResourceHandleParamComposes / …HandleVoid / …OwnedHandleDrop). The
-// composer is Go-only (the self-host composer was retired), so the self-host's
-// role is emitting a compatible `@export` CORE: a void handler taking a handle
-// param (erased to i32) that also holds a locally-constructed owned handle which
-// auto-drops (emitting `[resource-drop]`). This confirms the self-hosted
-// compiler emits that core and the Go composer lifts it — surfacing the handle
-// param's resource + wiring the drop — validated by `wasm-tools`.
 func TestSelfHostExportResourceHandleComposes(t *testing.T) {
 	wasmtools, err := exec.LookPath("wasm-tools")
 	if err != nil {
@@ -37,9 +28,6 @@ func TestSelfHostExportResourceHandleComposes(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_runio_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_runio_run.fern", "wasm_runio_run")
 
-	// A void handler taking a borrowed handle, which also constructs + drops a
-	// local owned handle (exercising handle params + owned-handle auto-drop in a
-	// reactor export). Not named `handle` (the checker's handler-main synthesis).
 	handlerSrc := `@import("local:test/res@0.1.0", "thing")
 resource Thing;
 
@@ -69,14 +57,10 @@ function on_request(t: borrow Thing): void {
 		t.Fatalf("read exporter core: %v", err)
 	}
 
-	// The world: imports res (resource thing + its constructor), exports the
-	// handler taking a borrow of thing.
 	expWit := filepath.Join(dir, "expwit")
 	if err := os.MkdirAll(expWit, 0o755); err != nil {
 		t.Fatalf("mkdir expwit: %v", err)
 	}
-	// The self-host run-io core also imports wasi:cli/stdout, so the world
-	// declares it alongside the custom res/handler interfaces.
 	run("cp", "-r", "../../../cmd/fern/wit/deps", filepath.Join(expWit, "deps"))
 	src := `package local:test@0.1.0;
 interface res { resource thing { constructor(); } }

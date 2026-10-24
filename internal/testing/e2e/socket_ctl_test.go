@@ -11,9 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// tcp_listen_with and tcp_socket_ctl, then the datagram sockets (#9853),
-// on every backend, raw and through std/net's typed faces: one probe each
-// over loopback, exit 42 iff every check holds.
 var socketProbes = []struct {
 	name string
 	src  func() string
@@ -61,8 +58,6 @@ func TestSocketCtlArm64(t *testing.T) {
 	}
 }
 
-// The Darwin leg runs the probes natively on Apple Silicon: the Darwin
-// socket leg of #9853, which macos.yml selects by this name.
 func TestArm64DarwinSocketCtl(t *testing.T) {
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 		t.Skip("requires the Apple Silicon execution lane")
@@ -87,10 +82,6 @@ func TestArm64DarwinSocketCtl(t *testing.T) {
 	}
 }
 
-// The wasm leg runs the component under wasmtime with the network
-// inherited, which the plain wasm runner does not grant: the probe binds
-// and dials loopback. A wasi:cli/run component reports only 0 or 1, so the
-// verdict is the probe's stdout: "ok", or the first failing check.
 func TestSocketCtlWasm(t *testing.T) {
 	for _, tool := range []string{"wasm-tools", "wasmtime"} {
 		if _, err := exec.LookPath(tool); err != nil {

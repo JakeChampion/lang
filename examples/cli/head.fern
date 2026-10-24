@@ -1,19 +1,3 @@
-// head.fern — print the leading part of each input, like `head(1)`.
-//
-//   -n N   print the first N lines (default 10)
-//   -c N   print the first N bytes (overrides -n)
-//
-// Both `-n N` (two args) and `-nN` (glued) are accepted, as is the
-// bare `-N` shorthand GNU head allows. When more than one file is
-// given, each is preceded by a `==> name <==` banner, just like the
-// real tool.
-//
-//   $ ./head -n 3 file.txt
-//   $ ./head -c 20 file.txt
-//   $ seq 100 | ./head -5
-//
-// Showcases: numeric flag parsing (split / glued / shorthand),
-// byte- vs line-oriented slicing, multi-file banners.
 import "std/string";
 import "std/i32";
 import "std/io";
@@ -57,7 +41,6 @@ function main(): i32 {
     } else if (a.starts_with("-c")) {
       o = Opts { ...o, count: a.drop(2).parse_int_or(10), by_bytes: true };
     } else if (a.len() > 1 && a[0] == 45 && a[1].is_ascii_digit()) {
-      // `-5` shorthand for `-n 5`.
       o = Opts { ...o, count: a.drop(1).parse_int_or(10), by_bytes: false };
     } else {
       inputs = inputs.append(a);

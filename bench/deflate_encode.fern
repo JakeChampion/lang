@@ -1,12 +1,5 @@
 import "std/deflate";
 
-// deflate_encode — std/deflate compressing 64 KiB of generated text.
-//
-// The text is words drawn by a linear congruential generator from a short
-// list, so it repeats at the word level as prose does and compresses about
-// 3:1, the ratio std/deflate reaches on the Silesia corpus. The count covers
-// match finding, block choice and Huffman coding. scripts/deflate-bench
-// compares the same encoder with libdeflate by wall time; this is its gate.
 function text(n: i32): u8[] {
   let words: string[] = ["the ", "of ", "and ", "a ", "to ", "in ", "is ", "you ", "that ", "it ", "he ", "was ", "for ", "on ", "are ", "as ", "with ", "his ", "they ", "at ", "be ", "this ", "have ", "from ", "or ", "one ", "had ", "by ", "word ", "but ", "not ", "what ", "all ", "were ", "we ", "when ", "your ", "can ", "said ", "there ", "use ", "an ", "each ", "which ", "she ", "do ", "how ", "their ", "if ", "will. "];
   let out: u8[] = [];

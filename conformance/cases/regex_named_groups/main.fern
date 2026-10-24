@@ -1,8 +1,8 @@
-// std/regex named capture groups (`(?<name>…)`) on the native backends:
-// named extraction, coexistence with positional numbering, mixed
-// named/unnamed groups, unknown-name handling, has_group_named,
-// ${name} template substitution, and (?i) interop. Each check sets a
-// bit; all eight hold -> 255.
+
+
+
+
+
 import "std/regex";
 
 function main(): i32 {
@@ -12,41 +12,41 @@ function main(): i32 {
   if (require_regex_text(m.group_named("year")) == "2026" && require_regex_text(m.group_named("mon")) == "07") {
     r = r + 1;
   }
-  // a named group is still positional: group 1 == year, index lookup agrees
+
   if (require_regex_text(m.group(1)) == "2026" && at(m.group_index("year"), 1) && at(m.group_index("mon"), 2)) {
     r = r + 2;
   }
 
-  // mixed named + unnamed, numbered by `(` order
+
   let mix: regex.RCaps = require_caps(regex.regex_captures("(\\w+)@(?<host>\\w+)", "a@b"));
   if (require_regex_text(mix.group(1)) == "a" && require_regex_text(mix.group_named("host")) == "b" && at(mix.group_index("host"), 2)) {
     r = r + 4;
   }
 
-  // unknown name → "" / None
+
   if (require_regex_text(m.group_named("nope")) == "" && none(m.group_index("nope"))) {
     r = r + 8;
   }
 
-  // has_group_named: optional named group absent vs present
+
   let absent: regex.RCaps = require_caps(regex.regex_captures("a(?<b>bc)?d", "ad"));
   let present: regex.RCaps = require_caps(regex.regex_captures("a(?<b>bc)?d", "abcd"));
   if (!absent.has_group_named("b") && present.has_group_named("b") && require_regex_text(present.group_named("b")) == "bc") {
     r = r + 16;
   }
 
-  // named group inside a quantified subexpression still names its index (last iteration)
+
   let q: regex.RCaps = require_caps(regex.regex_captures("(?<pair>(a|b)c)+", "acbc"));
   if (require_regex_text(q.group_named("pair")) == "bc" && at(q.group_index("pair"), 1)) {
     r = r + 32;
   }
 
-  // ${name} template substitution (and $0 still works alongside)
+
   if (require_regex_text(regex.regex_replace_all_groups("(?<k>\\w+)=(?<v>\\d+)", "a=1 b=22", "${v}:${k}")) == "1:a 22:b") {
     r = r + 64;
   }
 
-  // (?i) flag composes with named groups
+
   let ci: regex.RCaps = require_caps(regex.regex_captures("(?i)(?<g>HEL+O)", "say hello"));
   if (require_regex_text(ci.group_named("g")) == "hello") {
     r = r + 128;
@@ -55,7 +55,7 @@ function main(): i32 {
   return r;
 }
 
-// require_caps is the match, exiting 1 when there is none.
+
 function require_caps(result: Option[regex.RCaps]): regex.RCaps {
   if let Some(c) = result {
     return c;

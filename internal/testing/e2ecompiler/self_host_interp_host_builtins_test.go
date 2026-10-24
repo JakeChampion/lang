@@ -8,11 +8,6 @@ import (
 	"testing"
 )
 
-// The self-host interpreter's host-facing builtins answer what the Go
-// interpreter's do: a program's argv (its own path first), its stdin through
-// a Reader and through read_line, and a cell it reads and writes. Each
-// program is run by both CLIs' -interp with the same stdin and arguments, and
-// the exit code and stdout must agree (#10644).
 func TestSelfHostInterpHostBuiltins(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	native := buildFernCLIBin(t)

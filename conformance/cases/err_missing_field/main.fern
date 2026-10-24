@@ -1,4 +1,4 @@
-// Struct literal omitting a declared field.
+
 struct Point { x: i32, y: i32 }
 
 function main(): i32 {

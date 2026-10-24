@@ -2,13 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/u32.sqrt_floor / is_power_of_2 /
-// next_power_of_2 / log2_floor — unsigned root/power helpers, the u32 mirror of
-// the u64 set. sqrt_floor is exact up to (2^16-1)^2, is_power_of_2 /
-// next_power_of_2 reach 2^31 (the largest power a u32 holds; next_power_of_2
-// returns 0 above it), and log2_floor spans 0..31. None of them depend on
-// 32-bit wrap-around arithmetic. Returns 42 iff every check holds across interp
-// / x86-64 / wasm / arm64; each leg skips itself when its toolchain is absent.
 const u32RootsProg = `
 import "std/u32" as u32m;
 function main(): i32 {

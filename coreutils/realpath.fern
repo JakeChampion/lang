@@ -1,30 +1,3 @@
-// realpath.fern — GNU-compatible `realpath`.
-//
-//   realpath [OPTION]... FILE...
-//
-// The resolved absolute name of each operand. The walk itself is
-// `lib/canon.fern`, which `readlink -f/-e/-m` runs too; what realpath
-// adds is a second axis and the relative output.
-//
-// The axis `-e` / `-m` chooses is how much has to exist — every
-// component, or none, with "all but the last" in between as the
-// default. The axis `-P` / `-L` / `-s` chooses is what happens to
-// symbolic links, and the three are one setting with the last one
-// winning:
-//
-//   -P  physical (default)   links are followed as they are met, so a
-//                            `..` pops what the link RESOLVED to
-//   -s  no symlinks          links are not read at all, so a `..`
-//                            pops the name as it was written
-//   -L  logical              both, in that order: the name is first
-//                            resolved without reading any link, and
-//                            that answer is then resolved physically
-//
-// `--relative-to` and `--relative-base` are pure string work over the
-// answers. Both DIRs are resolved the same way the operands are, and
-// a DIR that will not resolve ends the program before any operand is
-// printed — `-q` does not cover it, because it is not one operand's
-// failure.
 import "std/string";
 import "std/array";
 import "std/io_buffered";
@@ -92,8 +65,6 @@ function opt_zero(): i32 {
   return 9;
 }
 
-// The three link settings, one number since only the last one given
-// counts.
 function link_physical(): i32 {
   return 0;
 }
@@ -106,10 +77,6 @@ function link_strip(): i32 {
   return 2;
 }
 
-// `resolve(name, mode, links)` — one operand's answer. `-L` is the
-// only one that is not a single walk: the lexical pass settles every
-// `..` against the name as written, and the physical pass then
-// resolves the links of what is left.
 function resolve(name: string, mode: i32, links: i32): Result[string, IoError] {
   if (links == link_strip()) {
     return canon.canonicalize(name, mode, true);
@@ -127,8 +94,6 @@ function resolve(name: string, mode: i32, links: i32): Result[string, IoError] {
   }
 }
 
-// Whether `p` is `base` or lies under it. The comparison is by
-// component, so `/a/bc` is not under `/a/b`.
 function under(base: string, p: string): boolean {
   if (base.len() == 1) {
     return true;
@@ -139,9 +104,6 @@ function under(base: string, p: string): boolean {
   return p.starts_with(base + "/");
 }
 
-// One DIR the relative output is measured against, or the end of the
-// program. It is not one operand's failure, so `-q` does not cover it
-// and nothing that follows runs.
 function resolve_dir(dir: string, mode: i32, links: i32): string {
   match (resolve(dir, mode, links)) {
     Ok(p) => {
@@ -156,9 +118,6 @@ function resolve_dir(dir: string, mode: i32, links: i32): string {
 }
 
 pub function main(): i32 {
-  // Declaration order, which the ambiguity list prints and which is
-  // NOT the order `--help` lists them in: `--logical` and `--physical`
-  // come last of the utility's own options, after `--zero`.
   let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("E", "canonicalize", opt_default()));
   opts = opts.append(gnu.flag("e", "canonicalize-existing", opt_existing()));
@@ -222,8 +181,6 @@ pub function main(): i32 {
     gnu.die_usage("missing operand", 1);
   }
 
-  // A base with no `--relative-to` beside it is the DIR to measure
-  // from as well as the one to stay under.
   if (have_rel_base && !have_rel_to) {
     rel_to = rel_base;
     have_rel_to = true;
@@ -235,8 +192,6 @@ pub function main(): i32 {
   let base: string = "";
   if (have_rel_base) {
     base = resolve_dir(rel_base, mode, links);
-    // A DIR to measure from that is not itself under the base leaves
-    // nothing that could be printed relative to it.
     if (!under(base, from)) {
       have_rel_to = false;
     }

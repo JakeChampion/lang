@@ -8,11 +8,6 @@ import (
 	"testing"
 )
 
-// A match expression whose arms produce a struct, an enum, an array or a
-// tuple (#8777). The desugar carries the arm value through a value local the
-// parser declares as `0`; the checker re-declares that local from the arm
-// type — or, when the arm type is an enum with no literal spelling, from the
-// destination's annotation.
 var matchExprValueLocalCases = []struct {
 	name string
 	src  string
@@ -22,37 +17,35 @@ function main(): i32 {
     let t: (i32, i32) = (7, 2);
     let p: P = match (t) { (a, b) => P { x: a } };
     return p.x;
-}`}, // 7
+}`},
 	{"struct_nested_if_arms", `struct P { x: i32, name: string }
 function main(): i32 {
     let t: (i32, i32) = (7, 2);
     let p: P = match (t) { (a, b) => P { x: a + b, name: "q" } };
     let q: P = match (t) { (a, b) => { if (a > b) { P { x: 1, name: "big" } } else { P { x: 2, name: "small" } } } };
     return p.x + q.x + q.name.len();
-}`}, // 13
+}`},
 	{"option_via_destination", `function main(): i32 {
     let t: (i32, i32) = (7, 2);
     let o: Option[i32] = match (t) { (a, b) => Some(a + b) };
     match (o) { Some(v) => { return v; }, None => { return 50; } }
-}`}, // 9
+}`},
 	{"result_struct_payload", `struct Q { n: i32 }
 function main(): i32 {
     let t: (i32, i32) = (7, 2);
     let r: Result[Q, string] = match (t) { (a, b) => { if (a > b) { Ok(Q { n: a }) } else { Err("no") } } };
     match (r) { Ok(q) => { return q.n + 10; }, Err(_) => { return 51; } }
-}`}, // 17
+}`},
 	{"array_arm", `function main(): i32 {
     let t: (i32, i32) = (7, 2);
     let xs: i32[] = match (t) { (a, b) => [a, b, 1] };
     return xs.len() * 10 + xs[0];
-}`}, // 37
+}`},
 	{"tuple_arm", `function main(): i32 {
     let t: (i32, i32) = (7, 2);
     let u: (i32, i32) = match (t) { (a, b) => (b, a) };
     return u.0 * 10 + u.1;
-}`}, // 27
-	// An arm that leaves the function contributes no store: its unreachable
-	// tail is the function's return value, which typed the local as i32.
+}`},
 	{"diverging_arm_struct", `struct P { x: i32 }
 enum R { A(P), B }
 function pick(r: Result[R, i32]): i32 {
@@ -62,7 +55,7 @@ function pick(r: Result[R, i32]): i32 {
 function main(): i32 {
     let b: R = B;
     return pick(Ok(A(P { x: 30 }))) + pick(Ok(b));
-}`}, // 35
+}`},
 	{"diverging_arm_array", `enum R { A(u8[]), B }
 function size(r: Result[R, i32]): i32 {
     let m: u8[] = match (r) { Ok(A(bs)) => bs, _ => { let k: i32 = 7; return k; } };
@@ -72,8 +65,7 @@ function main(): i32 {
     let xs: u8[] = [1u8, 2u8, 3u8];
     let b: R = B;
     return size(Ok(A(xs))) * 10 + size(Ok(b));
-}`}, // 37
-	// A trailing `if` that returns on both branches is a statement (#12828).
+}`},
 	{"diverging_if_tail", `struct P { x: i32 }
 enum R { A(P), B }
 function pick(r: Result[R, i32], n: i32): i32 {
@@ -83,8 +75,7 @@ function pick(r: Result[R, i32], n: i32): i32 {
 function main(): i32 {
     let b: R = B;
     return pick(Ok(A(P { x: 30 })), 1) + pick(Ok(b), 1) + pick(Ok(b), 0);
-}`}, // 45
-	// A `loop` that breaks falls through to the arm's value, which is stored.
+}`},
 	{"loop_then_value_arm", `enum R { A(i32), B }
 function val(r: Result[R, i32]): i32 {
     let n: i32 = match (r) { Ok(A(v)) => { loop { break; } v + 1 }, _ => 50 };
@@ -92,7 +83,7 @@ function val(r: Result[R, i32]): i32 {
 }
 function main(): i32 {
     return val(Ok(A(4)));
-}`}, // 5
+}`},
 }
 
 func runMatchExprValueLocalX86_64(t *testing.T, tc struct{ name, src string }, gcc string, runner []string, fernBin, interpBin, stdlibRoot string) {
@@ -117,8 +108,6 @@ func runMatchExprValueLocalX86_64(t *testing.T, tc struct{ name, src string }, g
 	}
 }
 
-// TestSelfHostMatchExprValueLocalX86_64 — the x86-64 leg; fern.fern is the
-// driver because the re-declaration lives in the checker.
 func TestSelfHostMatchExprValueLocalX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
@@ -136,9 +125,6 @@ func TestSelfHostMatchExprValueLocalX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostMatchExprValueLocalWasm is the wasm leg: the local's declaration
-// decides the slot, and wasm validates types, so a wrong slot is a module-level
-// rejection rather than a wrong answer.
 func TestSelfHostMatchExprValueLocalWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping match-expression value-local wasm cases")

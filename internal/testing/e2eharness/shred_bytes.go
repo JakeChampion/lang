@@ -133,7 +133,6 @@ func RunShredByteCases(t *testing.T, bin string, runner []string, census func(*t
 	}
 }
 
-// Compile the utility's actual private pattern function with a test entry.
 func WriteShredPatternFixture(t testing.TB) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -144,8 +143,6 @@ func WriteShredPatternFixture(t testing.TB) string {
 	source := string(data)
 	var fixture strings.Builder
 	fixture.WriteString("import \"std/array\";\n")
-	// These arithmetic/builder functions contain no quoted braces. Extract
-	// their actual bodies without importing the CLI's unrelated fsmode need.
 	for _, name := range []string{"base_patterns", "flip_first", "copy_bytes", "pattern_block"} {
 		start := strings.Index(source, "function "+name+"(")
 		if start < 0 {

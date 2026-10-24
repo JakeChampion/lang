@@ -8,48 +8,20 @@ import (
 	"testing"
 )
 
-// iterSingleParamIRCases are real `import "core/iter"` programs that drive
-// the single-type-parameter trait-bound combinators over a concrete
-// iterator (iter.range -> iter.Range). These combinators —
-// sum/product/min/max/contains/count_value/position (all
-// `[I: Iterator[i32]]`) — are instantiated
-// with a module-mangled type argument (`iter__Range`, from the bundling loader)
-// that itself contains `__`. For a single type parameter the monomorphiser's
-// clone_bg must use the instantiation key verbatim rather than split it on
-// `__`, or the type parameter binds to the bogus "iter" and the clone's
-// `it: I` becomes an unknown type.
-//
-// Each case asserts the modload -ir-probe verdict is `module: IR` AND
-// that the compiled binary matches the interpreter oracle. x86-64 only
-// (the loader driver takes argv file paths, like the other modload tests).
 var iterSingleParamIRCases = []struct {
 	name string
 	main string
 }{
-	// sum 1..5 (exclusive) = 1+2+3+4 = 10.
 	{"sum", "import \"core/iter\";\nfunction main(): i32 { return iter.sum(iter.range(1, 5)); }\n"},
-	// product 1..5 = 1*2*3*4 = 24.
 	{"product", "import \"core/iter\";\nfunction main(): i32 { return iter.product(iter.range(1, 5)); }\n"},
-	// min over 3..9 = 3.
 	{"min", "import \"core/iter\";\nfunction main(): i32 { match (iter.min(iter.range(3, 9))) { Some(v) => { return v; }, None => { return 0; }, } }\n"},
-	// max over 3..9 = 8 (range is half-open).
 	{"max", "import \"core/iter\";\nfunction main(): i32 { match (iter.max(iter.range(3, 9))) { Some(v) => { return v; }, None => { return 0; }, } }\n"},
-	// contains 5 in 1..9 -> true -> 7.
 	{"contains", "import \"core/iter\";\nfunction main(): i32 { if (iter.contains(iter.range(1, 9), 5)) { return 7; } return 0; }\n"},
-	// count: how many 3s in 0..5 -> 1.
 	{"count", "import \"core/iter\";\nfunction main(): i32 { return iter.count(iter.range(0, 5), 3); }\n"},
-	// index_of 13 in 10..20 -> index 3.
 	{"index-of", "import \"core/iter\";\nfunction main(): i32 { match (iter.index_of(iter.range(10, 20), 13)) { Some(p) => { return p; }, None => { return 99; }, } }\n"},
-	// len of 0..7 through the Iterator trait's len method = 7.
 	{"len", "import \"core/iter\";\nfunction main(): i32 { return iter.range(0, 7).len(); }\n"},
 }
 
-// TestSelfHostIterSingleParamIRX86_64 compiles real `import "core/iter"`
-// programs that use the single-type-parameter trait-bound combinators
-// over a concrete iterator through the multi-module bundling loader, and
-// asserts the whole program routes the IR path (`module: IR`) — the win
-// from fixing clone_bg's instantiation-key over-split for module-mangled
-// type arguments. Each binary is oracle-checked against the interpreter.
 func TestSelfHostIterSingleParamIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -72,12 +44,6 @@ func TestSelfHostIterSingleParamIRX86_64(t *testing.T) {
 			if err := os.WriteFile(mainPath, []byte(tc.main), 0o644); err != nil {
 				t.Fatalf("write main.fern: %v", err)
 			}
-			// Routing assertion: the whole program must reach the IR path.
-			// Use -decide (the real codegen route decision, taken AFTER
-			// monomorphisation) rather than -ir-probe: the combinators are
-			// generic templates, so a pre-monomorphise per-function probe
-			// always shows the un-instantiable template (`it: I`) bailing —
-			// the route that matters is the one the monomorphised clones take.
 			decide, err := exec.Command(mmc, mainPath, stdlibRoot, "-decide").Output()
 			if err != nil {
 				t.Fatalf("decide: %v", err)
@@ -85,7 +51,6 @@ func TestSelfHostIterSingleParamIRX86_64(t *testing.T) {
 			if got := string(bytes.TrimSpace(decide)); got != "ir" {
 				t.Fatalf("%s routed %q, want ir", tc.name, got)
 			}
-			// Compile + run, oracle-checked.
 			asm, err := exec.Command(mmc, mainPath, stdlibRoot).Output()
 			if err != nil || len(asm) == 0 {
 				t.Fatalf("loader compile: %v", err)

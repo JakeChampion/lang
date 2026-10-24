@@ -8,35 +8,6 @@ import (
 	"testing"
 )
 
-// The preview-2 halves of the path-MUTATING filesystem builtins
-// (#6208 part 2 step 1): `temp_dir` over
-// wasi:filesystem/types.create-directory-at and `remove_file` over
-// unlink-file-at.
-//
-// Why this is a separate gate from the wasmbin-side tests: those run
-// `wasmtime --dir=. --invoke main` against a preview-1 CORE module,
-// which never touches the component composer at all. `bin/fern
-// -target wasm32-wasi` builds with Preview2WASI and composes a component, so
-// it exercises four layers the preview-1 tests cannot — the p2 helper
-// bodies, ClassifyCore's method detection, the instance type the
-// composer builds for that method set, and the canonical lowerings.
-// A mismatch in any one of them produces a component that fails to
-// instantiate, which is exactly the failure mode #6208 opened on.
-//
-// Exit code is the signal, and it is deliberately 0-or-not: the
-// component's `_lang_run` normalises every non-zero main to 1 (see
-// #6211), so a step number would be indistinguishable from any other
-// failure. main returns 0 only if every step passed.
-
-// TestCmdLangComponentTempDirRemoveFile runs a create → write → read
-// → unlink → verify-gone lifecycle inside a composed component.
-//
-// The two negative steps are the essential ones. Reading a file
-// after remove_file must FAIL — otherwise unlink-file-at was never
-// reached and the assertion would pass against a no-op — and removing
-// what is already gone must also fail, which is remove_file's
-// documented contract (os.Remove's, not os.RemoveAll's) and the same
-// answer the interpreter gives.
 func TestCmdLangComponentTempDirRemoveFile(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -75,8 +46,6 @@ func TestCmdLangComponentTempDirRemoveFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("wasm-tools print failed: %v\n%s", err, printOut)
 	}
-	// The instance type must declare exactly the methods the core
-	// imports. The two new ones have to be there...
 	for _, want := range []string{
 		"[method]descriptor.create-directory-at",
 		"[method]descriptor.unlink-file-at",
@@ -86,20 +55,12 @@ func TestCmdLangComponentTempDirRemoveFile(t *testing.T) {
 			t.Errorf("expected %q in the composed component", want)
 		}
 	}
-	// ...and append-via-stream must NOT: this program never appends,
-	// and an instance type that declares a method the core does not
-	// import makes the component demand a capability it has no use
-	// for. That over-declaration is what the old five-way mode could
-	// not avoid and the feature set exists to prevent.
 	if strings.Contains(string(printOut), "[method]descriptor.append-via-stream") {
 		t.Errorf("composed component declares append-via-stream, which this program never imports")
 	}
 	if err := exec.Command("wasmtime", "run", "--dir", dir, compPath).Run(); err != nil {
 		t.Errorf("temp_dir + remove_file lifecycle: wasmtime run failed (want exit 0): %v", err)
 	}
-	// temp_dir names the directory after the prefix, and created it
-	// under the preopen rather than reporting $TMPDIR — so the
-	// evidence it really ran is a `probe-<8 hex>` directory here.
 	ents, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatalf("read dir: %v", err)
@@ -118,19 +79,6 @@ func TestCmdLangComponentTempDirRemoveFile(t *testing.T) {
 	}
 }
 
-// TestCmdLangComponentStatOnly runs `stat` — and NOTHING else — through
-// a composed component.
-//
-// "Nothing else" is the point twice over. It proves `open-at` is not a
-// prerequisite: stat-at takes the preopen descriptor and a path
-// directly, so a program that never opens a file for streaming must
-// neither import open-at nor declare it. While open-at was
-// unconditional this program did not build at all, and every
-// filesystem component demanded a capability its core might never use.
-//
-// It is also the shape that exposed the helper-closure bug: with no
-// read/write/list in the program, nothing dragged `__fern_alloc_rc1`
-// in behind `__fern_str_copy` (see wasmbin's helper_closure_test.go).
 func TestCmdLangComponentStatOnly(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -184,12 +132,6 @@ func TestCmdLangComponentStatOnly(t *testing.T) {
 	if strings.Contains(string(printOut), "[method]descriptor.open-at") {
 		t.Errorf("composed component declares open-at, which a stat-only program never imports")
 	}
-	// The full descriptor-stat record has to be declared even though
-	// Fern's FileStat surfaces two of its six fields — a record missing
-	// its timestamps is a different type and the component would fail
-	// to instantiate. `datetime` is declared inline rather than
-	// outer-aliased from wasi:clocks/wall-clock, so a stat program does
-	// not import a clock it never reads.
 	if !strings.Contains(string(printOut), "descriptor-stat") {
 		t.Errorf("composed component does not declare the descriptor-stat record")
 	}
@@ -201,22 +143,6 @@ func TestCmdLangComponentStatOnly(t *testing.T) {
 	}
 }
 
-// TestCmdLangComponentReadAppend covers the combination the five-way
-// filesystem mode could not express: a program that both READS a file
-// and APPENDS to one.
-//
-// There were bodies for read, write, append and read+write, but not
-// read+append — so this program matched nothing and the driver
-// rejected it. Two tests asserted that rejection as the expected
-// behaviour (`TestCmdLangComponentWrapRejectsImports` and
-// `TestCmdLangTargetWasmRejectsUnsupported`, which both named this
-// exact source). Under FsFeatures there is no combination left to miss,
-// so those two moved to a real remaining gap and this took over as the
-// positive case.
-//
-// The appended content is the assertion: reading back "one\ntwo\n"
-// proves append-via-stream positioned at EOF rather than truncating,
-// while read-via-stream still worked in the same component.
 func TestCmdLangComponentReadAppend(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -256,29 +182,12 @@ func TestCmdLangComponentReadAppend(t *testing.T) {
 	}
 }
 
-// TestCmdLangComponentReadDirRemoveDirAll closes the loop on the
-// listing surface: `read_dir` over the `directory-entry-stream` cursor,
-// and `remove_dir_all` recursing through it.
-//
-// The entry COUNT is the essential assertion. preview-1's fd_readdir
-// yields "." and ".." and the preview-1 body filters them out;
-// wasi-filesystem specifies that read-directory omits them, so the
-// preview-2 body has no filter at all. If that reading of the spec were
-// wrong this reports 4 entries instead of 2, and the two backends would
-// disagree on every listing.
-//
-// The nesting is what the flat case cannot reach — remove_dir_all must
-// descend rather than fail with "not empty", and must dispatch on the
-// entry's descriptor-type (6 = regular file → unlink, 3 = directory →
-// recurse then remove-directory-at).
 func TestCmdLangComponentReadDirRemoveDirAll(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
 	}
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "rd.fern")
-	// create_dir_all builds the level under the temp directory — that is
-	// what makes this a tree rather than siblings.
 	src := []byte(`function main(): i32 {
     let d: string = "";
     match (temp_dir("rd")) { Err(e) => { return 1; }, Ok(p) => { d = p; } }
@@ -322,8 +231,6 @@ func TestCmdLangComponentReadDirRemoveDirAll(t *testing.T) {
 	if err := exec.Command("wasmtime", "run", "--dir", dir, compPath).Run(); err != nil {
 		t.Errorf("read_dir + remove_dir_all: wasmtime run failed (want exit 0): %v", err)
 	}
-	// The recursion really removed the tree — nothing but the sources
-	// should be left under the preopen.
 	ents, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatalf("read dir: %v", err)
@@ -335,19 +242,6 @@ func TestCmdLangComponentReadDirRemoveDirAll(t *testing.T) {
 	}
 }
 
-// TestCmdLangComponentStdTestSuiteRuns is #6208's actual success
-// criterion, and the thing the issue was opened about.
-//
-// `TestRunner.finish` walks its cleanup paths through remove_dir_all
-// unconditionally, so before part 1 every program merely IMPORTING
-// std/test failed to build for wasm with `unknown callee
-// "remove_dir_all"` — whether or not the suite touched a file. Part 1
-// made it build for preview-1; this makes it BUILD AND RUN as a real
-// component, which is the end of the chain.
-//
-// Comparing the TAP output against the interpreter rather than just
-// checking the exit code is the point: a suite that silently ran zero
-// assertions would also exit 0.
 func TestCmdLangComponentStdTestSuiteRuns(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -390,16 +284,6 @@ function main(): i32 {
 	}
 }
 
-// TestCmdLangComponentCreateDirAll runs `create_dir_all` (#6749)
-// through a composed component: build a chain nobody preopened, write
-// into its leaf, and re-create it to prove "already there" is Ok.
-//
-// The write into the leaf is what makes this more than a syscall
-// smoke test — a walk that created only the last component, or that
-// mis-sliced a prefix, leaves a path write_file cannot reach. The
-// instance-type assertion pins the other half of the preview-2 contract:
-// create-directory-at must be declared for a program that only ever
-// creates directories, without dragging unlink-file-at along.
 func TestCmdLangComponentCreateDirAll(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")

@@ -7,11 +7,6 @@ import (
 	"testing"
 )
 
-// The in-place scale (ir.op_scale_f64_in_place) is scale_f64 with a flag:
-// it consumes the unique buffer it is handed and answers it as the result.
-// The lift names it apart from the allocating form so the certifier reads
-// the move; lifted under the plain name, the buffer looks leaked on the
-// unique arm and the default compile refuses a correct program.
 const rcCertifyInPlaceScaleSrc = `function build(n: i32): f64[] {
   let xs: f64[] = [];
   let i: i32 = 0;

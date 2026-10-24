@@ -10,25 +10,6 @@ import (
 	"testing"
 )
 
-// `chown_at` through the SELF-HOST IR path, on the two backends that provide
-// it. Neither WASI preview records an owner on an entry, so the wasm leg is
-// the capability refusal rather than a probe — `fsowner` is granted by no wasi
-// profile.
-//
-// Nothing here can be proved by compiling. A `chown_at` that lowered to
-// nothing, swapped its uid and gid, or passed the follow flag straight through
-// where the kernel wants its inverse still links and still returns Ok. The
-// last of those is the one a plain success cannot see: it chowns the symlink
-// instead of its target, which is a change to a real entry. So the probe sets
-// up two symlinks to the same file, chowns one each way, and the Go side reads
-// all three back through its own Lstat.
-//
-// `internal/testing/e2ecompiler` is PRIMARY for a self-host lowering change
-// (docs/TEST-GATES.md): the fixpoint is self-referential and nothing in the
-// compiler changes a file's owner.
-
-// shChownIds is what the harness measured about this process: a group it may
-// move a file it owns into, and whether it may change an owner at all.
 type shChownIds struct {
 	uid      int
 	gid      int
@@ -37,8 +18,6 @@ type shChownIds struct {
 	altUid   int
 }
 
-// shMeasureChownIds establishes, by doing them, which of the two changes this
-// process may make in `dir`, so neither arm of the probe is an assumption.
 func shMeasureChownIds(t *testing.T, dir string) shChownIds {
 	t.Helper()
 	probe := filepath.Join(dir, ".chownprobe")
@@ -55,8 +34,6 @@ func shMeasureChownIds(t *testing.T, dir string) shChownIds {
 	if err != nil {
 		t.Fatalf("getgroups: %v", err)
 	}
-	// 0 and 1 exist on every unix and are what root reaches for; the chown
-	// below is what decides, not this list.
 	for _, g := range append(groups, 0, 1) {
 		if g == ids.gid {
 			continue
@@ -91,7 +68,6 @@ func shMeasureChownIds(t *testing.T, dir string) shChownIds {
 	return ids
 }
 
-// selfHostChownAtSeed builds the tree the probe operates on.
 func selfHostChownAtSeed(t *testing.T, dir string) {
 	t.Helper()
 	for _, name := range []string{"plain", "tgt", "owned"} {
@@ -106,8 +82,6 @@ func selfHostChownAtSeed(t *testing.T, dir string) {
 	}
 }
 
-// selfHostChownAtSource is the probe. Every failure returns its own exit code,
-// so the number names the step.
 func selfHostChownAtSource(dir string, ids shChownIds) string {
 	p := func(name string) string { return filepath.Join(dir, name) }
 	src := fmt.Sprintf(`function main(): i32 {
@@ -144,8 +118,6 @@ func selfHostChownAtSource(dir string, ids shChownIds) string {
 	return src
 }
 
-// selfHostChownAtTree reads the tree back through Go's own Lstat rather than
-// through the compiler's `stat`.
 func selfHostChownAtTree(t *testing.T, dir string, ids shChownIds) {
 	t.Helper()
 	owner := func(name string) (int, int) {
@@ -190,7 +162,6 @@ func selfHostChownAtTree(t *testing.T, dir string, ids shChownIds) {
 	}
 }
 
-// TestSelfHostChownAtIR is the x86-64 leg.
 func TestSelfHostChownAtIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -222,9 +193,6 @@ func TestSelfHostChownAtIR(t *testing.T) {
 	selfHostChownAtTree(t, work, ids)
 }
 
-// TestSelfHostChownAtIRArm64 is the same probe through the arm64 IR backend
-// under qemu: a different syscall number, a different AT_SYMLINK_NOFOLLOW, and
-// a second hand-written operand reversal.
 func TestSelfHostChownAtIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

@@ -1,22 +1,22 @@
 // spec: FS-01
 // spec: FS-02
 // spec: FS-03
-//
-// Float-to-int conversion SATURATES, identically on every backend: NaN
-// becomes 0, anything above the destination's maximum becomes that
-// maximum, anything below its minimum becomes that minimum, and an
-// in-range value truncates toward zero.
-//
-// This is the one float edge the language pins rather than leaving to
-// the hardware, and it has to be, because the hardware answers three
-// different ways: wasm's `trunc_sat_*` and arm64's `fcvtz*` saturate
-// natively, while x86's `cvtt*2si` returns INT_MIN for every invalid
-// input — NaN and +overflow included — so the backend fixes those up.
-// The UNSIGNED destinations are the same rule, and they are covered here
-// because leaving them out is what let a compiler answer differently for one
-// of them: the self-host truncated into a `u8` SIGNED, so `-1.0 as u8` came
-// out 255 — the low byte of the signed clamp — rather than 0 (#9912). The
-// signedness of the conversion is the DESTINATION's, at every width.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import "std/i32";
 import "std/i64";
 
@@ -34,14 +34,14 @@ function main(): i32 {
     print((fid(0.0 - 3.9) as i32).to_string());
     print((fid(0.0) as i32).to_string());
 
-    // u32: below the minimum clamps to 0, above the maximum to all-ones.
+
     print(((nan as u32) as i64).to_string());
     print(((fid(0.0 - 1.0) as u32) as i64).to_string());
     print(((inf as u32) as i64).to_string());
 
-    // u8: the conversion saturates at 32 bits and the result is then narrowed,
-    // so an in-range-for-u32 value keeps its low byte (300 → 44) while a
-    // negative clamps to 0 before any narrowing can see it.
+
+
+
     print(((nan as u8) as i32).to_string());
     print(((fid(0.0 - 1.0) as u8) as i32).to_string());
     print(((fid(0.0 - 300.0) as u8) as i32).to_string());

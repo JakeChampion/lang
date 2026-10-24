@@ -16,23 +16,7 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// TestSelfHostPerModuleEmitAllFixpointX86_64 is a gen0 → link → gen1 →
-// gen1-emit-all byte-identity fixpoint on the whole compiler, emitted in
-// batches of units per process: the route every whole-compiler per-module build
-// takes, the driver's own default included (emit_per_module_spawned).
-//
-// Each process lowers the whole program through the typed lowering, and cuts
-// its units from that. Measured 2026-09-30 with the gen0 driver: the lowering
-// is 52 s at 4.4 GB, and all 116 units of one process emit in another 17 s and
-// 0.2 GB, so the batch (pmEmitAllBatch) keeps the compiler at two processes,
-// which still drives the -unit-range split. It runs UNGATED, in its own CI job
-// (emitall-fixpoint-x86_64).
-//
-// WHAT THIS DOES NOT COVER. The one-unit-per-process shape
-// (`-per-module-emit N`) is TestSelfHostPerModuleRoutesAgree's.
 func TestSelfHostPerModuleEmitAllFixpointX86_64(t *testing.T) {
-	// Both generations use the same batch so the comparison isolates the
-	// COMPILER, not the windowing.
 	batchUnits := pmEmitAllBatch
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProjectTyped(t)
@@ -49,7 +33,6 @@ func TestSelfHostPerModuleEmitAllFixpointX86_64(t *testing.T) {
 		t.Fatalf("link gen1 from gen0's emit-all units failed: %v\n%s", err, lout)
 	}
 
-	// gen1 (self-host-built) emit-all of the SAME source.
 	t.Logf("gen1: emit-all of the whole compiler (batch=%d)", batchUnits)
 	unitsG1 := emitAllWholeCompiler(t, runner, gen1Bin, entry, dir, "eafix_g1", "x86-64-linux", batchUnits, pmSelfBuiltEmitMemoryMB)
 
@@ -83,13 +66,6 @@ func TestSelfHostPerModuleEmitAllFixpointX86_64(t *testing.T) {
 	t.Logf("emit-all fixpoint holds: gen0 == gen1 across %d units, batch=%d, no OOM", len(unitsG0), batchUnits)
 }
 
-// emitAllWholeCompiler drives compilerBin's `-per-module-emit-all`
-// over the whole-compiler entry in RSS-bounded batches (a fresh process per
-// batch), returning a map of "<modIdx>[_s<lo>]" → unit asm read back from the
-// batch output dir. The plan (planPmEmitWindows) sizes the flat unit range only;
-// the driver windows internally so -unit-range [b,hi) emits exactly jobs[b:hi].
-// `target` selects the backend the units are emitted for ("x86-64-linux" or
-// "arm64-linux"); the analysis queries ignore it.
 func emitAllWholeCompiler(t *testing.T, runner []string, compilerBin, entry, dir, label, target string, batchUnits, memoryMB int) map[string]string {
 	t.Helper()
 	build := func(args ...string) *exec.Cmd {
@@ -103,9 +79,6 @@ func emitAllWholeCompiler(t *testing.T, runner []string, compilerBin, entry, dir
 		out, err := build(args...).Output()
 		return string(out), err
 	}
-	// driveRSS runs a batch and returns the child's peak RSS (ru_maxrss, KB on
-	// Linux). Logging it turns a future arena-growth regression into a visible
-	// creep in the CI output instead of a silent jump to exit-125.
 	driveRSS := func(args ...string) (int64, error) {
 		cmd := build(args...)
 		_, err := cmd.Output()
@@ -141,11 +114,6 @@ func emitAllWholeCompiler(t *testing.T, runner []string, compilerBin, entry, dir
 			peakRSSKB = batch.rss
 		}
 		if batch.err != nil {
-			// The two memory failures need opposite responses, and until the arena
-			// trap got its own status both arrived as 137 and this hint had to
-			// guess. 125 is the emitted binary exhausting its own fixed arena —
-			// reproducible, a real bound-the-batch bug. 137 is 128+9, the HOST
-			// kernel OOM-killing the process — infra, retry with a smaller budget.
 			hint := ""
 			if ee, ok := batch.err.(*exec.ExitError); ok {
 				switch ee.ExitCode() {
@@ -184,12 +152,6 @@ func emitAllWholeCompiler(t *testing.T, runner []string, compilerBin, entry, dir
 	return units
 }
 
-// The Go-built driver peaked at 2.43 GiB in CI run 34979953900. Persistent
-// instruction accumulation reduces the self-built driver's eight-unit peak
-// to 2.76 GiB across all 75 compiler units in native run 35033101363. Both
-// now reserve 5 GiB per batch against the shared process-wide budget. Two
-// self-built batches together peaked below 4.8 GB with byte-identical output;
-// retain separate constants so future measurements can adjust either shape.
 const (
 	pmGoBuiltEmitMemoryMB   = 5 * 1024
 	pmSelfBuiltEmitMemoryMB = 5 * 1024
@@ -201,10 +163,6 @@ type pmEmitBatchResult struct {
 	err    error
 }
 
-// runPMEmitBatches keeps the existing flat unit ranges, bounded by both the
-// Go CPU budget and the shared build-memory budget. Workers own disjoint
-// result slots and disjoint unit files. Wait for all subprocesses before
-// inspecting results or returning to a caller that might remove their files.
 func runPMEmitBatches(totalUnits, batchUnits, memoryMB int, emit func(lo, hi int) (int64, error)) []pmEmitBatchResult {
 	var batches []pmEmitBatchResult
 	for lo := 0; lo < totalUnits; lo += batchUnits {
@@ -214,8 +172,6 @@ func runPMEmitBatches(totalUnits, batchUnits, memoryMB int, emit func(lo, hi int
 	var workers sync.WaitGroup
 	workerCount := min(runtime.GOMAXPROCS(0), len(batches))
 	if e2eharness.InterpDriverMode() {
-		// Preserve serial execution until the interpreter's whole-compiler
-		// memory footprint has been measured independently.
 		workerCount = min(1, len(batches))
 	}
 	for range workerCount {
@@ -238,9 +194,6 @@ func runPMEmitBatches(totalUnits, batchUnits, memoryMB int, emit func(lo, hi int
 	return batches
 }
 
-// unitObjPaths returns the on-disk .s paths for an emit-all unit set in
-// deterministic key order (a Go map's iteration order is randomised and object
-// order affects the linked image). It also asserts exactly one entry unit.
 func unitObjPaths(t *testing.T, dir, label string, units map[string]string) []string {
 	t.Helper()
 	keys := make([]string, 0, len(units))
@@ -262,8 +215,6 @@ func unitObjPaths(t *testing.T, dir, label string, units map[string]string) []st
 	return objs
 }
 
-// firstDiffLine returns the 1-based line number of the first difference between
-// a and b, or 0 if they are equal.
 func firstDiffLine(a, b string) int {
 	la := strings.Split(a, "\n")
 	lb := strings.Split(b, "\n")

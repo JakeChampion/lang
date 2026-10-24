@@ -11,13 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestSelfHostExternRecordParamCustomProvider is the self-host port of the
-// record `@import` parameter (docs/WIT-BRING-YOUR-OWN.md): the self-hosted wasm
-// backend flattens a struct param to its fields. A self-host struct value is
-// [type-id@0][field@+4 in 4-byte slots], so the wrapper pushes one i32 per field
-// (no canonical memory pointer → no alignment constraint, unlike arrays). Tested via
-// the custom-provider harness: a `sum-point: func(p: record { x, y: s32 }) ->
-// s32` provider returns x+y. Mirror of the Go TestExternRecordParamCustomProvider.
 func TestSelfHostExternRecordParamCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -36,7 +29,6 @@ func TestSelfHostExternRecordParamCustomProvider(t *testing.T) {
 		}
 	}
 
-	// --- Provider component exporting local:test/sink@0.1.0 sum-point. ---
 	provWit := filepath.Join(dir, "provwit")
 	if err := os.MkdirAll(provWit, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -46,7 +38,6 @@ func TestSelfHostExternRecordParamCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export sink; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// sum-point receives the record flattened to (x, y) and returns their sum.
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)
   (func (export "local:test/sink@0.1.0#sum-point") (param $x i32) (param $y i32) (result i32)
@@ -58,7 +49,6 @@ func TestSelfHostExternRecordParamCustomProvider(t *testing.T) {
 	run(wasmtools, "component", "embed", provWit, "-w", "provider", filepath.Join(dir, "prov_core.wasm"), "-o", filepath.Join(dir, "prov_embed.wasm"))
 	run(wasmtools, "component", "new", filepath.Join(dir, "prov_embed.wasm"), "-o", provider)
 
-	// --- User world (custom sink iface + wasi stdout). ---
 	userWit := filepath.Join(dir, "userwit")
 	if out, err := exec.Command("cp", "-r", "../../../cmd/fern/wit/deps", filepath.Join(userWit, "deps")).CombinedOutput(); err != nil {
 		_ = os.MkdirAll(userWit, 0o755)
@@ -87,7 +77,6 @@ func TestSelfHostExternRecordParamCustomProvider(t *testing.T) {
 		t.Fatalf("DecodeWorldBytes: %v", err)
 	}
 
-	// --- Self-host backend: emit the core from the record-param program. ---
 	copySelfHostDriver(t, dir, "drivers/wasm_runio_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_runio_run.fern", "wasm_runio_run")
 

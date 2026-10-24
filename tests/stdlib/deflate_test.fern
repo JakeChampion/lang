@@ -6,13 +6,6 @@ import "std/hash" as hash;
 import "std/utf8" as utf8;
 import "core/int";
 
-// tests/stdlib/deflate_test.fern — std/deflate against streams Python's
-// zlib produced: a stored block, a fixed-Huffman block, a dynamic block,
-// a 60 KB corpus whose matches reach 32 KB back, a gzip member with every
-// optional header field, two members in one stream, a zlib stream, and
-// the refusals (truncation, a bad checksum, a reserved block type, a
-// preset dictionary, the output cap).
-
 function text(r: Result[deflate.Inflated, deflate.InflateError]): string {
   match (r) {
     Ok(inflated) => {
@@ -82,8 +75,6 @@ function test_consumed(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
-// `__appended(out, line)` — `out` with the line's bytes on its end, one
-// append per byte so the array grows in place.
 function __appended(own out: u8[], line: string): u8[] {
   let bs: u8[] = line.bytes();
   let i: i32 = 0;
@@ -94,8 +85,6 @@ function __appended(own out: u8[], line: string): u8[] {
   return out;
 }
 
-// 3000 numbered lines: dynamic blocks with matches up to the window's
-// full 32 KB back, checked byte for byte and by CRC-32 against the source.
 function test_corpus_gzip(): test.TestOutcome {
   let want: u8[] = [];
   let i: i32 = 0;
@@ -137,7 +126,6 @@ function test_zlib(): test.TestOutcome {
 }
 
 function test_adler32(): test.TestOutcome {
-  // RFC 1950's own example value for "Wikipedia".
   return test.assert_eq(deflate.adler32("Wikipedia".bytes()) == 300286872 as u32, true);
 }
 
@@ -169,10 +157,6 @@ function test_bad_headers(): test.TestOutcome {
   return test.assert_eq(text(deflate.inflate(__codec_bytes(hex.decode("07")), 1024)), "error: malformed compressed data: a reserved block type");
 }
 
-// Two inputs no encoder writes, each reaching a guard the Python-made
-// vectors above never do: a fixed block whose length code is cut off
-// mid-symbol, and a fixed block whose first pair copies from before the
-// output starts.
 function test_hand_rolled_refusals(): test.TestOutcome {
   if (text(deflate.inflate(__codec_bytes(hex.decode("8b24c0")), 1024)) != "error: the compressed data ends early") {
     return test.fail("cut-off symbol: " + text(deflate.inflate(__codec_bytes(hex.decode("8b24c0")), 1024)));
@@ -215,10 +199,6 @@ function round_trip(input: u8[]): string {
   return "";
 }
 
-// The encoder's streams read back by the decoder: empty, one byte (the
-// three bytes zlib writes for it), text with matches, 10 KiB of
-// repetition well under a hundredth of its size, and bytes with no
-// matches stored, five bytes over their size.
 function test_deflate_round_trip(): test.TestOutcome {
   let none: u8[] = [];
   let one: string = hex.encode(deflate.deflate("a".bytes()));
@@ -228,9 +208,6 @@ function test_deflate_round_trip(): test.TestOutcome {
   return test.assert_eq(round_trip(none) + "|" + one + "|" + text + "|" + repeated + "|" + noise, "ok 2|4b0400|ok 47|ok 40|ok 3005");
 }
 
-// varied() — runs of noise, each followed by a copy of an earlier span:
-// one copy of every match length from 3 to 258, at distances spread
-// across the window.
 function varied(): u8[] {
   let noise: u8[] = lcg_bytes(2560);
   let out: u8[] = [];
@@ -256,15 +233,11 @@ function test_deflate_varied(): test.TestOutcome {
   return test.assert_eq(round_trip(varied()), "ok 3571");
 }
 
-// More tokens than one block holds: 17000 bytes of noise, stored, then
-// 1760 bytes of text in a block coded for it.
 function test_deflate_blocks(): test.TestOutcome {
   let input: u8[] = lcg_bytes(17000).concat("the quick brown fox jumps over the lazy dog ".repeat(40).bytes());
   return test.assert_eq(round_trip(input), "ok 17095");
 }
 
-// `gzip` read back by `gunzip`: the corpus `test_corpus_gzip` decodes,
-// in fewer bytes than zlib's level 6 makes of it (7815).
 function test_gzip_round_trip(): test.TestOutcome {
   let want: u8[] = [];
   let i: i32 = 0;
@@ -287,11 +260,6 @@ function test_gzip_round_trip(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
-// `deflate_flushed` leaves the stream open behind an empty stored block:
-// it ends in `00 00 ff ff`, and the decoder reads the data once a final
-// empty block (`01 00 00 ff ff`) closes the stream, as a message framing
-// closes what it receives; a window of 2^9 keeps every match within 512
-// bytes.
 function test_deflate_flushed(): test.TestOutcome {
   let input: u8[] = "0123456789".repeat(300).bytes();
   let packed: u8[] = deflate.deflate_flushed(input, 9);
@@ -307,11 +275,6 @@ function test_deflate_flushed(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
-// `inflate_after` decodes a stream that goes on from earlier output:
-// zlib's second sync-flushed message of one context, a single match back
-// into the first message, closed by a final empty block. The cap counts
-// only the new output, and without the history the match reaches before
-// the start.
 function test_inflate_after(): test.TestOutcome {
   let history: u8[] = "context takeover, context takeover".bytes();
   let stream: u8[] = __codec_bytes(hex.decode("42e72b0200" + "0000ffff" + "010000ffff"));
@@ -346,7 +309,6 @@ function main(): i32 {
   return r.finish();
 }
 
-// Decode a valid fixture. Report a malformed fixture before the test exits.
 function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
   match (value) {
     Ok(bytes) => {

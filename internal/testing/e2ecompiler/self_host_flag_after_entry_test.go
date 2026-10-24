@@ -7,10 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostFlagAfterEntryIsRefused pins the driver's positional rule to
-// native's (#11406, #8465): driver flags end at the entry file, a `-x` written
-// after it is refused with exit 2 rather than parsed or handed to the program
-// unseen, and the program's own `-x` arguments go after a `--` separator.
 func TestSelfHostFlagAfterEntryIsRefused(t *testing.T) {
 	cli := newStrictCLI(t)
 	dir := t.TempDir()
@@ -52,8 +48,6 @@ func TestSelfHostFlagAfterEntryIsRefused(t *testing.T) {
 		}
 	}
 
-	// The program's own arguments: `--` separates a leading `-x`, a later one
-	// is ordinary data, and a bare `-` is a filename, not a flag.
 	for _, tc := range []struct {
 		argv []string
 		want string

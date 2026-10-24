@@ -1,18 +1,18 @@
-// A lambda capturing a binding matched out of a BUILT-IN record's field. The
-// self-host refused the function: lowering annotates a module before the
-// built-in structs are injected, so `module_env` held only the structs the
-// program declares, `r.body` typed as unknown, the binding `p` with it, and
-// the lift declined a lambda whose capture had no type.
-//
-// Positions:
-//   chunks     — `BodyChunks(p)` out of `HttpResponse.body`, the capture
-//                called inside the lambda.
-//   background — `Some(first)` out of `HttpResponse.background`, composed
-//                with a second closure as `with_background` does.
-//   control    — the same capture through an annotated local, which lowered
-//                before the fix.
-//
-// Sentinels are 201-203; the success path returns 42.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 function empty(): HeaderMap {
   return HeaderMap { names: [], values: [] };
 }

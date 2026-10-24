@@ -4,20 +4,6 @@ import (
 	"testing"
 )
 
-// `own` array parameters that self-append in a loop — `p = p.append(x)` — and
-// return the grown buffer. An `own` param is callee-owned (the caller
-// transferred it; no entry-inc; uniquely owned at rc==1 when the E051-guarded
-// arg was fresh), so its self-append is rc-gated exactly like an owned local:
-// in-place at rc==1, the orphan freed on grow. Before the gate extension an
-// `own` param was excluded from `isSelfArrayPushLocal`, orphaning one buffer
-// per iteration; now it reclaims grow intermediates.
-//
-// These pin the SAFETY contract — correct values across grows AND no
-// over-release (`__rc_underflow_count() == 0`, i.e. the buffer-only
-// `__fern_arr_dec` never double-frees a shared element) — for i32[] and the
-// string[] case where a flat element-walking dec would be unsound. This is the
-// runtime half of move semantics for threaded array params
-// (docs/RC-ARRAY-MOVE-SEMANTICS-PLAN.md step 3).
 const ownSelfAppendSrc = `
 function build_i32(own p: i32[], n: i32): i32[] {
     let i: i32 = 0;

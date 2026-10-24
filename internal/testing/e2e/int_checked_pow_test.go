@@ -2,16 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for the integer checked_pow helpers — std/i32, std/i64,
-// std/u32, std/u64 — the overflow-checked exponentiation that completes the
-// checked_ family for the last arithmetic op. checked_pow does
-// exponentiation-by-squaring, routing every intermediate product through
-// checked_mul, and returns None on the first overflow (or for a negative
-// exponent). Checks exact results straddling each type's max (2^30/2^31,
-// 2^62/2^63, 2^31/2^32, 2^63/2^64, 10^k boundaries), the exp==0 -> 1 identity,
-// a zero and a negative base, and the negative-exponent -> None case. Returns
-// 42 iff every check holds across interp / x86-64 / wasm / arm64; each leg skips
-// itself when its toolchain is absent.
 const intCheckedPowProg = `
 import "std/i32";
 import "std/i64" as i64m;

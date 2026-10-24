@@ -8,11 +8,6 @@ import (
 	"testing"
 )
 
-// `fern -lint` and `fern -doc` accept a literate `.fern.md`, as every other
-// mode that takes a `.fern` does (#12679): each runs over the modules the
-// document tangles to, and a lint finding is reported at its document line. A
-// directory walk passes over a chunk library, which has no module, and over a
-// document beside a module of the same stem, which the loader does not take.
 func TestSelfHostLiterateLintAndDoc(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	dir := t.TempDir()
@@ -36,7 +31,6 @@ func TestSelfHostLiterateLintAndDoc(t *testing.T) {
 
 	t.Run("lint-document", func(t *testing.T) {
 		out, errs, code := run("-lint", "-lint-opt", "cyclomatic-complexity.max=1", "lit/shapes.fern.md")
-		// `pub function area` is the document's line 8; `function`, column 5.
 		want := "lit/shapes.fern.md:8:5: warning[cyclomatic-complexity]: function `area` has a cyclomatic complexity of 2"
 		if code != 0 || !strings.HasPrefix(out, want) || !strings.Contains(out, "\n    pub function area(w: i32, h: i32): i32 {\n") {
 			t.Errorf("exit %d, stdout %q, stderr %q; want it to open %q and show the document line", code, out, errs, want)

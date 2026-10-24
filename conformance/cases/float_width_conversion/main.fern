@@ -1,9 +1,9 @@
 // spec: FS-07
 import "std/f64";
-// f32 -> f64 and back. Both directions are exact for a value with few
-// significant bits, so the round trip is portable; the same round trip
-// on a value needing more than 24 bits of mantissa is not, which is why
-// the case uses halves.
+
+
+
+
 function half(n: i32): f32 {
     return (n as f32) * 0.5;
 }

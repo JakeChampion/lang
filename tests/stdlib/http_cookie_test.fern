@@ -10,14 +10,6 @@ import "std/sim_fetch";
 import "std/utf8";
 import "std/i64";
 
-// tests/stdlib/http_cookie_test.fern — std/http/cookie: a SetCookie
-// written with every attribute and each one a browser would refuse
-// refused; a request's Cookie header read; a jar storing what a response
-// set under rfc6265bis's domain, path, scheme, prefix, lifetime and
-// eviction rules and writing the Cookie header a request carries in its
-// order; the cookie-date formats servers send; and the jar on the
-// client's route over the scripted network, through a redirect.
-
 function serialized(c: cookie.SetCookie): string {
   match (c.serialize()) {
     Ok(s) => {
@@ -30,7 +22,6 @@ function serialized(c: cookie.SetCookie): string {
   return "";
 }
 
-// refused is the error's kind for a cookie `serialize` refuses, or "ok".
 function refused(c: cookie.SetCookie): string {
   match (c.serialize()) {
     Ok(s) => {
@@ -101,8 +92,6 @@ function test_request_cookie(): test.TestOutcome {
   return test.assert_eq(read(req, "sid") + " " + read(req, "a") + " " + read(req, "b") + " " + read(req, "c") + " " + read(req, "Sid") + " " + read(req, "d"), "\"abc\" 1 2 3 none none");
 }
 
-// set stores one Set-Cookie at `now`, as the kept cookie's name, domain,
-// path and flags, or why it was ignored.
 function set(j: cookie.Jar, u: string, v: string, now: i64): string {
   match (j.set(u, v, now)) {
     Ok(c) => {
@@ -253,9 +242,6 @@ function header_line(request: string, name: string): string {
   return "-";
 }
 
-// The client's route with a jar: a login's Set-Cookie is carried by the
-// next request to the site and not by one to another, a redirect's is
-// stored and carried by the hop that follows it, and the jar reads back.
 function test_fetch_with_jar(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let login: string = "HTTP/1.1 200 Status\r\nSet-Cookie: sid=1; Path=/; HttpOnly\r\nSet-Cookie: theme=dark; Path=/ui\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok";

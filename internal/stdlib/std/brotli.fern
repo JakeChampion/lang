@@ -1,22 +1,8 @@
-// std/brotli — Brotli (RFC 7932) decoding, pure Fern: the coding a browser
-// asks for as `br` and std/http/static serves precompressed.
-//
-// A stream is a window size and meta-blocks. A compressed meta-block
-// carries, for literals, commands and distances, the block types it
-// switches between and the prefix codes each type or context uses; then
-// commands, each a run of literals, each literal coded under a context of
-// the two bytes before it, and a copy from earlier output or from the
-// static dictionary (`std/brotli/dictionary`), transformed. Prefix codes
-// are canonical, as DEFLATE's are, and are read a bit at a time.
-// `decompress` takes `max_out`, the most bytes it will produce.
-
+// This module decodes Brotli data under RFC 7932.
 import "std/brotli/dictionary";
 import "core/cmp";
 import "std/error";
 
-// `BrotliError` — why a stream could not be decoded: it ends early
-// (`BrotliTruncated`), it breaks the format, with what was wrong
-// (`BrotliMalformed`), or its output passes `max_out` (`BrotliTooLarge`).
 pub enum BrotliError { BrotliTruncated, BrotliMalformed(string), BrotliTooLarge }
 
 pub function (e: BrotliError) to_string(): string {
@@ -42,8 +28,6 @@ pub function (e: BrotliError) message(): string {
   return "brotli";
 }
 
-// `decompress(input, max_out)` — the stream decoded, at most `max_out`
-// bytes.
 pub function decompress(input: [u8], max_out: i32): Result[u8[], BrotliError] {
   let w: (i32, i32) = __window(input);
   if (w.0 < 0) {
@@ -66,20 +50,10 @@ pub function decompress(input: [u8], max_out: i32): Result[u8[], BrotliError] {
   return Ok(out);
 }
 
-// __St — what runs from one meta-block to the next: the bit reached, the
-// last four distances, most recent first, the window, the dictionary
-// (empty until a word is first referenced), and the tables built once a
-// stream.
 struct __St { bit: i32, ring: i32[], window: i32, dict: u8[], t: __Tab }
 
-// __Run — the output after a meta-block, and the state it leaves.
 struct __Run { out: u8[], s: __St }
 
-// ---------------------------------------------------------------------------
-// Bits
-
-// __bits(buf, bit, n) — `n` bits from bit `bit`, least significant first,
-// zeros past the end (a read that far is caught as truncation later).
 function __bits(buf: [u8], bit: i32, n: i32): i32 {
   let v: i64 = 0;
   let first: i32 = bit >> 3;
@@ -95,8 +69,6 @@ function __bits(buf: [u8], bit: i32, n: i32): i32 {
   return (v >> (bit & 7) & (1 as i64 << n) - 1) as i32;
 }
 
-// __window(buf) — the window bits the stream header names, -1 for a size
-// RFC 7932 does not have, and the bit after the header.
 function __window(buf: [u8]): (i32, i32) {
   if (__bits(buf, 0, 1) == 0) {
     return (16, 1);
@@ -115,8 +87,6 @@ function __window(buf: [u8]): (i32, i32) {
   return (8 + m, 7);
 }
 
-// __varlen(buf, bit) — the variable-length count of RFC 7932 §9.2, 0 to
-// 255, and the bit after it.
 function __varlen(buf: [u8], bit: i32): (i32, i32) {
   if (__bits(buf, bit, 1) == 0) {
     return (0, bit + 1);
@@ -128,15 +98,8 @@ function __varlen(buf: [u8], bit: i32): (i32, i32) {
   return (__bits(buf, bit + 4, n) + (1 << n), bit + 4 + n);
 }
 
-// ---------------------------------------------------------------------------
-// Prefix codes
-
-// __Pc — a canonical prefix code: how many codes of each length 1 to 15
-// and the symbols in code order; `single` the one symbol of a code that
-// has only one, which takes no bits.
 struct __Pc { count: i32[], sym: i32[], single: i32 }
 
-// __code(lens) — the canonical code for symbol lengths `lens`.
 function __code(lens: i32[]): __Pc {
   let count: i32[] = __zeros(16);
   let used: i32 = 0;
@@ -168,8 +131,6 @@ function __code(lens: i32[]): __Pc {
   return __Pc { count: count, sym: sym, single: 0 - 1 };
 }
 
-// __decode(buf, bit, pc) — the next symbol and the bit after it; -1 for
-// bits no code has.
 function __decode(buf: [u8], bit: i32, pc: __Pc): (i32, i32) {
   if (pc.single >= 0) {
     return (pc.single, bit);
@@ -193,7 +154,6 @@ function __decode(buf: [u8], bit: i32, pc: __Pc): (i32, i32) {
   return (0 - 1, bit);
 }
 
-// __symbol(buf, bit, pc) — `__decode`, an error for bits no code has.
 function __symbol(buf: [u8], bit: i32, pc: __Pc): Result[(i32, i32), BrotliError] {
   let r: (i32, i32) = __decode(buf, bit, pc);
   if (r.0 < 0) {
@@ -202,8 +162,6 @@ function __symbol(buf: [u8], bit: i32, pc: __Pc): Result[(i32, i32), BrotliError
   return Ok(r);
 }
 
-// __read_code(buf, bit, size) — a prefix code over `size` symbols (RFC
-// 7932 §3.4, §3.5), and the bit after its description.
 function __read_code(buf: [u8], bit: i32, size: i32): Result[(__Pc, i32), BrotliError] {
   let hskip: i32 = __bits(buf, bit, 2);
   if (hskip == 1) {
@@ -212,8 +170,6 @@ function __read_code(buf: [u8], bit: i32, size: i32): Result[(__Pc, i32), Brotli
   return __complex_code(buf, bit + 2, hskip, size);
 }
 
-// __simple_code(buf, bit, size) — one to four symbols listed, their
-// lengths fixed by how many there are (and, for four, a tree-select bit).
 function __simple_code(buf: [u8], bit: i32, size: i32): Result[(__Pc, i32), BrotliError] {
   let n: i32 = __bits(buf, bit, 2) + 1;
   let width: i32 = __highbit(size - 1) + 1;
@@ -255,9 +211,6 @@ function __has(xs: i32[], x: i32): boolean {
   return false;
 }
 
-// __complex_code(buf, bit, hskip, size) — code length code lengths in
-// RFC 7932's order from `hskip` (each in a fixed variable-length code),
-// then each symbol's length coded under them.
 function __complex_code(buf: [u8], bit: i32, hskip: i32, size: i32): Result[(__Pc, i32), BrotliError] {
   let order: i32[] = [1, 2, 3, 4, 0, 5, 17, 6, 16, 7, 8, 9, 10, 11, 12, 13, 14, 15];
   let fixed: i32[] = [0x020000, 0x020004, 0x020003, 0x030002, 0x020000, 0x020004, 0x020003, 0x040001, 0x020000, 0x020004, 0x020003, 0x030002, 0x020000, 0x020004, 0x020003, 0x040005];
@@ -283,14 +236,8 @@ function __complex_code(buf: [u8], bit: i32, hskip: i32, size: i32): Result[(__P
   return Ok((__code(read.0), read.1));
 }
 
-// __Sl — reading symbol lengths: the lengths so far, the last nonzero
-// one, the run a repeat code is extending and its length, and the code
-// space left.
 struct __Sl { lens: i32[], prev: i32, repeat: i32, rlen: i32, space: i32, bit: i32 }
 
-// __symbol_lens(buf, bit, clc, size) — `size` symbol lengths under the
-// code length code `clc`: 16 repeats the last nonzero length, 17 a zero,
-// consecutive repeats compounding (RFC 7932 §3.5).
 function __symbol_lens(buf: [u8], bit: i32, clc: __Pc, size: i32): Result[(i32[], i32), BrotliError] {
   let none: i32[] = [];
   let st: __Sl = __Sl { lens: none, prev: 8, repeat: 0, rlen: 0, space: 32768, bit: bit };
@@ -368,12 +315,6 @@ function __highbit(x: i32): i32 {
   return k;
 }
 
-// ---------------------------------------------------------------------------
-// Meta-blocks
-
-// __Mh — a meta-block header: whether it is the last, its length (0 for an
-// empty last one or metadata), whether it is stored uncompressed, how many
-// metadata bytes to skip, and the bit after it.
 struct __Mh { last: boolean, len: i32, raw: boolean, skip: i32, bit: i32 }
 
 function __mb_header(buf: [u8], bit: i32): Result[__Mh, BrotliError] {
@@ -403,8 +344,6 @@ function __mb_header(buf: [u8], bit: i32): Result[__Mh, BrotliError] {
   return Ok(__Mh { last: last, len: len, raw: raw, skip: 0, bit: bit });
 }
 
-// __metadata(buf, bit, last) — a metadata block's header: its length in
-// one to three bytes, the bytes themselves to skip.
 function __metadata(buf: [u8], bit: i32, last: boolean): Result[__Mh, BrotliError] {
   if (last || __bits(buf, bit, 1) != 0) {
     return Err(BrotliMalformed("metadata block"));
@@ -421,8 +360,6 @@ function __metadata(buf: [u8], bit: i32, last: boolean): Result[__Mh, BrotliErro
   return Ok(__Mh { last: false, len: 0, raw: false, skip: skip, bit: bit + bytes * 8 });
 }
 
-// __meta_block(buf, h, s, out, max_out) — the meta-block `h` heads: its
-// metadata skipped, its stored bytes copied, or its commands run.
 function __meta_block(buf: [u8], h: __Mh, s: __St, out: u8[], max_out: i32): Result[__Run, BrotliError] {
   if (out.len() + h.len > max_out) {
     return Err(BrotliTooLarge);
@@ -448,8 +385,6 @@ function __meta_block(buf: [u8], h: __Mh, s: __St, out: u8[], max_out: i32): Res
   return __commands(buf, m, s, out, out.len() + h.len);
 }
 
-// __aligned(buf, bit) — the byte at the boundary `bit` is padded to; the
-// padding bits must be zero.
 function __aligned(buf: [u8], bit: i32): Result[i32, BrotliError] {
   if (__bits(buf, bit, 8 - (bit & 7) & 7) != 0) {
     return Err(BrotliMalformed("padding"));
@@ -457,9 +392,6 @@ function __aligned(buf: [u8], bit: i32): Result[i32, BrotliError] {
   return Ok(bit + 7 >> 3);
 }
 
-// __Cat — one category's block types (literals, commands, distances): how
-// many, the codes for switching type and for block lengths, the current
-// and previous type, and what is left of the current block.
 struct __Cat { n: i32, types: __Pc, lens: __Pc, cur: i32, prev: i32, left: i32 }
 
 function __block_len(buf: [u8], bit: i32, pc: __Pc): Result[(i32, i32), BrotliError] {
@@ -469,7 +401,6 @@ function __block_len(buf: [u8], bit: i32, pc: __Pc): Result[(i32, i32), BrotliEr
   return Ok((offset[s.0] + __bits(buf, s.1, extra[s.0]), s.1 + extra[s.0]));
 }
 
-// __read_cat(buf, bit) — a category's block-type header (RFC 7932 §6).
 function __read_cat(buf: [u8], bit: i32): Result[(__Cat, i32), BrotliError] {
   let n: (i32, i32) = __varlen(buf, bit);
   let none: __Pc = __Pc { count: [], sym: [], single: 0 };
@@ -482,9 +413,6 @@ function __read_cat(buf: [u8], bit: i32): Result[(__Cat, i32), BrotliError] {
   return Ok((__Cat { n: n.0 + 1, types: types.0, lens: lens.0, cur: 0, prev: 1, left: first.0 }, first.1));
 }
 
-// __switched(buf, bit, c) — the category moved to its next block: a type
-// code of 0 is the previous type, 1 the one after the current, any other
-// that less 2.
 function __switched(buf: [u8], bit: i32, c: __Cat): Result[(__Cat, i32), BrotliError] {
   let s: (i32, i32) = __symbol(buf, bit, c.types)?;
   let t: i32 = s.0 - 2;
@@ -500,9 +428,6 @@ function __switched(buf: [u8], bit: i32, c: __Cat): Result[(__Cat, i32), BrotliE
   return Ok((__Cat { ...c, prev: c.cur, cur: t, left: len.0 }, len.1));
 }
 
-// __Mb — a compressed meta-block's header: the three categories, the
-// distance parameters, each literal type's context mode, the context maps
-// to prefix codes, and the codes.
 struct __Mb { lit: __Cat, cmd: __Cat, dist: __Cat, postfix: i32, direct: i32, modes: i32[], lmap: i32[], dmap: i32[], lcodes: __Pc[], ccodes: __Pc[], dcodes: __Pc[], bit: i32 }
 
 function __mb_codes(buf: [u8], bit: i32): Result[__Mb, BrotliError] {
@@ -536,10 +461,6 @@ function __codes(buf: [u8], bit: i32, n: i32, size: i32): Result[(__Pc[], i32), 
   return Ok((out, bit));
 }
 
-// __context_map(buf, bit, size) — a context map (RFC 7932 §7.3): the
-// number of codes it maps to, then, when there are two or more, the map
-// coded with runs of zeros and an optional move-to-front transform. The
-// map, how many codes, and the bit after it.
 function __context_map(buf: [u8], bit: i32, size: i32): Result[(i32[], i32, i32), BrotliError] {
   let trees: (i32, i32) = __varlen(buf, bit);
   let n: i32 = trees.0 + 1;
@@ -575,8 +496,6 @@ function __context_map(buf: [u8], bit: i32, size: i32): Result[(i32[], i32, i32)
   return Ok((map, n, bit + 1));
 }
 
-// __rle_prefix(buf, bit) — the largest run-length code a context map
-// uses, 0 for none, and the bit after it.
 function __rle_prefix(buf: [u8], bit: i32): (i32, i32) {
   if (__bits(buf, bit, 1) == 0) {
     return (0, bit + 1);
@@ -584,7 +503,6 @@ function __rle_prefix(buf: [u8], bit: i32): (i32, i32) {
   return (__bits(buf, bit + 1, 4) + 1, bit + 5);
 }
 
-// __inverse_mtf(v) — the move-to-front transform undone.
 function __inverse_mtf(v: i32[]): i32[] {
   let mtf: i32[] = [];
   while (mtf.len() < 256) {
@@ -604,11 +522,6 @@ function __inverse_mtf(v: i32[]): i32[] {
   return out;
 }
 
-// ---------------------------------------------------------------------------
-// Commands
-
-// __Tab — the transforms' prefixes, kinds and suffixes, the context
-// lookup, and where each word length's part of the dictionary starts.
 struct __Tab { pre: string[], kinds: i32[], suf: string[], lut: i32[], doff: i32[], dbits: i32[] }
 
 function __tables(): __Tab {
@@ -622,17 +535,10 @@ function __tables(): __Tab {
   return __Tab { pre: __prefixes(), kinds: __kinds(), suf: __suffixes(), lut: __context_lut(), doff: doff, dbits: dbits };
 }
 
-// __Cs — the command loop's moving parts: the three categories, the bit,
-// the last four distances, and the dictionary once loaded.
 struct __Cs { lit: __Cat, cmd: __Cat, dist: __Cat, bit: i32, ring: i32[], dict: u8[] }
 
-// __Cmd — an insert-and-copy command: how many literals, how many bytes
-// to copy, whether its distance is implicitly the last one, and the loop
-// state after it.
 struct __Cmd { insert: i32, copy: i32, implicit: boolean, c: __Cs }
 
-// __commands(buf, m, s, out, end) — the meta-block's commands run until
-// the output reaches `end`.
 function __commands(buf: [u8], m: __Mb, s: __St, out: u8[], end: i32): Result[__Run, BrotliError] {
   let c: __Cs = __Cs { lit: m.lit, cmd: m.cmd, dist: m.dist, bit: m.bit, ring: s.ring, dict: s.dict };
   let dst: u8[] = out;
@@ -660,13 +566,8 @@ function __overrun(past_end: boolean): BrotliError {
   return BrotliTruncated;
 }
 
-// __Step — what a command's copy adds, and the loop state after it.
 struct __Step { bytes: u8[], c: __Cs }
 
-// __copy_step(buf, m, s, c, cmd, dst) — the command's copy: `cmd.copy`
-// bytes from its distance back, or, past the window and what has been
-// written, a transformed dictionary word. A copy's distance joins the
-// last four unless its code was 0.
 function __copy_step(buf: [u8], m: __Mb, s: __St, c: __Cs, cmd: __Cmd, dst: u8[]): Result[__Step, BrotliError] {
   let d: (i32, i32, __Cs) = __distance(buf, m, c, cmd)?;
   let max: i32 = cmp.min(s.window, dst.len());
@@ -715,9 +616,6 @@ function __joined(own out: u8[], more: u8[]): u8[] {
   return out;
 }
 
-// __command(buf, m, c) — the next command: its code under the current
-// command type's code, the insert and copy length codes its cell names,
-// and their extra bits (RFC 7932 §5).
 function __command(buf: [u8], m: __Mb, c: __Cs): Result[__Cmd, BrotliError] {
   let cat: __Cat = c.cmd;
   let bit: i32 = c.bit;
@@ -740,12 +638,8 @@ function __command(buf: [u8], m: __Mb, c: __Cs): Result[__Cmd, BrotliError] {
   return Ok(__Cmd { insert: insert, copy: copy, implicit: s.0 < 128, c: next });
 }
 
-// __Lits — a command's literals and the loop state after them.
 struct __Lits { bytes: u8[], c: __Cs }
 
-// __literals(buf, m, t, c, n, p1, p2) — `n` literals, each under the code
-// its block type's context map gives the context of the two bytes before
-// it (RFC 7932 §7.1).
 function __literals(buf: [u8], m: __Mb, t: __Tab, c: __Cs, n: i32, p1: i32, p2: i32): Result[__Lits, BrotliError] {
   let out: u8[] = [];
   let cat: __Cat = c.lit;
@@ -771,8 +665,6 @@ function __literals(buf: [u8], m: __Mb, t: __Tab, c: __Cs, n: i32, p1: i32, p2: 
   return Ok(__Lits { bytes: out, c: __Cs { ...c, lit: cat, bit: bit } });
 }
 
-// __distance(buf, m, c, cmd) — the command's distance and its code (0
-// for the last distance, which is not pushed), and the loop state after.
 function __distance(buf: [u8], m: __Mb, c: __Cs, cmd: __Cmd): Result[(i32, i32, __Cs), BrotliError] {
   if (cmd.implicit) {
     return Ok((c.ring[0], 0, c));
@@ -793,9 +685,6 @@ function __distance(buf: [u8], m: __Mb, c: __Cs, cmd: __Cmd): Result[(i32, i32, 
   return Ok((d.0, s.0, __Cs { ...c, dist: __Cat { ...cat, left: cat.left - 1 }, bit: d.1 }));
 }
 
-// __distance_of(buf, bit, code, m, ring) — the distance a code names: one
-// of the last four, near the last or second-to-last, a direct distance, or
-// a range with extra bits and a postfix (RFC 7932 §4).
 function __distance_of(buf: [u8], bit: i32, code: i32, m: __Mb, ring: i32[]): (i32, i32) {
   if (code < 16) {
     let idx: i32 = [0, 1, 2, 3, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1][code];
@@ -813,8 +702,6 @@ function __distance_of(buf: [u8], bit: i32, code: i32, m: __Mb, ring: i32[]): (i
   return ((offset + __bits(buf, bit, nb) << m.postfix) + low + m.direct + 1, bit + nb);
 }
 
-// __dict_word(t, dict, id, len) — dictionary word `id` of length `len`
-// under the transform the high bits of `id` name (RFC 7932 §8).
 function __dict_word(t: __Tab, dict: u8[], id: i32, len: i32): Result[u8[], BrotliError] {
   if (len < 4 || len > 24) {
     return Err(BrotliMalformed("dictionary word length"));
@@ -836,9 +723,6 @@ function __dict_word(t: __Tab, dict: u8[], id: i32, len: i32): Result[u8[], Brot
   return Ok(__joined(out, t.suf[tr].bytes()));
 }
 
-// __transformed(word, kind) — the word with bytes dropped from its end
-// (1 to 9) or start (12 to 20), or upper-cased, its first character (10)
-// or all of them (11), as RFC 7932 Appendix B has it.
 function __transformed(word: u8[], kind: i32): u8[] {
   let n: i32 = word.len();
   if (kind >= 1 && kind <= 9) {
@@ -863,9 +747,6 @@ function __transformed(word: u8[], kind: i32): u8[] {
   return w;
 }
 
-// __upper_at(w, i) — the character at `i` upper-cased the way the
-// reference does it (an ASCII letter's case bit, a two-byte sequence's
-// second byte xor 32, a longer one's third byte xor 5), and its length.
 function __upper_at(w: u8[], i: i32): (u8[], i32) {
   let b: i32 = w[i] as i32;
   if (b < 0xC0) {
@@ -896,11 +777,6 @@ function __slice(w: u8[], from: i32, to: i32): u8[] {
   return out;
 }
 
-// The transforms of RFC 7932 Appendix B: each one's prefix, kind and
-// suffix (google/brotli c/common/transform.c). A kind is 0 for the word as
-// it is, 1 to 9 to drop that many bytes from its end, 10 to upper-case its
-// first character, 11 all of them, and 12 to 20 to drop 1 to 9 bytes from
-// its start.
 function __prefixes(): string[] {
   return [
     "", "", " ", "", "", "", " ", "s ", "", "", "", "", "", ", ", "", " ", "",
@@ -940,9 +816,6 @@ function __kinds(): i32[] {
   ];
 }
 
-// The literal context lookup of RFC 7932 §7.1, 512 entries per context
-// mode (LSB6, MSB6, UTF8, signed): the first 256 indexed by the last byte,
-// the next by the one before (google/brotli c/common/context.c).
 function __context_lut(): i32[] {
   return [
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,

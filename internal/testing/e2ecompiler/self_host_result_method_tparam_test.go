@@ -5,11 +5,6 @@ import (
 	"testing"
 )
 
-// A payload read back through a generic Option/Result method is read at its
-// instantiated type: the receiver's type arguments and the method's own
-// (`and[U]` from `Ok("vw")`) bind, so `.len()` and `match` read a string as a
-// string (#10014). Every row balances (#10388), and every answer is
-// interpreter-confirmed.
 var resultMethodTParamCases = []struct {
 	name string
 	src  string

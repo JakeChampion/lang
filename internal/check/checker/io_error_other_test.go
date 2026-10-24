@@ -9,13 +9,11 @@ import (
 	"github.com/jakechampion/lang/internal/pkg/modload"
 )
 
-// `IoError.Other` carries (path, message, errno), the errno an i32 in Linux
-// numbering, and std/errno names it (#11296).
 func TestIoErrorOtherCarriesAnErrno(t *testing.T) {
 	cases := []struct {
 		name string
 		src  string
-		want string // "" = must type-check
+		want string
 	}{
 		{"three payloads", `function main(): i32 { let e: IoError = Other("p", "m", 21); match (e) { Other(p, m, n) => { return n; }, _ => { return 0; } } }`, ""},
 		{"two arguments", `function main(): i32 { let e: IoError = Other("p", "m"); return 0; }`, "takes 3 arguments but was given 2"},

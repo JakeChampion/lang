@@ -1,15 +1,3 @@
-// link.fern — GNU-compatible `link`.
-//
-//   link FILE1 FILE2   create a hard link named FILE2 to the existing FILE1
-//
-// One `link(2)` and nothing else: exactly two operands, no options of its
-// own, and no attempt to be helpful about what went wrong. A symlink named
-// as FILE1 is linked to ITSELF on Linux; Darwin's link(2) follows it, so
-// there a dangling one is `No such file or directory`.
-//
-// The diagnostic names both operands, the NEW one first —
-// `cannot create link 'b' to 'a': File exists` — because that is the order
-// gnulib's message reads in.
 import "std/string";
 import "std/array";
 import "./lib/gnu";

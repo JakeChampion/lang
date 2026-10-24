@@ -5,12 +5,6 @@ import (
 	"testing"
 )
 
-// A struct whose TUPLE field carries a RECLAIM-STRUCT element — `Holder { t:
-// (i32, P), … }` where `P` has an rc-array field. Dropping the holder must
-// release the tuple's struct element and its array, balancing at live_bytes 0.
-// The leak matrix has no cell of this shape, so this test is the only thing
-// that measures it.
-
 func TestSelfHostTupleStructElemFieldX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

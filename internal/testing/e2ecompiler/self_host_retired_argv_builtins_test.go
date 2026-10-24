@@ -6,9 +6,6 @@ import (
 	"testing"
 )
 
-// arg_at and args_count are not builtins: native's checker reports each as
-// undefined, and the self-host used to compile both (#10183). A program reads
-// argv through args().
 func TestSelfHostRetiredArgvBuiltinsUndefined(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

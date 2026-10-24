@@ -5,24 +5,6 @@ import (
 	"testing"
 )
 
-// --- A nested block's reassign set is the BLOCK's, not the function's (#6127) -
-//
-// The block-level reclaim classifiers EXCLUDE a reassigned name from being a
-// free candidate, so the set they consult decides whether a free is emitted at
-// all. It has to be the set of the block the candidate is declared in: a
-// function-wide set is strictly wider, and answering from it silences a free
-// the block emits today whenever some OTHER block of the same function happens
-// to assign the same spelling.
-//
-// Each source below pairs a nested-block candidate with a sibling block that
-// assigns a same-named SCALAR — a name collision and nothing more, no shared
-// storage and no second allocation. Answering the candidate's rebind question
-// from the function's set turns each of these from an exact balance into a
-// per-iteration leak of the payload it stopped crediting.
-//
-// The `_alone` rows are the controls: identical but for the sibling block, so a
-// failure there says the shape stopped reclaiming for some unrelated reason
-// rather than that the scope rule broke.
 func TestSelfHostBlockReassignScopeX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -58,7 +40,6 @@ func TestSelfHostBlockReassignScopeX86_64(t *testing.T) {
 		return allocs, frees, live
 	}
 
-	// An unmatched Option[string] declared in a loop body.
 	const optStrAlone = `function round(r: i32): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -98,7 +79,6 @@ function main(): i32 {
     return x % 83;
 }`
 
-	// An unmatched Option[i32[]] declared in a loop body.
 	const optArrAlone = `function mk(i: i32): Option[i32[]] {
     if (i % 3 == 0) { return None; }
     return Some([i, i + 1]);

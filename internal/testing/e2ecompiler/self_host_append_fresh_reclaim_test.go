@@ -7,18 +7,6 @@ import (
 	"testing"
 )
 
-// The self-host IR sibling of internal/testing/e2e/append_fresh_reclaim_test.go
-// (#5608): a local array rebuilt by `xs = xs.append(v)` and returned must not
-// orphan a buffer per copy-grow in the caller. This pins that the self-hosted
-// compiler's IR path is bounded on that shape.
-//
-// Probe is `__heap_bump_bytes()` — the bump high-water, which lowers on the
-// self-host IR path (#3534). Each phase warms up, samples, churns 10x more and
-// re-samples; equal samples mean every buffer the extra calls allocated was
-// reclaimed. `noAppend` is the control that must be bounded either way.
-//
-// The callees take a parameter deliberately: a constant argument gets them
-// inlined, which hides the leak.
 const selfHostAppendFreshReclaimMain = `function noAppend(k: i32): i32[] { let xs: i32[] = [1]; return xs; }
 function oneGrow(k: i32): i32[] { let xs: i32[] = [1]; xs = xs.append(k); return xs; }
 function loopGrows(k: i32): i32[] {
@@ -46,9 +34,6 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostAppendFreshReclaimIRX86_64 runs the shape through the self-hosted
-// x86-64 IR driver, pinning both the routing (must be "ir") and the
-// bounded-high-water result.
 func TestSelfHostAppendFreshReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -58,10 +43,6 @@ func TestSelfHostAppendFreshReclaimIRX86_64(t *testing.T) {
 
 	src := []byte(selfHostAppendFreshReclaimMain)
 
-	// The interpreter witnesses the length and value phases (20/21) and that
-	// the program reaches 42. It cannot judge the bump phases (11/12/13): its
-	// `__heap_bump_bytes` is a constant 0, so those are held to 42 by the
-	// self-host run alone.
 	if code := runInterpExit(t, selfHostAppendFreshReclaimMain); code != 42 {
 		t.Fatalf("interpreter exited %d, want 42", code)
 	}

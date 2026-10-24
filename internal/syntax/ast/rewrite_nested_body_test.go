@@ -2,22 +2,6 @@ package ast
 
 import "testing"
 
-// RewriteProgramExprs must descend into the body of a NESTED function and of a
-// Lambda, not just top-level function bodies. The checker's post-check pass
-// uses it to splice in every desugar it built during checking — checked
-// arithmetic (Binary.CheckedLowered), composite operator overloads (ArithCall /
-// NegCall / EqCall / CmpCall), the error-converting `?` (TryOp.Lowered), and
-// the default-i32 width stamp.
-//
-// Skipping those bodies did not lose the rewrite quietly: both the IR and the
-// interpreter reject the un-desugared node, so `a +? b` or an overloaded `+`
-// inside a nested function was a hard error rather than a wrong answer. They
-// differ only in WHEN — the IR rejects it at emit whether the code would run
-// or not, while the interpreter reaches it only if the nested function is
-// called.
-//
-// Found by the drop-guided differential sweep once fernsmith started
-// generating checked operators inside its nested-function production.
 func TestRewriteProgramExprsDescendsIntoNestedFunctionBody(t *testing.T) {
 	inner := &FuncDecl{
 		Name: "inner",
@@ -59,11 +43,6 @@ func TestRewriteProgramExprsDescendsIntoNestedFunctionBody(t *testing.T) {
 	}
 }
 
-// The same for a `loop { … }` body. `loop` is its own statement kind rather
-// than sugar over While, so a rewriter that lists the loop forms by hand can
-// omit it and leave the body un-desugared — `a +? b` inside a `loop` was
-// rejected by both engines ("+?" not supported) while the identical code
-// inside a `while (true)` ran.
 func TestRewriteProgramExprsDescendsIntoLoopBody(t *testing.T) {
 	body := &Block{Stmts: []Stmt{
 		&ExprStmt{Expr: &Ident{Name: "target"}},
@@ -91,8 +70,6 @@ func TestRewriteProgramExprsDescendsIntoLoopBody(t *testing.T) {
 	}
 }
 
-// The same for an anonymous function expression, which the rewriter reaches
-// before closureconv hoists it into a top-level FuncDecl.
 func TestRewriteProgramExprsDescendsIntoLambdaBody(t *testing.T) {
 	lam := &Lambda{
 		Body: &Block{Stmts: []Stmt{

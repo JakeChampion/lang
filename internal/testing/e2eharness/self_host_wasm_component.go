@@ -1,16 +1,10 @@
-// Package e2eharness holds the shared e2e test harness — driver builds,
-// tooling discovery, caches — used by both internal/testing/e2e and
-// internal/testing/e2ecompiler (#4398 part 3). Extracted verbatim from
-// internal/testing/e2e/self_host_wasm_component_test.go.
 package e2eharness
 
 import "testing"
 
-// ComponentCoreSection returns the bytes of the first core-module section
-// (component section id 1) of a component binary.
 func ComponentCoreSection(t *testing.T, b []byte) []byte {
 	t.Helper()
-	i := 8 // skip preamble
+	i := 8
 	for i < len(b) {
 		sid := b[i]
 		i++

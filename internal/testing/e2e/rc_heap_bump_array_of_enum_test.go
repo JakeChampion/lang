@@ -4,25 +4,6 @@ import (
 	"testing"
 )
 
-// Array-of-enum (`E[]`) element reclamation (RC-Perceus). Arrays of
-// variant values (e.g. `Value[]`, pervasive in the self-host compiler)
-// flat-rc_dec'd each element under __fern_drop_arr_ptr, freeing the enum
-// box but leaking its rc-tracked payloads (profiling probe: 4864 B →
-// 480064 B). arrElemStructDropName now routes a CONCRETE droppable enum
-// element through a generated __drop_arr_enum_<Name> loop whose per-element
-// call is the tag-dispatched __drop_enum_<Name> (reclaims box + payloads,
-// is_unique-gated), then frees the buffer.
-//
-// Safety vs. the deferred enum-reuse hazard: enum construction doesn't inc
-// payloads, so a payload SHARED with a local would be a double-free risk —
-// but a payload built from a local taints that local (it escapes via the
-// variant constructor), so the local's OWN drop is skipped (no
-// double-free), and the array's deep-drop only fires at loop-reinit /
-// function-exit, after the shared local's last use. The
-// reassignment-overwrite path keeps the flat arr_dec (no deep drop), so no
-// deep-drop point precedes a use. The shared-payload test + the
-// self-host VM suite (heavy Value[] user) are the backstops.
-
 func arrOfEnumBumpSrc(n string) string {
 	return `enum E { Arr(i32[]), Empty }
 function main(): i32 {
@@ -41,9 +22,6 @@ function main(): i32 {
 }`
 }
 
-// arrOfEnumUnderflowSrc shares a payload with a live local `a` (the
-// adversarial double-free / UAF shape) and uses it after building the
-// array — returns 0 iff value-correct AND no over-release.
 const arrOfEnumUnderflowSrc = `enum E { Arr(i32[]), Empty }
 function main(): i32 {
     let i: i32 = 0;

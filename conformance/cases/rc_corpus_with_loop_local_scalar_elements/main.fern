@@ -1,11 +1,11 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// A SCALAR element array double-freed too, without ever computing a
-// wrong answer — FERN_LEAKCHECK reported allocs=20 frees=39 and
-// live_bytes=-304 while the program exited 0. The struct-element
-// shapes above are the same bug with something left to corrupt, so
-// this row is what stops the fix being narrowed to pointer elements.
+
+
+
+
+
+
+
+
 function mk_ints(): i32[] { return [0, 1]; }
 function f(n: i32): i32 {
     let t: i32 = 0;

@@ -2,20 +2,12 @@ package e2e
 
 import "testing"
 
-// Map.build — the map sibling of Array.build (docs/ARRAY-BUILDER-PLAN.md).
-// `Map.build((b: MapBuilder[K, V]): void => { ... b.insert(k, v) ... })`
-// desugars (parser) to a unique-local IIFE: `b` is a fresh non-escaping
-// map, `b.insert` becomes an in-place reassignment, and the map is returned
-// frozen. Pure desugar, so every Go backend gets it; verified on x86-64,
-// wasm, and the interpreter.
 var mapBuilderCases = []struct {
 	name string
 	src  string
 	want int
 }{
 	{
-		// insert in a while loop: {0:0,1:10,2:20,3:30,4:40}; get_or(3)=30,
-		// len=5 → 35.
 		name: "insert-while",
 		src: `
 import "core/int";
@@ -30,7 +22,6 @@ function main(): i32 {
 		want: 35,
 	},
 	{
-		// insert over a for-in loop, building {1:1,2:4,3:9}; get_or(3)=9 + len=3.
 		name: "insert-for-in",
 		src: `
 import "core/int";
@@ -45,7 +36,6 @@ function main(): i32 {
 		want: 12,
 	},
 	{
-		// b.len() read inside the builder: insert until len reaches 3.
 		name: "len-read",
 		src: `
 import "core/int";
@@ -63,7 +53,6 @@ function main(): i32 {
 		want: 3,
 	},
 	{
-		// String keys + an overwrite (insert replaces): {"a":1,"b":9}.
 		name: "string-keys-overwrite",
 		src: `
 import "core/int";
@@ -80,8 +69,6 @@ function main(): i32 {
 		want: 12,
 	},
 	{
-		// Churn: build a fresh map each iteration, 200x. Exercises the
-		// in-place fast path + per-iteration reclaim of the builder local.
 		name: "churn",
 		src: `
 import "core/int";

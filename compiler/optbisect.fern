@@ -1,8 +1,3 @@
-// An optimising pass's decision to rewrite one function, keyed by the pass and
-// the function's name. `FERN_OPT_BISECT=h` declines every decision whose key
-// hashes below h, so a program the passes miscompile bisects over h to the one
-// decision that breaks it. `FERN_OPT_TRACE` lists each decision asked about on
-// stderr as `opt-decision <hash> <pass> <name>`.
 import "./util";
 import "std/envflag";
 
@@ -10,8 +5,6 @@ pub function key_hash(pass: string, name: string): i64 {
   return util.roll_text(util.roll_text(util.digest_start(), pass), name) & 4294967295i64;
 }
 
-// The two switches, read once: a loop that asks about every function reads
-// them before it starts rather than per function.
 pub struct Switches { trace: boolean, bisect: boolean, floor: i64 }
 
 pub function switches(): Switches {

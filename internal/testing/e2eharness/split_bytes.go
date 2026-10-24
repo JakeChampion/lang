@@ -184,7 +184,6 @@ func runSplitStreaming(t *testing.T, bin string, runner []string, census func(*t
 			cmd.Wait()
 		}
 	}()
-	// One whole round-robin read block, with stdin deliberately left open.
 	data := bytes.Repeat([]byte{0xff, '\n'}, 131072)
 	written := make(chan error, 1)
 	go func() {

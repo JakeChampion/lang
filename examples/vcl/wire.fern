@@ -1,11 +1,3 @@
-// examples/vcl/wire.fern — between the proxy's messages and std/fetch.
-//
-// The mock origin in `machine.fern` fabricates a response struct. A real
-// one is reached through `std/fetch`, so something has to turn `bereq`
-// into a `fetch.Request` and the response's headers back into the proxy's
-// own. That is this module, and it is deliberately free of any I/O: it is
-// value in, value out, which is what lets it be tested under the
-// interpreter while the sockets around it can only run natively.
 import "std/string";
 import "std/i64";
 import "std/i32";
@@ -14,9 +6,6 @@ import "std/fetch";
 import "std/headers";
 import "./runtime";
 
-// hop_by_hop names the headers that belong to a single connection and must
-// not be forwarded (RFC 9110 §7.6.1), and the two the client rebuilds:
-// `Host` from the backend, `Content-Length` from the body it sends.
 function hop_by_hop(): string[] {
   return ["connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade", "host", "content-length"];
 }
@@ -33,10 +22,6 @@ function is_hop_by_hop(name: string): boolean {
   return false;
 }
 
-// request_of turns `bereq` into the request the client sends to `base`
-// (`http://host:port`): the method and URL, the end-to-end headers, and
-// the body as the policy left it, whose length the client recomputes
-// because a policy may have rewritten the body.
 pub function request_of(m: runtime.Msg, base: string): fetch.Request {
   let method: string = m.method;
   if (method == "") {
@@ -58,8 +43,6 @@ pub function request_of(m: runtime.Msg, base: string): fetch.Request {
   return req.with_text(m.body);
 }
 
-// headers_of turns a response's headers into the proxy's own, the last
-// value of a repeated field winning as `Headers.set` has it.
 pub function headers_of(h: HeaderMap): runtime.Headers {
   let out: runtime.Headers = runtime.headers_new();
   let i: i32 = 0;
@@ -70,7 +53,6 @@ pub function headers_of(h: HeaderMap): runtime.Headers {
   return out;
 }
 
-// leading_digits returns the run of ASCII digits at the start of `s`.
 function leading_digits(s: string): string {
   let out: string = "";
   let i: i32 = 0;
@@ -85,9 +67,6 @@ function leading_digits(s: string): string {
   return out;
 }
 
-// max_age reads `Cache-Control: ... max-age=N ...`, which is how a real
-// origin says how long its answer may be kept. `no-store` and `no-cache`
-// answer 0, which the built-in caching rule then reads as uncacheable.
 pub function max_age(cc: string): Option[f64] {
   let lower: string = cc.to_ascii_lower();
   if (lower.contains("no-store") || lower.contains("no-cache") || lower.contains("private")) {

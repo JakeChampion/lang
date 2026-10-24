@@ -309,14 +309,9 @@ if (!ssasem.holds_view(f, result) || anchor.pending) { return 14; }
 
 func TestSelfHostSSASemantic(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	// The group waits for all parallel children before returning, so this
-	// top-level test's elapsed time still includes the work for CI shard weights.
 	t.Run("cases", func(t *testing.T) {
 		for i, tc := range semanticCases() {
 			t.Run(tc.name, func(t *testing.T) {
-				// Each case owns its source tree and output binary. The harness
-				// shares immutable cache entries and bounds concurrent driver builds
-				// by memory, so independent semantic checks can use multiple cores.
 				t.Parallel()
 				dir := t.TempDir()
 				copySelfHostDriver(t, dir, "ssasem.fern")
@@ -386,7 +381,6 @@ func testSemanticIR(t *testing.T, target string) {
 		if err := os.WriteFile(wat, output, 0o644); err != nil {
 			t.Fatal(err)
 		}
-		// wasmtime hands the guest no host variable it is not told to.
 		run = exec.Command(wasmtime, "run", "--env", e2eharness.SelfHostVerify, wat)
 	}
 	got, err := run.CombinedOutput()

@@ -1,10 +1,10 @@
-// A variant built over a struct's ARRAY FIELD — `Leaf(v.tail)`, the level-grow
-// of std/pvec's append — took the buffer without a count: the constructor
-// retained a bare local's buffer (#3720) and nothing else. The holder's next
-// rebind then released the replaced field through __field_reclaim_<T>, and
-// the leaf read freed memory. The read is now retained like the local's, so
-// the holder's release leaves the leaf its buffer. Every leaf is read back
-// after churn.
+
+
+
+
+
+
+
 enum E { Leaf(i32[]), Branch(E[]), Empty }
 struct Vec { root: E, tail: i32[], n: i32 }
 
@@ -44,7 +44,7 @@ function sum_node(e: E): i32 {
     }
 }
 
-// leaf-sized buffers, so a freed leaf is handed out again and read back wrong
+
 function churn(): i32 {
     let junk: i32[][] = [];
     let i: i32 = 0;

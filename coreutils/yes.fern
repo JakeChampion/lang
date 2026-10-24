@@ -1,42 +1,7 @@
-// yes.fern — GNU-compatible `yes`.
-//
-// Writes its operands joined by spaces, or `y`, on a line, forever.
-//
-//   $ yes | head -3            y / y / y
-//   $ yes hello there          "hello there", until the pipe closes
-//   $ yes -- --help            "--help", forever: `--` ends the options
-//
-// Option handling is gnulib's parse_gnu_standard_options_only, and
-// that is a PERMUTING scan: `yes x --help` prints the help, and
-// `yes x -z` is a usage error, because getopt reads options wherever
-// they stand until `--`. Operands are the non-option tokens in their
-// original order plus everything after `--`. See gnu.fern for the
-// shared implementation and the messages it reproduces.
-//
-// The block goes to the kernel by vmsplice(2) where it takes one
-// (w.splice_forever), as GNU 9.12's yes does. Elsewhere the write loop is one
-// syscall per block, not per line: the line is repeated into a block once and
-// the block is written unchanged forever. Per-line writes measured 2.8 MB/s
-// against GNU's 385 MB/s — two bytes per syscall was the whole difference.
-//
-// A closed or full stdout is reported the way yes(1) reports it, with
-// its own wording (`standard output:`) rather than the `write error:`
-// the other utilities inherit from gnulib's close_stdout.
 import "std/string";
 import "std/array";
 import "./lib/gnu";
 
-// Bytes per write(2), and the one number here that is a measurement
-// rather than a rule. Too big is as slow as too small: a write that
-// overfills the pipe puts writer and reader into lockstep, and every
-// size from 2 KiB to 1 MiB paid for it. Measured through `| head -c 1G`
-// (median wall, C reference loop, 2026-09-04):
-//
-//   Linux arm64:  1K 549 ms   2K 164   4K 138   8K 162 (GNU)   64K 229
-//   macOS arm64:  1K 482 (GNU)   2K 674   4K 674   64K 613
-//
-// 4 KiB is the Linux optimum and 1 KiB the macOS one. target_os() is a
-// compile-time constant, so the other size never reaches the binary.
 function block_bytes(): i32 {
   if (target_os() == "darwin") {
     return 1024;

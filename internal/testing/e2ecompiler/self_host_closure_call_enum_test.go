@@ -4,17 +4,6 @@ import (
 	"testing"
 )
 
-// An rc enum returned by a call through a function value carries one count
-// the caller releases (#10577). Every closure body of an enum result is an
-// "ENUM:" member that retains a return it holds no count for, so a call
-// through a function value of that result ("CLOENUM:") is bound, lent and
-// rebound like a member call; where every such body returns a fresh chain
-// ("CLORCE:") it is an "RCE:" call. The programs cover a string, an array and
-// a closure payload, each bound, rebound in a loop and lent, through a lambda,
-// a named function's trampoline and a capturing lambda. Each runs ten rounds
-// and returns 99 if __rc_underflow_count() moved.
-
-// The issue's probe.
 const closureCallEnumIssueSrc = `enum S { Done(i32), Next(i32, string) }
 function mk(n: i32): S {
     if (n <= 0) { return Done(n); }
@@ -120,7 +109,6 @@ function round(i: i32): i32 {
 }
 ` + closureCallEnumMain
 
-// #9841's chain, walked by recursion through the payload's closure.
 const closureCallEnumClosureSrc = `enum Step { Done(i32), Next(i32, (i32) => Step) }
 function make(n: i32, k: i32): Step {
     if (n <= 0) { return Done(k); }
@@ -161,9 +149,6 @@ function round(i: i32): i32 {
 }
 ` + closureCallEnumMain
 
-// The guard: a closure body returns an enum its environment still holds, so
-// the result is shared. The body retains it and the caller's release only
-// drops that count; keep is read after every call.
 const closureCallEnumSharedSrc = `enum S { Done(i32), Next(i32, string) }
 function mk(n: i32): S {
     if (n <= 0) { return Done(n); }
@@ -201,8 +186,6 @@ function round(i: i32): i32 {
 }
 ` + closureCallEnumMain
 
-// Each closure body binds a fresh enum to a local and returns the local,
-// which hands its count over ("ERETOWN:") rather than retaining it.
 const closureCallEnumFreshLocalSrc = `enum S { Done(i32), Next(i32, string) }
 function mk(n: i32): S {
     if (n <= 0) { return Done(n); }
@@ -236,9 +219,6 @@ function round(i: i32): i32 {
 }
 ` + closureCallEnumMain
 
-// A capture-free lambda bound to a local that is only ever called is hoisted
-// to a `__lam_` body and called by name; its returned fresh local hands its
-// count over ("ERETOWN:").
 const closureCallEnumLamLocalSrc = `enum S { Done(i32), Next(i32, string) }
 function mk(n: i32): S {
     if (n <= 0) { return Done(n); }
@@ -257,8 +237,6 @@ function round(i: i32): i32 {
 }
 ` + closureCallEnumMain
 
-// No function value anywhere: a free function returning a local bound to a
-// direct construction, held to a balanced census and a clean sanitizer.
 const closureCallEnumNamedLocalSrc = `enum S { Done(i32), Next(i32, string) }
 function mk(n: i32): S {
     if (n <= 0) { return Done(n); }
@@ -287,7 +265,6 @@ const closureCallEnumMain = `function main(): i32 {
 }
 `
 
-// Wants are interpreter-confirmed (#10587).
 var closureCallEnumCases = []struct {
 	name string
 	src  string

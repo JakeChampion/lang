@@ -5,19 +5,6 @@ import (
 	"testing"
 )
 
-// The comparator reads eight bytes at a time with a final load anchored at the
-// END of each string, so it re-reads bytes the loop already covered whenever the
-// length is not a multiple of eight (#8192). The interesting inputs are
-// therefore the length classes around each word boundary and, within a length,
-// the position of the single differing byte — a tail that skipped a byte, or a
-// loop that stopped one word early, shows up at exactly one (length, position)
-// pair and nowhere else.
-//
-// So this sweeps every length 0..24 against every differing position in it, plus
-// the equal case and the off-by-one length at each size. `rep` builds each
-// operand by concatenation, which yields a fresh box: literals are interned, and
-// two names for one box would take the pointer-identity fast path without
-// comparing anything.
 const strEqLengthSweepSrc = `function rep(c: string, n: i32): string {
     let s: string = "";
     let i: i32 = 0;
@@ -62,7 +49,6 @@ func strEqLengthSweepWant(t *testing.T, got int) {
 	}
 }
 
-// TestSelfHostStrEqLengthSweepX86_64 runs the sweep through the x86-64 emitter.
 func TestSelfHostStrEqLengthSweepX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -84,8 +70,6 @@ func TestSelfHostStrEqLengthSweepX86_64(t *testing.T) {
 	strEqLengthSweepWant(t, cmd.ProcessState.ExitCode())
 }
 
-// TestSelfHostStrEqLengthSweepArm64 is the same sweep on arm64 under qemu: the
-// helper body is shared, but each backend lowers it separately.
 func TestSelfHostStrEqLengthSweepArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

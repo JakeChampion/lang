@@ -11,11 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestComposeStdoutFromWorld is P2's end-to-end gate: a stdout component whose
-// import surface is generated from the full decoded WIT world (every
-// interface, not the hand-written minimized bodies) validates under wasm-tools
-// and RUNS under wasmtime, printing the program's output. This proves the
-// whole import side is WIT-world-driven.
 func TestComposeStdoutFromWorld(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -42,8 +37,6 @@ func TestComposeStdoutFromWorld(t *testing.T) {
 	}
 	core := componentCoreSection(t, ref)
 
-	// ComposeFromWorldAuto derives the wired imports from the core module's
-	// own imports (classified against the world) — no hardcoded list.
 	w, err := componenttype.DecodeWorld("fern")
 	if err != nil {
 		t.Fatalf("DecodeWorld: %v", err)
@@ -69,11 +62,6 @@ func TestComposeStdoutFromWorld(t *testing.T) {
 	}
 }
 
-// TestComposeFsFromWorld proves the world-driven auto path generalizes beyond
-// stdout: a read_file program imports several memory / memory+realloc methods
-// across filesystem/preopens, filesystem/types and io/streams (plus stdout),
-// all classified from the world and grouped per interface. The component
-// validates and reads a preopened file under wasmtime.
 func TestComposeFsFromWorld(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {

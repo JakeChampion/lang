@@ -7,16 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostArm64Float byte-checks the f64 (scalar double) instruction
-// batch added to arm64_native.fern — fadd/fsub/fmul/fdiv, fcmp, the three
-// fmov forms, fcvtzs, scvtf, and the whole `<op> Dd, Dn` unary family
-// (fneg / fabs / fsqrt / frintm / frintp / frintz / frinta) — against the
-// llvm-mc-pinned encodings, via the self-host wasm pipeline.
-//
-// All but fneg and frinta of that unary family were missing, so the
-// assembler rejected the asm_arm64 emitter's own output for any program
-// using __sqrt_f64 / floor / ceil / trunc / abs: `in-process assembler hit
-// an instruction it does not yet support: fsqrt`.
 func TestSelfHostArm64Float(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host arm64 float e2e")

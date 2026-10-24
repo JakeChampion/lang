@@ -2,11 +2,6 @@ package e2e
 
 import "testing"
 
-// HoistUniquenessGuards moves the mutate-or-copy decision of an in-loop
-// `b = b.with(i, v)` out of the loop. What must not change is what the
-// program can see: a buffer another name still holds is copied before it
-// is written, a loop that never writes never copies (the alias survives),
-// and a loop that never runs leaves the value as it found it.
 const withGuardHoistSrc = `
 @noinline function fill_alias(n: i32): i32 {
     let a: u8[] = [1u8, 2u8, 3u8];

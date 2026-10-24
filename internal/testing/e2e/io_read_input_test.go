@@ -5,16 +5,6 @@ import (
 	"testing"
 )
 
-// Runtime tests for two std helpers added to simplify the
-// examples/cli/ tools: `(s: string).parse_int_or(fallback)` and
-// `io.read_input(path)` (stdin when the operand is "-" / "", a file
-// otherwise). Type-check-on-import is covered by
-// TestStdlibModulesImportStandalone; these pin the behaviour.
-
-// parse_int_or returns the parsed value on success and the fallback
-// on any parse failure. Encoded into the exit code: 42 (parsed) + 7
-// (fallback for "nope") + 5 (fallback for "") + 9 (fallback for the
-// overflow case) = 63.
 const parseIntOrSrc = `
 import "std/string";
 function main(): i32 {
@@ -43,9 +33,6 @@ func TestWASMParseIntOr(t *testing.T) {
 	}
 }
 
-// read_input("-") reads all of stdin. (The core runner's --invoke echoes
-// main's return value onto stdout, so we assert the written bytes
-// are present rather than matching stdout exactly.)
 func TestWASMReadInputStdin(t *testing.T) {
 	src := `
 import "std/string";
@@ -62,9 +49,6 @@ function main(): i32 {
 	}
 }
 
-// read_input(path) reads a named file (Ok), and reports Err for a
-// missing one — the two arms every cli tool relies on. The arms
-// write distinct markers so we can assert which fired from stdout.
 func TestWASMReadInputFile(t *testing.T) {
 	src := `
 import "std/string";

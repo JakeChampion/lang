@@ -5,27 +5,9 @@ import (
 	"testing"
 )
 
-// A dead alias bind of an rc-enum must not deny the SOURCE its release when
-// the source is consumed by a match.
-//
-// The bisect is why these cases are shaped as they are — see
-// docs/rc-log/2026-08-28-enum-alias-match-consumed.md. Two matches on the
-// source with NO alias are clean, and the alias alone denies the source, so the
-// match is not the cause. Both halves are kept as cases so a regression says
-// which one moved.
-//
-// The payload-out and escaping-alias shapes are the ones that could
-// over-release. They gate on the exit code as well as the census: an
-// over-release balances the census and shows up as __rc_underflow_count()
-// (exit 99) and in the sanitizer leg. Every row balances.
-//
-// Exits confirmed against bin/fern -interp.
-
 func enumAliasMatchConsumedCases() []tupleAliasParamCase {
 	return []tupleAliasParamCase{
 		{
-			// THE MINIMAL FAILING SHAPE: a dead alias, and the SOURCE is the
-			// one consumed by a match. Was 200 allocs / 0 frees.
 			name: "alias_bind_with_source_match",
 			src: `enum E { Full(i32[]), None }
 function round(i: i32): i32 {
@@ -39,7 +21,6 @@ function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc =
 			want: 34,
 		},
 		{
-			// The matrix cell: both the alias and the source are matched.
 			name: "both_matched",
 			src: `enum E { Full(i32[]), None }
 function round(i: i32): i32 {
@@ -54,9 +35,6 @@ function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc =
 			want: 68,
 		},
 		{
-			// The bisect's control: two matches on the source, NO alias. Was
-			// already clean, and is kept so a regression distinguishes "the
-			// alias forgiveness broke" from "the consuming-match free broke".
 			name: "two_matches_no_alias_control",
 			src: `enum E { Full(i32[]), None }
 function round(i: i32): i32 {
@@ -70,10 +48,6 @@ function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc =
 			want: 68,
 		},
 		{
-			// THE FREE-SAFETY GUARD. The alias's arm moves the payload OUT,
-			// so a release of the source under it would free a buffer the
-			// frame still holds. An over-release here balances the census,
-			// so the EXIT (99 on underflow) is the assertion that matters.
 			name: "payload_out_via_alias_refused",
 			src: `enum E { Full(i32[]), None }
 function round(i: i32): i32 {
@@ -88,7 +62,6 @@ function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc =
 			want: 68,
 		},
 		{
-			// The alias ESCAPES the frame (returned).
 			name: "returned_alias_refused",
 			src: `enum E { Full(i32[]), None }
 function mk(i: i32): E {
@@ -120,9 +93,6 @@ func TestSelfHostEnumAliasMatchConsumedX86_64(t *testing.T) {
 			asm := hevCompile(t, runner, driverBin, tc.src, []string{"FERN_LEAKCHECK=1"})
 			progBin := buildBin(t, gcc, dir, "enumaliasmc_"+tc.name, asm)
 			stderr, exit := hevRun(t, runner, progBin)
-			// 99 is the assertion that matters on the refused rows: an
-			// over-release balances the census, so only the underflow counter
-			// distinguishes it from a correct free.
 			if exit != tc.want {
 				t.Fatalf("%s exited %d, want %d (99 = rc underflow; 139 = read freed memory)", tc.name, exit, tc.want)
 			}

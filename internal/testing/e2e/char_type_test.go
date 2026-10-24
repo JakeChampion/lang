@@ -2,17 +2,6 @@ package e2e
 
 import "testing"
 
-// charTypeProgram exercises the `char` Unicode-scalar type end-to-end
-// (#5629 slice 1): a `char` var, param and return; explicit conversion in
-// both directions (`n as char`, `c as i32`); `char[]` arrays; a scalar
-// beyond the BMP; and char-to-char assignment and equality.
-//
-// In this first slice no stdlib producer yields `char` — the type exists so
-// signatures can declare scalar-vs-byte intent, mirroring how `str` landed.
-// CharType is erased to i32 at the LowerWith choke point
-// (ir/erase_surface.go), so a correct run proves the erasure feeds every
-// backend a plain i32 program. Exits 0 on success, a distinct code per
-// failed step.
 const charTypeProgram = `
 function scalar_of(c: char): i32 { return c as i32; }
 
@@ -76,19 +65,6 @@ func TestCharTypeArm64(t *testing.T) {
 	}
 }
 
-// charUnicodeProgram pins std/unicode's `char` surface (#5629 slice 5) —
-// the first stdlib producer/consumer of the type.
-//
-// These are METHODS, not free functions, and that is essential: a free
-// `to_upper(c: char)` would collide with `to_upper(s: string)` in the same
-// module. The method form also makes the receiver TYPE carry the meaning,
-// which is the whole point of D2 — `c.to_upper()` and `s.to_upper()` are
-// visibly different operations, rather than both being `i32` with only a
-// naming convention separating them.
-//
-// Case mapping on a `char` is SIMPLE: a 1→N expansion has no single scalar
-// to return, so `ß` maps to itself here while `"ß".to_upper()` is `"SS"`.
-// Step 12 pins exactly that contrast.
 const charUnicodeProgram = `
 import "std/string";
 import "std/unicode" as unicode;

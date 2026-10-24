@@ -3,15 +3,6 @@ import "std/string";
 import "std/array";
 import "../../coreutils/lib/resolv" as resolv;
 
-// tests/stdlib/coreutils_resolv_test.fern — coreutils/lib/resolv, the
-// NSS walk gethostid makes over std/dns's two sources: nsswitch's
-// `hosts:` line with its bracketed actions and compiled-in default, and
-// the walk's reaction to each source's status. The files, the resolver
-// configuration and the wire protocol are std/dns's and are covered by
-// tests/stdlib/dns_test.fern.
-//
-// Every expectation is what glibc does with the same input. Two live
-// cases run against this machine's own /etc/hosts.
 function word(o: Option[i32]): i32 {
   match (o) {
     Some(v) => {
@@ -24,7 +15,7 @@ function word(o: Option[i32]): i32 {
 }
 
 function loopback(): i32 {
-  return 16777343;  // 0x0100007f: 127.0.0.1 as the in_addr word
+  return 16777343;
 }
 
 function test_ipv4_word(): test.TestOutcome {
@@ -105,8 +96,6 @@ function test_nsswitch_spaced_bracket_and_empty(): test.TestOutcome {
   return test.pass();
 }
 
-// The walk over the sources: a source nothing implements is UNAVAIL,
-// which continues by default and returns under [UNAVAIL=return].
 function test_lookup_walk(): test.TestOutcome {
   if (word(resolv.lookup("localhost", [resolv.source("nosuch"), resolv.source("files")])) != loopback()) {
     return test.fail("an unimplemented source continues to the next");
@@ -127,9 +116,6 @@ function test_lookup_walk(): test.TestOutcome {
   return test.pass();
 }
 
-// The live cases: this machine's own /etc/hosts. Every system this runs
-// on maps localhost to 127.0.0.1 in its hosts file, and `files` comes
-// before `dns` on every default nsswitch line.
 function test_live_resolve_localhost(): test.TestOutcome {
   return test.assert_eq(word(resolv.resolve("localhost")), loopback());
 }

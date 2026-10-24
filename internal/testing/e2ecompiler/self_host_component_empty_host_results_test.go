@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// Empty canonical results carry a pointer but do not allocate a heap block.
+// Empty canonical results contain a pointer but have no heap block.
 func TestSelfHostComponentEmptyHostResults(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")

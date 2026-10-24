@@ -30,8 +30,6 @@ pub function record_output(out: ssaprepare.Output): void {
   if (out.bodies.len() == 1) {
     finalproof.run(out);
   } else {
-    // Generated drop/release bodies need their own effect proof. Certifying
-    // the selected leaf cannot certify this larger final output.
     require(!unit.check_selected_collection(out.text, arch, out.bodies).ok);
   }
 }
@@ -89,9 +87,6 @@ function signatures(row: ssaprepare.Emitted): void {
   check(contracts(row, [ssasem.Contract { ...c, params: [c.params[0], c.params[0]] }]), false);
   check(contracts(row, [ssasem.Contract { ...c, result: c.params[0] }]), false);
   check(contracts(row, [ssasem.Contract { ...c, name: "other" }]), false);
-  // Coherently supplied ABI alternatives are inputs, not authenticated types.
-  // string and str both use bit-clear box handles. Only conversion to [u8]
-  // adds the descriptor tag refused above; owned byte arrays remain bit-clear.
   let good_types: typeinfo.Type[] = [typeinfo.TypeString { tag: 0 }, typeinfo.TypeString { tag: 1 }, typeinfo.TypeArray { elem: byte, view: false }];
   for t in good_types {
     check(contracts(row, [ssasem.Contract { ...c, params: [t] }]), true);
@@ -138,8 +133,6 @@ function record_schema(row: ssaprepare.Emitted, c: ssasem.Contract, record: semr
   let fields = record.fields;
   require(fields.len() > 0);
   check(metadata(row, physicalbody.Metadata { ...m, records: semrecords.no_records() }), false);
-  // Deliberately inconsistent metadata: a stale name index must not rescue
-  // missing schemas. Admission derives facts from the actual record list.
   check(metadata(row, physicalbody.Metadata { ...m, records: semrecords.Records { ...m.records, list: [] } }), false);
   check(metadata(row, physicalbody.Metadata { ...m, records: semrecords.records_of([record, record]) }), false);
   let unknown: typeinfo.Type = typeinfo.TypeUnknown { reason: "unresolved field" };
@@ -160,8 +153,6 @@ function record_schema(row: ssaprepare.Emitted, c: ssasem.Contract, record: semr
   for r in outer_boxes {
     check(metadata(row, physicalbody.Metadata { ...m, records: semrecords.records_of([r]) }), true);
   }
-  // A scalar descriptor or closure environment cannot become an ordinary box
-  // merely because a caller supplies a matching schema.
   for name in ["Reader", "Writer", "Dir", "__env$first"] {
     let t: typeinfo.Type = typeinfo.TypeStruct { name: name, args: [] };
     let r = semrecords.Record { ...record, ty: t };
@@ -182,7 +173,6 @@ function record_producer(row: ssaprepare.Emitted, record: semrecords.Record): vo
   let correct = physicalbody.Selected { ...own_selection, origin: physicalbody.Origin { ...own_selection.origin, producer: 1 } };
   check(ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, selected: correct } }, true);
   if let typeinfo.TypeStruct(s) = record.ty {
-    // Finalizers are not invoked by this borrowed uniqueness-only leaf.
     check(metadata(row, physicalbody.Metadata { ...m, finalizers: [ssasem.Finalizer { receiver: s.name, symbol: "destroy" }] }), true);
     if (s.args.len() > 0) {
       let wrong = semrecords.Record { ...record, ty: typeinfo.TypeStruct { ...s, args: [] } };
@@ -276,7 +266,6 @@ pub function run(row: ssaprepare.Emitted): void {
   check(text(row, load, ""), false);
   check(text(row, "__fn_" + row.label_name + ".r:\n", "__fn_" + row.label_name + ".r:\n    " + (if (arm) { "mov x0, #0" } else { "movq $0, %rax" }) + "\n"), false);
   check(text(row, "    ret\n", ""), false);
-  // Omitting view normalization does not permit removing either safety guard.
   check(text(row, tag_guard(row, arm), ""), false);
   let floor = if (arm) { "    cmp x0, #16, lsl #12\n" } else { "    cmpq $0x10000, %rax\n" };
   check(text(row, floor, ""), false);

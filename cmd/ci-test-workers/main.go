@@ -1,5 +1,3 @@
-// ci-test-workers runs disjoint top-level tests in isolated processes within
-// one CI job. Process isolation protects packages with mutable global state.
 package main
 
 import (
@@ -39,8 +37,6 @@ type result struct {
 	Error    string            `json:"error,omitempty"`
 }
 
-// Serialize gotestsum diagnostics from the workers so they can share the job
-// console without racing the writer.
 type lockedWriter struct {
 	sync.Mutex
 	w io.Writer
@@ -71,9 +67,6 @@ func main() {
 	}
 }
 
-// readWeights parses a `TestName seconds` file, the format of
-// .github/selfhost-test-weights.txt: one row per test, `#` comments and blank
-// lines ignored. A test absent from the file weighs 1.
 func readWeights(path string) (map[string]float64, error) {
 	weights := map[string]float64{}
 	if path == "" {
@@ -106,11 +99,6 @@ func readWeights(path string) (map[string]float64, error) {
 	return weights, nil
 }
 
-// inventory assigns every listed test to exactly one worker by the same
-// greedy longest-processing-time-first partition as scripts/shard-tests:
-// heaviest first, ties by name, each to the least-loaded worker (lowest index
-// on a tie). With no weights every test weighs 1, which is a round-robin over
-// the sorted names.
 func inventory(output []byte, workers int, weights map[string]float64) ([][]string, error) {
 	names := strings.Fields(string(output))
 	if workers < 1 || len(names) < workers {
@@ -232,7 +220,6 @@ func run(ctx context.Context, c config, output io.Writer) error {
 	if _, err := regexp.Compile(c.pattern); err != nil {
 		return err
 	}
-	// Bound inventory too: a package TestMain may execute before -test.list.
 	ctx, cancel := context.WithTimeout(ctx, c.timeout+30*time.Second)
 	defer cancel()
 	list := exec.CommandContext(ctx, c.binary, "-test.list="+c.pattern)
@@ -292,9 +279,6 @@ func run(ctx context.Context, c config, output io.Writer) error {
 	return errors.Join(append(failures, err)...)
 }
 
-// test2json ignores INT and QUIT. Pipe test output into it instead of having
-// it launch the binary, so tests inherit the caller's signal environment.
-// Keep the actual test exit status: a converter reading stdin cannot see it.
 func runTestStream(ctx context.Context, c config, names []string, cpus, worker int, path string, console io.Writer) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -323,8 +307,6 @@ func runTestStream(ctx context.Context, c config, names []string, cpus, worker i
 		cancel()
 		return errors.Join(fmt.Errorf("start test binary: %w", err), formatter.Wait())
 	}
-	// Only the child processes retain pipe ends now. The formatter sees EOF as
-	// soon as the test exits, without waiting for the parent to return.
 	reader.Close()
 	writer.Close()
 	return errors.Join(test.Wait(), formatter.Wait())

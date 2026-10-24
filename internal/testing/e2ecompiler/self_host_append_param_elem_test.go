@@ -4,45 +4,6 @@ import (
 	"testing"
 )
 
-// --- A struct element a CALLEE appends is owned by the array, not the caller
-//
-// `emitf(s, o) { return St { ops: s.ops.append(o) }; }` — the self-host's own
-// state-threading shape — must retain the caller's box as it stores it. Without
-// the retain the caller releases the box on the binding's next rebind, and the
-// array is left pointing at freed memory.
-//
-// That defect shows as a WRONG ANSWER while every counter reads healthy.
-// Reading the elements back after three appends, `t = t * 10 + st.ops[k].a`:
-//
-//	                                  answer   allocs/frees   live
-//	callee appends a named local       212      1800 / 1800      0
-//	same, elements never read           ok      1800 / 1800      0
-//	append written inline in main       012      1800 / 1404  19008
-//
-// Both oracles say 012. The middle row is why nothing caught it: with only a
-// `.len()` read the dangling element is never dereferenced. The bottom row is
-// correct only because it LEAKS — nothing is recycled into the dead box.
-//
-// The threshold is the freelist, not a capacity boundary: one and two appends
-// answer correctly because no allocation recycles the freed box before the
-// read; the third one does, and elements 0 and 2 then alias — hence 212.
-//
-// The counted-store contract has two halves. The append retains a struct
-// element that is a borrowed PARAMETER, and a caller handing over a fresh temp
-// emits the matching post-call release. Either half alone is wrong: the retain
-// with no release leaks the temp, the release with no retain frees a box
-// nobody counted.
-//
-// A LOCAL is excluded from the retain, and that exclusion is the whole
-// precision of the test: a local that escapes into a container has already lost
-// its reclaim credit to the escape walk, so the container holds the only
-// reference and retaining there would leak. An `own` parameter is excluded from
-// the other side — the caller transferred its reference rather than keeping
-// one.
-//
-// Every want below was confirmed against bin/fern -interp, never read off the
-// self-host run.
-
 const appendParamElemProlog = "struct Op { a: i32, b: i32 }\n" +
 	"struct St { ops: Op[] }\n" +
 	"function mkop(i: i32): Op { return Op { a: i, b: i + 1 }; }\n" +
@@ -50,9 +11,6 @@ const appendParamElemProlog = "struct Op { a: i32, b: i32 }\n" +
 	"function (s: St) emit(o: Op): St { return St { ops: s.ops.append(o) }; }\n" +
 	"function emito(s: St, own o: Op): St { return St { ops: s.ops.append(o) }; }\n"
 
-// appendParamElemSrc reads every element back as a digit, so the answer names
-// the exact element sequence rather than a sum that several wrong sequences
-// share. Three appends: the first count at which the freed box is recycled.
 func appendParamElemSrc(inner string) string {
 	return appendParamElemProlog +
 		"function main(): i32 { let t: i32 = 0; let st: St = St { ops: [] }; let j: i32 = 0; " +
@@ -63,35 +21,15 @@ func appendParamElemSrc(inner string) string {
 
 func appendParamElemCases() []struct{ name, inner string } {
 	return []struct{ name, inner string }{
-		// The three rows that answered 212. A free function and a method are
-		// the same defect; so is a local bound from a literal rather than a
-		// producer call.
 		{"freefn_local", "let o: Op = mkop(j); st = emitf(st, o);"},
 		{"method_local", "let o: Op = mkop(j); st = st.emit(o);"},
 		{"lit_local", "let o: Op = Op { a: j, b: j + 1 }; st = st.emit(o);"},
-		// The append written in the CALLER. No parameter, so no retain may
-		// fire — the local's own escape already gave the array sole ownership,
-		// and a retain here would leak.
 		{"inline_local", "let o: Op = mkop(j); st = St { ops: st.ops.append(o) };"},
-		// A fresh temp handed to the callee. The retain fires inside the
-		// callee, and the caller's post-call release is what nets it.
 		{"temp", "st = st.emit(mkop(j));"},
-		// An `own` parameter — a reference the caller TRANSFERRED. Retaining it
-		// would leave the array holding two claims and the caller none. (The
-		// checker refuses a borrowed local at an owned position outright, so a
-		// fresh argument is the only way to reach this arm.)
 		{"own_param", "st = emito(st, mkop(j));"},
 	}
 }
 
-// TestSelfHostAppendParamElemX86_64 — the element reads back, and the box is
-// released exactly once.
-//
-// The answer carries the use-after-free (a recycled box shows as a wrong digit
-// sequence) and `__rc_underflow_count()` carries the over-release; `allocs == frees`
-// at `live_bytes == 0` carries the leak. All three are needed here: this defect
-// had healthy counters throughout, so counts alone would have passed the broken
-// compiler.
 func TestSelfHostAppendParamElemX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -126,8 +64,6 @@ func TestSelfHostAppendParamElemX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostAppendParamElemWasmIR — the wasm sibling. Exit codes only; the
-// leak counters are an x86-64 self-host backend feature.
 func TestSelfHostAppendParamElemWasmIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range appendParamElemCases() {

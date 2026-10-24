@@ -2,13 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// genericStructLitDestCases bind a generic struct literal to a destination
-// that names its instantiation: a `let` annotation, a function's return type,
-// an array annotation, a parameter reached through an array-literal argument,
-// a struct field, a method parameter, a value-position if's arms, a
-// lambda's declared result, or the variable an assignment writes. The destination fixes the type argument even where
-// an untyped field literal (`a: 3`) would default it to i32 (#10452, #10481,
-// #10537).
 var genericStructLitDestCases = []struct {
 	name string
 	src  string
@@ -104,8 +97,6 @@ function main(): i32 {
 `, 11},
 }
 
-// TestSelfHostGenericStructLitDest compiles each case with the self-host CLI
-// for every target and checks the exit code against the interpreter.
 func TestSelfHostGenericStructLitDest(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	interpBin := buildLangBinForInterp(t)

@@ -1,6 +1,6 @@
-// A record field read as a borrowed byte view after a `?` that inlines the
-// call it guards. On the error path the field holds the null placeholder,
-// which the view's decoded data and length must not read through.
+
+
+
 import "std/i32";
 
 enum E { Short, Bad(string) }

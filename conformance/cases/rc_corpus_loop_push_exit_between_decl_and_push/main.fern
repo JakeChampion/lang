@@ -1,9 +1,9 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// An early exit BETWEEN the declaration and the push: the exiting
-// iteration builds an element it never stores, so the move is refused
-// and the element keeps its retain. 3 stored + stop 1 + kids[0] 0 = 4.
+
+
+
+
+
+
 import "core/int";
 struct Val { kind: i32, kids: i32[] }
 function build(n: i32): i32 {

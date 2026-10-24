@@ -1,15 +1,6 @@
 import "std/test";
 import "std/array";
 
-// tests/stdlib/array_rotate_test.fern — pure-Fern coverage of std/array's
-// structural rotation verbs rotate_left / rotate_right (free + method forms):
-// cyclic shift by n (mod len), wrap when n >= len, negative n rotates the other
-// way, n%len==0 / empty → unchanged. Kept as its own suite so the self-host
-// merged bundle stays under the asm_ir IR budget; uses assert_eq_array /
-// assert_true (not the generic assert_eq[i32]) so it stays clear of the
-// self-host monomorph gap. String-element rotation is pinned on every backend by
-// conformance/cases/array_rotate_module.
-
 function test_left(): test.TestOutcome {
   return test.assert_eq_array([1, 2, 3, 4, 5].rotate_left(2), [3, 4, 5, 1, 2]);
 }
@@ -23,7 +14,6 @@ function test_free_fn(): test.TestOutcome {
 }
 
 function test_wrap(): test.TestOutcome {
-  // n >= len wraps: 7 % 5 == 2.
   return test.assert_eq_array([1, 2, 3, 4, 5].rotate_left(7), [3, 4, 5, 1, 2]);
 }
 
@@ -32,12 +22,10 @@ function test_zero_shift(): test.TestOutcome {
 }
 
 function test_full_shift(): test.TestOutcome {
-  // n == len → unchanged.
   return test.assert_eq_array([1, 2, 3].rotate_left(3), [1, 2, 3]);
 }
 
 function test_negative(): test.TestOutcome {
-  // rotate_left(-1) == rotate_right(1).
   return test.assert_eq_array([1, 2, 3, 4].rotate_left(0 - 1), [1, 2, 3, 4].rotate_right(1));
 }
 

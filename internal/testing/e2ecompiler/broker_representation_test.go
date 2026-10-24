@@ -8,8 +8,6 @@ import (
 	"testing"
 )
 
-// Run the same independent state/protocol assertions against each representation.
-// Only field access changes; model answers and allocation assertions stay intact.
 func prepareBrokerRepresentation(t *testing.T, dir, source string, ring bool) string {
 	t.Helper()
 	name := "broker_core.fern"

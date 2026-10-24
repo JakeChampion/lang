@@ -8,10 +8,6 @@ import (
 	"testing"
 )
 
-// A method two traits provide for one type is ranked by the calling
-// module's imports (#12295), on both checkers: the trait a module imports
-// directly outranks one it reaches only through another module, and two it
-// imports directly tie, which is E074.
 func TestSelfHostAmbiguousMethodRankedByImports(t *testing.T) {
 	_, runner, driverBin := buildCheckerModloadDriverX86(t)
 	fern := buildFernCLIBin(t)

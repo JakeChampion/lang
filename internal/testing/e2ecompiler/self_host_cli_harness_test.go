@@ -10,19 +10,13 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// selfHostCLI is the self-host front end (fern.fern) built once per test, for
-// legs that must see what production sees: the checker's annotations, module
-// loading and flattening, none of which the emit drivers run.
 type selfHostCLI struct {
 	gcc, stdlib string
 	runner      []string
 	bin         string
-	// flags are passed to every compile ahead of the source, as `-embed DIR`.
-	flags []string
+	flags       []string
 }
 
-// compileCmd is the CLI compiling src for target to out, with extra flags
-// ahead of the source.
 func (c *selfHostCLI) compileCmd(target, out, src string, extra ...string) *exec.Cmd {
 	args := append([]string{"-target", target}, extra...)
 	args = append(args, c.flags...)
@@ -42,7 +36,6 @@ func buildSelfHostCLI(t *testing.T) *selfHostCLI {
 	return &selfHostCLI{gcc: gcc, stdlib: stdlib, runner: runner, bin: bin}
 }
 
-// buildRuntimeCLI selects explicit primitive admission for internal runtime probes.
 func buildRuntimeCLI(t *testing.T) *selfHostCLI {
 	t.Helper()
 	gcc, runner := x86_64Tooling(t)
@@ -50,8 +43,6 @@ func buildRuntimeCLI(t *testing.T) *selfHostCLI {
 		bin: e2eharness.CachedDriverBinFor(t, e2eharness.RepoPath("compiler"), "drivers/runtime_run.fern", e2eharness.TargetX86_64Linux)}
 }
 
-// emit compiles the entry file at src for target with env added to the
-// compiler's environment, and returns the path of the emitted asm or WAT.
 func (c *selfHostCLI) emit(t *testing.T, src, target string, env ...string) string {
 	t.Helper()
 	ext := ".s"
@@ -67,8 +58,6 @@ func (c *selfHostCLI) emit(t *testing.T, src, target string, env ...string) stri
 	return out
 }
 
-// wasmComponent compiles src to a wasm32-wasi component, the target's
-// default output form.
 func (c *selfHostCLI) wasmComponent(t *testing.T, src string, env ...string) string {
 	t.Helper()
 	bin := filepath.Join(t.TempDir(), "main.wasm")
@@ -80,7 +69,6 @@ func (c *selfHostCLI) wasmComponent(t *testing.T, src string, env ...string) str
 	return bin
 }
 
-// x86Binary compiles src for x86-64 Linux and links it.
 func (c *selfHostCLI) x86Binary(t *testing.T, src string, env ...string) string {
 	t.Helper()
 	asm := c.emit(t, src, "x86-64-linux", env...)
@@ -91,8 +79,6 @@ func (c *selfHostCLI) x86Binary(t *testing.T, src string, env ...string) string 
 	return bin
 }
 
-// arm64Binary compiles src for arm64 Linux the way `fern -target arm64-linux
-// -o` does: through the self-host's own assembler and ELF writer, not GNU as.
 func (c *selfHostCLI) arm64Binary(t *testing.T, src string, env ...string) string {
 	t.Helper()
 	bin := filepath.Join(t.TempDir(), "prog")
@@ -107,8 +93,6 @@ func (c *selfHostCLI) arm64Binary(t *testing.T, src string, env ...string) strin
 	return bin
 }
 
-// runWasmCensus runs a WAT module under wasmtime with args, returning its
-// stderr (where the leakcheck census lands) and exit code.
 func runWasmCensus(t *testing.T, wat string, args ...string) (string, int) {
 	t.Helper()
 	cmd := exec.Command(e2eharness.Wasmtime(t), append([]string{"run", wat}, args...)...)
@@ -121,8 +105,6 @@ func runWasmCensus(t *testing.T, wat string, args ...string) (string, int) {
 	return eb.String(), cmd.ProcessState.ExitCode()
 }
 
-// exitOf compiles the program text source for target (x86-64-linux,
-// arm64-linux or wasm32-wasi), runs it, and returns its stderr and exit code.
 func (c *selfHostCLI) exitOf(t *testing.T, source, target string, env ...string) (string, int) {
 	t.Helper()
 	return c.exitOfStdin(t, source, target, nil, env...)
@@ -137,13 +119,11 @@ func (c *selfHostCLI) exitOfStdin(t *testing.T, source, target string, stdin []b
 	return c.exitOfFile(t, src, target, stdin, env...)
 }
 
-// exitOfFile also supports fixtures with relative imports beside the entry.
 func (c *selfHostCLI) exitOfFile(t *testing.T, src, target string, stdin []byte, env ...string) (string, int) {
 	t.Helper()
 	return c.exitOfFileArgs(t, src, target, stdin, nil, env...)
 }
 
-// exitOfFileArgs is exitOfFile with args passed to the program after its name.
 func (c *selfHostCLI) exitOfFileArgs(t *testing.T, src, target string, stdin []byte, args []string, env ...string) (string, int) {
 	t.Helper()
 	var cmd *exec.Cmd

@@ -2,10 +2,6 @@ package e2e
 
 import "testing"
 
-// A local named like an enum shadows it, so `R.len()` and `R.X` on the local
-// are a method call and a field read, not the enum's variants (#10159).
-// A local captured into a lambda shadows it there too (#10211). Outside the
-// shadow the qualified variants still construct.
 const enumNameShadowedProg = `
 enum R { X, Y, Z(i32) }
 struct S { X: i32 }

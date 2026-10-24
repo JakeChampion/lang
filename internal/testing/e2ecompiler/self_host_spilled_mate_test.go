@@ -10,12 +10,6 @@ import (
 	"testing"
 )
 
-// A value read only by its phi mate, when that mate is already in a frame
-// slot, takes the mate's slot. keep carries more values across the calls
-// in its loop than the callee-saved registers hold; k changes on one
-// iteration in five, and its merge feeds only the loop phi. Given a
-// register, the merge loaded k's slot on the unchanged path and stored it
-// back on the back edge.
 const spilledMateProg = `@noinline function bump(x: i64): i64 {
     return x + 1i64;
 }
@@ -57,9 +51,6 @@ var (
 	jumpOrCall = regexp.MustCompile(`^(?:j\w+|call|ret)\b`)
 )
 
-// slotRoundTrip finds a load of a frame slot into a register that, falling
-// through labels and with the register unwritten, is stored back into the
-// same slot.
 func slotRoundTrip(body string) string {
 	var lines []string
 	for _, l := range strings.Split(body, "\n") {

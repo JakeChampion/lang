@@ -1,12 +1,3 @@
-// rename_noreplace and rename_exchange (#9784) end to end on every native
-// backend: renameat2 with RENAME_NOREPLACE / RENAME_EXCHANGE on Linux,
-// renameatx_np with RENAME_EXCL / RENAME_SWAP on Darwin, where the flag
-// values differ. A wrong flag still produces a plausible call — an exchange
-// that only renames, a no-replace that replaces — so the probe checks the
-// RESULTING TREE as well as each return value.
-//
-// WASI has neither call; E066 refuses both there (capability `fsrename`),
-// which TestWASMRenameFlagsRefused pins.
 package e2e
 
 import (
@@ -18,8 +9,6 @@ import (
 	"testing"
 )
 
-// renameFlagsSource is the probe, its paths under `dir`. Every failure
-// returns its own exit code, so the number names the step.
 func renameFlagsSource(dir string) string {
 	p := func(name string) string { return filepath.Join(dir, name) }
 	return fmt.Sprintf(`function main(): i32 {
@@ -41,7 +30,6 @@ func renameFlagsSource(dir string) string {
 `, p("a"), p("b"), p("c"), p("missing"))
 }
 
-// renameFlagsCheckTree asserts what the probe left on disk.
 func renameFlagsCheckTree(t *testing.T, dir string) {
 	t.Helper()
 	for _, absent := range []string{"a", "missing"} {
@@ -86,8 +74,6 @@ func TestInterpRenameFlagsPrimitives(t *testing.T) {
 	renameFlagsCheckTree(t, dir)
 }
 
-// Darwin's flag values are not Linux's: RENAME_EXCL is 4 where
-// RENAME_NOREPLACE is 1, so a Linux word on XNU would ask for something else.
 func TestArm64DarwinRenameFlagsPrimitives(t *testing.T) {
 	dir := t.TempDir()
 	if buildAndRunDarwin(t, dir, renameFlagsSource(dir)) {

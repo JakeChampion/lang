@@ -7,20 +7,6 @@ import (
 	"testing"
 )
 
-// The open helpers call openat(2), which returns the LOWEST free descriptor,
-// so a program exec'd with a standard stream closed — `prog >&-` — used to be
-// handed 0, 1 or 2 for the file it opened, and stdout() then silently aliased
-// that file: the write reported success and the bytes landed in the file.
-// Every open helper now moves such a descriptor up (fcntl F_DUPFD 3) and
-// closes the original, as glibc's fopen does (#8823).
-//
-// Two programs, one per direction. Neither can run under the interpreter:
-// the Go runtime reopens a closed standard descriptor on /dev/null at
-// startup, so os.OpenFile never sees 0/1/2 free there.
-
-// fdSaferStdoutSrc opens a file with fd 1 closed. stdout().write must FAIL
-// (exit 2 if it succeeded, which means it went to the file) and the file
-// must hold only what was written to it.
 const fdSaferStdoutSrc = `function main(): i32 {
     match (open_writer("alias.out")) {
         Ok(w) => {
@@ -42,9 +28,6 @@ const fdSaferStdoutSrc = `function main(): i32 {
 }
 `
 
-// fdSaferStdinSrc opens a file with fd 0 closed. A line read from stdin must
-// not answer a line (exit 2 if it read the FILE's first line), and the reader
-// must still hand back that line.
 const fdSaferStdinSrc = `import "std/io";
 
 function main(): i32 {
@@ -67,9 +50,6 @@ function main(): i32 {
 }
 `
 
-// closedStdio is a typed nil *os.File: os/exec passes it to os.StartProcess
-// as a nil entry, which leaves that descriptor CLOSED in the child rather
-// than on /dev/null.
 var closedStdio = (*os.File)(nil)
 
 func TestOpenedHandleNeverLandsOnAStandardDescriptor(t *testing.T) {

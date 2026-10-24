@@ -12,16 +12,6 @@ import (
 	"time"
 )
 
-// StreamBodiesServerSource is a one-worker server with
-// `stream_bodies` on (docs/NET-P3-SUSPENSION-PLAN.md §3.9): /sum reads
-// its body a kilobyte at a time through the request's Stream and answers
-// the byte count and sum; /text reads it whole with body_string, so a body
-// that ended early is answered with the fault's status; /refuse answers
-// 403 without reading the body; /peek reads the first kilobyte and
-// answers, leaving the rest of the body unread; /ok is the hello. The body cap is 4 KiB
-// and the minimum data rate 1000 B/s after a 300 ms grace, so the checks
-// below can stall a body into a 408 and push a chunk past the cap into a
-// 413 in well under a second.
 func StreamBodiesServerSource() string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
@@ -73,9 +63,6 @@ function main(): i32 {
 `)
 }
 
-// StreamUploadBytes is the body the overlap check uploads: 3000 bytes,
-// under the 4 KiB cap, each byte its index modulo 251, so the handler's
-// sum is checkable.
 func StreamUploadBytes() []byte {
 	out := make([]byte, 3000)
 	for i := range out {
@@ -92,12 +79,6 @@ func streamUploadSum(body []byte) int {
 	return sum
 }
 
-// CheckStreamBodiesOverlap drives StreamBodiesServerSource as a client
-// uploading slowly: the handler's pull parks on the body, so /ok on
-// another connection is answered while the upload is still arriving, and
-// the upload itself is answered with every byte once it has all arrived.
-// Only a server whose handlers park passes this; the Go compiler's
-// blocking fallback is checked by CheckStreamBodiesSequential.
 func CheckStreamBodiesOverlap(t *testing.T, addr string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
@@ -107,8 +88,6 @@ func CheckStreamBodiesOverlap(t *testing.T, addr string) {
 	if _, err := up.Write(body[:300]); err != nil {
 		t.Fatal(err)
 	}
-	// Give the worker time to read the head and park the handler on the
-	// body before the second connection arrives.
 	time.Sleep(20 * time.Millisecond)
 	started := time.Now()
 	if resp := HTTPRoundTrip(t, addr, "/ok", 5*time.Second); !strings.Contains(resp, "HTTP/1.1 200") {
@@ -133,21 +112,10 @@ func CheckStreamBodiesOverlap(t *testing.T, addr string) {
 	}
 }
 
-// CheckStreamBodiesSequential drives StreamBodiesServerSource one client
-// at a time, the checks that hold whether or not the handler parks: a
-// chunked upload with a request pipelined behind it is answered in order
-// with the next request's bytes taken back from the pull; a body that
-// stalls under the minimum data rate is answered 408 and the connection
-// closed; a chunk past the body cap is answered 413; an `Expect:
-// 100-continue` upload is invited once the handler reads, and a handler
-// that refuses never invites it and the connection closes with the body
-// unread; a client that goes away mid-body leaves the worker serving.
 func CheckStreamBodiesSequential(t *testing.T, addr string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
 	checkStreamBodiesBinary(t, addr)
-	// A chunked body in two chunks with a trailer, and a /ok pipelined
-	// behind it in the same write.
 	conn := dialRaw(t, addr)
 	chunked := "POST /text HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n6\r\n world\r\n0\r\nX-Sum: 11\r\n\r\n" +
 		"GET /ok HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n"
@@ -165,8 +133,6 @@ func CheckStreamBodiesSequential(t *testing.T, addr string) {
 	}
 	conn.Close()
 
-	// A body that stalls: 100 of 3000 bytes, then silence past the grace
-	// (300 ms) and what 100 bytes buy at 1000 B/s (100 ms).
 	stalled := dialUpload(t, addr, "/sum", 3000)
 	defer stalled.Close()
 	if _, err := stalled.Write(make([]byte, 100)); err != nil {
@@ -176,7 +142,6 @@ func CheckStreamBodiesSequential(t *testing.T, addr string) {
 		t.Fatalf("a stalled body: want 408, got\n%s", resp)
 	}
 
-	// A chunk past the 4 KiB cap is refused at its size line.
 	big := dialRaw(t, addr)
 	defer big.Close()
 	if _, err := io.WriteString(big, "POST /sum HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n1400\r\n"); err != nil {
@@ -186,8 +151,6 @@ func CheckStreamBodiesSequential(t *testing.T, addr string) {
 		t.Fatalf("a chunk past the cap: want 413, got\n%s", resp)
 	}
 
-	// Expect: 100-continue, read by the handler: the interim response
-	// comes first, then the body is sent and answered.
 	expecting := dialRaw(t, addr)
 	defer expecting.Close()
 	if _, err := io.WriteString(expecting, "POST /text HTTP/1.1\r\nHost: h\r\nContent-Length: 5\r\nExpect: 100-continue\r\nConnection: close\r\n\r\n"); err != nil {
@@ -206,9 +169,6 @@ func CheckStreamBodiesSequential(t *testing.T, addr string) {
 		t.Fatalf("/text after 100 Continue: want 200 text 5, got %d %q", final.StatusCode, bodyText(t, final))
 	}
 
-	// A handler that refuses without reading never invites the body: no
-	// 100, the 403 at once, and the connection closed since the body was
-	// not read.
 	refused := dialRaw(t, addr)
 	defer refused.Close()
 	if _, err := io.WriteString(refused, "POST /refuse HTTP/1.1\r\nHost: h\r\nContent-Length: 5\r\nExpect: 100-continue\r\n\r\n"); err != nil {
@@ -219,9 +179,6 @@ func CheckStreamBodiesSequential(t *testing.T, addr string) {
 		t.Fatalf("a refusing handler under Expect: want 403 alone and the close, got\n%s", resp)
 	}
 
-	// A handler that stops reading early without a fault, the rest of the
-	// body still on the wire: its response goes out and the connection
-	// closes, so the bytes that follow are never read as a request.
 	peek := dialRaw(t, addr)
 	defer peek.Close()
 	peekBody := StreamUploadBytes()
@@ -236,16 +193,12 @@ func CheckStreamBodiesSequential(t *testing.T, addr string) {
 	if peeked.StatusCode != 200 || !strings.Contains(bodyText(t, peeked), "peek 1024") {
 		t.Fatalf("a handler that read part of the body: want 200 peek 1024, got %d %q", peeked.StatusCode, bodyText(t, peeked))
 	}
-	// The rest of the body and a request behind it: the connection is
-	// closed, so no second response comes back.
 	_, _ = peek.Write(peekBody[1500:])
 	_, _ = io.WriteString(peek, "GET /ok HTTP/1.1\r\nHost: h\r\n\r\n")
 	if after, _ := io.ReadAll(preader); strings.Contains(string(after), "HTTP/1.1 ") {
 		t.Fatalf("the body left unread was answered as a request:\n%s", after)
 	}
 
-	// A client that half-closes mid-body is answered 400, whether its head
-	// started a handler before the end of stream arrived or arrived with it.
 	short := dialUpload(t, addr, "/sum", 3000)
 	defer short.Close()
 	if _, err := short.Write(make([]byte, 200)); err != nil {
@@ -258,7 +211,6 @@ func CheckStreamBodiesSequential(t *testing.T, addr string) {
 		t.Fatalf("a body cut short by the client: want 400, got\n%s", resp)
 	}
 
-	// A client that goes away mid-body: the worker keeps serving.
 	gone := dialUpload(t, addr, "/sum", 3000)
 	if _, err := gone.Write(make([]byte, 200)); err != nil {
 		t.Fatal(err)
@@ -270,8 +222,6 @@ func CheckStreamBodiesSequential(t *testing.T, addr string) {
 	}
 }
 
-// Arbitrary bytes survive a suspended pull and a following request in the
-// same read. The echo compares every byte, including malformed UTF-8 and NUL.
 func checkStreamBodiesBinary(t *testing.T, addr string) {
 	t.Helper()
 	body := make([]byte, 1024)
@@ -308,7 +258,6 @@ func checkStreamBodiesBinary(t *testing.T, addr string) {
 					t.Fatalf("want 100 before sending the binary body, got %d", interim.StatusCode)
 				}
 			} else {
-				// Header and partial body together exercise the pending buffer.
 				first.WriteString(head + "\r\n")
 			}
 			if tc.framing == "chunked" {
@@ -352,8 +301,6 @@ func checkStreamBodiesBinary(t *testing.T, addr string) {
 	})
 }
 
-// dialUpload opens a connection and writes the head of a POST to `path`
-// declaring `length` body bytes, for the caller to send at its pace.
 func dialUpload(t *testing.T, addr, path string, length int) net.Conn {
 	t.Helper()
 	c := dialRaw(t, addr)
@@ -378,7 +325,6 @@ func dialRaw(t *testing.T, addr string) net.Conn {
 	return c
 }
 
-// readWhole reads a connection to its close.
 func readWhole(t *testing.T, c net.Conn) string {
 	t.Helper()
 	b, _ := io.ReadAll(c)

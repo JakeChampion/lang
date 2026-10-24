@@ -1,39 +1,8 @@
-// coreutils/lib/blocks.fern — the SIZE argument and the number it scales,
-// which `du` and `df` share.
-//
-// Two halves that only look like one:
-//
-//   - the GRAMMAR of a `-B` / `--block-size` / `--threshold` argument, and
-//     of the three block-size environment variables, with the three
-//     diagnostics a bad one earns (`invalid`, `invalid suffix in`,
-//     `too large`) — the three are not interchangeable, and which one a
-//     spec earns depends on an alphabet that is not the set of letters
-//     that scale;
-//   - the RENDERING of a count under that unit: divided by the block size
-//     rounding UP, or scaled by a power of 1024 / 1000 with one decimal
-//     below ten.
-//
-// Both utilities reach every corner of both halves, and the two alphabets
-// (`wide`) are the only thing that differs between their options.
 import "std/string";
 import "std/array";
 import "std/u64";
 import "./gnu";
 
-// The alphabet a SIZE argument's suffix letter has to be in, which is
-// not the same question as whether the letter has a scale. The two
-// alphabets differ, and neither is the set of letters that scale:
-//
-//   -B  e E g G k K m M p P t T y Y z Z   — p / e / z / y are in it and
-//                                           have no power, so `-Bp` is
-//                                           an invalid SUFFIX while
-//                                           `-BR` is an invalid ARGUMENT
-//   -t  k K m M G T P E Z Y R Q           — R and Q are here and not
-//                                           there, and the lowercase
-//                                           g / t are the other way round
-//
-// A letter outside the alphabet with no digits in front of it is not a
-// suffix at all, which is what makes the two diagnostics differ.
 function valid_suffix(c: i32, wide: boolean): boolean {
   if (wide) {
     return c == 107 || c == 75 || c == 109 || c == 77 || c == 71 || c == 84 || c == 80 || c == 69 || c == 90 || c == 89 || c == 82 || c == 81;
@@ -41,9 +10,6 @@ function valid_suffix(c: i32, wide: boolean): boolean {
   return c == 101 || c == 69 || c == 103 || c == 71 || c == 107 || c == 75 || c == 109 || c == 77 || c == 112 || c == 80 || c == 116 || c == 84 || c == 121 || c == 89 || c == 122 || c == 90;
 }
 
-// The power of the base a suffix letter stands for, or 0 for a letter
-// that has none. `b` (512) and `B` (1024) are deliberately absent:
-// neither alphabet admits them.
 function suffix_power(c: i32): i32 {
   if (c == 107 || c == 75) {
     return 1;
@@ -78,9 +44,6 @@ function suffix_power(c: i32): i32 {
   return 0;
 }
 
-// The canonical letter for a scaled power: uppercase for the powers of
-// 1024, and `k` alone lowercased for the powers of 1000 — the rule `-h`
-// and `--si` print under.
 function power_letter(p: i32, base: u64): string {
   if (p <= 0) {
     return "";
@@ -112,11 +75,6 @@ function power_letter(p: i32, base: u64): string {
   return "Y";
 }
 
-// `Num` — a parsed SIZE argument.
-//
-// `show_suffix` is set when the spec named a unit with no count (`K`),
-// which is also what makes the utility print that unit after every
-// number; `base` and `with_b` are how the unit is spelled back out.
 pub struct Num { value: u64, neg: boolean, base: u64, with_b: boolean, show_suffix: boolean, human: u64, status: i32 }
 
 pub function size_ok(): i32 {
@@ -135,7 +93,6 @@ function size_overflow(): i32 {
   return 3;
 }
 
-// Multiply, reporting overflow rather than wrapping.
 function mul_checked(a: u64, b: u64): (u64, boolean) {
   if (a == 0 as u64 || b == 0 as u64) {
     return (0 as u64, false);
@@ -160,9 +117,6 @@ pub function hex_digit(c: i32): i32 {
   return 0 - 1;
 }
 
-// The digits of `s` from `start`, base 0: `0x` hexadecimal, a leading
-// `0` octal, anything else decimal. Returns (value, index just past the
-// digits, overflowed); the index is `start` when there are none.
 pub function scan_number(s: string, start: i32): (u64, i32, boolean) {
   if (start + 1 < s.len() && s[start] as i32 == 48 && (s[start + 1] as i32 == 120 || s[start + 1] as i32 == 88)) {
     let j: i32 = start + 2;
@@ -183,7 +137,6 @@ pub function scan_number(s: string, start: i32): (u64, i32, boolean) {
       j = j + 1;
     }
     if (!hany) {
-      // `0x` with nothing after it is the digit 0 followed by `x`.
       return (0 as u64, start + 1, false);
     }
     return (hv, j, hover);
@@ -215,8 +168,6 @@ pub function scan_number(s: string, start: i32): (u64, i32, boolean) {
   return (v, i, over);
 }
 
-// The unit at `i`: a letter, optionally followed by `B` (powers of
-// 1000) or `iB` (powers of 1024). Returns (multiplier, base, status).
 function scan_unit(s: string, i: i32, wide: boolean): (u64, u64, i32) {
   if (i >= s.len()) {
     return (1 as u64, 1024 as u64, size_ok());
@@ -256,14 +207,6 @@ function bad_num(status: i32): Num {
   return Num { value: 0 as u64, neg: false, base: 1024 as u64, with_b: false, show_suffix: false, human: 0 as u64, status: status };
 }
 
-// `parse_num(spec, wide, words, signed)` — gnulib's SIZE grammar.
-//
-// An optional grouping apostrophe and the `human-readable` / `si`
-// spellings are the block-size half (`words`); `du -t` takes neither and
-// takes a sign instead. A spec naming a unit with NO count (`K`) means
-// one of that unit, and for a block size it also prints the unit after
-// every number. The count may be preceded by blanks (` 1K` is 1024) but
-// a bare unit may not: ` K` is invalid.
 pub function parse_num(spec: string, wide: boolean, words: boolean, signed: boolean): Num {
   let s: string = spec;
   if (words) {
@@ -293,9 +236,6 @@ pub function parse_num(spec: string, wide: boolean, words: boolean, signed: bool
   let bare: boolean = false;
   let after: i32 = n.1;
   if (n.1 == i) {
-    // No digits: a unit standing alone, which has to be at the front and
-    // in the alphabet. Outside it there is no suffix to be wrong about,
-    // so the whole argument is what the diagnostic names.
     if (i != 0 || i >= s.len() || !valid_suffix(s[i] as i32, wide)) {
       return bad_num(size_invalid());
     }
@@ -314,7 +254,6 @@ pub function parse_num(spec: string, wide: boolean, words: boolean, signed: bool
   if (m.1) {
     return bad_num(size_overflow());
   }
-  // A block size of zero is refused where a threshold of zero is fine.
   if (words && m.0 == 0 as u64) {
     return bad_num(size_invalid());
   }
@@ -328,10 +267,6 @@ pub function parse_num(spec: string, wide: boolean, words: boolean, signed: bool
   return Num { value: m.0, neg: neg, base: u.1, with_b: with_b, show_suffix: bare, human: 0 as u64, status: size_ok() };
 }
 
-// The unit printed after every number, for a spec that named one with
-// no count. The letter comes from the DIVISOR rather than the spec, so
-// `du --inodes` — which forces the divisor to 1 — leaves `-BKiB`
-// printing a bare `B`.
 pub function unit_text(divisor: u64, base: u64, with_b: boolean): string {
   let exp: i32 = 0;
   let d: u64 = divisor;
@@ -352,15 +287,6 @@ pub function unit_text(divisor: u64, base: u64, with_b: boolean): string {
   return out;
 }
 
-// `human(n, base, point_zero)` — gnulib's human_readable with the ceiling
-// rounding these utilities print under: one decimal below ten after
-// scaling, none at or above, and a value that rounds up to the base
-// scaled once more, so 1048575 bytes is `1.0M` and not `1024K`.
-//
-// `point_zero` false drops the decimal from a value that lands on a
-// whole number, so 2 GiB is `2G` rather than `2.0G`. Every number in a
-// COLUMN keeps it; `df`'s `1M-blocks` header is the one place that does
-// not, and the two are otherwise the same renderer.
 pub function human(n: u64, base: u64, point_zero: boolean): string {
   let div: u64 = 1 as u64;
   let exp: i32 = 0;
@@ -398,8 +324,6 @@ pub function human(n: u64, base: u64, point_zero: boolean): string {
   return up.to_string() + power_letter(exp, base);
 }
 
-// `Unit` — the display unit as an option scan leaves it, before the
-// utility's own overrides and the environment get their say.
 pub struct Unit { block_size: u64, base: u64, with_b: boolean, show_suffix: boolean, human: u64, chosen: boolean }
 
 pub function default_unit(): Unit {
@@ -414,16 +338,10 @@ pub function plain_unit(size: u64): Unit {
   return Unit { block_size: size, base: 1024 as u64, with_b: false, show_suffix: false, human: 0 as u64, chosen: true };
 }
 
-// `-h` and `--si`: scale by powers of `base` rather than divide.
 pub function human_unit(base: u64): Unit {
   return Unit { block_size: 1 as u64, base: base, with_b: false, show_suffix: false, human: base, chosen: true };
 }
 
-// The block size the environment names: the first of the given names
-// that is SET wins, and one that will not parse is silently ignored
-// rather than fatal. `names` is the utility's own variable in front of
-// the two shared ones — DU_BLOCK_SIZE / DF_BLOCK_SIZE, BLOCK_SIZE,
-// BLOCKSIZE.
 pub function env_unit(names: string[]): Unit {
   let i: i32 = 0;
   while (i < names.len()) {
@@ -442,8 +360,6 @@ pub function env_unit(names: string[]): Unit {
   return posix_default();
 }
 
-// POSIXLY_CORRECT is tested for PRESENCE, not value, and moves the
-// default block size to 512.
 pub function posix_default(): Unit {
   match (env("POSIXLY_CORRECT")) {
     Some(_) => {
@@ -454,8 +370,6 @@ pub function posix_default(): Unit {
   return default_unit();
 }
 
-// The number one line prints: scaled by the human base, or divided by
-// the block size rounding UP and followed by the unit the spec named.
 pub function format_size(n: u64, block_size: u64, suffix: string, human_base: u64): string {
   if (human_base > 0 as u64) {
     return human(n, human_base, true);
@@ -467,16 +381,10 @@ pub function format_size(n: u64, block_size: u64, suffix: string, human_base: u6
   return q.to_string() + suffix;
 }
 
-// gnulib's `quote()`, which since 9.12 backslashes an apostrophe inside
-// the value rather than letting it close the quotes.
 function quote_size(spec: string): string {
   return gnu.quote(spec);
 }
 
-// The three diagnostics a bad SIZE earns, with the option spelled the
-// way it was typed. `status` is the PARSE status, not the exit code:
-// `die_size` exits 1 and `die_size_with` takes the utility's own
-// number, which `ls` needs because every usage error there is 2.
 pub function die_size(status: i32, option: string, spec: string): void {
   die_size_with(status, option, spec, 1);
 }

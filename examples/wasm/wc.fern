@@ -1,19 +1,3 @@
-// wc.fern — word / line / byte counter, like `wc(1)`.
-//
-// Reads from each file path in argv (skipping argv[0]); falls
-// back to stdin when no paths are given. Prints the per-input
-// totals + a grand total.
-//
-// Showcases: command-line args, stdin/Reader API, file I/O,
-// string methods (split, len), `defer` for cleanup, and the
-// `Result` + `match` idiom for fallible operations.
-//
-//   $ fern -target wasm32-wasi -o wc.wasm wc.fern
-//   $ wasmtime --dir=. wc.wasm README.md docs/LANGUAGE-DIRECTION.md
-//   ...
-// (string).split / (string).is_empty inside count_chunk; the
-// f-string in format_counts dispatches (i32).to_string on
-// each Counts field.
 import "std/string";
 import "std/i32";
 import "std/io_buffered";
@@ -21,7 +5,6 @@ import "std/io_buffered";
 struct Counts { lines: i32, words: i32, bytes: i32 }
 
 function count_chunk(chunk: string, acc: Counts): Counts {
-  // Each chunk is one line, so the line count goes up by one per call.
   let parts: string[] = chunk.split(" ");
   let nwords: i32 = 0;
   let i: i32 = 0;
@@ -31,8 +14,6 @@ function count_chunk(chunk: string, acc: Counts): Counts {
     }
     i = i + 1;
   }
-  // Functional update — produce a new Counts rather than mutating
-  // acc in place (immutable-data-structures migration).
   return Counts {
     ...acc,
     bytes: acc.bytes + chunk.len(),
@@ -41,13 +22,8 @@ function count_chunk(chunk: string, acc: Counts): Counts {
   };
 }
 
-// The counts of `r`'s lines, or None when a read fails or the input is not
-// UTF-8.
 function count_reader(r: Reader): Option[Counts] {
   let acc: Counts = Counts { lines: 0, words: 0, bytes: 0 };
-  // `r.close()` is best-effort — its Result[void, IoError] return
-  // is dropped here. defer fires even when one of the match
-  // arms below short-circuits with `return`.
   defer r.close();
   let lr: io_buffered.LineReader = io_buffered.line_reader_new(r, 10, 65536);
   while (true) {
@@ -69,7 +45,7 @@ function count_reader(r: Reader): Option[Counts] {
       }
     }
   }
-  return Some(acc);  // unreachable
+  return Some(acc);
 }
 
 function format_counts(label: string, c: Counts): string {
@@ -81,7 +57,7 @@ function main(): i32 {
   let total: Counts = Counts { lines: 0, words: 0, bytes: 0 };
   let nfiles: i32 = 0;
   let status: i32 = 0;
-  let i: i32 = 1;  // skip argv[0]
+  let i: i32 = 1;
   while (i < argv.len()) {
     let path: string = argv[i];
     match (open_reader(path)) {

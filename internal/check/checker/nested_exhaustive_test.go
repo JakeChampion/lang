@@ -14,9 +14,6 @@ struct Lamp { on: boolean, level: i32 }
 struct Pair2 { x: boolean, y: boolean }
 `
 
-// A variant is covered when no value of its payloads escapes every
-// unguarded arm, whichever payloads the arms' sub-patterns test and however
-// deeply they nest (#12257).
 func TestNestedPatternExhaustiveness(t *testing.T) {
 	covered := map[string]string{
 		"sub-patterns in different payloads": `function f(t: Tree): i32 {

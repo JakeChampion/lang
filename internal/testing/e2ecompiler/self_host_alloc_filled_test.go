@@ -2,12 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// `__alloc_i32`, `__alloc_i64` and `__alloc_bool` are `__alloc_u8`'s typed
-// siblings: n zeroed slots of the element type, owned by the caller. Each
-// program reads the lengths and every slot, writes some back, and keeps a
-// zero-length allocation beside the rest, so a wrong slot width or a stale
-// block off the free list changes its exit status. The Go interpreter is
-// the oracle on every target, and an exit stays under 126 for wasmtime.
 var allocFilledCases = []struct {
 	name string
 	src  string

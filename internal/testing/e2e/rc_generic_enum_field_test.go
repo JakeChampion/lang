@@ -5,26 +5,6 @@ import (
 	"testing"
 )
 
-// #8829 — a generic enum INSTANTIATION is deep-drop-wired, so a struct
-// holding one stays in the owned model.
-//
-// Generic enums are not monomorphised: `Option[i32]` and `Option[string]`
-// share one EnumDecl whose payloads are the type parameter, and the concrete
-// types live in EnumType.Args. The capability walks read that decl
-// without substituting, met a ParamType, and answered "deep drop not wired"
-// for every Option and Result in the language — which took every struct
-// holding one out of owned-by-default and cost it every reuse path. These pin
-// what the emitted runtime does.
-//
-// std/io_buffered's BufWriter is the shape that surfaced it: its `err:
-// Option[IoError]` field alone put the writer's `buf: b.buf + s` back on a
-// fresh box and a whole-buffer copy per append. 3M 17-byte writes took 3.9 s
-// and now take 43 ms.
-
-// genericEnumFieldGrowSrc accumulates through a struct field on a struct that
-// also carries generic-enum fields at each payload shape the walk classifies
-// differently: a heap-payload one, a scalar-payload one, an array payload, a
-// nested instantiation, and a two-parameter enum.
 const genericEnumFieldGrowSrc = `struct Inner { s: string }
 struct Acc {
     buf: string,
@@ -75,16 +55,6 @@ function main(): i32 {
     return 0;
 }`
 
-// genericEnumFieldAliasSrc is the discriminating one: the struct's box is
-// aliased while its buffer is not, so a gate on anything but the BOX's own
-// runtime uniqueness grows a buffer the second alias still reads through the
-// old box. Admitting the type into the owned model must not weaken that gate
-// — the alias is what proves the reuse still declines.
-//
-// The accumulator starts as a heap string (__fern_str_append refuses to grow
-// a .rodata literal whatever the rc says) and twenty bytes plus one stays
-// inside one allocator class, so a decline here is the gate and not a class
-// boundary.
 const genericEnumFieldAliasSrc = `struct B { buf: string, tag: Option[string], n: i32 }
 
 function heap(s: string): string { return s + ""; }
@@ -108,10 +78,6 @@ const genericEnumFieldAliasWant = `0123456789abcdefghij
 0123456789abcdefghijY
 0123456789abcdefghijX`
 
-// TestX86_64GenericEnumFieldAppendAllocsBounded pins the collapse. Measured
-// on this program: 4007 allocations before the fix, 141 after — the before
-// figure is one box and one whole-buffer copy per append, which is the
-// quadratic. The assertion is the invariant rather than the number.
 func TestX86_64GenericEnumFieldAppendAllocsBounded(t *testing.T) {
 
 	stdout, stderr, code := runLeakCheckX86_64(t, genericEnumFieldGrowSrc)
@@ -128,8 +94,6 @@ func TestX86_64GenericEnumFieldAppendAllocsBounded(t *testing.T) {
 	}
 }
 
-// The aliased-box leg: the answers, and a balanced heap, which catches an
-// over-release from the newly-admitted deep drop as firmly as a leak.
 func TestX86_64GenericEnumFieldAliasedBoxIsNotMutated(t *testing.T) {
 
 	stdout, stderr, code := runLeakCheckX86_64(t, genericEnumFieldAliasSrc)
@@ -145,10 +109,6 @@ func TestX86_64GenericEnumFieldAliasedBoxIsNotMutated(t *testing.T) {
 	}
 }
 
-// arm64 keeps the plain concat (no __fern_str_append helper), so its win is
-// the box reuse alone — but it takes the same ownership decision, and its
-// exit sweep runs the deep drop this change newly admits. Balanced counts
-// here are the arm64 half of that.
 func TestArm64GenericEnumFieldDropsAreBalanced(t *testing.T) {
 
 	stdout, stderr, code := runLeakCheckArm64(t, genericEnumFieldGrowSrc)
@@ -172,9 +132,6 @@ func TestArm64GenericEnumFieldAliasedBoxIsNotMutated(t *testing.T) {
 	}
 }
 
-// The two-word (wasm) legs. A string field fans out to (data, len) there, so
-// the deep drop this change admits releases two words per field rather than
-// one — the ABI half of the same question.
 func TestWASMGenericEnumFieldAppendCorrect(t *testing.T) {
 
 	if code := runWasm(t, genericEnumFieldGrowSrc); code != 0 {
@@ -189,19 +146,8 @@ func TestWASMGenericEnumFieldAliasedBoxIsNotMutated(t *testing.T) {
 	}
 }
 
-// A generic enum whose ARGUMENT carries a Map stays out: only the substituted
-// walk can see it, since the Map is in EnumType.Args and never in the shared
-// decl. Map-in-enum reclamation is an open gap (__map_drop_values is not
-// pulled into a generated __drop_enum_ body on wasm), so admitting this shape
-// would hand the owned model a drop it cannot run.
 func TestOptionOfMapStaysOutOfTheOwnedModel(t *testing.T) {
 
-	// The Map's own two allocations are stranded at exit (#8854) — identical on
-	// main, and one-time rather than per-append. Admitting Option[Map] to the
-	// owned model would make the loss scale with the append count, so running
-	// the same program at two loop counts and requiring an identical loss is
-	// the assertion that actually guards the exclusion. A flat balance check
-	// cannot be used here while #8854 stands.
 	src := func(n int) string {
 		return fmt.Sprintf(`import "core/map";
 

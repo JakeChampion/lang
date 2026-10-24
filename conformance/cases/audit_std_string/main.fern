@@ -2,9 +2,9 @@ import "core/int";
 import "std/string";
 import "std/array";
 
-// Audit fixture: representative std/string methods across every native
-// backend. Result strings are compared directly; lengths gate the
-// collection-returning methods.
+
+
+
 
 function main(): i32 {
   if ("hello".to_upper() != "HELLO") {
@@ -52,7 +52,7 @@ function main(): i32 {
     return 19;
   }
 
-  // collection-returning: split
+
   let parts: string[] = "a,b,c".split(",");
   if (parts.len() != 3) {
     print("FAIL split-len");
@@ -63,8 +63,8 @@ function main(): i32 {
     return 21;
   }
 
-  // The search family (index_of / last_index_of / index_of_ci): "not
-  // found" is None, a hit is Some(index).
+
+
   match ("hello".index_of("ll")) {
     Some(i) => {
       if (i != 2) {

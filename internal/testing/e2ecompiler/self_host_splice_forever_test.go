@@ -12,16 +12,6 @@ import (
 	"time"
 )
 
-// `w.splice_forever(block)` on the host targets. A short block that divides
-// neither 4 KiB nor the runtime's 128 KiB mapping checks the stream stays
-// whole across every wrap, and a 70000-byte one checks a block that fills the
-// mapping alone. Stdout is a pipe (the vmsplice path), then a regular file
-// (through the runtime's own pipe). A pipe whose reader goes away, with
-// SIGPIPE ignored, must answer the writer's own EPIPE (exit 4); /dev/full
-// refuses splice before a byte moves, so it must answer Unsupported (exit 3)
-// and leave the write to the caller. A build that answered Unsupported
-// everywhere would exit at once and leave the pipe empty, so the byte checks
-// also prove the kernel path ran.
 const spliceForeverProg = `import "std/string";
 
 function main(): i32 {
@@ -41,7 +31,6 @@ function main(): i32 {
 }
 `
 
-// spliceForeverWant is the first n bytes the program must write.
 func spliceForeverWant(long bool, n int) []byte {
 	block := "abcdefghij\n"
 	if long {
@@ -128,7 +117,6 @@ func TestSelfHostSpliceForever(t *testing.T) {
 				t.Errorf("%s long=%v: file: %d bytes, not the block repeated", tg.target, long, len(fileBytes))
 			}
 
-			// `trap "" PIPE` sets SIGPIPE to ignored, which survives exec.
 			cmd = exec.Command("sh", append([]string{"-c", `trap "" PIPE; exec "$@"`, "sh"}, argvOf(args...)...)...)
 			out, err = cmd.StdoutPipe()
 			if err != nil {

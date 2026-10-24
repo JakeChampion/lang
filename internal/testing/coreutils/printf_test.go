@@ -9,8 +9,6 @@ func init() {
 	registerCorpus("printf", printfCases)
 }
 
-// Where Apple's printf is the one at fault, the Darwin reference is wrong and
-// Fern keeps glibc's answer.
 const (
 	appleNaNSign       = "Apple's printf drops a NaN's sign"
 	appleIntMaxField   = "Apple's printf refuses a conversion of exactly INT_MAX bytes, which POSIX allows"
@@ -20,9 +18,6 @@ const (
 func printfCases(t *testing.T) []invocation {
 	long := strings.Repeat("x", 10000)
 	return []invocation{
-		// printf(1) does not use getopt: only a sole --help / --version
-		// is an option, a leading `--` is skipped, and everything else
-		// is the format.
 		{name: "no arguments"},
 		{name: "dashdash alone"},
 		{name: "dashdash then format", args: []string{"--", `%s\n`, "a"}},
@@ -47,8 +42,6 @@ func printfCases(t *testing.T) []invocation {
 		{name: "posix bad number", args: []string{`%d\n`, "1.5"}, env: []string{"POSIXLY_CORRECT=1"}},
 		{name: "posix char constant warning", args: []string{`%d\n`, "'ab"}, env: []string{"POSIXLY_CORRECT=1"}},
 
-		// The format is reused while arguments remain; a format that
-		// consumes none warns about the excess.
 		{name: "one directive three arguments", args: []string{`%s\n`, "a", "b", "c"}},
 		{name: "two directives three arguments", args: []string{`%s %s\n`, "a", "b", "c"}},
 		{name: "missing argument is empty", args: []string{`%s\n`}},
@@ -75,7 +68,6 @@ func printfCases(t *testing.T) []invocation {
 		{name: "long operand", args: []string{`%s\n`, long}},
 		{name: "excess warning quotes control bytes", args: []string{"x", "a\tb\x01\xff'\\"}},
 
-		// Escapes in the format.
 		{name: "named escapes", args: []string{`a\ab\bc\ed\ff\nn\rr\tt\vv\\\"\'\z\q\8\9\'`}},
 		{name: "trailing backslash", args: []string{`x\`}},
 		{name: "octal with leading zero in format is three digits", args: []string{`\0101\n`}},
@@ -102,7 +94,6 @@ func printfCases(t *testing.T) []invocation {
 		{name: "backslash c after a range error exits zero", args: []string{`%d\c`, "99999999999999999999"}},
 		{name: "backslash c with arguments left warns not", args: []string{`\c`, "a", "b"}},
 
-		// %b: the argument with escapes, octal as \0NNN.
 		{name: "b octal forms", args: []string{`%b\n`, `\0101`, `\101`, `\0`, `\00`, `\000`, `\0000`, `\01234`, `\x41`, "A", `x\`, `\q`, `\"`, `\'`, "\xc3\xa9", `\e`}},
 		{name: "b backslash c", args: []string{`%b|`, `a\cb`}},
 		{name: "b backslash c ends everything", args: []string{`%b|%s\n`, `a\cb`, "d"}},
@@ -113,7 +104,6 @@ func printfCases(t *testing.T) []invocation {
 		{name: "b with a length modifier is invalid", args: []string{`%lb|`, "a"}},
 		{name: "b hex without digit is fatal", args: []string{`%b`, `\x`}},
 
-		// %q: shell quoting.
 		{name: "q bare words", args: []string{`%q\n`, "abc", "1", "a,b", "a/b", "a-b", "-a", "%", "a%b", "@", "+", "a:b", "x#", "a~", "{}", "a{b}", "a}b", "a]b", ".", "..", "_", "a_b", "/", "-", "--", "+a", "a=", "=a", "a."}},
 		{name: "q single quoted", args: []string{`%q\n`, "a b", "a$b", "#x", "~", "{", "}", "a=b", "a^b", "a[b", "a`b", "a!b", "a?b", "a*b", "a(b", "a|b", "a<b", "a&b", "a;b", `a\b`, "]", "[", "!", "^", "*", "?", "#", "~a", "a~b", "#a", " ", "  ", "a  b", "a b~", "=", ":", "a{", "{a", "a}", "a>b", "a)b"}},
 		{name: "q double quoted", args: []string{`%q\n`, "it's", "a'b c", "#it's", "~it's", "it's:x", "it's,x", "it's@x", "it's%x", "it's a", "'", "''", "a'", "'a", "a''b", "'a'"}},
@@ -127,7 +117,6 @@ func printfCases(t *testing.T) []invocation {
 		{name: "q with a precision is invalid", args: []string{`%.1q|`, "ab"}},
 		{name: "q cycles", args: []string{`%q\n`, "a", "b c", ""}},
 
-		// Integer arguments: strtoimax / strtoumax with base 0.
 		{name: "d out of range clamps", args: []string{`%d\n`, "99999999999999999999"}},
 		{name: "d negative out of range clamps", args: []string{`%d\n`, "-99999999999999999999"}},
 		{name: "d at the limits", args: []string{`%d\n`, "9223372036854775807", "9223372036854775808", "-9223372036854775808", "-9223372036854775809"}},
@@ -147,7 +136,6 @@ func printfCases(t *testing.T) []invocation {
 		{name: "error then bad directive", args: []string{`%d %z\n`, "abc"}},
 		{name: "out of range with trailing junk", args: []string{`%d\n`, "99999999999999999999x"}},
 
-		// Character constants.
 		{name: "char constant", args: []string{`%d\n`, "'a"}},
 		{name: "char constant double quote", args: []string{`%d\n`, `"a`}},
 		{name: "char constant with trailing bytes warns", args: []string{`%d\n`, "'ab"}},
@@ -161,7 +149,6 @@ func printfCases(t *testing.T) []invocation {
 		{name: "char constant everywhere", args: []string{`%c|%s|%d|%f|%x\n`, "'a", "'a", "'a", "'a", "'a"}},
 		{name: "char constant as star width", args: []string{`%*d`, "'a", "1"}},
 
-		// Float arguments: strtold.
 		{name: "f words", darwinLibcDefect: appleNaNSign + "; its strtold also takes '-' inside nan(...)", args: []string{`%f\n`, "1e3", "inf", "nan", "-inf", "0x1p3", "INF", "Infinity", "nan(abc)", "nan(", "-nan", "nan(a-b)", "nanx", "infx", "infinit", "infinityx", "-INFINITY", "+inf", "nan()", "NAN(12_a)"}},
 		{name: "f syntax edges", args: []string{`%f\n`, "1.5", "1.5x", "", "abc", ".5", "5.", ".", "e5", "1e", "1e+", "1e5x", "0x", "0x.", "0x.8", "0x8.", "0x1p", "0x1p+", "0x1P3", "0X1p3", "1E3", "0x.8p1", "0x1.8p-1", ".e5", "0x1pz"}},
 		{name: "f spacing and zeros", args: []string{`%f\n`, "'a", "", " 1.5", "1.5 ", "00012.5", "1_0", "+.5", "-.5", "-0", "+0", "-0.0"}},
@@ -199,14 +186,6 @@ func printfCases(t *testing.T) []invocation {
 		{name: "tiny values", args: []string{`%e %g %f\n`, "4e-4951", "4e-4951", "4e-4951"}},
 		{name: "tiny value long e", args: []string{`%.30e\n`, "4e-4951"}},
 
-		// %a: hex floats from the significand of the HOST's long double,
-		// which is x87 80-bit extended on x86-64, IEEE binary128 on arm64
-		// and binary64 on Darwin (#8513). The cases below the plain ones
-		// are the shapes that differ between the three, so whichever host
-		// runs the corpus proves coreutils/lib/ld picked its format:
-		// the leading digit and how many follow it, where the subnormals
-		// start and stop, where overflow begins, and how many decimal
-		// digits reproduce the value exactly.
 		{name: "a of one", args: []string{`%a %A\n`, "1", "1"}},
 		{name: "a values", args: []string{`%a\n`, "0", "0.5", "2", "3", "0.1", "-1", "1e400", "1e-4950", "1e-4940", "1e-4930", "10", "255", "256", "1.5", "0.75", "1e300", "1e-300", "4e-4951", "3e-4951"}},
 		{name: "a precisions", args: []string{`%.0a %.1a %.2a %.20a %#.0a %#a %.3a\n`, "1", "1", "1", "1", "1", "1", "0.1"}},
@@ -225,10 +204,6 @@ func printfCases(t *testing.T) []invocation {
 		{name: "a carry into the lead", args: []string{`%.0a %.0a\n`, "0xf.8p0", "0xf.8000001p0"}},
 		{name: "a two digit rounding", args: []string{`%.2a %.2a %.2a %.2a\n`, "0x1.008p0", "0x1.018p0", "0x1.028p0", "0x1.038p0"}},
 
-		// One per long double a target can have. The %a signature of a
-		// tenth alone separates all three (0xc.ccccccccccccccdp-7 /
-		// 0x1.999999999999999999999999999ap-4 / 0x1.999999999999ap-4), so
-		// a host that grew a fourth format could not pass these quietly.
 		{name: "a signature of each format", args: []string{`%a %a %a %a\n`, "1", "0.1", "255", "1e-5"}},
 		{name: "a at the format's digit count", args: []string{`%.12a %.13a %.14a %.15a %.16a %.27a %.28a %.29a\n`, "0.1", "0.1", "0.1", "0.1", "0.1", "0.1", "0.1", "0.1"}},
 		{name: "subnormals of a binary64 long double", args: []string{`%a %e\n`, "1e-320", "1e-320", "5e-324", "5e-324", "1e-324", "1e-324"}},
@@ -237,7 +212,6 @@ func printfCases(t *testing.T) []invocation {
 		{name: "decimal digits the significand reproduces", args: []string{`%.40e\n`, "0.1", "0.2", "3.141592653589793238462643"}},
 		{name: "decimal digits of the exact tail", args: []string{`%.70f %.120f\n`, "0.1", "0.1"}},
 
-		// %c and %s.
 		{name: "c of empty is NUL", args: []string{`%c\n`, "", "abc"}},
 		{name: "c of empty alone", args: []string{`%c|`, ""}},
 		{name: "c widths", args: []string{`%5c|%-5c|`, "a", "b"}},
@@ -252,7 +226,6 @@ func printfCases(t *testing.T) []invocation {
 		{name: "d hash flag is invalid", args: []string{`%#d\n`, "1"}},
 		{name: "u i hash flags are invalid", args: []string{`%#u %#i\n`, "1", "1"}},
 
-		// Flags, width and precision on integers.
 		{name: "hash on x o", args: []string{`%#x %#o %#X %#x\n`, "0", "0", "15", "15"}},
 		{name: "hash o forms", args: []string{`%#o %#.0o %#.1o %#.3o %#5o %#05o %#-5o|\n`, "8", "8", "8", "8", "8", "8", "8"}},
 		{name: "hash x forms", args: []string{`%#x %#.0x %#.1x %#.3x %#5x %#05x %#-5x|\n`, "15", "15", "15", "15", "15", "15", "15"}},
@@ -269,7 +242,6 @@ func printfCases(t *testing.T) []invocation {
 		{name: "length modifiers on floats", args: []string{`%lf %Lf %llf %hf %jf\n`, "1.5", "1.5", "1.5", "1.5", "1.5"}},
 		{name: "length modifiers on c and s", args: []string{`%lc %ls %Lc %hs\n`, "a", "b", "c", "d"}},
 
-		// Flags, width and precision on floats.
 		{name: "float sign flags", args: []string{`%+.3e % .3E %+g %+a % a % g\n`, "1", "1", "1", "1", "1", "1"}},
 		{name: "float widths", args: []string{`%08.3f %-8.3f %+8.3f % 8.3f %08.3f %+08.3f\n`, "1.5", "1.5", "1.5", "1.5", "-1.5", "-1.5"}},
 		{name: "specials are not zero padded", args: []string{`%08f %08e %08g %08a %-8f| %+8f % 8f\n`, "-inf", "-inf", "nan", "nan", "inf", "inf", "inf"}},
@@ -277,7 +249,6 @@ func printfCases(t *testing.T) []invocation {
 		{name: "float width mix", args: []string{`%5.1f|%-8g|%08.3a|%#8.0f|%#08.0f|%#08.0e|%#08.0g|\n`, "inf", "nan", "1", "1", "1", "1", "1"}},
 		{name: "bench float shape", args: []string{`%5.2f|%-8.3e|%+g\n`, "3.14159", "2.71828", "1.5"}},
 
-		// `*` width and precision.
 		{name: "star width", args: []string{`%*d|%-*d|%*d|\n`, "5", "1", "5", "1", "-5", "1"}},
 		{name: "star precision", args: []string{`%.*f\n`, "2", "3.14159", "-1", "3.14159"}},
 		{name: "star both", args: []string{`%*.*f|\n`, "10", "2", "3.14159"}},
@@ -315,7 +286,6 @@ func printfCases(t *testing.T) []invocation {
 		{name: "star precision on c is invalid", args: []string{`%.*c|`, "1", "a"}},
 		{name: "star width on c", args: []string{`%*c|`, "3", "a"}},
 
-		// Invalid conversion specifications.
 		{name: "unknown conversion", args: []string{`%z\n`}},
 		{name: "lone percent", args: []string{"%"}},
 		{name: "positional is invalid", args: []string{`%1$s\n`, "a"}},
@@ -330,16 +300,12 @@ func printfCases(t *testing.T) []invocation {
 		{name: "q after modifier", args: []string{`%lq\n`, "a"}},
 		{name: "invalid after output", args: []string{`%s\n%z`, "a"}},
 
-		// glibc refuses a conversion whose output would reach INT_MAX-1
-		// bytes: nothing is printed for it, `write error`, exit 1.
 		{name: "width at int max", darwinLibcDefect: appleIntMaxField, args: []string{"%2147483647d", "1"}},
 		{name: "width one under int max", args: []string{"%2147483646d", "1"}},
 		{name: "width far too large", args: []string{"%99999999999d", "1"}},
 		{name: "precision at int max", darwinLibcDefect: appleIntMaxField, args: []string{"%.2147483647d", "1"}},
 		{name: "precision one under int max", args: []string{"%.2147483646d", "1"}},
 		{name: "precision far too large", darwinLibcDefect: applePrecisionWrap, args: []string{"%.99999999999d", "1"}},
-		// Just under the limit is a two-gigabyte field, which both
-		// sides write as a run of zeros (#9812).
 		{name: "e precision just under", args: []string{"%.2147483640e", "1"}},
 		{name: "f precision just under", args: []string{"%.2147483640f", "1"}},
 		{name: "a precision just under", args: []string{"%.2147483640a", "1"}},
@@ -357,8 +323,6 @@ func printfCases(t *testing.T) []invocation {
 		{name: "refused then bad number", darwinLibcDefect: appleIntMaxField, args: []string{`%2147483647d%d\n`, "1", "abc"}},
 		{name: "bad number then refused", darwinLibcDefect: appleIntMaxField, args: []string{`%d%2147483647d\n`, "abc", "1"}},
 
-		// Write failures: what close_stdout reports depends on whether a
-		// diagnostic flushed stdout first (#8265).
 		{name: "stdout full", args: []string{"%s", "a", "b"}, stdout: stdoutFull},
 		{name: "stdout closed", args: []string{"%s", "a"}, stdout: stdoutClosed},
 		{name: "stdout full nothing written", args: []string{"%z"}, stdout: stdoutFull},
@@ -377,8 +341,6 @@ func printfCases(t *testing.T) []invocation {
 		{name: "stdout closed output around warning", args: []string{`x%d\nxyz\n`, "abc"}, stdout: stdoutClosed},
 		{name: "stdout full excess warning", args: []string{"abc", "x"}, stdout: stdoutFull},
 		{name: "stdout closed excess warning", args: []string{"abc", "x"}, stdout: stdoutClosed},
-		// A refused conversion with nothing written: only fclose's close(2)
-		// can fail, and it does on a closed descriptor.
 		{name: "stdout closed refused conversion", args: []string{"%2147483647d", "1"}, stdout: stdoutClosed},
 		{name: "stdout full refused conversion", args: []string{"%2147483647d", "1"}, stdout: stdoutFull},
 		{name: "stdout closed refused conversion after output", args: []string{`x%2147483647d`, "1"}, stdout: stdoutClosed},

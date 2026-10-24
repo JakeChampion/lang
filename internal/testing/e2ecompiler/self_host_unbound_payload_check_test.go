@@ -7,13 +7,6 @@ import (
 	"testing"
 )
 
-// A built-in variant's type argument its constructor did not bind (`E` in an
-// un-annotated `Ok(5)`) is a payload the value never holds (#12788), so the
-// `Err(e)` arm is unreachable and `e` fits an `i32[]`, an `(i32, i32)`, an
-// `i32` variant payload or a `Map[string, i32]` alike, in both checkers.
-// Found by TestDifferential_CheckerMutants. A user generic enum's payload
-// spelled with a parameter is unbound the same way, and one spelled without
-// keeps its type.
 func TestSelfHostUnboundPayloadCheck(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {

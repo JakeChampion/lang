@@ -10,21 +10,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostSemanticSourceCensusLoadsTheStdlib pins the one property the
-// coverage census (compiler/drivers/semsource_census_run.fern) cannot be
-// trusted without: that the program it measures is the WHOLE program.
-//
-// The loader drops an import it cannot resolve in silence, which is right in a
-// compiler driver — an intrinsic looks exactly like an unresolvable import —
-// and is the census's worst failure mode. Run without the stdlib overlay, an
-// entry that imports std/test measured its own 33 declarations, refused every
-// call into the missing module, and charged each refusal to whatever leaf the
-// unresolved result landed on. The histogram that came out was dominated by a
-// class with no construct behind it at all.
-//
-// So this gate builds the census the way it is meant to be built, runs it over
-// an entry whose declarations are nearly all in the stdlib, and asserts the
-// count is the closure's rather than the entry's.
 func TestSelfHostSemanticSourceCensusLoadsTheStdlib(t *testing.T) {
 	_, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -37,17 +22,12 @@ func TestSelfHostSemanticSourceCensusLoadsTheStdlib(t *testing.T) {
 		t.Fatalf("stdlib path: %v", err)
 	}
 	bin := filepath.Join(dir, "census")
-	// Shelled out rather than run through buildSelfHostBin's cache for the
-	// reason buildPlaygroundDriver gives: that path cannot pass an asset
-	// bundle, and the bundle is the whole point here.
 	build := exec.Command(buildFernCLIBin(t), "-target", "x86-64-linux",
 		"-embed", stdlib, "-o", bin, filepath.Join(dir, "drivers/semsource_census_run.fern"))
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("building the census failed: %v\n%s", err, out)
 	}
 
-	// An entry that is almost entirely stdlib: a handful of declarations of its
-	// own, reaching a module tree of thousands.
 	entry := filepath.Join(dir, "entry.fern")
 	writeEntry(t, entry, `import "std/test";
 function t_one(): test.TestOutcome { return test.assert_eq(1, 1); }
@@ -72,8 +52,6 @@ function main(): i32 {
 		n, _ := strconv.Atoi(m[1])
 		return n
 	}
-	// The entry declares two functions. Anything near that means the import was
-	// dropped and the census is measuring the entry alone.
 	total := count("functions")
 	if total < 100 {
 		t.Fatalf("census counted %d functions for an entry that imports std/test: the stdlib "+
@@ -85,10 +63,6 @@ function main(): i32 {
 		t.Errorf("census lowered 0 of %d functions; report:\n%s", total, report)
 	}
 
-	// A template nothing instantiates is counted apart from a refusal. It has
-	// no body, so a measurement over it is not evidence about what the
-	// boundary admits, and counting it as a refusal made it 44% of the
-	// corpus histogram.
 	shaken := filepath.Join(dir, "shaken.fern")
 	writeEntry(t, shaken, `function used[T](x: T[]): i32 { return x.len(); }
 function never_asked[T](x: T[], y: T): i32 { return x.len(); }
@@ -108,13 +82,6 @@ function main(): i32 { return used([1, 2]); }
 		n, _ := strconv.Atoi(m[1])
 		return n
 	}
-	// A template nothing instantiates does not reach the boundary at all: the
-	// production prepass this driver now runs monomorphises the instantiated
-	// one and drops the other, so `never_asked` is not in the module to be
-	// measured, counted apart, or refused. Before the prepass was restored it
-	// survived as a bodyless declaration and the assertion here was that it be
-	// counted apart from the refusals — one pipeline further from what the
-	// compiler does, for the same underlying property.
 	if n := countIn(shakenReport, "bodyless"); n != 0 {
 		t.Errorf("bodyless = %d, want 0: the prepass drops an uninstantiated template, so nothing "+
 			"here should be measured without a body.\n%s", n, shakenReport)
@@ -123,15 +90,6 @@ function main(): i32 { return used([1, 2]); }
 		t.Errorf("measured %d and produced %d: the shaken entry has nothing the boundary "+
 			"refuses.\n%s", got, want, shakenReport)
 	}
-	// The census has to measure the module the COMPILER lowers, which is
-	// `lift_lambdas_typed(parser.module_with_builtins_typed(merged))` on the
-	// CLI's typed route. It once hand-rolled a prefix of that and skipped
-	// `hoist_local_funcs_module`, so a self-recursive nested `function` — which
-	// that pass lifts to a top-level declaration — was measured as a binding
-	// production has already removed, and its calls charged to
-	// `no semantic contract: $binding$0$…`. It refused 0 of 2 here and produced
-	// whole in the compiler, which cost an issue filed against the language for
-	// a defect the instrument invented (#9773, #9778).
 	prepass := filepath.Join(dir, "prepass.fern")
 	writeEntry(t, prepass, `function main(): i32 {
     function rec(n: i32): i32 {
@@ -161,14 +119,6 @@ function main(): i32 { return used([1, 2]); }
 			"refusal, it is a declaration with nothing to measure.\n%s", shakenReport)
 	}
 
-	// The front end's own enums are injected as declarations before lowering,
-	// and the census has to do it too. Without the injection a module that
-	// names one finds no variants for it, union_layout answers 0, and every
-	// declaration touching it refuses under a name that describes the enum
-	// rather than the miss: IoError is the error arm of every filesystem
-	// Result, so that was 10,336 refusals across the corpus with no construct
-	// behind them. Same failure mode as the dropped-overlay case above, and
-	// the second time the instrument has understated coverage this way.
 	injected := filepath.Join(dir, "injected.fern")
 	writeEntry(t, injected, `function code(e: IoError): i32 {
     match (e) {
@@ -202,22 +152,6 @@ function main(): i32 { return code(Interrupted); }
 			"must lower whole.\n%s", got, want, injectedReport)
 	}
 
-	// std/string's segment producers hand every piece to an array whose
-	// declared element type is an OWNED string. A bare slice there is a view
-	// of the receiver, which the array outlives, so the boundary refuses it —
-	// correctly, and that refusal was the largest class in the corpus. The
-	// producers now materialise each piece the way their runtime twins in
-	// asmcore.fern already do, so nothing in this family escapes.
-	// std/http is named alongside std/string: http_path_segments carries one of
-	// the family's sites and lives outside std/string's module tree, so an
-	// entry over the six methods alone would leave it unpinned.
-	//
-	// std/regex's three sites CANNOT be pinned here and are deliberately not
-	// claimed. regex_split refuses before the boundary ever reaches its
-	// appends — __rx_compile and __rx_search_from have no semantic contract —
-	// so reverting its materialisation leaves the census reporting nothing,
-	// which a gate naming it would read as green. It becomes pinnable when
-	// those intrinsics get contracts, and not before.
 	segments := filepath.Join(dir, "segments.fern")
 	writeEntry(t, segments, "import \"std/string\";\nimport \"std/http\";\n"+
 		"function main(): i32 {\n"+
@@ -237,7 +171,6 @@ function main(): i32 { return code(Interrupted); }
 			"be materialised, as the runtime twins in asmcore.fern do.\n%s", segmentsReport)
 	}
 
-	// An import that still does not resolve has to be named, not dropped.
 	orphan := filepath.Join(dir, "orphan.fern")
 	writeEntry(t, orphan, `import "std/definitely_not_a_module";
 function main(): i32 { return 0; }

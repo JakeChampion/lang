@@ -5,8 +5,6 @@ import (
 	"testing"
 )
 
-// A method call's receiver is not one of its written arguments, so E038
-// numbers the arguments from the first one inside the parentheses (#10199).
 func TestMethodCallArgumentNumbering(t *testing.T) {
 	cases := []struct{ name, src, want string }{
 		{"builtin append", `function main(): i32 { let out: string[] = []; out = out.append(5); return out.len(); }`,

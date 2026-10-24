@@ -6,10 +6,6 @@ import (
 	"testing"
 )
 
-// A BoxedProbes test compiles its programs with the inliner off, but the
-// driver it builds is cached under a key with no FERN_* component, so the
-// setting must stay out of that build or every other test reads a boxed
-// driver back.
 func TestBoxedProbesReachProgramsNotDriverBuilds(t *testing.T) {
 	if slices.Contains(ChildEnv(), BoxedProbe) {
 		t.Fatalf("ChildEnv carries %s outside a BoxedProbes test", BoxedProbe)

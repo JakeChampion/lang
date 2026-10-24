@@ -1,16 +1,16 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// A slice header stored in a struct field, an array element and a
-// tuple is retained on the store (needsRcIncOnAlias) and released by
-// the container's own drop — the same counted-alias protocol every
-// other rc-tracked shape runs. The source local's exit dec only decs
-// the shared header; the last container to let go frees it. The
-// `[u8][]` element walk is the per-element __fern_closure_drop of
-// __drop_arr_slice; a bare __fern_rc_dec would strand the fresh
-// second element at rc 0. Closure captures are exercised by the
-// correctness-only view program (closure churn is a pinned gap of
-// its own).
+
+
+
+
+
+
+
+
+
+
+
+
+
 struct View { v: [u8], n: i32 }
 function first(v: View): i32 { return v.v[0] as i32; }
 function main(): i32 {

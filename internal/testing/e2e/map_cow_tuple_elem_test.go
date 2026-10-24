@@ -1,15 +1,5 @@
 package e2e
 
-// A Map COW mutator's result stored straight into a tuple or array literal
-// (#11121).
-//
-// On an owned receiver at its last use `__map_cow_inplace` hands back the
-// receiver's own handle un-retained. A `let` owes that handle the COW-seam
-// retain (#6227); a tuple or array element did not get it, so the container
-// and the receiver's binding shared one count and both released it. Returning
-// `(m.insert(k, v), 1)` from an `own m` function SEGV'd on the caller's next
-// probe, and the three-element form silently emptied the map.
-
 import (
 	"strings"
 	"testing"
@@ -83,7 +73,6 @@ function main(): i32 {
 }
 `
 
-// 42 when clean; every rc underflow the run recorded adds to it.
 const mapCowTupleElemRcProg = mapCowTupleElemDefs + `
 function main(): i32 {
     let r: i32 = check();
@@ -98,10 +87,6 @@ func TestMapCowTupleElemInterp(t *testing.T) {
 	}
 }
 
-// Under the sanitizer the shared count is a use-after-free report the moment
-// the receiver's release frees what the container still holds, and an
-// over-retain is a leak verdict; a plain run often reads the stale block back
-// intact.
 func TestMapCowTupleElemSanitizedX86_64(t *testing.T) {
 	checkMapCowTupleElemSanitized(t, runSanitizeX86_64)
 }

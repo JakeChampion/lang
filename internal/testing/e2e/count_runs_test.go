@@ -7,13 +7,6 @@ import (
 	"testing"
 )
 
-// __count_runs(s, inside, set) counts the runs of bytes whose entry in the u8[]
-// `set` is nonzero that begin in s; `inside` nonzero says the byte before s was
-// a member, so a run open at s[0] is not counted. A byte past the end of `set`
-// is not a member. The corpus sweeps both values of `inside`, every length up
-// to 40 across the unrolled loop's pairs, a full set, a short one, an empty
-// one, NUL and high bytes, and random strings over a small alphabet.
-
 func countRunsRef(s string, inside int, set []byte) int {
 	prev := inside != 0
 	runs := 0

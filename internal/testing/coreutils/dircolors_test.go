@@ -17,8 +17,6 @@ func dircolorsFile(t *testing.T, dir, name, content string) string {
 	return p
 }
 
-// dircolorsEnv is the environment every case has to name: baseEnv sets
-// no SHELL, TERM or COLORTERM, and all three change the output.
 func dircolorsEnv(shell, term, colorterm string) []string {
 	return []string{"SHELL=" + shell, "TERM=" + term, "COLORTERM=" + colorterm}
 }
@@ -27,33 +25,6 @@ func init() {
 	registerCorpus("dircolors", dircolorsCases)
 }
 
-// dircolorsCases is dircolors(1)'s corpus.
-//
-// Three things carry most of the risk. The TERM / COLORTERM filter is a
-// four-state machine and not a flag — a non-matching TERM line closes the
-// section only when an ordinary line has been read since the one that
-// opened it, and the same states decide whether an unknown keyword is
-// fatal or ignored — so the section cases come in pairs that differ by
-// one intervening line. The pattern is fnmatch(3) with flags 0, whose
-// malformed shapes differ (an unterminated `[` restarts as a literal,
-// a bad character class fails the whole match), so the `g*` files put one
-// pattern each in front of several TERM values. And the shell escaper is
-// a toggle rather than an escape, which only a `^` or a `\` next to a `:`
-// shows.
-//
-// The fourth is the write-failure wording, which is not a property of the
-// option but of how many bytes glibc's stdio still had pending at close:
-// a body past one buffer gets `write error: <strerror>` from the shell
-// emitters, whose suffix is still pending, and a bare `write error` from
-// `--print-ls-colors`, which writes one piece and leaves nothing. Hence a
-// file either side of that boundary against both emitters and both
-// failing descriptors.
-//
-// The built-in database is GNU coreutils 9.4's, so the cases that reach
-// it — `-p`, and every invocation with no FILE — are the version-sensitive
-// exception docs/COREUTILS.md allows: a newer reference prints a later
-// copyright year and fails them, and the fix is to transcribe its
-// `dircolors -p` into coreutils/dircolors.fern.
 func dircolorsCases(t *testing.T) []invocation {
 	t.Helper()
 	dir := t.TempDir()
@@ -73,9 +44,6 @@ func dircolorsCases(t *testing.T) []invocation {
 	}
 	d := filepath.Join(dir, "d")
 
-	// The section machine. Each pair differs by one ordinary line
-	// between the two TERM lines, which is the whole of the difference
-	// between TERMSURE and TERMYES.
 	sureThenMiss := dircolorsFile(t, dir, "sure-then-miss", "TERM linux\nTERM vt52\nDIR 3\n")
 	yesThenMiss := dircolorsFile(t, dir, "yes-then-miss", "TERM linux\nDIR 2\nTERM vt52\nDIR 3\n")
 	sureThenBogus := dircolorsFile(t, dir, "sure-then-bogus", "TERM linux\nTERM vt52\nbogus 1\n")
@@ -95,7 +63,6 @@ func dircolorsCases(t *testing.T) []invocation {
 	lowerTerm := dircolorsFile(t, dir, "lower-term", "term linux\nDIR 1\n")
 	lowerColorterm := dircolorsFile(t, dir, "lower-colorterm", "colorterm ?*\nDIR 1\n")
 
-	// The line grammar.
 	blanks := dircolorsFile(t, dir, "blanks", "#comment\n   \n\n  # c\nDIR 1\n")
 	spacing := dircolorsFile(t, dir, "spacing", "  DIR   01;34\n\tLINK\t01;36\n\fSOCK 1\nFIFO \v1\nEXEC 1 \f2\nBLK 1\r\nCHR 1\f\nDOOR 1\v\nSUID 1\t\n")
 	restOfLine := dircolorsFile(t, dir, "rest-of-line", "DIR 01;34 extra tokens here\n")
@@ -124,14 +91,12 @@ func dircolorsCases(t *testing.T) []invocation {
 	twoFaults := dircolorsFile(t, dir, "two-faults", "DIR 1\nbad\nLINK 2\nbad2\n")
 	mixedFaults := dircolorsFile(t, dir, "mixed-faults", "TERM *\nzzz 1\nDIR\nyyy 2\n")
 
-	// The escaper's toggle.
 	escapes := dircolorsFile(t, dir, "escapes", "DIR a:b\nLINK a=b\nSOCK a^b\nFIFO a\\b\nEXEC a\\:b\nBLK a^:b\nCHR a^^:b\n")
 	quotes := dircolorsFile(t, dir, "quotes", "DIR a'b\nLINK a''b\nSOCK a':b\n")
 	toggleRuns := dircolorsFile(t, dir, "toggle-runs", "DIR a^^^:b\nLINK a\\^:b\nSOCK a^\\:b\n")
 	toggleResets := dircolorsFile(t, dir, "toggle-resets", ".a^ :b\n.a\\ :b\n.a' :b\n")
 	bareSpecials := dircolorsFile(t, dir, "bare-specials", "DIR ::\nLINK ==\nSOCK :=:\nFIFO ^\nEXEC \\\nBLK ^^\n")
 
-	// fnmatch: one pattern per file, several TERM values each.
 	pattern := func(name, pat string) string {
 		return dircolorsFile(t, dir, name, "TERM "+pat+"\nDIR 1\n")
 	}
@@ -182,14 +147,7 @@ func dircolorsCases(t *testing.T) []invocation {
 	pClassRange := pattern("p-class-range", "[[:alpha:]-z]")
 	pDashRange := pattern("p-dash-range", "[--0]")
 
-	// Past one read block on the way in (90 KB) and past a pipe buffer on
-	// the way out (84 KB), which is what the SIGPIPE case needs.
 	big := dircolorsFile(t, dir, "big", strings.Repeat("DIR 0123456789\n", 6000))
-	// A body that outgrows one stdio buffer, which is what separates the
-	// two write-failure wordings: the shell emitters write the body and
-	// then a suffix, so the suffix is pending at close and the errno is
-	// named, while --print-ls-colors writes one piece and leaves nothing
-	// pending, so the same failure is a bare `write error`.
 	spill := new(strings.Builder)
 	for i := 0; i < 300; i++ {
 		fmt.Fprintf(spill, ".ext%04d 01;31\n", i)
@@ -209,7 +167,6 @@ func dircolorsCases(t *testing.T) []invocation {
 	}
 
 	cases := []invocation{
-		// The built-in database and the two shells it is written for.
 		{name: "no operand", env: linux},
 		{name: "no operand csh", env: cshEnv},
 		{name: "no operand no match", env: vt52},
@@ -221,7 +178,6 @@ func dircolorsCases(t *testing.T) []invocation {
 		{name: "no operand no COLORTERM", env: []string{"SHELL=/bin/bash", "TERM=vt52"}},
 		{name: "LS_COLORS is never read", args: []string{empty}, env: append(linux, "LS_COLORS=xx=1")},
 
-		// -p is not filtered and does not need a shell.
 		{name: "print database", args: []string{"-p"}, env: linux},
 		{name: "print database no match", args: []string{"-p"}, env: vt52},
 		{name: "print database no shell", args: []string{"-p"}, env: noShell},
@@ -230,7 +186,6 @@ func dircolorsCases(t *testing.T) []invocation {
 		{name: "print database unique prefix", args: []string{"--print-d"}, env: noShell},
 		{name: "print database dashdash", args: []string{"-p", "--"}, env: noShell},
 
-		// --print-ls-colors: long only, no shell, no escaping.
 		{name: "print ls colors", args: []string{"--print-ls-colors"}, env: linux},
 		{name: "print ls colors no shell", args: []string{"--print-ls-colors"}, env: noShell},
 		{name: "print ls colors no match", args: []string{"--print-ls-colors"}, env: vt52},
@@ -243,7 +198,6 @@ func dircolorsCases(t *testing.T) []invocation {
 		{name: "print ls colors a directory", args: []string{"--print-ls-colors", d}, env: linux},
 		{name: "print ls colors a fault", args: []string{"--print-ls-colors", missing}, env: linux},
 
-		// The shell-syntax options, and the last one winning.
 		{name: "bourne", args: []string{"-b"}, env: noShell},
 		{name: "csh", args: []string{"-c"}, env: noShell},
 		{name: "bourne over SHELL", args: []string{"-b"}, env: cshEnv},
@@ -257,8 +211,6 @@ func dircolorsCases(t *testing.T) []invocation {
 		{name: "sh then csh", args: []string{"--sh", "--csh", empty}, env: noShell},
 		{name: "csh then sh", args: []string{"--csh", "--sh", empty}, env: noShell},
 
-		// Long-option prefixes. `--b`, `--s` and `--c` are unique or
-		// same-valued; only the print family is ambiguous.
 		{name: "prefix b", args: []string{"--b"}, env: noShell},
 		{name: "prefix s", args: []string{"--s"}, env: noShell},
 		{name: "prefix c is not ambiguous", args: []string{"--c"}, env: noShell},
@@ -266,11 +218,8 @@ func dircolorsCases(t *testing.T) []invocation {
 		{name: "prefix pr", args: []string{"--pr"}, env: noShell},
 		{name: "prefix print", args: []string{"--print"}, env: noShell},
 		{name: "prefix print dash", args: []string{"--print-"}, env: noShell},
-		// The empty long option: its list names every candidate but
-		// `--sh`, which shares `--bourne-shell`'s id.
 		{name: "empty long option", args: []string{"--=x"}, env: noShell},
 
-		// Option faults.
 		{name: "invalid option", args: []string{"-x"}, env: noShell},
 		{name: "glued digit", args: []string{"-b5"}, env: noShell},
 		{name: "glued letter", args: []string{"-cx"}, env: noShell},
@@ -283,8 +232,6 @@ func dircolorsCases(t *testing.T) []invocation {
 		{name: "version takes no argument", args: []string{"--version=x"}, env: noShell},
 		{name: "unrecognized option", args: []string{"--foo"}, env: noShell},
 
-		// The two mutual exclusions, and that the shell-syntax one runs
-		// first: `-b -p --print-ls-colors` says the shell one.
 		{name: "bourne and print database", args: []string{"-b", "-p"}, env: noShell},
 		{name: "print database and bourne", args: []string{"-p", "-b"}, env: noShell},
 		{name: "cluster cp", args: []string{"-cp"}, env: noShell},
@@ -297,24 +244,19 @@ func dircolorsCases(t *testing.T) []invocation {
 		{name: "the two print options", args: []string{"-p", "--print-ls-colors"}, env: noShell},
 		{name: "the two print options reversed", args: []string{"--print-ls-colors", "-p"}, env: noShell},
 
-		// The operand count, and which operand is named.
 		{name: "two operands", args: []string{f1, f2}, env: linux},
 		{name: "three operands", args: []string{f1, f2, f1}, env: linux},
 		{name: "print database with an operand", args: []string{"-p", f1}, env: noShell},
 		{name: "print database with two operands", args: []string{"-p", f1, f2}, env: noShell},
 		{name: "print database with a dash", args: []string{"-p", "-"}, env: noShell},
 		{name: "print ls colors with two operands", args: []string{"--print-ls-colors", f1, f2}, env: noShell},
-		// extra operand quotes with quote(), where the file diagnostics
-		// use quotef().
 		{name: "extra operand with a quote", args: []string{"a", "b'c"}, env: linux},
 		{name: "extra operand empty", args: []string{"a", ""}, env: linux},
 		{name: "extra operand with a space", args: []string{"a", "a b"}, env: linux},
 		{name: "extra operand with a high byte", args: []string{"a", "x\xff"}, env: linux},
-		// The count is checked BEFORE the shell is guessed.
 		{name: "operand count beats the shell guess", args: []string{f1, f2}, env: noShell},
 		{name: "print database operand beats the shell guess", args: []string{"-p", f1}, env: []string{"TERM=linux"}},
 
-		// The shell guess, and that it happens before the file is opened.
 		{name: "no shell", env: noShell},
 		{name: "no shell with a file", args: []string{f1}, env: noShell},
 		{name: "no shell beats a missing file", args: []string{nosuch}, env: noShell},
@@ -334,7 +276,6 @@ func dircolorsCases(t *testing.T) []invocation {
 		{name: "shell is a slash", env: dircolorsEnv("/", "linux", "")},
 		{name: "print ls colors needs no shell with a file", args: []string{"--print-ls-colors", nosuch}, env: []string{"TERM=linux"}},
 
-		// Operands and `--`.
 		{name: "one file", args: []string{f1}, env: linux},
 		{name: "one file csh", args: []string{f1}, env: cshEnv},
 		{name: "empty file", args: []string{empty}, env: linux},
@@ -348,12 +289,10 @@ func dircolorsCases(t *testing.T) []invocation {
 		{name: "name with a high byte", args: []string{"--", "ab\xff"}, env: linux},
 		{name: "a directory", args: []string{d}, env: linux},
 
-		// Permutation, and POSIXLY_CORRECT stopping it by presence.
 		{name: "option after an operand", args: []string{f1, "-c"}, env: linux},
 		{name: "posixly correct", args: []string{f1, "-c"}, env: append(linux, "POSIXLY_CORRECT=1")},
 		{name: "posixly correct empty", args: []string{f1, "-c"}, env: append(linux, "POSIXLY_CORRECT=")},
 
-		// stdin.
 		{name: "dash is stdin", args: []string{"-"}, stdin: "DIR 7\n", env: linux},
 		{name: "dash is stdin csh", args: []string{"-"}, stdin: "DIR 7\n", env: cshEnv},
 		{name: "empty stdin", args: []string{"-"}, stdin: "", env: linux},
@@ -361,7 +300,6 @@ func dircolorsCases(t *testing.T) []invocation {
 		{name: "stdin is not read without a dash", stdin: "DIR 7\n", env: linux},
 		{name: "stdin is a directory", args: []string{"-"}, stdinPath: d, env: linux},
 
-		// The section machine.
 		{name: "sure survives a miss", args: []string{sureThenMiss}, env: linux},
 		{name: "yes does not survive a miss", args: []string{yesThenMiss}, env: linux},
 		{name: "sure survives a miss then faults", args: []string{sureThenBogus}, env: linux},
@@ -385,7 +323,6 @@ func dircolorsCases(t *testing.T) []invocation {
 		{name: "term keyword folds case", args: []string{lowerTerm}, env: linux},
 		{name: "colorterm keyword folds case", args: []string{lowerColorterm}, env: truecolor},
 
-		// The line grammar.
 		{name: "blank and comment lines", args: []string{blanks}, env: linux},
 		{name: "leading and inner whitespace", args: []string{spacing}, env: linux},
 		{name: "the argument is the rest of the line", args: []string{restOfLine}, env: linux},
@@ -406,7 +343,6 @@ func dircolorsCases(t *testing.T) []invocation {
 		{name: "two faults are both reported", args: []string{twoFaults}, env: linux},
 		{name: "both fault kinds", args: []string{mixedFaults}, env: linux},
 
-		// The escaper.
 		{name: "escaper", args: []string{escapes}, env: linux},
 		{name: "escaper csh", args: []string{escapes}, env: cshEnv},
 		{name: "quotes", args: []string{quotes}, env: linux},
@@ -414,7 +350,6 @@ func dircolorsCases(t *testing.T) []invocation {
 		{name: "the toggle resets per field", args: []string{toggleResets}, env: linux},
 		{name: "bare specials", args: []string{bareSpecials}, env: linux},
 
-		// Write failures.
 		{name: "stdout closed", stdout: stdoutClosed, env: linux},
 		{name: "stdout closed print database", args: []string{"-p"}, stdout: stdoutClosed, env: linux},
 		{name: "stdout closed on help", args: []string{"--help"}, stdout: stdoutClosed, env: linux},
@@ -431,9 +366,6 @@ func dircolorsCases(t *testing.T) []invocation {
 		{name: "stdout full with nothing to write", args: []string{"--print-ls-colors", empty}, stdout: stdoutFull, env: linux},
 		{name: "stdout full on a parse fault", args: []string{missing}, stdout: stdoutFull, env: linux},
 
-		// A file past one read block, and the same file with the read end
-		// closed early: the output outgrows the pipe buffer, so both
-		// sides die of SIGPIPE rather than reporting a write error.
 		{name: "large file", args: []string{big}, env: linux},
 		{name: "large file print ls colors", args: []string{"--print-ls-colors", big}, env: linux},
 		{name: "large file onto a full disk", args: []string{"--print-ls-colors", big}, stdout: stdoutFull, env: linux},
@@ -446,8 +378,6 @@ func dircolorsCases(t *testing.T) []invocation {
 		{name: "large file into a closed pipe", args: []string{big}, env: linux, limit: 64},
 	}
 
-	// fnmatch, one pattern against the TERM values that separate it from
-	// a glob matcher.
 	cases = append(cases, against(pStar, "a/b", "", "x", ".hidden")...)
 	cases = append(cases, against(pStarMid, "a/x/b", "ab", "axb")...)
 	cases = append(cases, against(pQuestion, "a/b", "ab", "abb")...)
@@ -498,8 +428,6 @@ func dircolorsCases(t *testing.T) []invocation {
 	return append(cases, dircolorsByteCases(t)...)
 }
 
-// Config files are byte streams. GNU preserves raw extension and value bytes
-// in both shell output and diagnostics, even in malformed UTF-8 sequences.
 func dircolorsByteCases(t *testing.T) []invocation {
 	t.Helper()
 	dir := t.TempDir()
@@ -554,8 +482,6 @@ func TestDircolorsHelpVersion(t *testing.T) {
 	requireHelp(t, "dircolors", []string{"--help"}, 0)
 	requireHelp(t, "dircolors", []string{"--h"}, 0)
 	requireHelp(t, "dircolors", []string{"--he"}, 0)
-	// --help and --version short-circuit inside the getopt loop, so they
-	// beat every later validation but lose to an earlier getopt fault.
 	requireHelp(t, "dircolors", []string{"-b", "-p", "--help"}, 0)
 	requireHelp(t, "dircolors", []string{"-p", "--print-ls-colors", "--help"}, 0)
 	requireHelp(t, "dircolors", []string{"x", "y", "--help"}, 0)

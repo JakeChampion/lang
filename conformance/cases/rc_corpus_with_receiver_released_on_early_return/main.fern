@@ -1,11 +1,11 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// An owned array local whose textually-last use is a consuming
-// `.with`, on a function that can return before reaching it: the
-// consuming site nulls the slot, so the early path still releases
-// the buffer (it used to be skipped on every path — 150 blocks
-// stranded here). Leak-only; the leak gate holds it at zero.
+
+
+
+
+
+
+
+
 enum N { L(i32), B(i32, N[]) }
 function mk(c: i32, flag: boolean): N {
     let ks: N[] = [];

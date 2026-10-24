@@ -1,17 +1,5 @@
 import "std/test";
 
-// tests/stdlib/process_output_shortcuts_test.fern — batch
-// 31 additions to std/test:
-//   * `test.assert_exit_zero(proc)` / `test.assert_exit_nonzero(proc)`
-//     — sugar for the most common exit-code checks.
-//   * `test.assert_stdout_lines(proc, lines[])` /
-//     `test.assert_stderr_lines(proc, lines[])` — multi-line
-//     compare (delegates to `assert_lines_eq` so the diff
-//     message wording is identical to file/in-memory).
-//   * `test.assert_stdout_line_count(proc, n)` /
-//     `test.assert_stderr_line_count(proc, n)` — line
-//     cardinality without pinning content.
-
 function test_exit_zero_pass(): test.TestOutcome {
   let res: ProcessResult = subprocess("true", [], "");
   return test.assert_exit_zero(res);
@@ -67,7 +55,6 @@ function test_stdout_lines_mismatch(): test.TestOutcome {
       return test.fail("mismatch should fail");
     },
     Fail(msg) => {
-      // assert_lines_eq names the differing line.
       if (!msg.contains("line 2")) {
         return test.fail("expected 'line 2' in failure: " + msg);
       }
@@ -77,7 +64,6 @@ function test_stdout_lines_mismatch(): test.TestOutcome {
 }
 
 function test_stderr_lines_pass(): test.TestOutcome {
-  // Send something to stderr via sh -c.
   let res: ProcessResult = subprocess(
     "sh",
     ["-c", "printf 'err1\\nerr2\\n' >&2"], "",

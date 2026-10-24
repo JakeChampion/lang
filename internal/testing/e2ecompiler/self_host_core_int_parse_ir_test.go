@@ -2,19 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// coreIntParseIRCases exercise core/int's radix parse direction
-// (parse_int_radix + __radix_value + __radix_digit) through the self-host IR
-// path on x86-64 + wasm (the `core/int` row was fully unaudited). The three
-// functions are inlined verbatim from `internal/stdlib/core/int.fern` rather
-// than imported (no reserved type names involved). This verifies the
-// constructs the parse direction lowers to compile on the IR path:
-// `Option[i32]` `Some`/`None` returns with a payload-binding `match`, string
-// indexing (`s[i]`) with char-class comparisons, a multiply-accumulate `while`
-// loop in an i64 lane bounded against what i32 holds, sign handling, and
-// negation. Each program returns a small deterministic int (<= 126);
-// expectations are oracle-checked against the native interpreter. The
-// `to_string` direction is not covered (it pokes raw memory via `__alloc_u8` /
-// `__memcpy` / `usize`), mirroring the std/u64 `to_string` caveat. FEATURE-AUDIT core/int row (parse direction).
 const coreIntParseIRPrelude = `function __radix_digit(c: i32): i32 {
     if (c >= 48 && c <= 57)  { return c - 48; }
     if (c >= 97 && c <= 122) { return c - 87; }
@@ -61,28 +48,16 @@ var coreIntParseIRCases = []struct {
 	main string
 	want int
 }{
-	// hex parse with a lowercase a-f digit: 0x5a = 90 (kept <=125 so wasmtime
-	// doesn't normalise the exit code: codes >=126 come back as 1 under WASI).
-	{"hex", `return parse_or("5a", 16, 0);`, 90}, // 0x5a = 90
-	// base-10 with leading '+' sign.
+	{"hex", `return parse_or("5a", 16, 0);`, 90},
 	{"plus-sign", `return parse_or("+42", 10, 0);`, 42},
-	// binary "1100100" = 100.
 	{"binary", `return parse_or("1100100", 2, 0);`, 100},
-	// base-36 "z" = 35.
 	{"base36", `return parse_or("z", 36, 0);`, 35},
-	// invalid digit for the base -> None -> default 7.
 	{"invalid-digit", `return parse_or("12x", 10, 7);`, 7},
-	// empty string -> None -> default 9.
 	{"empty", `return parse_or("", 10, 9);`, 9},
-	// out-of-range base -> None -> default 5.
 	{"bad-base", `return parse_or("10", 99, 5);`, 5},
-	// negative result, mapped back to a small positive via arithmetic: -3 + 100 = 97.
 	{"negative", `return parse_or("-3", 10, 0) + 100;`, 97},
-	// the i32 edges parse, mapped back to small positives: INT_MAX - 2147483600
-	// = 47, and INT_MIN + INT_MAX = -1, + 53 = 52 (every literal within i32).
 	{"int-max", `return parse_or("2147483647", 10, 0) - 2147483600;`, 47},
 	{"int-min", `return parse_or("-2147483648", 10, 0) + 2147483647 + 53;`, 52},
-	// a magnitude past i32 -> None -> default 11, where the old i32 lane wrapped.
 	{"overflow", `return parse_or("99999999999999999999", 10, 11);`, 11},
 	{"overflow-by-one", `return parse_or("2147483648", 10, 13);`, 13},
 }
@@ -91,8 +66,6 @@ func coreIntParseIRSrc(mainBody string) string {
 	return coreIntParseIRPrelude + "\nfunction main(): i32 { " + mainBody + " }\n"
 }
 
-// TestSelfHostCoreIntParseIR compiles each case with the self-host CLI for
-// x86-64 and wasm and checks the exit code.
 func TestSelfHostCoreIntParseIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {

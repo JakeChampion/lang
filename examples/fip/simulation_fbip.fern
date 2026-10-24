@@ -48,7 +48,6 @@ pub fbip function input_ai(own w: World): World {
       tx = dest.x;
       ty = dest.y;
     }
-    // Remove the collection's reference before consuming the record donor.
     w = World { ...w, entities: w.entities.with(i, w.empty) };
     row = simulation_entity.input_ai(row, i, w.tick, target, tx, ty);
     w = World { ...w, entities: w.entities.with(i, row) };
@@ -61,7 +60,6 @@ pub fbip function move(own w: World): World {
   let i: i32 = 0;
   while (i < w.count) {
     let row: simulation_entity.Entity = get(w, i);
-    // Remove the collection's reference before consuming the record donor.
     w = World { ...w, entities: w.entities.with(i, w.empty) };
     row = simulation_entity.move(row);
     w = World { ...w, entities: w.entities.with(i, row) };
@@ -127,7 +125,6 @@ pub fbip function update(own w: World): World {
   let i: i32 = 0;
   while (i < w.count) {
     let row: simulation_entity.Entity = get(w, i);
-    // Remove the collection's reference before consuming the record donor.
     w = World { ...w, entities: w.entities.with(i, w.empty) };
     row = simulation_entity.update(row, w.neighbors[i]);
     w = World { ...w, entities: w.entities.with(i, row) };

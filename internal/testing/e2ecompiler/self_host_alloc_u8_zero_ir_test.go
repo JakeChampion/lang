@@ -8,12 +8,6 @@ import (
 	"testing"
 )
 
-// `__alloc_u8(n)` is a fresh u8[] of length n, every element zero (#10081).
-// The self-host runtime builds it on __fern_arr_box, which may hand back a
-// block off the free list with its last owner's bytes still in it, so the
-// program fills a table, drops it, and asks for one of the same size and of
-// other sizes, over and over: any stale byte fails. 42 means every element
-// of every fresh array read zero; the other codes name the size that did not.
 const allocU8ZeroIRProg = `function filled(n: i32): u8[] {
     let t: u8[] = __alloc_u8(n);
     let b: i32 = 0;

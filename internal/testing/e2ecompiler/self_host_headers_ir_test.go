@@ -2,22 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// headersIRCases exercise std/headers' HeaderMap surface — case-insensitive
-// get/get_all/append/set over two parallel string[] fields — through the
-// self-host IR path on x86-64 + wasm (the `std/headers` row was unaudited).
-// `HeaderMap` is a reserved builtin name, so the type is inlined as `Headers`,
-// and `.to_lower()` as a local lookup-slice `lower`; this verifies the
-// constructs the header map lowers to compile on the IR path: a struct with two
-// string[] fields, functional struct-spread update (`Headers { ...h, names:
-// ..., values: ... }`), `string[]` `.append`, indexed string-field compares,
-// `Option[string]` `Some`/`None` with a payload-binding `match`, and chained
-// struct-returning receiver methods. Each program returns a small deterministic
-// int (kept <= 126). Expectations are hardcoded, verified against the native
-// interp + x86-64 backends. The `append-len` case pins the `(h) len()` receiver
-// method (`return h.names.len();`): it regressed #3478 (a user receiver method
-// named `len` mis-dispatched to the builtin `.len()` on the struct box,
-// returning a callee local's value) — fixed in irlower.fern's `.len()`
-// intercept guard. FEATURE-AUDIT std/headers row.
 const headersIRPrelude = `struct Headers { names: string[], values: string[] }
 function lower(s: string): string {
     let alpha: string = "abcdefghijklmnopqrstuvwxyz";
@@ -91,17 +75,10 @@ var headersIRCases = []struct {
 	main string
 	want int
 }{
-	// the `(h) len()` receiver method counts entries: two appends -> 2. This is
-	// the #3478 regression guard — a user method named `len` must shadow the
-	// builtin `.len()` on the struct receiver (pre-fix: x86-64 -> 26, wasm -> 0).
 	{"append-len", `let h: Headers = header_map_new(); h = h.append("Set-Cookie", "a"); h = h.append("Set-Cookie", "b"); return h.len();`, 2},
-	// get is case-insensitive: "content-TYPE" finds "Content-Type" -> "text" (len 4).
 	{"get-ci", `let h: Headers = header_map_new(); h = h.append("Content-Type", "text"); return get_len(h, "content-TYPE");`, 4},
-	// set replaces in place: get returns the new value "22" (len 2).
 	{"set-replace", `let h: Headers = header_map_new(); h = h.append("X", "1"); h = h.set("x", "22"); return get_len(h, "X");`, 2},
-	// get_all collects duplicates regardless of case: 2 entries.
 	{"get-all-dups", `let h: Headers = header_map_new(); h = h.append("a", "1"); h = h.append("A", "2"); return h.get_all("a").len();`, 2},
-	// a missing name renders the None arm: 99.
 	{"missing", `let h: Headers = header_map_new(); h = h.append("a", "1"); return get_len(h, "missing");`, 99},
 }
 
@@ -109,8 +86,6 @@ func headersIRSrc(mainBody string) string {
 	return headersIRPrelude + "\nfunction main(): i32 { " + mainBody + " }\n"
 }
 
-// TestSelfHostHeadersIR compiles each case with the self-host CLI for
-// x86-64 and wasm and checks the exit code.
 func TestSelfHostHeadersIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {

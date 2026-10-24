@@ -5,25 +5,12 @@ import (
 	"testing"
 )
 
-// TestScalarMethodImportHint pins the E043 wording for a method call on a
-// SCALAR whose defining stdlib module was not imported (#5494).
-//
-// Since the auto-prelude was removed (Phase 5) a program sees only what it
-// imports, so `n.to_string()` without `import "std/i32"` fails. The bare
-// diagnostic — "field access on non-struct value of type i32" — describes the
-// desugared shape rather than the user's code, and is actively misleading for
-// f-strings: `f"{n}"` desugars to `n.to_string()`, so a program that never
-// mentions `to_string` reports a struct-field error pointed at the f-string.
-//
-// The hint names the import instead, read from the stdlib method index, so a
-// method no module declares gets no import suggestion (#13064), which the last
-// cases pin.
 func TestScalarMethodImportHint(t *testing.T) {
 	cases := []struct {
 		name string
 		src  string
-		want []string // all must appear in the error
-		deny []string // none may appear
+		want []string
+		deny []string
 	}{
 		{
 			name: "f-string on i32 names std/i32 and explains the desugar",
@@ -47,8 +34,6 @@ func TestScalarMethodImportHint(t *testing.T) {
 			want: []string{`import "std/i64"`},
 		},
 		{
-			// Not an f-string desugar target, so the parenthetical must not
-			// appear — it would be describing a mechanism the user did not use.
 			name: "to_string_radix gets the import but NOT the f-string note",
 			src:  `function main(): i32 { let n: i32 = 7; return n.to_string_radix(16).len(); }`,
 			want: []string{`no method "to_string_radix" on i32`, `import "std/i32"`},
@@ -60,9 +45,6 @@ func TestScalarMethodImportHint(t *testing.T) {
 			want: []string{`no method "abs" on i32`, `add ` + "`" + `import "std/i32"` + "`"},
 		},
 		{
-			// An unknown method must NOT get an import suggestion — suggesting
-			// std/i32 for a method it does not define would send the reader off
-			// to add an import that cannot help.
 			name: "unknown method gets no import",
 			src:  `function main(): i32 { let n: i32 = 7; return n.nonexistent_method(); }`,
 			want: []string{`no method "nonexistent_method" on i32, and no stdlib module declares one`},
@@ -174,12 +156,3 @@ func TestScalarMethodImportHint(t *testing.T) {
 		})
 	}
 }
-
-// NOTE on the positive path: there is deliberately no "with the import present
-// it resolves" case here. checkSource goes through a bare parser.Parse, which
-// does not run modload, so an `import "std/i32"` line is parsed but the module
-// is never loaded and the method stays unregistered — the hint fires and the
-// assertion would be testing the harness, not the compiler. That path is
-// covered where imports are actually resolved: `fern -interp` on the same
-// program prints `x7y`, and TestSelfHostWasmRun/fstring-int pins the f-string
-// lowering end to end.

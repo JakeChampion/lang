@@ -6,11 +6,6 @@ import (
 	"testing"
 )
 
-// signalCatchCheckerCases are the signatures of signal_catch / signal_taken
-// (#9243) and signal_catch_interrupting / signal_raise (#11698) from the
-// caller's side: a catch answers the i32 sigaction return signal_ignore does,
-// the poll a boolean a caller branches on, the raise kill(2)'s i32. `ok` rows must
-// type-check; the rest must be refused.
 var signalCatchCheckerCases = []struct {
 	name string
 	src  string
@@ -30,8 +25,6 @@ var signalCatchCheckerCases = []struct {
 	{"raise takes a number", `function main(): i32 { return signal_raise("TERM"); }`, false},
 }
 
-// TestSelfHostCheckerSignalCatch holds the self-host checker's signatures for
-// the four builtins to the Go checker's, diagnostic for diagnostic.
 func TestSelfHostCheckerSignalCatch(t *testing.T) {
 	checkerBin, runner, dir := buildCheckerCodesBin(t)
 	for _, tc := range signalCatchCheckerCases {

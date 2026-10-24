@@ -1,26 +1,3 @@
-// paste.fern — GNU-compatible `paste`.
-//
-//   paste [-s] [-d LIST] [-z] [FILE]...
-//
-// In parallel (the default) the n-th line of every FILE is written as
-// one line, the files separated by the delimiters of LIST cycling round
-// (a tab by default). `-s` pastes each FILE on a line of its own
-// instead. `-z` makes NUL the line delimiter on both sides.
-//
-// Four behaviours are the reference binary's:
-//
-//   - A NUL delimiter writes NOTHING. `-d ''` means exactly that, since
-//     an empty LIST is read as `\0`, so `paste -d '' a b` concatenates.
-//   - A FILE that runs out early keeps its column: the delimiter that
-//     would have followed it is HELD BACK and written only when a later
-//     file on the same line produces something, or at the end of a line
-//     that produced anything at all. That is why the row after a short
-//     file starts with delimiters rather than ending with them.
-//   - Every `-` operand is ONE stream, not one per column, so
-//     `paste - -` puts consecutive lines of stdin side by side.
-//   - A FILE that cannot be OPENED ends the run before any output at
-//     all, where one that cannot be READ (a directory) is reported and
-//     treated as empty.
 import "std/array";
 import "std/io_buffered";
 import "./lib/gnu";
@@ -53,10 +30,6 @@ function help_text(): string {
   return out;
 }
 
-// Bytes per read(2), and the size of the block the accumulated output
-// is handed to the buffered writer in. The writer's threshold is the
-// same number, so a full block goes straight to the fd instead of being
-// copied into its buffer first.
 function read_size(): i32 {
   return 65536;
 }
@@ -65,9 +38,6 @@ function block_size(): i32 {
   return 16384;
 }
 
-// `collapse(list)` — the `-d` operand with its escapes resolved. The
-// named ones are the seven C escapes plus `\0`; any other backslashed
-// byte is itself, and a list ending in a bare backslash is an error.
 function collapse(list: string): u8[] {
   let out: u8[] = [];
   let i: i32 = 0;
@@ -125,8 +95,6 @@ pub function main(): i32 {
         if (m.id == opt_serial()) {
           serial = true;
         } else if (m.id == opt_delims()) {
-          // An empty LIST is read as `\0`: one delimiter that writes
-          // nothing.
           if (m.value.len() == 0) {
             list = "\\0";
           } else {
@@ -141,8 +109,6 @@ pub function main(): i32 {
       }
     }
   }
-  // GNU cycles individual bytes, including the bytes of a UTF-8 argument.
-  // A NUL entry advances the cycle without writing a byte.
   let delims: u8[] = collapse(list);
 
   let files: string[] = g.operands();
@@ -155,9 +121,6 @@ pub function main(): i32 {
   return run_parallel(files, delims, term);
 }
 
-// `run_serial(files, delims, term)` — one line per FILE, its own lines
-// joined by the delimiters. Even a FILE with nothing in it produces its
-// line delimiter; one that cannot be opened produces nothing at all.
 function run_serial(files: string[], delims: u8[], term: i32): i32 {
   let o: io_buffered.BufWriter = gnu.out_with(block_size());
   let h: usize = o.handle();
@@ -265,10 +228,6 @@ function run_serial(files: string[], delims: u8[], term: i32): i32 {
   return 0;
 }
 
-// `run_parallel(files, delims, term)` — the n-th line of each FILE on
-// one line. `held` is the delimiters of files that have already run
-// out: they are only written once a later file on the same line
-// produces something.
 function run_parallel(files: string[], delims: u8[], term: i32): i32 {
   let o: io_buffered.BufWriter = gnu.out_with(block_size());
   let h: usize = o.handle();
@@ -280,9 +239,6 @@ function run_parallel(files: string[], delims: u8[], term: i32): i32 {
   let eofs: boolean[] = [];
   let live: boolean[] = [];
   let stdins: boolean[] = [];
-  // Every `-` operand is the SAME stream, so they share one read
-  // position: `paste - -` puts consecutive lines of stdin side by side
-  // rather than giving each column a buffer of its own.
   let slot: i32[] = [];
   let stdin_slot: i32 = 0 - 1;
   let i: i32 = 0;
@@ -329,14 +285,9 @@ function run_parallel(files: string[], delims: u8[], term: i32): i32 {
     while (i < files.len()) {
       let k: i32 = slot[i];
       let produced: boolean = false;
-      // Whether the line's own terminator went out with its content.
-      // For the LAST column of a line that is exactly what follows it,
-      // so taking the two together halves the appends per row.
       let took_term: boolean = false;
       let whole: boolean = false;
       if (live[i]) {
-        // The usual line: already whole in the chunk this file is on,
-        // so it needs neither the refill loop nor the piece loop.
         let ck: u8[] = chunks[k];
         let cp: i32 = poss[k];
         if (cp < ck.len()) {
@@ -360,8 +311,6 @@ function run_parallel(files: string[], delims: u8[], term: i32): i32 {
         }
       }
       if (live[i] && !whole) {
-        // Is there anything left at all? The answer decides whether
-        // this file still holds a column on this line.
         while (poss[k] >= chunks[k].len() && !eofs[k]) {
           let piece: u8[] = [];
           let read_ok: boolean = true;
@@ -389,7 +338,6 @@ function run_parallel(files: string[], delims: u8[], term: i32): i32 {
             buf_push_bytes_range(h, held, 0, held.len());
             held = [];
           }
-          // The line itself, terminator dropped.
           let reading: boolean = true;
           while (reading) {
             if (poss[k] >= chunks[k].len()) {
@@ -432,8 +380,6 @@ function run_parallel(files: string[], delims: u8[], term: i32): i32 {
               }
             }
           }
-          // A line that ran into end of file leaves the file behind:
-          // its column is held from the next one on.
           if (poss[k] >= chunks[k].len() && eofs[k]) {
             produced = false;
           }

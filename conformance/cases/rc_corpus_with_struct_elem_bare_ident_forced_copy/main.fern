@@ -1,12 +1,12 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// `.with` on an array of struct elements where the receiver is a bare
-// local that stays LIVE after the call (`b = a.with(0, ..)`; a read
-// again), so the CoW copy branch fires. The old element being overwritten
-// at index 0 is dropped, the rest are inc'd on the copy; a churn loop
-// recycles any freed block to surface a stale-pointer read. a stays
-// {10,20,30}, b is {99,20,30}. All four deltas 0 → 0 when correct.
+
+
+
+
+
+
+
+
+
 struct Op2 { a: i32, c: i32 }
 function main(): i32 {
     let a: Op2[] = [Op2 { a: 10, c: 0 }, Op2 { a: 20, c: 0 }, Op2 { a: 30, c: 0 }];

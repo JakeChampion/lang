@@ -12,22 +12,10 @@ import (
 	"time"
 )
 
-// touch(1) leaves a tree behind and says little, so the corpus is
-// what it creates and refuses — files, directories, links, FIFOs, the
-// `-` operand, missing names under -c and -h — plus the option faults,
-// the `--time` words and the invalid spellings of `-t` and `-d`. The
-// harness compares the tree's names, kinds, modes and contents but not
-// its timestamps, so the times the options set are checked by
-// TestTouchTimestamps, which runs both binaries over identical trees
-// and reads the stamps back.
-
 func init() {
 	registerCorpus("touch", touchCases)
 }
 
-// touchTree holds one of every operand kind: a file, a directory, a
-// symlink to each, a dangling symlink, a FIFO, a nested file and a
-// reference file with fixed times.
 func touchTree(t *testing.T, dir string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, "f"), []byte("data\n"), 0o644); err != nil {
@@ -64,7 +52,6 @@ func touchCases(t *testing.T) []invocation {
 		add(invocation{name: name, args: args, seedTree: touchTree})
 	}
 
-	// ---- creation ----
 	tree("create one", "new")
 	tree("create two", "new1", "new2")
 	tree("create nested", "d/new")
@@ -97,7 +84,6 @@ func touchCases(t *testing.T) []invocation {
 	tree("--no-dereference on missing", "--no-dereference", "new")
 	tree("--no-d prefix", "--no-d", "new")
 
-	// ---- every operand kind under the ways of choosing a time ----
 	for _, mode := range [][]string{nil, {"-a"}, {"-m"}, {"-h"}, {"-c"}, {"-ch"}, {"-t", "202406151234"}, {"-d", "2024-06-15 12:34:56.5"}, {"-r", "ref"}, {"-r", "ref", "-d", "+1 day"}, {"-h", "-r", "ref"}, {"--time=atime"}, {"--time=modify"}} {
 		label := "default"
 		if mode != nil {
@@ -112,7 +98,6 @@ func touchCases(t *testing.T) []invocation {
 	tree("a failure between successes", "f", "nodir/x", "d")
 	tree("a directory then a file", "d", "f")
 
-	// ---- the -d and -t spellings ----
 	for _, s := range []string{"", "now", "today", "tomorrow", "2024-06-15", "2024-06-15 12:34:56", "2024-06-15T12:34:56Z", "@0", "@1718434196.5", "next monday", "3 days ago", "-1 day", "x", "foo bar", "2024-13-01", "12:00:60", "TZ=\"Asia/Tokyo\" 2024-06-15 12:00", "2024-06-15 12:00 EDT", "24:00", "1 jan 12:00"} {
 		tree("-d "+s, "-d", s, "f", "new")
 		tree("-d "+s+" with -r", "-r", "ref", "-d", s, "f", "new")
@@ -153,7 +138,6 @@ func touchCases(t *testing.T) []invocation {
 	tree("-r needs a value", "-r")
 	tree("-r then no file", "-r", "ref")
 
-	// ---- --time ----
 	for _, w := range []string{"atime", "access", "use", "mtime", "modify", "a", "ac", "m", "mod", "u", "x", "", "modif", "atime2", "ATIME", "a'b", "access,use"} {
 		tree("--time="+w, "--time="+w, "f", "new")
 	}
@@ -165,7 +149,6 @@ func touchCases(t *testing.T) []invocation {
 	tree("--time twice", "--time=atime", "--time=mtime", "f")
 	tree("--time and -a -m", "--time=atime", "-m", "f")
 
-	// ---- getopt faults ----
 	tree("-x", "-x", "f")
 	tree("--foo", "--foo", "f")
 	tree("the empty long option", "--=x", "f")
@@ -185,7 +168,6 @@ func touchCases(t *testing.T) []invocation {
 	add(invocation{name: "-c alone", args: []string{"-c"}})
 	add(invocation{name: "-a -m alone", args: []string{"-a", "-m"}})
 
-	// ---- the obsolete MMDDhhmm[YY] form ----
 	for _, env := range [][]string{nil, {"_POSIX2_VERSION=199209"}, {"_POSIX2_VERSION=200112"}, {"_POSIX2_VERSION=199209", "POSIXLY_CORRECT=1"}, {"_POSIX2_VERSION=x"}} {
 		label := "default posix"
 		if env != nil {
@@ -196,7 +178,6 @@ func touchCases(t *testing.T) []invocation {
 		}
 	}
 
-	// ---- standard output as the operand ----
 	tree("dash", "-")
 	tree("dash with -c", "-c", "-")
 	tree("dash with -a -m", "-a", "-m", "-")
@@ -235,8 +216,6 @@ func TestTouchHelpVersion(t *testing.T) {
 	requireVersion(t, "touch", []string{"--version", "f"}, 0)
 }
 
-// stampOf reads a path's access and modification times without
-// following a symlink.
 func stampOf(t *testing.T, path string) (string, bool) {
 	t.Helper()
 	var st syscall.Stat_t
@@ -247,13 +226,6 @@ func stampOf(t *testing.T, path string) (string, bool) {
 		time.Unix(st.Mtim.Sec, st.Mtim.Nsec).UTC().Format("2006-01-02T15:04:05.000000000"), true
 }
 
-// TestTouchTimestamps runs GNU touch and Fern's over identical trees
-// for every way of naming a time that does not read the clock — `-t`
-// stamps, absolute `-d` strings, `-r` with and without a relative
-// `-d`, `-a`, `-m` and `-h` — under three zones, and compares the
-// times each leaves on every entry. The reference file's own stamps
-// are the base of the relative strings, so a DST gap and a repeated
-// hour in the named zone are both crossed.
 func TestTouchTimestamps(t *testing.T) {
 	gnu := referenceBin(t, "touch")
 	ours := fernBin(t, "touch")
@@ -338,10 +310,6 @@ func TestTouchTimestamps(t *testing.T) {
 
 	seed := func(dir string) {
 		touchTree(t, dir)
-		// A reference whose access time sits in the New York gap of
-		// 2024-03-10 and whose modification time sits in the repeated
-		// hour of 2024-11-03, and one whose two times are on either
-		// side of a change, so a relative string moves them apart.
 		for _, r := range []struct {
 			name   string
 			at, mt time.Time
@@ -364,9 +332,6 @@ func TestTouchTimestamps(t *testing.T) {
 			t.Fatalf("chtimes f: %v", err)
 		}
 	}
-	// Only the operands are compared: an entry the case does not name
-	// keeps the instant its tree was seeded at, and the two trees are
-	// seeded moments apart.
 	operands := func(args []string) []string {
 		var names []string
 		skip := false
@@ -404,9 +369,6 @@ func TestTouchTimestamps(t *testing.T) {
 		for _, n := range operands(c.args) {
 			ws, wok := stampOf(t, filepath.Join(want, n))
 			gs, gok := stampOf(t, filepath.Join(got, n))
-			// Without -h a symlink operand stands for its target, which is
-			// compared under its own name; the link itself keeps the
-			// instant its tree was seeded at.
 			if (n == "lf" || n == "lref" || n == "dangling") && c.args[0] != "-h" {
 				continue
 			}

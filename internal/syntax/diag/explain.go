@@ -6,25 +6,9 @@ import (
 	"strings"
 )
 
-// explanations is the per-code long-form catalogue. One file
-// per code under `internal/syntax/diag/explanations/CODE.md`;
-// referenced by `fern -explain CODE` (docs/DIAGNOSTIC-UX-
-// RESEARCH.md Rec §4). Files are markdown so the same source
-// renders both at the CLI (plain text) and in future IDE
-// surfaces (rich text via the LSP).
-//
 //go:embed explanations/*.md
 var explanations embed.FS
 
-// Explain returns the long-form explanation for the given
-// error code. Returns the empty string when the code has no
-// catalogue entry; callers should treat that as
-// "code unrecognised" and surface a one-liner ("unknown
-// error code") rather than an empty output.
-//
-// Codes are case-insensitive on input — `e001` and `E001`
-// both look up the same file — but the catalogue stores
-// them uppercase as the canonical form.
 func Explain(code string) string {
 	if code == "" {
 		return ""
@@ -37,11 +21,6 @@ func Explain(code string) string {
 	return string(data)
 }
 
-// AvailableCodes returns the catalogued error codes in sort
-// order. Used by `fern -explain` (no-arg form) to print the
-// available list and by tests that walk every code to verify
-// the catalogue is consistent with the checker's stamped
-// emissions.
 func AvailableCodes() []string {
 	entries, err := explanations.ReadDir("explanations")
 	if err != nil {
@@ -61,18 +40,11 @@ func AvailableCodes() []string {
 	return codes
 }
 
-// FormatExplain renders an `Explain` result for CLI output: the page's
-// `# CODE — title` heading becomes an `error CODE: title` header over the
-// rest of the page. Empty input returns an empty string — caller surfaces
-// "unknown code" upstream.
 func FormatExplain(code, body string) string {
 	if body == "" {
 		return ""
 	}
 	canonical := strings.ToUpper(strings.TrimSpace(code))
-	// Colour the header to match the diagnostic renderer's error label
-	// (docs/DIAGNOSTIC-UX-RESEARCH.md Rec §7); off by default, so piped /
-	// non-interactive output stays plain.
 	header := paint(ansiRedBld, "error "+canonical+":")
 	if first, rest, ok := strings.Cut(body, "\n"); ok {
 		if title, found := strings.CutPrefix(first, "# "+canonical+" — "); found {

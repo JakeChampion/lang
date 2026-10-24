@@ -8,8 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// roundTrip parses src, pretty-prints the result, and parses that
-// output again. The two ASTs should match modulo source positions.
 func roundTrip(t *testing.T, src string) {
 	t.Helper()
 	first, err := parser.Parse(src)
@@ -117,11 +115,6 @@ func TestRoundtripStringEscapes(t *testing.T) {
 	}`)
 }
 
-// ---------- helpers ----------
-
-// zeroPositions walks every AST node and zeroes its source position so
-// two ASTs compare equal regardless of whitespace differences in the
-// pretty-printed output.
 func zeroPositions(prog *ast.Program) {
 	for _, sd := range prog.Structs {
 		sd.P = ast.Position{}
@@ -140,12 +133,6 @@ func zeroPositions(prog *ast.Program) {
 		}
 		zeroBlock(fn.Body)
 	}
-	// TypeRefs is a parser-recorded side table whose source-position
-	// content varies with whitespace, so positions diverge between
-	// the source and printer output even when the underlying AST
-	// matches. Drop it for the comparison. Comments / BlankLines are
-	// likewise whitespace-keyed side tables (their line numbers shift
-	// as formatting re-flows the source), not part of the AST shape.
 	prog.TypeRefs = nil
 	prog.Comments = nil
 	prog.BlankLines = nil
@@ -285,8 +272,6 @@ func TestRoundtripIfExpr(t *testing.T) {
 }
 
 func TestRoundtripCompoundAssign(t *testing.T) {
-	// The printer always emits the desugared `x = x + 1` form, which
-	// re-parses to the same AST.
 	roundTrip(t, `function f(): i32 { let x: i32 = 0; x += 1; return x; }`)
 }
 
@@ -299,23 +284,14 @@ func TestRoundtripStruct(t *testing.T) {
 		}`)
 }
 
-// Construction-site type arguments on a struct literal survive the
-// round-trip, and their ABSENCE survives too — printing them onto a
-// literal that never wrote them changes the program just as much as
-// dropping them from one that did. Both directions matter because the
-// dropped form re-infers: `Box[i64] { val: 42 }` printed as
-// `Box { val: 42 }` silently becomes `Box[i32]`.
 func TestRoundtripStructLitTypeArgs(t *testing.T) {
 	const decls = "struct Box[T] { val: T }\nstruct Stack[T] { items: T[] }\nstruct Pair[A, B] { a: A, b: B }\n"
 	for _, body := range []string{
-		// Written — must survive.
 		`function main(): i32 { let b = Box[i32] { val: 1 }; return b.val; }`,
 		`function main(): i32 { let s = Stack[i32] { items: [] }; return s.items.len(); }`,
 		`function main(): i32 { let p = Pair[i32, string] { a: 1, b: "x" }; return p.a; }`,
 		`function main(): i32 { let b = Box[i32[]] { val: [1] }; return b.val.len(); }`,
-		// Written, on a struct-update literal.
 		`function main(): i32 { let a = Box[i32] { val: 1 }; let b = Box[i32] { ...a, val: 2 }; return b.val; }`,
-		// Not written — must stay not written.
 		`function main(): i32 { let b = Box { val: 1 }; return b.val; }`,
 		`function main(): i32 { let a = Box { val: 1 }; let b = Box { ...a, val: 2 }; return b.val; }`,
 	} {
@@ -323,9 +299,6 @@ func TestRoundtripStructLitTypeArgs(t *testing.T) {
 	}
 }
 
-// Struct-update literals (`Foo { ...base, field: v }` and the pure
-// copy `Foo { ...base }`) round-trip through parse → print → parse
-// with the spread base preserved.
 func TestRoundtripStructUpdate(t *testing.T) {
 	roundTrip(t, `struct Point { x: i32, y: i32 }
 		function main(): i32 {
@@ -348,16 +321,12 @@ func TestRoundtripMethod(t *testing.T) {
 		function (p: Point) sum(): i32 { return p.x + p.y; }`)
 }
 
-// An `@import` extern (bring-your-own WIT, P4) must survive Print → re-parse
-// with its binding intact and a nil body — and must not panic on the nil body.
 func TestRoundtripExternImport(t *testing.T) {
 	roundTrip(t, `@import("wasi:random/random@0.2.0", "get-random-bytes")
 function rand_bytes(n: u64): u8[];
 function main(): i32 { return 0; }`)
 }
 
-// `@derive(...)` on a struct must survive Print → re-parse with the trait
-// list intact (Print formerly dropped it, losing the derives).
 func TestRoundtripDeriveAttr(t *testing.T) {
 	roundTrip(t, `@derive(Eq, Display)
 struct P { x: i32, y: i32 }

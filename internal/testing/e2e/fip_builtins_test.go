@@ -5,11 +5,6 @@ import (
 	"testing"
 )
 
-// A `fip` function may call the builtins that allocate nothing (#9607): the
-// byte-scan kernels, the bit counts, the pointer width, the heap counters and
-// the clock. Each backend's verifyFipAllocs (E068) sees what they lower to, so
-// this compiling at all is half the test; the other half is that the call
-// allocates nothing and answers as the unannotated code does.
 const fipBuiltinsSrc = `import "std/i32";
 
 fip function scan(s: string, set: u8[]): i32 {

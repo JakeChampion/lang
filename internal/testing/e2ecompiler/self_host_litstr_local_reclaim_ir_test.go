@@ -6,27 +6,11 @@ import (
 	"testing"
 )
 
-// litStrLocalReclaimCases pin #6582: a literal-initialised string local declared INSIDE
-// a loop body must free its box every iteration on the asm backends. A string literal
-// allocates a fresh box per evaluation — the DATA is .rodata but the box is not, and
-// __fern_str_free's heap-base guard skips the data and reclaims the box — so a named
-// literal binding is as fresh as any other string producer.
-//
-// The census (FERN_LEAKCHECK=1) is what sees this; `__heap_bump_bytes()` deltas cannot
-// (#5474). wasm is unaffected: the whole literal is data-section there and arr_dec is a
-// guarded no-op.
-//
-// A literal local that is the receiver of `.to_string()` must NOT be freed: on a string
-// receiver that call is the IDENTITY, so its result aliases the receiver's box and is
-// freed as an inline-consumed concat temp; freeing the local too would release the same
-// box twice. TestSelfHostStrConcatTempIRX86_64's `tostring-string-recv-alias-safe` case
-// pins that.
 var litStrLocalReclaimCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// The reproducer: a literal string local re-declared per iteration, used borrow-only.
 	{"litstr-loop-local", `function main(): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -40,8 +24,6 @@ var litStrLocalReclaimCases = []struct {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// #6606: a local bound to a USER function's string result, not just a
-	// builtin's: `let t = suffix(i)` is freed every round.
 	{"strfresh-ret-call-loop-local", `function suffix(n: i32): string { if (n % 2 == 0) { return "even"; } return "odd"; }
 function main(): i32 {
     let acc: i32 = 0;
@@ -56,11 +38,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// The OVER-RELEASE guard on that credit, and the reason the freshness half is a
-	// whole-program proof rather than "it is a call". `ident` returns its PARAMETER, so
-	// its result ALIASES the caller's box — releasing it at the binding as if it were
-	// fresh would free a string the caller still holds. Reading every value back
-	// afterwards turns a wrong admission into a wrong ANSWER rather than only a byte count.
 	{"strfresh-identity-ret-safe", `@noinline function ident(s: string): string { return s; }
 function main(): i32 {
     let keep: string = "abcd";
@@ -72,7 +49,6 @@ function main(): i32 {
     if (acc != (200 * 4) % 251) { return 95; }
     return 0;
 }`, 0},
-	// The shape #5474's gate tripped on: the same local feeding a scalar array build.
 	{"litstr-loop-local-with-array", `function main(): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -86,9 +62,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// VALUE guard: the freed box must not be read back. A literal local re-declared per
-	// iteration and compared, so a premature free or a shared/interned box shows up as a
-	// wrong answer rather than only as a byte count. 200 rounds x 2 = 400, %251 = 149.
 	{"litstr-value-exact", `function main(): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -102,7 +75,6 @@ function main(): i32 {
     if (acc != 149) { return 97; }
     return 0;
 }`, 0},
-	// ESCAPE negative: the literal local is returned, so it must NOT be freed.
 	{"litstr-escape-return-safe", `function mk(): string { let pre: string = "abcd"; return pre; }
 function main(): i32 {
     let acc: i32 = 0;
@@ -114,8 +86,6 @@ function main(): i32 {
 }`, 0},
 }
 
-// TestSelfHostLitStrLocalReclaimIRX86_64 drives the cases through the self-hosted x86-64
-// compiler (asm_run), heap-bump, census and underflow guarded.
 func TestSelfHostLitStrLocalReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	t.Setenv("FERN_LEAKCHECK", "1")
@@ -148,8 +118,6 @@ func TestSelfHostLitStrLocalReclaimIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostLitStrLocalReclaimIRArm64 is the arm64 leg — the other backend that
-// allocates a box for a string literal, and so the other one that leaked.
 func TestSelfHostLitStrLocalReclaimIRArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range litStrLocalReclaimCases {

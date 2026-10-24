@@ -1,52 +1,10 @@
-// tests/proposals/csv2json.fern — proposal turn, line 4:
-// "A CSV-to-JSON converter that handles quoted fields, embedded commas and
-// embedded newlines."
-//
-// The drawn line names the three things that break CSV parsers, and they break
-// it in the same way: a parser written as `split(line, ",")` over
-// `split(text, "\n")` handles every file nobody had trouble with. So the tests
-// are not a table of expected JSON — they are a ROUND TRIP.
-//
-// Every table in the corpus is serialised to CSV, parsed back, and required to
-// be identical cell for cell. Serialising is where the quoting rules live
-// (quote a field iff it contains a comma, a quote or a newline; double an
-// embedded quote), parsing is where they are undone, and a round trip fails
-// the moment the two disagree about any of it. On top of that the corpus is
-// generated: every combination of a small set of awkward cell values, at every
-// position of a 2x2 table, which is ~2 400 tables nobody had to think up and
-// which contains the cases an author would not have.
-//
-// The generator is the essential part, so it is checked too: a test asserts
-// the sweep actually covered the shapes it claims (a cell containing a comma,
-// one containing a quote, one containing a newline, and an empty one), because
-// a sweep that silently stopped generating would pass every comparison it made.
-//
-// Parsing is checked against the shape of the input as well as its content: a
-// table's rows must all have the same width as the header, and a parser that
-// loses a row or merges two is caught by that even when every cell it did
-// produce is correct.
-//
-// The JSON side gets the property that matters for JSON: the output must
-// PARSE. A minimal reader validates it and hands back the values, which are
-// then compared to the table — so a converter that emits a plausible-looking
-// string with an unescaped quote in it fails here rather than downstream.
-//
-// Two decisions, stated because CSV dialects differ and both are tested:
-// RFC 4180 quoting (double the quote, not backslash it), and a trailing
-// newline at the end of the file being optional rather than an empty final row.
-//
-// The app writes its report to stderr; stdout carries TAP-13 from std/test.
-
 import "std/test";
 import "std/i32";
 import "std/string";
 
-// A table is rows of cells; the first row is the header.
 struct Table { rows: string[][] }
 
 struct Parsed { ok: boolean, table: Table, err: string }
-
-// ------------------------------------------------------------ serialising
 
 function needs_quoting(cell: string): boolean {
   let i: i32 = 0;
@@ -60,7 +18,6 @@ function needs_quoting(cell: string): boolean {
   return false;
 }
 
-// RFC 4180: wrap in quotes, and double any quote inside.
 function quote_cell(cell: string): string {
   let buf: u8[] = [34];
   let i: i32 = 0;
@@ -100,27 +57,22 @@ function to_csv(t: Table): string {
   return out;
 }
 
-// --------------------------------------------------------------- parsing
-
 function fail_parse(why: string): Parsed {
   let none: string[][] = [];
   return Parsed { ok: false, table: Table { rows: none }, err: why };
 }
 
-// A character-at-a-time reader, which is the only way to get embedded
-// newlines right: inside quotes a newline is data, outside it ends the row.
 function from_csv(text: string): Parsed {
   let rows: string[][] = [];
   let row: string[] = [];
   let buf: u8[] = [];
   let in_quotes: boolean = false;
-  let any: boolean = false;  // has anything been read for the current row?
+  let any: boolean = false;
   let i: i32 = 0;
   while (i < text.len()) {
     let c: u8 = text[i];
     if (in_quotes) {
       if (c == 34) {
-        // A doubled quote is one literal quote; a lone one closes.
         if (i + 1 < text.len() && text[i + 1] == 34) {
           buf = buf.append(34);
           i = i + 1;
@@ -145,7 +97,6 @@ function from_csv(text: string): Parsed {
         row = [];
         any = false;
       } else if (c == 13) {
-        // A CR before LF is line-ending noise, not data.
         if (!(i + 1 < text.len() && text[i + 1] == 10)) {
           buf = buf.append(c);
         }
@@ -159,15 +110,12 @@ function from_csv(text: string): Parsed {
   if (in_quotes) {
     return fail_parse("unterminated quoted field");
   }
-  // A trailing newline ends the last row rather than starting an empty one.
   if (any || buf.len() > 0 || row.len() > 0) {
     row = row.append(string_from_bytes_unchecked(buf));
     rows = rows.append(row);
   }
   return Parsed { ok: true, table: Table { rows: rows }, err: "" };
 }
-
-// ------------------------------------------------------------------ JSON
 
 function json_escape(s: string): string {
   let buf: u8[] = [];
@@ -197,7 +145,6 @@ function json_escape(s: string): string {
   return string_from_bytes_unchecked(buf);
 }
 
-// An array of objects, keyed by the header row.
 function to_json(t: Table): string {
   if (t.rows.len() == 0) {
     return "[]";
@@ -228,9 +175,6 @@ function to_json(t: Table): string {
   return out + "]";
 }
 
-// A minimal reader for exactly the JSON `to_json` emits: an array of objects
-// of string-to-string. It exists to VALIDATE — a converter that emits a
-// plausible string with an unescaped quote fails here rather than downstream.
 struct JsonRead { ok: boolean, values: string[], err: string }
 
 function json_string_at(s: string, at: i32): JsonRead {
@@ -273,9 +217,6 @@ function json_string_at(s: string, at: i32): JsonRead {
   return JsonRead { ok: false, values: none, err: "unterminated string" };
 }
 
-// Read the whole document into a flat list of alternating key, value strings
-// per object, with "{" and "}" markers, which is enough to compare against
-// the table without building a tree.
 function json_flatten(s: string): JsonRead {
   let none: string[] = [];
   let out: string[] = [];
@@ -340,9 +281,6 @@ function json_flatten(s: string): JsonRead {
   return JsonRead { ok: true, values: out, err: "" };
 }
 
-// ---------------------------------------------------------------- corpus
-
-// The cell values that break naive parsers, plus ordinary ones for contrast.
 function nasty_cells(): string[] {
   return [
     "plain", "", "a,b", "say \"hi\"", "line1\nline2", " lead", "trail ",
@@ -391,10 +329,6 @@ function show_table(t: Table): string {
   return out;
 }
 
-// Every awkward cell at every position of a 2x2 table: 11^1 choices at one
-// position against a fixed background, four positions, plus the all-same
-// tables. Enough combinations that the interesting interactions (a quote
-// beside a comma, a newline beside an empty) actually occur.
 function generated_tables(): Table[] {
   let cells: string[] = nasty_cells();
   let out: Table[] = [];
@@ -422,9 +356,6 @@ function generated_tables(): Table[] {
   return out;
 }
 
-// ----------------------------------------------------------------- tests
-
-// The claim, carried out: serialise, parse, compare cell for cell.
 function test_every_table_round_trips(): test.TestOutcome {
   let ts: Table[] = generated_tables();
   let checked: i32 = 0;
@@ -449,8 +380,6 @@ function test_every_table_round_trips(): test.TestOutcome {
   return test.pass();
 }
 
-// The generator is essential, so assert it produced the shapes it claims:
-// a cell with a comma, one with a quote, one with a newline, and an empty one.
 function test_the_sweep_covers_the_nasty_shapes(): test.TestOutcome {
   let ts: Table[] = generated_tables();
   let saw_comma: boolean = false;
@@ -501,8 +430,6 @@ function test_the_sweep_covers_the_nasty_shapes(): test.TestOutcome {
   return test.pass();
 }
 
-// Shape, not just content: every row has the header's width. A parser that
-// drops or merges a row is caught here even when its cells are right.
 function test_the_parsed_shape_matches(): test.TestOutcome {
   let ts: Table[] = generated_tables();
   let i: i32 = 0;
@@ -531,7 +458,6 @@ function test_the_parsed_shape_matches(): test.TestOutcome {
   return test.pass();
 }
 
-// The JSON must PARSE, and read back the values the table holds.
 function test_the_json_parses_and_matches(): test.TestOutcome {
   let ts: Table[] = generated_tables();
   let i: i32 = 0;
@@ -542,7 +468,6 @@ function test_the_json_parses_and_matches(): test.TestOutcome {
       return test.fail("table " + i.to_string() + " produced JSON that does not "
         + "parse (" + read.err + "): " + j);
     }
-    // One object per data row, each with the header's fields.
     let head: string[] = ts[i].rows[0];
     let want: string[] = [];
     let r: i32 = 1;
@@ -578,7 +503,6 @@ function test_the_json_parses_and_matches(): test.TestOutcome {
   return test.pass();
 }
 
-// Quoting is applied exactly when it is needed — not always, and not never.
 function test_quoting_is_applied_exactly_when_needed(): test.TestOutcome {
   let plain: Table = Table { rows: [["a", "b"]] };
   if (to_csv(plain) != "a,b") {
@@ -599,9 +523,6 @@ function test_quoting_is_applied_exactly_when_needed(): test.TestOutcome {
   return test.pass();
 }
 
-// Input a naive parser gets wrong, read directly rather than round-tripped —
-// so the parser is pinned against hand-written CSV, not only against its own
-// serialiser.
 function test_hand_written_csv_parses_correctly(): test.TestOutcome {
   let p: Parsed = from_csv("name,note\n\"Smith, John\",\"he said \"\"hi\"\"\"\n\"two\nlines\",plain");
   if (!p.ok) {
@@ -622,7 +543,6 @@ function test_hand_written_csv_parses_correctly(): test.TestOutcome {
   return test.pass();
 }
 
-// The stated trailing-newline rule, and the malformed case.
 function test_trailing_newline_and_unterminated_quotes(): test.TestOutcome {
   let without: Parsed = from_csv("a,b\nc,d");
   let with_nl: Parsed = from_csv("a,b\nc,d\n");

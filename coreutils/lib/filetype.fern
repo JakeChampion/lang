@@ -1,15 +1,3 @@
-// coreutils/lib/filetype.fern — st_mode's TYPE half: the S_IFMT kinds,
-// the predicates over them, and the three renderings the utilities here
-// print.
-//
-// Five files held a private `s_ifmt` beside a private `is_dir_mode` and
-// `is_link_mode`, and two of them held the same eight-way word table;
-// `ls -l`, `stat %A` and `stat %F` are the renderings. One copy each.
-//
-// The numbers are the kernel's and are the same on every target Fern
-// builds for — Linux, Darwin and WASI all inherit the historical octal
-// layout — so they are constants rather than a per-OS table.
-// S_IFMT: the four bits of `mode` that name the kind.
 pub function s_ifmt(): u32 {
   return 0xf000 as u32;
 }
@@ -42,7 +30,6 @@ pub function s_ifsock(): u32 {
   return 0xc000 as u32;
 }
 
-// The kind alone, for a caller comparing two modes or switching on one.
 pub function kind(mode: u32): u32 {
   return mode & s_ifmt();
 }
@@ -75,10 +62,6 @@ pub function is_sock(mode: u32): boolean {
   return kind(mode) == s_ifsock();
 }
 
-// `type_name(mode, size)` — what a diagnostic calls the file: `stat %F`
-// prints it and `rm -i` asks about it. An empty regular file is its own
-// word, which is why the size is an argument; `weird file` is the kind
-// the kernel grew after this was written.
 pub function type_name(mode: u32, size: i64): string {
   let t: u32 = kind(mode);
   if (t == s_ifreg()) {
@@ -108,8 +91,6 @@ pub function type_name(mode: u32, size: i64): string {
   return "weird file";
 }
 
-// The letter that leads `ls -l`'s mode column and `stat %A`. `?` for a
-// kind with no letter, which is what the C library prints too.
 pub function type_letter(mode: u32): string {
   let h: usize = buf_new(1);
   buf_push_byte(h, type_letter_byte(mode));
@@ -144,15 +125,6 @@ function type_letter_byte(mode: u32): i32 {
   return 63;
 }
 
-// One rwx triple, appended as three BYTES to a capacity-carrying
-// buffer. `extra` is the setuid / setgid / sticky bit for this triple
-// and `hi` / `lo` the letters it takes when the execute bit is set and
-// when it is not.
-//
-// Bytes rather than strings because `ls -l` calls this three times per
-// ENTRY: the string form allocated four times per triple and twelve
-// times per line, and an array of bytes grown one at a time
-// reallocates four times.
 function push_triple(h: usize, mode: u32, shift: i32, extra: u32, hi: i32, lo: i32): void {
   let bits: u32 = mode >> shift as u32 & 7 as u32;
   if ((bits & 4 as u32) != 0 as u32) {
@@ -179,9 +151,6 @@ function push_triple(h: usize, mode: u32, shift: i32, extra: u32, hi: i32, lo: i
   buf_push_byte(h, x);
 }
 
-// `mode_string(mode)` — the ten-character `drwxr-xr-x`: the kind letter
-// and three rwx triples, each of which can carry the special bit that
-// shares its execute position.
 pub function mode_string(mode: u32): string {
   let h: usize = buf_new(10);
   buf_push_byte(h, type_letter_byte(mode));

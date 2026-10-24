@@ -1,28 +1,3 @@
-// compiler/cover.fern — `fern -cover` line and branch coverage
-// (#5548, #11140): the self-host's port of native's ast.CoverEnabled.
-//
-// A source pass over the checked module. Every statement that starts a new
-// source line is preceded by `__fern_cov_hit(k)`, which bumps counter k, and
-// every conditional gets a pair: E, bumped when it is evaluated, and T, bumped
-// when it takes its true edge. The false edge is E − T, which is how a
-// one-armed `if` reports the arm its source never wrote. `if (c)` and
-// `while (c)` become `hit(E) && c` with `hit(T)` opening the body; `a && b`
-// becomes `(hit(E) && a) && (hit(T) && b)`; and `a || b` becomes
-// `(hit(E) && a && hit(T)) || b`, whose T counts the short-circuit, as
-// native's does.
-//
-// Counters live in a table allocated on the first hit, reached through
-// `__raw_cover()`, the address of the one `.bss` word holding the table's
-// address. `__fern_cov_report` writes one stderr line per counter at both exit
-// seams, `main`'s return and each `exit(…)` statement:
-//
-//   fern-cover: FILE:LINE COUNT
-//   fern-branch: FILE:LINE:COL E|T COUNT
-//
-// The pass runs before the tree shake, so a function nothing calls keeps its
-// rows and reports 0. A conditional's COL is where its condition starts, or
-// the operator of an `&&` / `||`.
-
 import "./ast";
 import "./astwalk";
 import "./lexer";
@@ -30,19 +5,10 @@ import "./parser";
 import "./util";
 import "./asmcore";
 
-// Ctx is what a site's report text needs: the display path of each module
-// (`util.pos_file`) and the entry's.
 struct Ctx { files: string[], entry: string }
 
-// Tab is the counter table: each counter's report text, in counter order,
-// chained by hash through head/next.
 struct Tab { keys: string[], head: i32[], next: i32[] }
 
-// instrument rewrites every function body of `mod`, appends the helpers the
-// rewritten bodies call, and wraps `main` so it reports on return. It runs in
-// three passes: the rewrite marks each site with its report text, a fold
-// collects the texts, which are numbered in first-seen order, and a map swaps
-// each text for its number.
 pub function instrument(mod: parser.Module, files: string[], entry: string): parser.Module {
   let m: parser.Module = asmcore.synth_script_main(mod);
   let ret: string = main_ret(m);
@@ -78,9 +44,6 @@ pub function instrument(mod: parser.Module, files: string[], entry: string): par
   return parser.Module { ...m, funcs: funcs };
 }
 
-// main_ret is `main`'s declared result, "" when it declares none and "-" when
-// the module has no `main`. A `main` of any other result is not wrapped, and
-// reports only at an `exit(…)`.
 function main_ret(m: parser.Module): string {
   for f in m.funcs {
     if (f.name == "main" && f.receiver_type == "") {
@@ -90,9 +53,6 @@ function main_ret(m: parser.Module): string {
   return "-";
 }
 
-// ---- the table -----------------------------------------------------------
-
-// table numbers the distinct texts of `seen` in first-seen order.
 function table(seen: string[]): Tab {
   let head: i32[] = [];
   while (head.len() < 16381) {
@@ -115,7 +75,6 @@ function table(seen: string[]): Tab {
   return Tab { keys: keys, head: head, next: next };
 }
 
-// find is key's counter, or -1.
 function find(t: Tab, key: string): i32 {
   let i: i32 = t.head[util.hash_bucket(key, t.head.len())];
   while (i >= 0) {
@@ -127,7 +86,6 @@ function find(t: Tab, key: string): i32 {
   return 0 - 1;
 }
 
-// site_key is the text of a marked site, `__fern_cov_hit("…")`, or "".
 function site_key(e: ast.Expr): string {
   match (e) {
     ast.ExprCall(c) => {
@@ -173,8 +131,6 @@ function number_site(e: ast.Expr, t: Tab): ast.Expr {
   return ast.ExprCall { callee: ast.ExprIdent { name: "__fern_cov_hit", line: 0, col: 0, ty: "" }, args: [n], line: 0, col: 0, type_args: [], ty: "" };
 }
 
-// ---- the rewrite ---------------------------------------------------------
-
 function file_of(c: Ctx, line: i32): string {
   let f: string = util.pos_file(c.files, line);
   if (f == "") {
@@ -187,13 +143,10 @@ function line_key(c: Ctx, line: i32): string {
   return "fern-cover: " + file_of(c, line) + ":" + util.i32_to_string(util.pos_line(line)) + " ";
 }
 
-// branch_key is a conditional's E or T counter text.
 function branch_key(c: Ctx, line: i32, col: i32, edge: string): string {
   return "fern-branch: " + file_of(c, line) + ":" + util.i32_to_string(util.pos_line(line)) + ":" + util.i32_to_string(col) + " " + edge + " ";
 }
 
-// hit marks a site with its report text; number_site later swaps the text
-// for the counter's number.
 function hit(key: string): ast.Expr {
   let k: ast.Expr = ast.ExprString { value: key, line: 0, col: 0 };
   return ast.ExprCall { callee: ast.ExprIdent { name: "__fern_cov_hit", line: 0, col: 0, ty: "" }, args: [k], line: 0, col: 0, type_args: [], ty: "" };
@@ -212,11 +165,6 @@ function report_stmt(): ast.Stmt {
   return ast.StmtExpr { value: ast.ExprCall { callee: ast.ExprIdent { name: "__fern_cov_report", line: 0, col: 0, ty: "" }, args: none, line: 0, col: 0, type_args: [], ty: "" }, line: 0 };
 }
 
-// cover_stmts instruments one statement list. A statement counts its line
-// unless the statement before it in the list already counted that line; a
-// nested list starts afresh, and so does whatever follows a statement that
-// transfers control. `exprs` is false for a lambda body, whose expressions
-// the expression walk has already rewritten.
 function cover_stmts(stmts: ast.Stmt[], c: Ctx, exprs: boolean): ast.Stmt[] {
   let out: ast.Stmt[] = [];
   let last: i32 = 0;
@@ -266,7 +214,6 @@ function transfers(st: ast.Stmt): boolean {
   }
 }
 
-// is_exit is a statement calling the `exit` builtin, the second exit seam.
 function is_exit(st: ast.Stmt): boolean {
   match (st) {
     ast.StmtExpr(x) => {
@@ -292,7 +239,6 @@ function is_exit(st: ast.Stmt): boolean {
   }
 }
 
-// guarded instruments a conditional statement's condition: `hit(E) && cond`.
 function guarded(cond: ast.Expr, c: Ctx, line: i32, exprs: boolean): ast.Expr {
   let e: ast.Expr = cond;
   if (exprs) {
@@ -301,7 +247,6 @@ function guarded(cond: ast.Expr, c: Ctx, line: i32, exprs: boolean): ast.Expr {
   return and(hit(branch_key(c, line, start_col(cond), "E")), e);
 }
 
-// opened puts a conditional's T counter at the top of the arm it guards.
 function opened(key: string, body: ast.Stmt[]): ast.Stmt[] {
   let out: ast.Stmt[] = [hit_stmt(key)];
   for st in body {
@@ -379,7 +324,6 @@ function literal_true(e: ast.Expr): boolean {
   }
 }
 
-// start_col is the column a condition starts at: its leftmost operand's.
 function start_col(e: ast.Expr): i32 {
   match (e) {
     ast.ExprBinary(b) => {
@@ -412,9 +356,6 @@ function start_col(e: ast.Expr): i32 {
   }
 }
 
-// cover_expr rewrites the two short-circuit operators, which are
-// conditionals, and gives a lambda's body its statement counters. The walk
-// is bottom-up, so each node arrives with its operands already rewritten.
 function cover_expr(e: ast.Expr, c: Ctx): ast.Expr {
   function visit(x: ast.Expr): ast.Expr {
     return cover_node(x, c);
@@ -444,9 +385,6 @@ function cover_node(e: ast.Expr, c: Ctx): ast.Expr {
   }
 }
 
-// ---- the helpers ---------------------------------------------------------
-
-// escaped spells `s` inside a Fern string literal.
 function escaped(s: string): string {
   let parts: string[] = [];
   let from: i32 = 0;
@@ -463,11 +401,6 @@ function escaped(s: string): string {
   return util.str_join_chunks(parts);
 }
 
-// helper_source is the Fern the rewritten bodies call: the counter bump, the
-// report over `keys` in counter order, and, when the module has a `main`, the
-// wrapper that reports once it returns. `ret` is main's declared result. The
-// report's texts are one literal, a line each, so a program with a hundred
-// thousand counters still compiles one string rather than an array of them.
 function helper_source(keys: string[], ret: string): string {
   let n: string = util.i32_to_string(keys.len());
   let lines: string[] = [];

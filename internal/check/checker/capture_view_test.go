@@ -5,11 +5,6 @@ import (
 	"testing"
 )
 
-// E082: a closure may not capture a value holding a borrowed view, whether
-// the view is bare or reached through a record, tuple, enum payload, Option
-// or array, and whether the closure is an arrow, a nested function or a `use`
-// callback. A generic body instantiated at `str` is refused when
-// monomorphisation re-checks the instance (gates).
 func TestCaptureViewRejected(t *testing.T) {
 	for name, src := range map[string]string{
 		"str parameter":   `function f(sep: str): i32 { let g = (): i32 => sep.len(); return g(); }`,
@@ -34,8 +29,6 @@ func TestCaptureViewRejected(t *testing.T) {
 	}
 }
 
-// A closure over an owned copy, a view reached without a closure, and a
-// lambda parameter that shadows a view all stay accepted.
 func TestCaptureViewAccepted(t *testing.T) {
 	for name, src := range map[string]string{
 		"owned copy":         `function f(sep: str): i32 { let owned: string = sep + ""; let g = (): i32 => owned.len(); return g(); }`,

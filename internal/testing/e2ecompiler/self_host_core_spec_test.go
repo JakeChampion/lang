@@ -1,3 +1,4 @@
+// CI-DARK: FERN_UPDATE_GOLDEN — This flag regenerates the reference data.
 package e2ecompiler
 
 import (
@@ -15,12 +16,6 @@ const (
 	coreSpecEnd   = "<!-- END ir_effects_run -->\n"
 )
 
-// TestSelfHostCoreSpecMatchesTheIR pins spec/core.md's instruction table to
-// compiler/ir.fern: ir_effects_run prints one row per registered op kind from
-// the same op_pops / op_pushes the verifier and the backends read, and the
-// table between the markers must be exactly that output. A new op without a
-// row, a row for a retired op, or an effect the table misstates all fail.
-// FERN_UPDATE_GOLDEN=1 rewrites the table from the driver.
 func TestSelfHostCoreSpecMatchesTheIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -47,7 +42,6 @@ func TestSelfHostCoreSpecMatchesTheIR(t *testing.T) {
 	if got == want {
 		return
 	}
-	// CI-DARK: FERN_UPDATE_GOLDEN — a regeneration tool, not coverage.
 	if envflag.On("FERN_UPDATE_GOLDEN") {
 		updated := spec[:begin+len(coreSpecBegin)] + want + spec[end:]
 		if err := os.WriteFile(filepath.Clean(coreSpecPath), []byte(updated), 0o644); err != nil {

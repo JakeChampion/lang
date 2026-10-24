@@ -2,12 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/string.swap_case — toggle the case of every
-// ASCII letter (A-Z <-> a-z), passing digits / punctuation / non-ASCII through
-// unchanged (Python's str.swapcase, ASCII-only). Exercises mixed case, all-upper
-// / all-lower, non-letters, empty, and the involution (swap twice == original).
-// Returns 42 iff every check holds across interp / x86-64 / wasm / arm64; each
-// leg skips itself when its toolchain is absent.
 const stringSwapCaseProg = `
 import "std/string";
 function main(): i32 {

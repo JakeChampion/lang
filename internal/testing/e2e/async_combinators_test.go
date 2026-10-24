@@ -11,17 +11,6 @@ import (
 	"time"
 )
 
-// std/async is the supported structured-concurrency surface
-// (docs/ASYNC-REDESIGN.md): `gather` / `race` / `with_deadline` over a
-// portable `Future[T]`, replacing the `concurrent`/`await`/`race`
-// keyword surface. These two tests pin (1) the combinators are portable
-// — a fan-out of already-`Ready` futures resolves on interp + wasm —
-// and (2) `Pending` futures drive REAL overlapping socket I/O on the
-// native backends through `gather` and `race`.
-
-// Portable: gather/race/with_deadline over Ready futures resolve on
-// interp (exit 42) and the program compiles on wasm. No real I/O — this
-// is the backend-agnostic combinator contract.
 func TestAsyncCombinatorsPortable(t *testing.T) {
 	bin := buildFernCLI(t)
 	const src = `import "std/async";
@@ -60,13 +49,6 @@ function main(): i32 {
 	})
 }
 
-// Native real I/O: two parallel tcp_connect fetches expressed as
-// `Pending` futures and driven through `async.gather` (await-all) and
-// `async.race` (first-wins) over real sockets. The combinator surface
-// overlapping real descriptors on one thread — the edge-handler
-// fan-out, now through the redesign's supported API rather than the
-// hand-rolled reactor. A Go upstream answers both connections; exit 42
-// iff the combinator returned the expected result(s).
 func TestAsyncCombinatorsRealFd(t *testing.T) {
 	bin := buildFernCLI(t)
 
@@ -166,7 +148,7 @@ function main(): i32 {
 		for _, be := range backends {
 			be := be
 			t.Run(p.name+"/"+be.target, func(t *testing.T) {
-				qemu := be.qemu(t) // skips if no runner
+				qemu := be.qemu(t)
 				out := filepath.Join(dir, p.name+"_"+be.target+".bin")
 				if o, err := exec.Command(bin, "-target", be.target, "-o", out, srcPath).CombinedOutput(); err != nil {
 					t.Fatalf("build failed: %v\n%s", err, o)

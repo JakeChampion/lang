@@ -2,13 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/i64's abs_diff (absolute difference, the wider
-// counterpart to i32.abs_diff) and the range predicates is_in_range (half-open
-// [lo, hi)) / is_between (inclusive [lo, hi]) — parity with std/i32. Uses values
-// past the i32 range so the i64 width is genuinely exercised. Returns 42 iff
-// every check holds across interp / x86-64 / wasm / arm64; each leg skips itself
-// when its toolchain is absent. All results are i64 / boolean (no Option[i64]),
-// so the wasmbin enum-i64 gap does not apply.
 const i64AbsDiffRangeProg = `
 import "std/i64";
 function main(): i32 {

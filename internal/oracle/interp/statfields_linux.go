@@ -9,14 +9,8 @@ import (
 	"unsafe"
 )
 
-// sysStatx is statx(2): x86-64's own table numbers it 332, the
-// asm-generic one (arm64, riscv64) 291. `syscall` predates it.
 var sysStatx = map[bool]uintptr{true: 332, false: 291}[runtime.GOARCH == "amd64"]
 
-// statFields projects Linux's `struct stat` onto rawStat, and asks statx(2)
-// for the birth time `struct stat` has no field for. Every field is present
-// here, so nothing is left at its zero value except for a FileInfo that did
-// not come from the OS at all, or a filesystem that records no birth time.
 func statFields(info os.FileInfo, at statOrigin) rawStat {
 	st, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
@@ -46,8 +40,6 @@ func statFields(info os.FileInfo, at statOrigin) rawStat {
 
 type birth struct{ sec, nsec int64 }
 
-// birthTime is statx(2)'s stx_btime for what `at` names, or zero when the
-// filesystem does not record one (STATX_BTIME clear in stx_mask).
 func birthTime(at statOrigin) birth {
 	const (
 		statxBtime      = 0x800

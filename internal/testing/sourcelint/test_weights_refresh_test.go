@@ -8,7 +8,6 @@ import (
 	"testing"
 )
 
-// tree seeds a source tree defining the named tests, for FERN_WEIGHT_TREE.
 func tree(t *testing.T, names ...string) string {
 	t.Helper()
 	var b strings.Builder
@@ -38,10 +37,6 @@ func TestCITestWeightsRefreshUsesIndependentRuns(t *testing.T) {
 	}
 }
 
-// The runs predate the tree the table is for: a measured test deleted since,
-// or a declared one, gets no row (the weights file's lookup is exact and the
-// testname gate rejects a name nothing answers to), and the drop is reported
-// for the rows the table would otherwise have held.
 func TestCITestWeightsRefreshDropsTestsTheTreeNoLongerHas(t *testing.T) {
 	env := []string{tree(t, "TestKept", "TestWeightOne")}
 	weights := weightsFile(t, "TestKept 5\nTestRetired 40\n")
@@ -95,8 +90,6 @@ func TestCITestWeightsRefreshRequiresDistinctRunDirectories(t *testing.T) {
 	}
 }
 
-// merge is one run's refresh input printed from its shard artifacts: the
-// slowest observation of each test, sorted, in the row format refresh reads.
 func TestCITestWeightsMergeKeepsTheSlowestObservation(t *testing.T) {
 	run := seed(t, map[string]string{
 		"shard0.timings": "TestFaster\t100.10\nTestSlower\t12.1\nTestOnce\t2\n",
@@ -108,7 +101,6 @@ func TestCITestWeightsMergeKeepsTheSlowestObservation(t *testing.T) {
 		t.Fatalf("merge = %d, %q; want %q", code, out, want)
 	}
 
-	// The printed rows stand in for the run's artifacts.
 	weights := weightsFile(t, "TestFaster 600\nTestSlower 3\n")
 	saved := seed(t, map[string]string{"run.timings": out})
 	other := seed(t, map[string]string{"shard0.timings": "TestFaster\t120.9\nTestSlower\t8\n"})
@@ -133,11 +125,6 @@ func TestCITestWeightsMergeKeepsTheSlowestObservation(t *testing.T) {
 	}
 }
 
-// The verify job prints the merged durations into its log, where a run's
-// evidence outlives the artifacts' retention (docs/CI-WEIGHT-REFRESH.md). The
-// step's conditions are the feature: it has to run on a red run, whose
-// durations are the ones worth keeping, and a merge of no artifacts must not
-// red the lane.
 func TestSelfHostVerifyJobPrintsTheMergedDurations(t *testing.T) {
 	wf, err := os.ReadFile(filepath.Join("..", "..", "..", ".github", "workflows", "test-e2e-selfhost.yml"))
 	if err != nil {

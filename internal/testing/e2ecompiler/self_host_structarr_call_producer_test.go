@@ -2,13 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// #8609: a producer of a struct array registered under STRUCTARRF: /
-// ARRSTRUCTF: only when every element was a struct LITERAL. One whose elements
-// are calls to a strict-fresh producer (`[mkop(0), …]`, `pre.append(mkop(i))`)
-// registered nothing, so `let v: Op[] = three()` took the shallow buffer dec
-// and stranded every element box, although the store rule already admitted the
-// same call as a fresh element. Both element classes are covered: scalar-field
-// structs and structs with an array field (the deep walk).
 var structArrCallProducerCases = []struct{ name, src string }{
 	{"literal-of-calls", `struct Op { a: i32, b: i32 }
 function mkop(i: i32): Op { return Op { a: i, b: i + 1 }; }

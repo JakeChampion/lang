@@ -1,15 +1,15 @@
-// A literal in a variant payload slot TESTS the payload; it does not bind it.
-//
-// The self-host parser used to drop a non-identifier payload token on the
-// floor, so `Sm(0)` became a bare `Sm` arm that matched every payload and
-// returned the first arm's answer for every value. Native said 2 and the
-// self-host binary said 1 on the two-arm shape below, and nothing noticed:
-// no case in this corpus wrote the form, and this corpus is the only one that
-// runs the self-host on all three targets.
-//
-// Both compilers desugar the slot to a synthetic binder plus a guard, so the
-// arms below also pin that a FAILING implied guard falls through to the next
-// arm rather than ending the match.
+
+
+
+
+
+
+
+
+
+
+
+
 
 import "std/i32";
 
@@ -19,7 +19,7 @@ enum Nest2 { Wrap(Res2), Bare }
 enum Pair2 { Pr(i32, i32), Non }
 enum Msg { Txt(string), Num(i32) }
 
-// The main case: a literal slot beside a binding slot on the same variant.
+
 function classify(o: Opt2): string {
     match (o) {
         Sm(0) => { return "zero"; },
@@ -28,8 +28,8 @@ function classify(o: Opt2): string {
     }
 }
 
-// A literal at slot 0 with a binder after it — the literal must not consume
-// the second slot's position.
+
+
 function pair_of(p: Pair2): i32 {
     match (p) {
         Pr(1, y) => { return 100 + y; },
@@ -38,7 +38,7 @@ function pair_of(p: Pair2): i32 {
     }
 }
 
-// String and negative-number literals reach the same path as a plain integer.
+
 function describe(m: Msg): string {
     match (m) {
         Txt("hi") => { return "greeting"; },
@@ -48,9 +48,9 @@ function describe(m: Msg): string {
     }
 }
 
-// A literal inside a NESTED slot belongs to the inner match the desugar
-// builds, not to the outer arm — a distinction that is invisible until the
-// outer variant has a second arm forcing the merge.
+
+
+
 function unwrap(w: Nest2): i32 {
     match (w) {
         Wrap(Ok2(0)) => { return 40; },
@@ -60,7 +60,7 @@ function unwrap(w: Nest2): i32 {
     }
 }
 
-// The same form at a second binding site, and alongside a written guard.
+
 function via_if_let(o: Opt2): i32 {
     if let Sm(0) = o { return 60; }
     return 61;

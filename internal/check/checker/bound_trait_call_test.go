@@ -19,7 +19,6 @@ function main(): i32 { return 0; }`)
 			}
 		})
 	}
-	// The method's inference must not make the enclosing receiver concrete.
 	err := checkSource(t, `trait Cfg { function keep[U](self: Self, x: U): Self { return self; } }
 function f[P: Cfg](c: P): string { return c.keep(2); }
 function main(): i32 { return 0; }`)

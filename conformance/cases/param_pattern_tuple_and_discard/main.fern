@@ -1,8 +1,8 @@
-// A destructuring parameter reads the shared pattern grammar (#5356): struct
-// patterns (with rename and `..`), tuples, and `w @ PAT`.
-//
-// The tuple form parameters already had, unchanged — including the
-// `_` discard element.
+
+
+
+
+
 function f((a, b): (i32, i32)): i32 { return a * 10 + b; }
 function g((a, _): (i32, i32)): i32 { return a; }
 function main(): i32 { return f((3, 4)) + g((5, 9)); }

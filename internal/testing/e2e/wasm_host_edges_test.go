@@ -11,9 +11,6 @@ import (
 	"testing"
 )
 
-// `exit(n)` reaches a preview-2 host through wasi:cli/exit, whose
-// argument is a `result<_, _>`: one bit. Every non-zero code is that
-// bit, and the output written before the call is not lost.
 func TestWASMExitCodeCollapsesToOne(t *testing.T) {
 	for _, c := range []struct{ code, want int }{{0, 0}, {1, 1}, {3, 1}, {125, 1}} {
 		src := fmt.Sprintf(`function main(): i32 {
@@ -31,10 +28,6 @@ func TestWASMExitCodeCollapsesToOne(t *testing.T) {
 	}
 }
 
-// A host that preopens no directory leaves every path operation with
-// nothing to resolve against. The answer is NotFound, the same as a
-// path that is not there, rather than a trap on a handle the host
-// never issued.
 func TestWASMNoPreopenIsNotFound(t *testing.T) {
 	src := `function say(op: string, e: IoError): void {
     match (e) {
@@ -77,17 +70,11 @@ function main(): i32 {
 			t.Errorf("%s without a preopen: want NotFound, stdout:\n%s", op, stdout)
 		}
 	}
-	// remove_dir_all ignores a path that is not there, and with no
-	// directory to look in nothing is.
 	if !strings.Contains(stdout, "remove_dir_all ok\n") {
 		t.Errorf("remove_dir_all without a preopen: want ok, stdout:\n%s", stdout)
 	}
 }
 
-// A write that fails is an error on the preview 1 command module too. Its
-// write_file dropped fd_write's errno, so a full device answered Ok over a
-// short file where the component and native answer Err. Preopening /dev hands
-// the guest /dev/full, whose every write fails with ENOSPC (#10813).
 func TestWASMCommandModuleWriteFileReportsFullDevice(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("/dev/full is a Linux device")

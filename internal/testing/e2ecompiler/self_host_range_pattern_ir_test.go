@@ -7,15 +7,6 @@ import (
 	"testing"
 )
 
-// Range match patterns on the self-host compiler (#5355). The self-host
-// parser gained the same range-pattern support as the native front-end
-// (#5406): a scalar arm `lo..hi` / `lo..=hi` desugars (in build_literal_match,
-// at parse time) to a bound test `scrut >= lo && scrut <op> hi` in the
-// literal-match if-chain — so the checker and codegen see only ordinary
-// comparisons. These cases build the self-host x86-64 driver and assert the
-// compiled binary agrees with the interpreter oracle. Scope matches the
-// native side: signed-integer scrutinees (unsigned is rejected by the
-// checker for now).
 var selfHostRangePatternCases = []struct {
 	name string
 	main string
@@ -62,9 +53,6 @@ function main(): i32 { return cls(0) * 10 + cls(5) + cls(50); }`},
 function main(): i32 { return cls(4) * 100 + cls(5) * 10 + cls(200); }`},
 }
 
-// TestSelfHostRangePatternX86_64 builds the self-host x86-64 driver and
-// checks each range-pattern program's compiled exit code against the
-// interpreter oracle.
 func TestSelfHostRangePatternX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)

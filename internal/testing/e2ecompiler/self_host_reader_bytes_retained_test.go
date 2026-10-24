@@ -38,7 +38,6 @@ func TestSelfHostReaderBytesRetainedShortReads(t *testing.T) {
 				}
 				slotBytes := 1
 				if target.target == "wasm32-wasi" {
-					// Primary WASM arrays have one four-byte slot per byte.
 					slotBytes = 4
 				}
 				source := e2eharness.ReaderBytesRetainedProgram(tc.request, slotBytes, 64, tc.sanitize)

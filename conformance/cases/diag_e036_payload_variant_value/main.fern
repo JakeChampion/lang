@@ -1,7 +1,7 @@
-// A variant that carries a payload is a constructor, not a value: read
-// without a call it is E036, bare or qualified, declared here or imported,
-// and for the built-in Some / Ok / Err alike. A payload-less variant stands
-// as a value.
+
+
+
+
 import "./shapes";
 
 enum Token { Num(i32), Pair(i32, i32), End }

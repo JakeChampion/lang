@@ -12,36 +12,14 @@ import (
 	"github.com/jakechampion/lang/internal/pkg/modload"
 )
 
-// TestSelfHostCheckerModloadX86_64 exercises the file-based checker driver
-// (checker_modload_run.fern) — the import-driven successor to the
-// checker_codes_bundle_run `///MODULE`-marker driver. It builds the driver,
-// then points it at a 2-module program on disk: `main` imports `./a` and
-// uses a.helper()'s i32 result as an `if` condition. The driver must
-// resolve the import through the shared ./modloader, run the self-hosted
-// checker over the merged module, print the diagnostic codes, and exit 1.
-// The deliberate non-boolean condition is E008; cross-module resolution is
-// what lets the checker know a.helper() is an i32 in the first place.
-// buildCheckerModloadDriverX86 builds the file-based checker driver
-// (checker_modload_run) as an x86 host binary — the import-driven successor
-// to checker_codes_bundle_run.
 func buildCheckerModloadDriverX86(t *testing.T) (gcc string, runner []string, driverBin string) {
 	t.Helper()
 	gcc, runner = x86_64Tooling(t)
 	dir := t.TempDir()
-	// The driver's own import closure, derived rather than listed: a
-	// hand-written list goes stale the moment a module gains an import, and
-	// the missing source is silently omitted from the build-cache key.
 	copySelfHostDriver(t, dir, "drivers/checker_modload_run.fern")
 	return gcc, runner, buildSelfHostBin(t, gcc, dir, "drivers/checker_modload_run.fern", "ckdriver")
 }
 
-// checkSourceModload resolves `entrySrc`'s full stdlib closure (real Go
-// modload, like selfHostBundleFor), vendors it as a std/ and core/ tree next
-// to main.fern + builtins.fern, runs the file-based
-// checker driver, and returns its stdout (one `CODE\tMESSAGE` line per
-// diagnostic). The
-// driver exits 1 when diagnostics are emitted, so the non-zero exit is
-// tolerated.
 func checkSourceModload(t *testing.T, runner []string, driverBin, entrySrc string) string {
 	t.Helper()
 	_, srcs, err := modload.LoadSource(entrySrc)
@@ -51,9 +29,6 @@ func checkSourceModload(t *testing.T, runner []string, driverBin, entrySrc strin
 	return checkLoadedModload(t, runner, driverBin, "/__fern_source__/main.fern", entrySrc, srcs)
 }
 
-// checkFileModload is checkSourceModload for a program on disk, whose own
-// modules (`import "./lib"`) load with it and vendor at the same place
-// relative to main.fern.
 func checkFileModload(t *testing.T, runner []string, driverBin, entryPath string) string {
 	t.Helper()
 	_, srcs, err := modload.Load(entryPath)
@@ -67,9 +42,6 @@ func checkFileModload(t *testing.T, runner []string, driverBin, entryPath string
 	return checkLoadedModload(t, runner, driverBin, entryPath, string(entrySrc), srcs)
 }
 
-// checkLoadedModload vendors a loaded module closure beside the entry, each
-// module where its import resolves from there, and runs the file-based checker
-// driver over it.
 func checkLoadedModload(t *testing.T, runner []string, driverBin, entryPath, entrySrc string, srcs map[string]string) string {
 	t.Helper()
 	progDir := t.TempDir()
@@ -113,15 +85,6 @@ func checkLoadedModload(t *testing.T, runner []string, driverBin, entryPath, ent
 	return runCheckerDriver(t, cmd, "checkSourceModload")
 }
 
-// The checker drivers answer with an exit status as well as stdout: 0 clean, 1
-// diagnostics emitted. checker_modload_run.fern returns 2 and 3 on its own bail
-// paths, and a signal death arrives negative.
-//
-// The differential call sites turn stdout into a code SET, where EMPTY means
-// "no diagnostics" — so a driver that dies before printing reads as a clean
-// check and surfaces as a code disagreement blaming the checker.
-//
-// Returns "" when the driver answered.
 func checkerDriverFault(code int, stderr []byte) string {
 	if code == 0 || code == 1 {
 		return ""
@@ -140,9 +103,6 @@ func checkerDriverFault(code int, stderr []byte) string {
 	return msg
 }
 
-// runCheckerDriver returns the driver's stdout, failing the test when it did
-// not answer. Use wherever stdout becomes a code set; a call site that asserts
-// the exit code itself does not need it.
 func runCheckerDriver(t *testing.T, cmd *exec.Cmd, label string) string {
 	t.Helper()
 	out, err := cmd.Output()
@@ -164,7 +124,6 @@ func runCheckerDriver(t *testing.T, cmd *exec.Cmd, label string) string {
 func TestSelfHostCheckerModloadX86_64(t *testing.T) {
 	_, runner, driverBin := buildCheckerModloadDriverX86(t)
 
-	// A 2-module program with a deliberate E008 (non-boolean if condition).
 	progDir := t.TempDir()
 	bsrc, err := os.ReadFile("../../../compiler/builtins.fern")
 	if err != nil {
@@ -182,8 +141,6 @@ func TestSelfHostCheckerModloadX86_64(t *testing.T) {
 		t.Fatalf("write main.fern: %v", err)
 	}
 
-	// Run the driver on the entry path. It exits 1 (diagnostics emitted),
-	// so capture stdout without failing on the non-zero exit.
 	var cmd *exec.Cmd
 	if len(runner) == 0 {
 		cmd = exec.Command(driverBin, filepath.Join(progDir, "main.fern"))
@@ -199,25 +156,6 @@ func TestSelfHostCheckerModloadX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostCheckerModloadEmptyImplMangledX86_64 pins that an EMPTY
-// `impl Trait for Type` block survives flatten's name mangling.
-//
-// flatten renames an imported module's decls (`Num` -> `num__Num`) and
-// rewrites every type spelling with them, including each receiver method's
-// receiver type — but it used to pass `mod.impls` through verbatim, so the
-// impl table still said `Num` / `num.Num` while the providing method had
-// become `num__Num`. The checker's E021 conformance scan resolves an empty
-// impl by looking for an inherent method on `impl_type` ("empty impls adopt
-// the existing method"), found nothing under the stale spelling, and
-// reported every required method of every empty impl as missing. Real
-// programs hit it through core/cmp's `impl Display for bigint.BigInt` et al,
-// which any `import "std/array"` pulls in — four spurious E021s on a clean
-// program. `flatten.mangle_impls` (#6398) fixed it; this is the pin, which
-// that PR did not carry.
-//
-// Both shapes are covered: an empty impl on the impl-ing module's OWN struct
-// (bare `Tag`, mangled by prefix) and one on a struct from another module
-// (qualified `num.Num`, mangled by module map) — the bigint/cmp shape.
 func TestSelfHostCheckerModloadEmptyImplMangledX86_64(t *testing.T) {
 	_, runner, driverBin := buildCheckerModloadDriverX86(t)
 
@@ -228,11 +166,8 @@ func TestSelfHostCheckerModloadEmptyImplMangledX86_64(t *testing.T) {
 	}
 	files := map[string]string{
 		"builtins.fern": string(bsrc),
-		// num: the struct + its inherent method, no impl block of its own.
 		"num.fern": "pub struct Num { v: i32 }\n" +
 			"pub function (n: Num) to_string(): string { return \"n\"; }\n",
-		// cross: the trait, plus two empty impls — one on its OWN struct
-		// (bare `Tag`) and one on num's (qualified `num.Num`).
 		"cross.fern": "import \"./num\";\n" +
 			"pub trait Show {\n    function to_string(self: Self): string;\n}\n" +
 			"pub struct Tag { v: i32 }\n" +
@@ -263,14 +198,6 @@ func TestSelfHostCheckerModloadEmptyImplMangledX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostCheckerModloadTraitSigMangledX86_64 pins that a library trait's
-// requirement signatures are mangled with the module's other decls, so E021
-// compares a requirement with its impl method in one spelling. flatten
-// rewrote every function's parameter and return types (`Local` ->
-// `lib__Local`) but passed the requirements through, so every method of a
-// library trait whose signature named a struct or enum, the trait's own
-// module's or another's, read as a wrong signature. A real mismatch still
-// reports.
 func TestSelfHostCheckerModloadTraitSigMangledX86_64(t *testing.T) {
 	_, runner, driverBin := buildCheckerModloadDriverX86(t)
 	bsrc, err := os.ReadFile("../../../compiler/builtins.fern")

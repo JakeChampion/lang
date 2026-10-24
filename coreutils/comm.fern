@@ -1,24 +1,3 @@
-// comm.fern — GNU-compatible `comm`.
-//
-//   comm [OPTION]... FILE1 FILE2
-//
-// A merge of two sorted inputs into three columns: lines only in FILE1,
-// lines only in FILE2, lines in both. `-1` / `-2` / `-3` suppress a
-// column, and the indentation of the ones that remain is one delimiter
-// per SUPPRESSED-or-not column to its left, so `comm -1` starts its
-// second column at the left margin.
-//
-// Two things are worth knowing before reading the loop:
-//
-//   - Lines are ordered by memcmp over the SHORTER line's content, and
-//     the lengths break the tie. The delimiter is outside that
-//     comparison on purpose: `a<TAB>x` sorts AFTER `a`, which comparing
-//     the delimiter byte would get backwards.
-//   - The default order check is not the same as `--check-order`. It
-//     stays quiet until an unpairable line has been seen, because
-//     input that pairs up completely never depends on the order; that
-//     is why `comm f f` on an unsorted f says nothing. It then warns
-//     once per file, keeps going, and fails at the end.
 import "std/string";
 import "std/array";
 import "std/io_buffered";
@@ -82,7 +61,6 @@ function help_text(): string {
   return out;
 }
 
-// ---- order ------------------------------------------------------------------
 function order_default(): i32 {
   return 0;
 }
@@ -95,8 +73,6 @@ function order_disabled(): i32 {
   return 2;
 }
 
-// GNU's line order: memcmp over the shorter line's content, then the
-// lengths. Both ranges include the delimiter, which is excluded here.
 function cmp_lines(a: u8[], alo: i32, ahi: i32, b: u8[], blo: i32, bhi: i32): i32 {
   let la: i32 = ahi - alo;
   let lb: i32 = bhi - blo;
@@ -121,15 +97,10 @@ function cmp_lines(a: u8[], alo: i32, ahi: i32, b: u8[], blo: i32, bhi: i32): i3
   return 0;
 }
 
-// ---- input ------------------------------------------------------------------
 function read_size(): i32 {
   return 65536;
 }
 
-// Bytes accumulated before a write(2), as in uniq(1) and for the same
-// reason: `gnu.block_bytes()` is the pipe optimum for a saturating
-// producer, and a merge is not one. 4 KiB costs 375 ms over 3M lines
-// here, 64 KiB 336.
 function write_block(): i32 {
   return 65536;
 }
@@ -146,20 +117,6 @@ function status_error(): i32 {
   return 2;
 }
 
-// `next_line_slow(r, chunk, pos, eof, term)` — the next line when the
-// block in hand holds no complete one: carry its tail, read more, and
-// join. The line carries its delimiter, which gnulib's
-// readlinebuffer_delim adds when the input ended without one.
-//
-// The block itself is passed and returned here, which retains and
-// releases a 64 KiB byte array, once per read. The `__memchr_bytes`
-// fast path in the merge loop runs once per
-// line and touches no block reference at all. Routing every line
-// through a helper like this one instead cost 130 ns a line, four times
-// the whole rest of the loop.
-//
-// Returns (line, chunk, pos, eof, status, error): status is a line, end
-// of input, or a read failure whose strerror text is `error`.
 function next_line_slow(r: Reader, chunk0: u8[], pos0: i32, eof0: boolean, term: i32): (u8[], u8[], i32, boolean, i32, string) {
   let chunk: u8[] = chunk0;
   let pos: i32 = pos0;
@@ -206,9 +163,6 @@ function next_line_slow(r: Reader, chunk0: u8[], pos0: i32, eof0: boolean, term:
   return ([], chunk, pos, eof, status_eof(), "");
 }
 
-// ---- the merge --------------------------------------------------------------
-//
-// `Cfg` — everything the option scan settles.
 struct Cfg { only1: boolean, only2: boolean, both: boolean, sep: string, check: i32, total: boolean, term: i32 }
 
 pub function main(): i32 {
@@ -249,8 +203,6 @@ pub function main(): i32 {
         } else if (m.id == opt_zero()) {
           cfg = Cfg { ...cfg, term: 0 };
         } else {
-          // Given twice with different text it is a fault, not a
-          // last-one-wins; an empty STR is one NUL byte.
           if (delim_specified && delim_given != m.value) {
             gnu.error("multiple output delimiters specified");
             exit(1);
@@ -316,18 +268,11 @@ pub function main(): i32 {
   return merge(r1, r2, name1, name2, cfg);
 }
 
-// `merge(r1, r2, name1, name2, cfg)` — the whole comparison. Each
-// column prefix and line is pushed straight into stdout's builder, which
-// is flushed once it holds a block, so no byte is copied into an
-// accumulator on the way.
 function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): i32 {
   let out: io_buffered.BufWriter = gnu.out_with(write_block());
   let h: usize = out.handle();
   let block: i32 = write_block();
   let term: i32 = cfg.term;
-  // Both operands `-` is ONE stream in GNU, read alternately by the two
-  // sides; the scan state is copied across after each read so it stays
-  // one cursor here too.
   let shared: boolean = name1 == "-" && name2 == "-";
 
   let chunk1: u8[] = [];
@@ -337,8 +282,6 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
   let pos2: i32 = 0;
   let eof2: boolean = false;
 
-  // A line is the range `[lo, hi)` of `cur`: the block it was found in,
-  // or a byte array of its own when it straddled two blocks.
   let cur1: u8[] = [];
   let lo1: i32 = 0;
   let hi1: i32 = 0;
@@ -347,9 +290,6 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
   let hi2: i32 = 0;
   let have1: boolean = false;
   let have2: boolean = false;
-  // The two lines before the current one, for the order check GNU makes
-  // at end of input: an unpairable line seen late turns the check on
-  // after the last pair was already read, so that pair is re-examined.
   let back1a: u8[] = [];
   let alo1: i32 = 0;
   let ahi1: i32 = 0;
@@ -365,10 +305,6 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
   let read1: i32 = 0;
   let read2: i32 = 0;
 
-  // GNU's writeline: a column prints only if it was not suppressed, and
-  // carries one delimiter for each column to its LEFT that is printed,
-  // so `comm -1` starts its second column at the left margin. Built
-  // once, because joining them per line allocates per line.
   let show1: boolean = cfg.only1;
   let show2: boolean = cfg.only2;
   let show3: boolean = cfg.both;
@@ -384,11 +320,6 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
     pre3 = pre3 + cfg.sep;
   }
 
-  // The order-check state is shared between the two files: checking
-  // only starts once an unpairable line has been seen ANYWHERE, and
-  // each file warns at most once. Three locals rather than a struct
-  // because the unpairable flag is set once per unpaired line, and a
-  // struct update allocates.
   let seen_unpairable: boolean = false;
   let issued1: boolean = false;
   let issued2: boolean = false;
@@ -396,9 +327,6 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
   let t1: u64 = 0 as u64;
   let t2: u64 = 0 as u64;
 
-  // Each side is stepped at the TOP of the iteration that needs it,
-  // which is where GNU's check_order sees the same seen_unpairable it
-  // would have seen stepping at the bottom of the previous one.
   let need1: boolean = true;
   let need2: boolean = true;
   while (true) {
@@ -563,10 +491,6 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
       buf_push_bytes_range(h, cur2, lo2, hi2);
       wrote = true;
     }
-    // GNU checks the stream after every line it WRITES, so a failure
-    // the disorder warning's own flush met is what the next line
-    // reports — and the summary is never reached. A suppressed column
-    // writes nothing and so asks nothing.
     if (wrote) {
       out = gnu.check(out);
     }
@@ -581,10 +505,6 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
     }
   }
 
-  // GNU closes both inputs before the summary, and both closes are
-  // reported — except with `comm - -`, where the two are one stream and
-  // it closes only once. GNU <= 9.4 closed twice and reported the
-  // second one's EBADF.
   if let Err(e) = r1.close() {
     gnu.die(out, gnu.quotef(name1) + ": " + gnu.io_error_text(e), 1);
   }
@@ -603,14 +523,7 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
     buf_push(h, "total");
     buf_push_byte(h, term);
   }
-  // What is still pending is written BEFORE the disorder status is
-  // reported, so a write failing here replaces the status; a failure
-  // met earlier, with nothing left pending, is reported after it by the
-  // close, as a bare `write error`.
   if (issued1 || issued2) {
-    // error() flushes stdout before it writes, so what is pending goes
-    // out first and a failure there does not swallow the status: the
-    // close reports it after.
     out = gnu.error_out(out, "input is not in sorted order");
     gnu.close_stdout(out, false);
     return 1;
@@ -622,10 +535,6 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
   return 0;
 }
 
-// Whether check_order would look at this pair at all: never under
-// `--nocheck-order`, always under `--check-order`, and by default only
-// once an unpairable line has shown that the order matters — and never
-// twice for the same file.
 function should_check(cfg: Cfg, seen_unpairable: boolean, issued: boolean): boolean {
   if (cfg.check == order_disabled() || issued) {
     return false;
@@ -633,8 +542,6 @@ function should_check(cfg: Cfg, seen_unpairable: boolean, issued: boolean): bool
   return cfg.check == order_enabled() || seen_unpairable;
 }
 
-// The out-of-order diagnostic: fatal under `--check-order`, a warning
-// by default that the exit status picks up at the end.
 function disorder(o: io_buffered.BufWriter, cfg: Cfg, which: i32): io_buffered.BufWriter {
   let msg: string = "file " + which.to_string() + " is not in sorted order";
   if (cfg.check == order_enabled()) {

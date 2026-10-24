@@ -2,16 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for the integer overflowing_add / overflowing_sub /
-// overflowing_mul helpers — std/i32, std/i64, std/u32, std/u64 — Rust's
-// overflowing_* family: each returns (wrapped_result, did_overflow), the
-// two's-complement wrapped value (identical to the bare operator) paired with a
-// boolean that is true iff the op overflowed. Checks a non-overflowing and an
-// overflowing case for each, verifying BOTH the wrapped value and the flag: the
-// signed MAX+1 -> MIN / MIN-1 -> MAX wraps, the unsigned add/sub wrap and
-// underflow, the 2^32 / 2^64 mul wraps, and the i64 MIN * -1 -> MIN case.
-// Returns 42 iff every check holds across interp / x86-64 / wasm / arm64; each
-// leg skips itself when its toolchain is absent.
 const intOverflowingProg = `
 import "std/i32";
 import "std/i64" as i64m;

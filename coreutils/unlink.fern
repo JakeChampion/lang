@@ -1,11 +1,3 @@
-// unlink.fern — GNU-compatible `unlink`.
-//
-//   unlink FILE   remove FILE with one `unlink(2)`
-//
-// The whole program: exactly one operand, no options of its own, and no
-// recursion, no prompt and no `-f`. A directory is EISDIR here rather than
-// being removed, which is the distinction that makes `unlink` different from
-// `rm` and the reason it exists.
 import "std/string";
 import "std/array";
 import "./lib/gnu";

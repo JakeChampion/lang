@@ -8,8 +8,6 @@ import (
 	"testing"
 )
 
-// The conversion traits preserve a concrete error type with its original value.
-// Success contributes 42 + 100. The rejected value contributes 7.
 const tryConvertSrc = `import "std/convert" as convert;
 import "std/error";
 import "core/cmp";

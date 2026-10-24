@@ -8,12 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostArm64DataGas exercises the data-section + named-symbol
-// relocation added in slice 3i of arm64_gas.fern: the data directives
-// (.quad/.4byte/.byte/.asciz) build a __DATA blob with a symbol table, and
-// adrp `sym@PAGE` / ldr `sym@PAGEOFF` queue fixups that arm64_gas_link
-// resolves against the (hand-supplied) segment addresses. Run through the
-// self-host wasm pipeline; exit 0 = all pass, else the failing check id.
 func TestSelfHostArm64DataGas(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host arm64 data gas e2e")
@@ -41,23 +35,11 @@ func TestSelfHostArm64DataGas(t *testing.T) {
 	}
 }
 
-// TestSelfHostArm64DarwinMachOSymbolRuns is the end-to-end proof of
-// named-symbol relocation through the GAS assembler: a Fern program feeds
-// AArch64 text that defines a `.quad 42` in __const and loads it via
-// `adrp x1, answer@PAGE` + `ldr x0, [x1, answer@PAGEOFF]`, links the page
-// fixups against macho.fern's segment addresses, wraps it into an
-// ad-hoc-signed Mach-O, and the binary exits 42 — assembly text with a
-// real cross-segment symbol reference to a runnable binary, no external
-// tool.
 func TestSelfHostArm64DarwinMachOSymbolRuns(t *testing.T) {
 	assertMachORuns(t, machoRun{name: "sym42", main: arm64MachOSymbolDriverMain, wantExit: 42, wantData: true})
 	assertMachORuns(t, machoRun{name: "const42", main: strings.Replace(arm64MachOSymbolDriverMain, "__DATA,__data", "__TEXT,__const", 1), wantExit: 42})
 }
 
-// arm64DataGasSelfTestMain checks data-directive emission, the data symbol
-// table, and the @PAGE/@PAGEOFF fixup + link. Each `return N` is a
-// distinct failing-check id. The link addresses model the real layout
-// (adrp at 0x100000310, __DATA at 0x100004000 -> page delta 4, off 0).
 const arm64DataGasSelfTestMain = `
 function main(): i32 {
     // .quad in __data: 8 bytes, symbol at offset 0.
@@ -96,8 +78,6 @@ function main(): i32 {
 }
 `
 
-// arm64MachOSymbolDriverMain assembles a program that loads a __data
-// `.quad 42` by name (adrp/ldr @PAGE/@PAGEOFF) and exits with it.
 const arm64MachOSymbolDriverMain = "\n" +
 	"function main(): i32 {\n" +
 	"    let asm: string = \"\";\n" +

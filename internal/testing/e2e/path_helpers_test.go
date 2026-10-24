@@ -2,13 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for the std/path helpers added alongside the
-// original join/parent/file_name/extension/clean set:
-// path.is_absolute, path.stem, and path.with_extension — including the
-// multi-extension case ("archive.tar.gz"), hidden-file dots
-// (".bashrc"), the no-extension and empty-extension paths, and
-// directory preservation. Returns 42 iff every exact check holds. Each
-// leg skips itself when its toolchain is absent.
 const pathHelpersProg = `
 import "std/path" as path;
 function main(): i32 {

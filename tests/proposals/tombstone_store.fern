@@ -1,16 +1,3 @@
-// tests/proposals/tombstone_store.fern — proposal turn, drawn line 233:
-// "A tombstone-based delete with a garbage-collection pass."
-//
-// A key/value store where `del` does not remove a slot, it marks it dead.
-// Reads skip tombstones; a separate `compact` pass rebuilds the slot array
-// without them and reports what it reclaimed. That is the shape every
-// log-structured store has, and the reason to write it here is that the
-// compaction pass is an allocation churn loop — exactly where a stray
-// retain turns linear work quadratic.
-//
-// The app writes its report to stderr; stdout carries TAP-13 from
-// std/test, so the file is its own test suite.
-
 import "std/test";
 import "std/i32";
 import "std/i64";
@@ -23,8 +10,6 @@ function store_new(): Store {
   return Store { slots: [], live: 0, dead: 0 };
 }
 
-// Index of the LIVE slot holding `k`, or -1. Tombstones are skipped, so a
-// deleted key reads as absent even though its slot is still there.
 function find_live(s: Store, k: string): i32 {
   let i: i32 = 0;
   while (i < s.slots.len()) {
@@ -48,9 +33,6 @@ function has(s: Store, k: string): boolean {
   return find_live(s, k) >= 0;
 }
 
-// put overwrites a live slot in place, otherwise appends. It never reuses a
-// tombstone: that is compaction's job, and keeping the two apart is what
-// makes the reclaim count meaningful.
 function put(s: Store, k: string, v: string): Store {
   let at: i32 = find_live(s, k);
   if (at >= 0) {
@@ -73,9 +55,6 @@ function put(s: Store, k: string, v: string): Store {
   };
 }
 
-// del marks the slot dead and leaves it in place. Returns the store and
-// whether anything was actually deleted, so a caller can tell a real delete
-// from a no-op on a missing key.
 function del(s: Store, k: string): (Store, boolean) {
   let at: i32 = find_live(s, k);
   if (at < 0) {
@@ -98,9 +77,6 @@ function del(s: Store, k: string): (Store, boolean) {
   return (Store { slots: updated, live: s.live - 1, dead: s.dead + 1 }, true);
 }
 
-// The garbage-collection pass: rebuild the slot array keeping only live
-// entries, in their original relative order. Returns the compacted store and
-// how many tombstones it dropped.
 function compact(s: Store): (Store, i32) {
   let kept: Slot[] = [];
   let i: i32 = 0;
@@ -126,8 +102,6 @@ function live_keys(s: Store): string[] {
   return out;
 }
 
-// ---------------------------------------------------------------- tests
-
 function seeded(): Store {
   let s: Store = store_new();
   s = put(s, "alpha", "1");
@@ -137,9 +111,6 @@ function seeded(): Store {
   return s;
 }
 
-// A tombstone hides the key from reads but does NOT shrink the backing
-// array — that distinction is the whole point of the design, so it is worth
-// asserting directly rather than inferring from a later compaction.
 function test_delete_tombstones_rather_than_removes(): test.TestOutcome {
   let s: Store = seeded();
   let slots_before: i32 = s.slots.len();
@@ -163,7 +134,6 @@ function test_delete_tombstones_rather_than_removes(): test.TestOutcome {
   return test.pass();
 }
 
-// Deleting an absent key must not fabricate a tombstone.
 function test_delete_missing_is_a_noop(): test.TestOutcome {
   let s: Store = seeded();
   let (s2, removed) = del(s, "nope");
@@ -176,8 +146,6 @@ function test_delete_missing_is_a_noop(): test.TestOutcome {
   return test.pass();
 }
 
-// The property that makes compaction safe: it is invisible to readers. Every
-// live key maps to the same value before and after, and nothing else appears.
 function test_compaction_preserves_the_live_mapping(): test.TestOutcome {
   let s: Store = seeded();
   let (s1, _) = del(s, "alpha");
@@ -225,8 +193,6 @@ function test_compaction_preserves_the_live_mapping(): test.TestOutcome {
   return test.pass();
 }
 
-// Compacting twice must be the same as compacting once — a GC pass with no
-// garbage to collect has to be a no-op, or repeated maintenance drifts.
 function test_compaction_is_idempotent(): test.TestOutcome {
   let s: Store = seeded();
   let (s1, _) = del(s, "beta");
@@ -245,8 +211,6 @@ function test_compaction_is_idempotent(): test.TestOutcome {
   return test.pass();
 }
 
-// A tombstone must not resurrect. Re-putting a deleted key gives the NEW
-// value, and compaction afterwards must not surface the old one.
 function test_reinsert_after_delete_does_not_resurrect(): test.TestOutcome {
   let s: Store = seeded();
   let (s1, _) = del(s, "beta");
@@ -287,9 +251,6 @@ function test_reinsert_after_delete_does_not_resurrect(): test.TestOutcome {
   return test.pass();
 }
 
-// The counters have to agree with the array they describe, under churn --
-// a store whose `live` field disagrees with its live slots is how a
-// compaction bug hides.
 function test_counters_track_the_slots_under_churn(): test.TestOutcome {
   let s: Store = store_new();
   let round: i32 = 0;
@@ -322,9 +283,6 @@ function test_counters_track_the_slots_under_churn(): test.TestOutcome {
   return test.pass();
 }
 
-// ----------------------------------------------------------------- app
-
-// One churn round: fill to `n`, delete every other key, compact.
 function churn(n: i32): i32 {
   let s: Store = store_new();
   let i: i32 = 0;
@@ -353,9 +311,6 @@ function main(): i32 {
   eprint("after compaction: " + c.live.to_string() + " live, "
     + c.dead.to_string() + " dead, " + reclaimed.to_string() + " reclaimed");
 
-  // Allocation shape of the churn loop, at n and 2n. The bump allocator's
-  // high-water mark is the host-independent measure; RSS is not comparable
-  // across THP settings.
   let base: i64 = __heap_bump_bytes();
   let a: i32 = churn(64);
   let after_n: i64 = __heap_bump_bytes();

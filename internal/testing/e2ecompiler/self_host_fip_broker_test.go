@@ -44,7 +44,7 @@ func (m *brokerModel) apply(a brokerAction) {
 	m.status, m.result = 0, -1
 	fail := func(status int) { m.status = status }
 	switch a.kind {
-	case 0: // reserve
+	case 0:
 		if a.argument < 0 || a.argument >= m.topics {
 			fail(1)
 			return
@@ -71,7 +71,7 @@ func (m *brokerModel) apply(a brokerAction) {
 		m.producer = brokerMessage{int64(a.argument), m.serial, a.value}
 		m.producerSlot, m.phase[slot], m.result = slot, 1, slot
 		m.slots[slot] = brokerMessage{topic: -1}
-	case 1: // publish: no changes until every subscriber can receive
+	case 1:
 		if m.producerSlot < 0 {
 			fail(6)
 			return
@@ -91,7 +91,7 @@ func (m *brokerModel) apply(a brokerAction) {
 		}
 		m.phase[slot], m.result, m.producerSlot = 2, slot, -1
 		m.producer = brokerMessage{topic: -1}
-	case 2: // consume: independent slice FIFO, not a ring
+	case 2:
 		s := a.argument
 		if s < 0 || s >= m.subscribers {
 			fail(1)
@@ -108,7 +108,7 @@ func (m *brokerModel) apply(a brokerAction) {
 		m.leases[s] = m.queues[s][0]
 		m.queues[s] = m.queues[s][1:]
 		m.result = m.leases[s]
-	case 3: // ack: derive remaining references from queues and leases
+	case 3:
 		s := a.argument
 		if s < 0 || s >= m.subscribers {
 			fail(1)
@@ -128,7 +128,7 @@ func (m *brokerModel) apply(a brokerAction) {
 			m.phase[slot] = 0
 			m.free = append(m.free, slot)
 		}
-	case 4: // cancel
+	case 4:
 		slot := m.producerSlot
 		if slot < 0 {
 			fail(6)
@@ -242,8 +242,6 @@ func testBrokerRepresentation(t *testing.T, ring bool) {
 				model.apply(a)
 				states = append(states, model.state())
 			}
-			// Fill, hit queue or pool capacity, exercise asymmetric consumers, then
-			// retry/cancel. Every result and complete state is checked independently.
 			for i := 0; i < tc.pool+2; i++ {
 				add(brokerAction{0, 0, int64(i)})
 				add(brokerAction{1, 0, 0})
@@ -263,7 +261,6 @@ func testBrokerRepresentation(t *testing.T, ring bool) {
 					add(brokerAction{3, s, serial})
 				}
 			}
-			// Several complete cycles force physical queue wrap and pool reuse.
 			for i := 0; i < tc.capacity+3; i++ {
 				add(brokerAction{0, 0, int64(-100 - i)})
 				add(brokerAction{1, 0, 0})

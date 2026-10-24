@@ -8,44 +8,13 @@ import (
 	"testing"
 )
 
-// emittedCodeRE captures the stable code passed to a diagnostic-emission
-// call. It matches the `err…Code(pos, "CODE", …)` family (checker's
-// errfCode, parser's errorfCode — both end in `Code(`) and the
-// `ErrCode: "CODE"` / `Code: "CODE"` struct-field form. `[^"]*` skips the
-// position argument (which never contains a quote) so a `)` inside it,
-// e.g. `errfCode(body[len(b)-1].P, "E052", …)`, doesn't defeat the match.
-// Anchored on the `Code`-suffixed call/field so a bare code mention in a
-// comment or message string is never picked up.
 var emittedCodeRE = regexp.MustCompile(`(?:err\w*Code\(|ErrCode:\s*|\bCode:\s*)[^"]*"([EP][0-9]{3})"`)
 
-// fernEmittedCodeRE is the same for the self-host compiler's sources, which
-// pass a code as a call's first argument (`dg_at("E036", …)`) or set it as a
-// field (`code: "E087"`).
 var fernEmittedCodeRE = regexp.MustCompile(`(?:\(|:)\s*"([EP][0-9]{3})"`)
 
-// TestEmittedCodesHaveExplanations is the catalogue-completeness gate
-// (#4413 Rec §4): every diagnostic code the checker / parser / modload, and
-// the self-host compiler, actually EMIT must have a `fern -explain`-able explanation under
-// internal/syntax/diag/explanations/, so `fern -explain <code>` never bottoms out
-// on "unknown code" for a diagnostic a user can hit. It scrapes the
-// emission sites from source (rather than a hand-maintained list, which
-// drifts — the older TestAvailableCodesEnumeratesCatalogue pins a fixed
-// subset) so a newly-added code with no explanation fails here. This test
-// added E065 (the `str`-escape sibling of E063), which was emitted with no
-// explanation.
 func TestEmittedCodesHaveExplanations(t *testing.T) {
-	// Test runs in the package dir (internal/syntax/diag); the emitters are its
-	// siblings. modload/parser share the same emission helpers as checker;
-	// cmd/fern emits E066 (platform capability enforcement) and E070
-	// (per-package capability grants) via checker.Error, and
-	// internal/pkg/platforms owns the E066 pass — scan both so new codes there
-	// can't ship without explanations either.
-	// internal/check/defaultargs emits E076 / E077 (and E004) through its own
-	// Error struct, which the checker surfaces; unscanned, it had been
-	// reusing E060 — the `as?` downcast code — for named-argument errors,
-	// so `fern -explain` answered with an unrelated page.
 	dirs := []string{"../../check/checker", "../parser", "../../pkg/modload", "../../pkg/platforms", "../../check/defaultargs", "../../../cmd/fern"}
-	emitted := map[string]string{} // code -> first source file it's emitted from
+	emitted := map[string]string{}
 	for _, d := range dirs {
 		files, err := filepath.Glob(filepath.Join(d, "*.go"))
 		if err != nil {
@@ -66,8 +35,6 @@ func TestEmittedCodesHaveExplanations(t *testing.T) {
 			}
 		}
 	}
-	// The self-host compiler is what ships, so its codes are held to the same
-	// rule.
 	fern, err := filepath.Glob("../../../compiler/*.fern")
 	if err != nil || len(fern) == 0 {
 		t.Fatalf("glob compiler/*.fern: %v (%d files)", err, len(fern))

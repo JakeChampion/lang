@@ -1,14 +1,6 @@
 import "std/test";
 import "std/f64";
 
-// tests/stdlib/float_hypot_test.fern — pure-Fern coverage of std/f64's
-// hypot (Euclidean length via the overflow-safe scaled form), fract (signed
-// fractional part x - trunc(x)), and tan (sin/cos). f64 and f32 receivers.
-// Kept as its own suite so the self-host merged bundle stays under the asm_ir IR
-// budget; uses assert_eq_f64_near (tolerance-banded) so it needs no scalar
-// assert_eq[i32]. The Go-side TestFloatHypotFractTan pins these across all four
-// backends; this is the migration-shaped (pure-Fern, std/test-driven) companion.
-
 function test_hypot_345(): test.TestOutcome {
   return test.assert_eq_f64_near(3.0.hypot(4.0), 5.0, 0.0001);
 }
@@ -22,7 +14,6 @@ function test_hypot_zero(): test.TestOutcome {
 }
 
 function test_hypot_negative(): test.TestOutcome {
-  // Magnitude only — sign of the inputs doesn't matter.
   return test.assert_eq_f64_near((0.0 - 3.0).hypot(4.0), 5.0, 0.0001);
 }
 
@@ -35,7 +26,6 @@ function test_fract_positive(): test.TestOutcome {
 }
 
 function test_fract_negative(): test.TestOutcome {
-  // Keeps the sign of x.
   return test.assert_eq_f64_near((0.0 - 3.75).fract(), 0.0 - 0.75, 0.0001);
 }
 
@@ -48,7 +38,6 @@ function test_tan_zero(): test.TestOutcome {
 }
 
 function test_tan_quarter_pi(): test.TestOutcome {
-  // tan(pi/4) == 1.
   return test.assert_eq_f64_near(0.7853981633974483.tan(), 1.0, 0.0001);
 }
 

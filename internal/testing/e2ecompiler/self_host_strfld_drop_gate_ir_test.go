@@ -7,15 +7,6 @@ import (
 	"testing"
 )
 
-// strFldDropGateCases pin that a struct drop frees a STRING field only when
-// construction retained it (#3425). Freeing a string field construction never
-// retained turns a string aliased into several structs into an uncounted
-// reference the first element drop frees out from under the rest — heap
-// corruption. The shape below is the minimal form of what once broke the
-// compiler's own self-compile (ir.Op's shared .str): `esc` returns the field
-// (an escaping read), `shared` is aliased into every element, and Outer's exit
-// drop walks the Rec[] field through the array-element deep-drop. The shared
-// string must survive intact with the underflow detector at zero.
 var strFldDropGateCases = []struct {
 	name string
 	src  string
@@ -42,11 +33,6 @@ function main(): i32 {
     if (shared[0] != 97) { return 97; }
     return 0;
 }`, 0},
-	// ADMITTED control: no escaping read anywhere, so the type IS admitted,
-	// construction retains the aliased field, and the drop's string free
-	// stays balanced — fresh per-iteration strings reclaim (bounded churn)
-	// with the detector at zero. Guards that the gate didn't turn off the
-	// slice-3 reclaim for admitted types.
 	{"admitted-string-field-still-reclaims", `struct Rec { tag: string, n: i32 }
 struct Outer { rs: Rec[], m: i32 }
 function go(pre: string): i32 {
@@ -66,8 +52,6 @@ function main(): i32 {
 }`, 0},
 }
 
-// TestSelfHostStrFldDropGateIRX86_64 drives the cases through the self-hosted
-// x86-64 compiler (asm_run) — value-correct + underflow-guarded.
 func TestSelfHostStrFldDropGateIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

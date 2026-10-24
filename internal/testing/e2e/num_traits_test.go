@@ -8,11 +8,6 @@ import (
 	"testing"
 )
 
-// std/num arithmetic operator traits + the Num supertrait (#2706, and the
-// foundation for #2663's generic numeric methods): a `T: num.Num` bound lets a
-// generic function dispatch arithmetic by method (`s.add(...)`) for ANY
-// implementing element type — here the SAME generic `total` runs over both an
-// i32[] and an i64[]. 10+20 = 30, 9+3 = 12, 30 + 12 = 42.
 const numTraitsSrc = `import "std/num" as num;
 function (a: T[]) total[T: num.Num](init: T): T {
     let s = init;

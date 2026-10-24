@@ -13,8 +13,6 @@ import (
 	"github.com/jakechampion/lang/internal/tools/launcher"
 )
 
-// compileRequest is a `-target` compile as the command line spelled it.
-// backtrace is nil when -backtrace was not passed, so FERN_BACKTRACE decides.
 type compileRequest struct {
 	src, out, target, emit, backend, embed, export, qemu    string
 	runIt, shared, debug, sanitize, cover, optimize, harden bool
@@ -22,9 +20,6 @@ type compileRequest struct {
 	progArgs                                                []string
 }
 
-// compileArgs is the self-host compiler's command line for r, writing to out.
-// With no out the compiler decides what reaches stdout: a native target's
-// assembly, or a refusal of a wasm binary.
 func compileArgs(r compileRequest, out, stdlib string) []string {
 	args := []string{"-target", r.target}
 	if out != "" {
@@ -52,8 +47,6 @@ func compileArgs(r compileRequest, out, stdlib string) []string {
 	return append(args, r.src, stdlib)
 }
 
-// wasmRunRefusal refuses a -run that wasmtime run cannot execute: an HTTP
-// component is served, not run.
 func wasmRunRefusal(r compileRequest) error {
 	if r.target == "wasm32-wasi-http" {
 		return fmt.Errorf("-run cannot serve -target wasm32-wasi-http; build it with -o OUT.wasm and run `wasmtime serve OUT.wasm`")
@@ -61,8 +54,6 @@ func wasmRunRefusal(r compileRequest) error {
 	return nil
 }
 
-// compileSelfHost hands r to the self-host compiler, and with -run executes
-// what it built.
 func compileSelfHost(r compileRequest) (int, error) {
 	compiler, err := launcher.Compiler()
 	if err != nil {
@@ -102,9 +93,6 @@ func compileSelfHost(r compileRequest) (int, error) {
 		}
 		return execTool("wasmtime", append([]string{"run", out}, r.progArgs...))
 	}
-	// The target's ISA and the host's GOARCH are different vocabularies
-	// ("x86-64" against "amd64"), so the comparison goes through the
-	// descriptor.
 	if d := platforms.ForTarget(r.target); d != nil {
 		if (d.ISA == "arm64" && runtime.GOARCH == "arm64") || (d.ISA == "x86-64" && runtime.GOARCH == "amd64") {
 			return execDirect(out, r.progArgs)
@@ -117,7 +105,6 @@ func compileSelfHost(r compileRequest) (int, error) {
 	return execUnderQemu(qemu, out, r.progArgs)
 }
 
-// runREPL implements `-repl` with the self-host compiler's interpreter.
 func runREPL() int {
 	stdlib, err := launcher.StdlibRoot()
 	if err != nil {
@@ -127,8 +114,6 @@ func runREPL() int {
 	return runSelfHostTool([]string{"-repl", stdlib}, os.Stdout)
 }
 
-// runEffects implements `-effects FILE` with the self-host compiler's report
-// (compiler/effects.fern).
 func runEffects(src string) int {
 	stdlib, err := launcher.StdlibRoot()
 	if err != nil {
@@ -138,9 +123,6 @@ func runEffects(src string) int {
 	return runSelfHostTool([]string{"-effects", src, stdlib}, os.Stdout)
 }
 
-// runLiterate implements `-tangle`, `-weave [-html]` and `-doctest` on one
-// literate document with the self-host compiler; its exit status is theirs.
-// -doctest loads the examples' imports, so it takes the stdlib root.
 func runLiterate(doc, mode, out, chunk string, html bool) int {
 	args := []string{mode}
 	if out != "" {
@@ -164,8 +146,6 @@ func runLiterate(doc, mode, out, chunk string, html bool) int {
 	return runSelfHostTool(args, os.Stdout)
 }
 
-// runSelfHostTool runs the self-host compiler with args, its stdout to w and
-// its stdin and stderr this process's, and returns its exit status.
 func runSelfHostTool(args []string, w io.Writer) int {
 	compiler, err := launcher.Compiler()
 	if err != nil {

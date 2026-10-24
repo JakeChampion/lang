@@ -7,7 +7,6 @@ import (
 	"testing"
 )
 
-// cutFile writes `content` under `dir` as `name` and returns its path.
 func cutFile(t *testing.T, dir, name, content string) string {
 	t.Helper()
 	p := filepath.Join(dir, name)
@@ -21,16 +20,6 @@ func init() {
 	registerCorpus("cut", cutCases)
 }
 
-// cutCases is cut(1)'s corpus.
-//
-// The list grammar is the half with the most corners: overlapping ranges
-// merge but adjacent ones do not, `N-0` is a decreasing range where `N-`
-// is an open one, blanks separate as commas do but a newline does not,
-// and UINTMAX_MAX is refused even though it fits. The other half is the
-// field machinery, where a line with no delimiter is printed whole, a
-// delimiter equal to the LINE delimiter makes the whole file one record,
-// and the trailing line delimiter of an unterminated final record turns
-// on whether gnulib had to buffer the first field to judge it.
 func cutCases(t *testing.T) []invocation {
 	dir := t.TempDir()
 	f := cutFile(t, dir, "f", "a:b:c:d\nnodelim\n:x::y:\n")
@@ -46,14 +35,10 @@ func cutCases(t *testing.T) []invocation {
 		t.Fatal(err)
 	}
 	d := filepath.Join(dir, "d")
-	// Bigger than one output block, so a write failure is met while
-	// streaming rather than only at the final flush.
 	big := cutFile(t, dir, "big", strings.Repeat("alpha:beta:gamma\n", 20000))
-	// A file whose last line has no terminator, for the record-end rules.
 	part := cutFile(t, dir, "part", "one:two\nthree:")
 
 	return []invocation{
-		// Bytes and characters: the same thing in the C locale.
 		{name: "byte one", args: []string{"-b1", f}},
 		{name: "char one", args: []string{"-c1", f}},
 		{name: "byte range", args: []string{"-b", "2-4", f}},
@@ -77,16 +62,12 @@ func cutCases(t *testing.T) []invocation {
 		{name: "characters long option", args: []string{"--characters=2-4", f}},
 		{name: "bytes long option", args: []string{"--bytes", "2-4", f}},
 
-		// --complement.
 		{name: "complement bytes", args: []string{"--complement", "-b", "2-4", f}},
 		{name: "complement everything", args: []string{"--complement", "-b", "1-", f}},
 		{name: "complement nothing selected", args: []string{"--complement", "-b", "100", f}},
 		{name: "complement fields", args: []string{"--complement", "-d:", "-f2", f}},
 		{name: "complement all fields", args: []string{"--complement", "-d:", "-f1-", f}},
 
-		// -w / -F (9.11): a RUN of blanks is one delimiter, so a run at
-		// either end leaves an empty field there unless `=trimmed` took
-		// it off. -F is -w with a space as the output delimiter.
 		{name: "whitespace first field", args: []string{"-w", "-f1", ws}},
 		{name: "whitespace second field", args: []string{"-w", "-f2", ws}},
 		{name: "whitespace all fields", args: []string{"-w", "-f1-", ws}},
@@ -111,7 +92,6 @@ func cutCases(t *testing.T) []invocation {
 		{name: "no-partial with fields", args: []string{"-n", "-d:", "-f2", f}},
 		{name: "complement with only-delimited", args: []string{"-s", "--complement", "-d:", "-f1", f}},
 
-		// --output-delimiter separates RANGES under -b and FIELDS under -f.
 		{name: "output delimiter between byte ranges", args: []string{"-b", "1-2,4-5", "--output-delimiter=X", f}},
 		{name: "output delimiter between single bytes", args: []string{"-b", "1,3", "--output-delimiter=X", f}},
 		{name: "adjacent ranges are two ranges", args: []string{"-b", "1-2,3-4", "--output-delimiter=X", f}},
@@ -121,7 +101,6 @@ func cutCases(t *testing.T) []invocation {
 		{name: "output delimiter between fields", args: []string{"-d:", "-f1-2,3-4", "--output-delimiter=X", f}},
 		{name: "output delimiter on a non-delimited line", args: []string{"-d:", "-f1,2", "--output-delimiter=@", f}},
 
-		// Fields.
 		{name: "field one", args: []string{"-d:", "-f1", f}},
 		{name: "field list", args: []string{"-d:", "-f2,4", f}},
 		{name: "field open range", args: []string{"-d:", "-f2-", f}},
@@ -140,7 +119,6 @@ func cutCases(t *testing.T) []invocation {
 		{name: "unterminated final record beyond", args: []string{"-d:", "-f5", part}},
 		{name: "unterminated final record suppressed", args: []string{"-s", "-d:", "-f1", part}},
 
-		// The delimiter itself.
 		{name: "empty delimiter is NUL", args: []string{"-d", "", "-f1", nul}},
 		{name: "empty delimiter second field", args: []string{"-d", "", "-f2", nul}},
 		{name: "delimiter is a letter", args: []string{"-da", "-f2", f}},
@@ -152,7 +130,6 @@ func cutCases(t *testing.T) []invocation {
 		{name: "delimiter equal to the line delimiter suppressed no delimiter", args: []string{"-s", "-d", "\n", "-f1"}, stdin: "abc"},
 		{name: "last delimiter wins", args: []string{"-d,", "-d:", "-f2", f}},
 
-		// -z.
 		{name: "zero terminated bytes", args: []string{"-z", "-b1", nul}},
 		{name: "zero terminated fields", args: []string{"-z", "-d:", "-f2", nul}},
 		{name: "zero terminated long", args: []string{"--zero-terminated", "-d:", "-f1", nul}},
@@ -164,7 +141,6 @@ func cutCases(t *testing.T) []invocation {
 		{name: "zero terminated unterminated with content", args: []string{"-z", "-d:", "-f5"}, stdin: "ab:cd"},
 		{name: "newline terminated unterminated buffered", args: []string{"-d:", "-f2"}, stdin: "ab:"},
 
-		// List faults. Every one prints a line and the `Try …` line.
 		{name: "no list", args: []string{f}},
 		{name: "two lists", args: []string{"-b1", "-f1", f}},
 		{name: "two lists same kind", args: []string{"-f1", "-f2", f}},
@@ -197,7 +173,6 @@ func cutCases(t *testing.T) []invocation {
 		{name: "two too-large numbers name the first", args: []string{"-b", "99999999999999999999,88888888888888888888", f}},
 		{name: "field too large", args: []string{"-f", "99999999999999999999", "-d:", f}},
 
-		// Mode faults, in GNU's order: the list first, then -d, then -s.
 		{name: "delimiter without fields", args: []string{"-b1", "-d:", f}},
 		{name: "delimiter before the list", args: []string{"-d:", "-b1", f}},
 		{name: "tab delimiter still counts as specified", args: []string{"-d", "\t", "-b1", f}},
@@ -210,7 +185,6 @@ func cutCases(t *testing.T) []invocation {
 		{name: "multi-character delimiter is found during the scan", args: []string{"-d::", "-f1", "-x", f}},
 		{name: "delimiter fault beats a later list fault", args: []string{"-f0", "-d::", f}},
 
-		// Operands.
 		{name: "no operand reads stdin", args: []string{"-b1"}, stdin: "abc\ndef\n"},
 		{name: "lone dash is stdin", args: []string{"-b1", "-"}, stdin: "abc\n"},
 		{name: "dashdash", args: []string{"-b1", "--", f}},
@@ -226,7 +200,6 @@ func cutCases(t *testing.T) []invocation {
 		{name: "directory", args: []string{"-b1", d}},
 		{name: "directory then a file", args: []string{"-b1", d, f}},
 
-		// getopt.
 		{name: "invalid short option", args: []string{"-x"}},
 		{name: "unrecognized long option", args: []string{"--foo"}},
 		{name: "unrecognized long option with a value", args: []string{"--foo=bar"}},
@@ -245,7 +218,6 @@ func cutCases(t *testing.T) []invocation {
 		{name: "posix operand then option", args: []string{f, "-b1"}, env: []string{"POSIXLY_CORRECT=1"}},
 		{name: "posix option before the operand", args: []string{"-b1", f}, env: []string{"POSIXLY_CORRECT=1"}},
 
-		// Write failures.
 		{name: "stdout closed", args: []string{"-b1", f}, stdout: stdoutClosed},
 		{name: "stdout full", args: []string{"-b1", f}, stdout: stdoutFull},
 		{name: "stdout closed with a large output", args: []string{"-d:", "-f2", big}, stdout: stdoutClosed},
@@ -253,7 +225,6 @@ func cutCases(t *testing.T) []invocation {
 		{name: "stdout closed with nothing to write", args: []string{"-b1", empty}, stdout: stdoutClosed},
 		{name: "stdout closed with a missing file", args: []string{"-b1", missing}, stdout: stdoutClosed},
 
-		// stdin across read blocks.
 		{name: "stdin larger than one read block", args: []string{"-b", "1-3"}, stdin: strings.Repeat("abcdef\n", 20000)},
 		{name: "fields across read blocks", args: []string{"-d:", "-f2"}, stdin: strings.Repeat("alpha:beta:gamma\n", 8000)},
 		{name: "a line longer than one read block", args: []string{"-d:", "-f2"}, stdin: strings.Repeat("x", 70000) + ":tail\n"},

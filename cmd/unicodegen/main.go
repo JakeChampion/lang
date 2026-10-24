@@ -1,54 +1,3 @@
-// Command unicodegen generates internal/stdlib/std/unicode.fern — the
-// Unicode case-mapping tables (the simple 1:1 runs plus the
-// unconditional full 1→N mappings), the character-class range tables,
-// and the API built on them. The data comes from the Go standard
-// library's `unicode` package (unicode.ToUpper / unicode.ToLower and the
-// category predicates), so the tables' Unicode version tracks the Go
-// toolchain used to run this generator.
-//
-// Usage:
-//
-//	go run ./cmd/unicodegen internal/stdlib/std/unicode.fern
-//
-// Re-run after a Go toolchain upgrade to refresh the tables; the output
-// is deterministic (sorted by code point), so an unchanged Unicode
-// version reproduces the file byte-for-byte.
-//
-// # Why the tables are strings
-//
-// The tables were once emitted as `function _upper_keys(): i32[] { return
-// [97, 98, …] }` — 2900 array-literal stores of *code*, materialised on
-// every single call. That cost 176 KB of binary and ran 22x slower than
-// the ASCII byte fold on ASCII input (#5627). A string literal is static
-// rodata: it costs its own length, once, and indexing it allocates
-// nothing. So every table here is a string in a fixed-width, 6-bit
-// character encoding, binary-searched in place.
-//
-// The alphabet is 64 printable ASCII characters in two contiguous spans,
-// 48..91 ('0'..'[') and 93..112 (']'..'p'), chosen to skip `\` (92) so no
-// emitted literal ever needs an escape — `"` (34) is below the range, and
-// a `\xNN` escape for a byte >= 0x80 would make the literal invalid
-// UTF-8. Decoding is two comparisons (see `_dig` in the generated file).
-//
-// A field is 4 characters = 24 bits. Deltas are stored biased by 2^23 so
-// they can be negative.
-//
-// # Record layouts
-//
-// Case table — 5 fields (20 chars) per entry, sorted by lo, disjoint:
-//
-//	lo | hi | kind | dUpper | dLower
-//
-//	kind 0: constant deltas. ToUpper(cp) = cp + dUpper, likewise lower.
-//	kind 1: alternating pair run — even offset from lo is UPPERCASE, odd
-//	        is its lowercase (the Latin-Extended-A shape: Ā ā Ă ă …).
-//
-// Class tables — 2 fields (8 chars) per entry: lo | hi, inclusive.
-//
-// Correctness does not rest on the run-derivation being right: `verify`
-// below decodes the emitted tables for every code point in 0..MaxRune and
-// compares against the `unicode` package, failing the build on any
-// mismatch.
 package main
 
 import (
@@ -63,33 +12,12 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/fmtsource"
 )
 
-// bias is added to a stored delta so negative deltas fit an unsigned
-// 24-bit field.
 const bias = 1 << 23
 
-// fullCase is one entry of the UNCONDITIONAL full case mapping: a code
-// point whose full mapping is more than one code point, so the simple
-// (1:1) table cannot express it. `to` is zero-padded on the right.
 type fullCase struct {
 	from rune
 	to   [3]rune
 }
-
-// fullUpper / fullLower are the unconditional section of the Unicode
-// SpecialCasing data, transcribed here because Go's `unicode` package
-// has no full mappings at all — it does simple mapping only, and Go's
-// own answer for full mapping lives outside the standard library in
-// x/text/cases, which this zero-dependency module does not have. So
-// unlike every other table in this generator, these are NOT derived
-// from an oracle at build time; they are data, pinned by
-// TestFullCaseKnownAnswers and by the e2e suite.
-//
-// 102 uppercase entries and exactly 1 lowercase (U+0130), matching
-// SpecialCasing.txt's unconditional section, which has been stable for
-// many Unicode versions. Greek Final_Sigma is handled separately, as a
-// context rule over the Cased / Case_Ignorable tables rather than a table
-// entry (see isCased / isCaseIgnorable). The Lithuanian and Turkish
-// tailorings are out of scope by design.
 
 var fullUpper = []fullCase{
 	{0x00DF, [3]rune{0x0053, 0x0053, 0x0000}},
@@ -199,21 +127,6 @@ var fullUpper = []fullCase{
 var fullLower = []fullCase{
 	{0x0130, [3]rune{0x0069, 0x0307, 0x0000}},
 }
-
-// foldExceptions is the CaseFolding data, minus everything the simple
-// lowercase mapping already gets right. Folding is a THIRD operation,
-// not a synonym for lowercasing: `ß` folds to `ss` (lowercase leaves it
-// alone), `ſ` LATIN SMALL LETTER LONG S folds to `s`, and `µ` MICRO SIGN
-// folds to the Greek `μ`. Only the 297 code points where the fold differs
-// from the char `to_lower` are stored; everything else falls through to the
-// simple lowercase table, which keeps this table a quarter the size of a
-// complete one.
-//
-// Same provenance caveat as fullUpper/fullLower: Go's unicode package has
-// `SimpleFold`, which walks orbits rather than yielding a fold string, and
-// nothing for full folding — so this is transcribed data, validated
-// end-to-end against CPython's str.casefold and pinned by
-// TestFoldKnownAnswers.
 
 var foldExceptions = []fullCase{
 	{0x00B5, [3]rune{0x03BC, 0x0000, 0x0000}},
@@ -515,9 +428,6 @@ var foldExceptions = []fullCase{
 	{0xFB17, [3]rune{0x0574, 0x056D, 0x0000}},
 }
 
-// fieldChars is the width of one encoded field, and recChars / rangeChars
-// the width of one case-table / class-table record. The generated Fern
-// decoder hard-codes the same numbers.
 const (
 	fieldChars = 4
 	recChars   = 5 * fieldChars
@@ -525,8 +435,6 @@ const (
 	fullChars  = 4 * fieldChars
 )
 
-// enc6 maps a 6-bit value to its alphabet character: 0..43 to '0'..'[',
-// 44..63 to ']'..'p'. The gap skips '\'.
 func enc6(d int) byte {
 	if d < 44 {
 		return byte(48 + d)
@@ -534,7 +442,6 @@ func enc6(d int) byte {
 	return byte(93 + d - 44)
 }
 
-// dec6 is enc6's inverse, mirroring the generated `_dig`.
 func dec6(c byte) int {
 	if c <= 91 {
 		return int(c) - 48
@@ -542,7 +449,6 @@ func dec6(c byte) int {
 	return int(c) - 49
 }
 
-// encField appends v as one 4-character big-endian base-64 field.
 func encField(b *strings.Builder, v int) {
 	if v < 0 || v >= 1<<24 {
 		panic(fmt.Sprintf("unicodegen: field %d out of 24-bit range", v))
@@ -553,38 +459,23 @@ func encField(b *strings.Builder, v int) {
 	b.WriteByte(enc6(v & 63))
 }
 
-// decField reads the field at character offset i, mirroring `_fld`.
 func decField(t string, i int) int {
 	return dec6(t[i])<<18 | dec6(t[i+1])<<12 | dec6(t[i+2])<<6 | dec6(t[i+3])
 }
 
-// run is one case-table entry: an inclusive code-point range whose
-// upper/lower mappings share a single rule.
 type run struct {
 	lo, hi rune
 	kind   int
-	du, dl int // kind 0 only
+	du, dl int
 }
 
 func deltaUpper(r rune) int { return int(unicode.ToUpper(r)) - int(r) }
 func deltaLower(r rune) int { return int(unicode.ToLower(r)) - int(r) }
 
-// startsAlt reports whether an alternating run could start at r: r is an
-// uppercase letter whose lowercase is the very next code point (the
-// Latin-Extended-A shape, Ā ā Ă ă …).
-//
-// A block starting on the *lowercase* half would need a second pattern.
-// No such block exists in Unicode 15.0, so encoding one is not
-// implemented — those code points fall back to constant runs, which are
-// always correct, just less compact. If a future Unicode version
-// introduces one the tables stay correct automatically; only the size
-// regresses.
 func startsAlt(r rune) bool {
 	return deltaUpper(r) == 0 && deltaLower(r) == 1
 }
 
-// altHolds reports whether cp continues the alternating run anchored at
-// lo: even offsets are the uppercase half, odd offsets the lowercase.
 func altHolds(lo, cp rune) bool {
 	if (cp-lo)&1 == 0 {
 		return deltaUpper(cp) == 0 && deltaLower(cp) == 1
@@ -592,15 +483,8 @@ func altHolds(lo, cp rune) bool {
 	return deltaUpper(cp) == -1 && deltaLower(cp) == 0
 }
 
-// minAltRun is the shortest alternating run worth encoding as one. Below
-// this, constant runs encode the same code points in fewer bytes.
 const minAltRun = 4
 
-// caseRuns derives the minimal set of case-mapping runs by walking every
-// code point and diffing ToUpper/ToLower — never by copying
-// unicode.CaseRanges, so the output is correct regardless of that table's
-// stride conventions. Code points with no mapping are omitted entirely;
-// the decoder returns them unchanged.
 func caseRuns() []run {
 	var runs []run
 	for r := rune(0); r <= unicode.MaxRune; {
@@ -630,7 +514,6 @@ func caseRuns() []run {
 	return runs
 }
 
-// encodeCase renders the case runs as the table string.
 func encodeCase(runs []run) string {
 	var b strings.Builder
 	for _, rn := range runs {
@@ -643,8 +526,6 @@ func encodeCase(runs []run) string {
 	return b.String()
 }
 
-// applyCase decodes `t` for cp exactly as the generated Fern
-// `_case_apply` does — the reference the verifier checks against.
 func applyCase(t string, cp int, wantUpper bool) int {
 	lo, hi := 0, len(t)/recChars-1
 	for lo <= hi {
@@ -674,11 +555,6 @@ func applyCase(t string, cp int, wantUpper bool) int {
 	return cp
 }
 
-// coalesce enumerates every code point satisfying pred and merges
-// contiguous runs into inclusive [lo, hi] ranges. Enumerating and
-// coalescing (rather than copying the stdlib RangeTable) keeps the output
-// correct regardless of stride and yields the minimal set of ranges for a
-// binary search.
 func coalesce(pred func(rune) bool) [][2]rune {
 	var out [][2]rune
 	inRun := false
@@ -709,12 +585,6 @@ func encodeRanges(rs [][2]rune) string {
 	return b.String()
 }
 
-// encodeFull encodes a full-case table as 4-field records:
-//
-//	from | to[0] | to[1] | to[2]
-//
-// Absent trailing code points are 0, which is unambiguous because U+0000
-// is never part of a case expansion.
 func encodeFull(fs []fullCase) string {
 	var b strings.Builder
 	for _, f := range fs {
@@ -726,7 +596,6 @@ func encodeFull(fs []fullCase) string {
 	return b.String()
 }
 
-// inRanges mirrors the generated `_in_ranges`.
 func inRanges(t string, cp int) bool {
 	lo, hi := 0, len(t)/rangeChars-1
 	for lo <= hi {
@@ -744,9 +613,6 @@ func inRanges(t string, cp int) bool {
 	return false
 }
 
-// verify decodes every emitted table for every code point and compares
-// against the `unicode` package. Any mismatch is a generator bug and
-// fails the run rather than shipping a wrong table.
 func verify(caseT string, classes map[string]classTable) {
 	for r := rune(0); r <= unicode.MaxRune; r++ {
 		if got, want := applyCase(caseT, int(r), true), int(unicode.ToUpper(r)); got != want {
@@ -777,15 +643,10 @@ type classTable struct {
 	count int
 }
 
-// emitTable writes a non-public `name(): string` returning the encoded
-// table, with a comment recording its entry count and byte size.
-func emitTable(b *strings.Builder, name, comment, table string, entries, width int) {
-	fmt.Fprintf(b, "// %s\n// %d entries, %d bytes (%d chars per entry).\nfunction %s(): string {\n    return \"%s\";\n}\n\n",
-		comment, entries, len(table), width, name, table)
+func emitTable(b *strings.Builder, name, table string) {
+	fmt.Fprintf(b, "function %s(): string {\n    return \"%s\";\n}\n\n", name, table)
 }
 
-// tables builds the case table and every class table, verified against
-// the `unicode` package before it is returned.
 func tables() (caseT string, runs []run, classes map[string]classTable) {
 	runs = caseRuns()
 	caseT = encodeCase(runs)
@@ -807,33 +668,26 @@ func tables() (caseT string, runs []run, classes map[string]classTable) {
 	return caseT, runs, classes
 }
 
-// wordBreakMid is the Word_Break = MidLetter / MidNumLet / Single_Quote
-// set. Go's unicode package exposes the General_Categories and the
-// Other_* properties but not the Word_Break property, and this is the one
-// piece of Case_Ignorable that comes from it — 17 code points, fixed for
-// many Unicode versions.
 var wordBreakMid = map[rune]bool{
-	0x0027: true, // Single_Quote  APOSTROPHE
-	0x002E: true, // MidNumLet     FULL STOP
-	0x003A: true, // MidLetter     COLON
-	0x00B7: true, // MidLetter     MIDDLE DOT
-	0x0387: true, // MidLetter     GREEK ANO TELEIA
-	0x055F: true, // MidLetter     ARMENIAN ABBREVIATION MARK
-	0x05F4: true, // MidLetter     HEBREW PUNCTUATION GERSHAYIM
-	0x2018: true, // MidNumLet     LEFT SINGLE QUOTATION MARK
-	0x2019: true, // MidNumLet     RIGHT SINGLE QUOTATION MARK
-	0x2024: true, // MidNumLet     ONE DOT LEADER
-	0x2027: true, // MidLetter     HYPHENATION POINT
-	0xFE13: true, // MidLetter     PRESENTATION FORM FOR VERTICAL COLON
-	0xFE52: true, // MidNumLet     SMALL FULL STOP
-	0xFE55: true, // MidLetter     SMALL COLON
-	0xFF07: true, // MidNumLet     FULLWIDTH APOSTROPHE
-	0xFF0E: true, // MidNumLet     FULLWIDTH FULL STOP
-	0xFF1A: true, // MidLetter     FULLWIDTH COLON
+	0x0027: true,
+	0x002E: true,
+	0x003A: true,
+	0x00B7: true,
+	0x0387: true,
+	0x055F: true,
+	0x05F4: true,
+	0x2018: true,
+	0x2019: true,
+	0x2024: true,
+	0x2027: true,
+	0xFE13: true,
+	0xFE52: true,
+	0xFE55: true,
+	0xFF07: true,
+	0xFF0E: true,
+	0xFF1A: true,
 }
 
-// isCased is the Unicode Cased property: Lu + Ll + Lt + Other_Uppercase +
-// Other_Lowercase. Final_Sigma is defined in terms of it.
 func isCased(r rune) bool {
 	return unicode.Is(unicode.Lu, r) || unicode.Is(unicode.Ll, r) ||
 		unicode.Is(unicode.Lt, r) ||
@@ -841,43 +695,25 @@ func isCased(r rune) bool {
 		unicode.Is(unicode.Other_Lowercase, r)
 }
 
-// isCaseIgnorable is the Unicode Case_Ignorable property: Mn + Me + Cf +
-// Lm + Sk, plus the Word_Break mid set above. Final_Sigma skips over these
-// when looking for the cased characters on either side, which is what
-// makes "ΑΣ'" lowercase its sigma as final rather than medial.
 func isCaseIgnorable(r rune) bool {
 	return unicode.Is(unicode.Mn, r) || unicode.Is(unicode.Me, r) ||
 		unicode.Is(unicode.Cf, r) || unicode.Is(unicode.Lm, r) ||
 		unicode.Is(unicode.Sk, r) || wordBreakMid[r]
 }
 
-// normdata.txt holds the canonical-normalization source data. It is
-// checked in rather than derived here because Go's unicode package ships
-// neither canonical decompositions nor combining classes, and this module
-// has no external dependencies. gen_normdata.py regenerates it from the
-// UCD files of a named release, the one the case tables' Go track.
-//
 //go:embed normdata.txt
 var normData string
 
-// cccRun is an inclusive range of code points sharing one combining class.
 type cccRun struct {
 	lo, hi rune
 	ccc    int
 }
 
-// decomp is one code point's FULL canonical decomposition, already in
-// canonical order. Four elements is the observed maximum (U+1F82 and its
-// Greek neighbours); unused trailing slots are 0, which is unambiguous
-// because U+0000 never appears in a decomposition.
 type decomp struct {
 	cp rune
 	to [4]rune
 }
 
-// primary is a primary composite: to0 + to1 recompose to cp under NFC.
-// Composition-excluded characters are simply absent, so the table encodes
-// the Full_Composition_Exclusion property by omission.
 type primary struct {
 	a, b, cp rune
 }
@@ -888,9 +724,6 @@ const (
 	composeChars = 3 * fieldChars
 )
 
-// Hangul syllables decompose arithmetically rather than by table (UAX #15).
-// normdata.txt deliberately omits them; the generated Fern implements the
-// formula with these constants.
 const (
 	hangulSBase  = 0xAC00
 	hangulLBase  = 0x1100
@@ -901,12 +734,6 @@ const (
 	hangulSCount = 11172
 )
 
-// parseNormData reads the embedded data into the three tables. Malformed
-// input panics: it is generated and checked in, so a parse failure is a
-// broken commit, not a runtime condition to tolerate.
-// normDataVersion is the UCD release normdata.txt was generated from, off
-// its `# UCD` line — a different oracle from the case tables', so the
-// generated file names it separately.
 func normDataVersion() string {
 	for _, line := range strings.Split(normData, "\n") {
 		if strings.HasPrefix(line, "# UCD ") {
@@ -956,8 +783,6 @@ func parseNormData() (cccs []cccRun, decomps []decomp, prims []primary) {
 		}
 	}
 
-	// Coalesce equal classes into ranges the same way the character
-	// classes do — 912 code points collapse to a few hundred records.
 	keys := make([]rune, 0, len(ccc))
 	for cp := range ccc {
 		keys = append(keys, cp)
@@ -971,9 +796,6 @@ func parseNormData() (cccs []cccRun, decomps []decomp, prims []primary) {
 		cccs = append(cccs, cccRun{lo: cp, hi: cp, ccc: ccc[cp]})
 	}
 
-	// Both lookup tables are binary-searched by the generated Fern, so
-	// they must be sorted by their search key. The composition table is
-	// keyed on the PAIR, not on the composite.
 	sort.Slice(decomps, func(i, j int) bool { return decomps[i].cp < decomps[j].cp })
 	sort.Slice(prims, func(i, j int) bool {
 		if prims[i].a != prims[j].a {
@@ -1023,11 +845,6 @@ func encodeCompose(ps []primary) string {
 	return b.String()
 }
 
-// verifyNorm decodes the three emitted tables and checks them against the
-// parsed data, the same round-trip discipline verify applies to the case
-// tables. It also asserts the invariant the composer relies on: a primary
-// composite's pair must itself be canonically ordered, so composing left
-// to right can never need to look backwards.
 func verifyNorm(cccT, decompT, composeT string, cccs []cccRun, decomps []decomp, prims []primary) {
 	classOf := func(cp rune) int {
 		for _, r := range cccs {
@@ -1063,7 +880,6 @@ func verifyNorm(cccT, decompT, composeT string, cccs []cccRun, decomps []decomp,
 	}
 }
 
-// decodeCCC mirrors the generated _ccc_of.
 func decodeCCC(t string, cp int) int {
 	lo, hi := 0, len(t)/cccChars-1
 	for lo <= hi {
@@ -1081,7 +897,6 @@ func decodeCCC(t string, cp int) int {
 	return 0
 }
 
-// decodeDecomp mirrors the generated _decomp_of.
 func decodeDecomp(t string, cp int) ([4]rune, bool) {
 	lo, hi := 0, len(t)/decompChars-1
 	for lo <= hi {
@@ -1103,8 +918,6 @@ func decodeDecomp(t string, cp int) ([4]rune, bool) {
 	return [4]rune{}, false
 }
 
-// decodeCompose mirrors the generated _compose_pair, returning 0 for a
-// pair with no primary composite.
 func decodeCompose(t string, a, b int) int {
 	lo, hi := 0, len(t)/composeChars-1
 	for lo <= hi {
@@ -1123,20 +936,9 @@ func decodeCompose(t string, a, b int) int {
 	return 0
 }
 
-// gcbdata.txt holds the UAX #29 segmentation source data. Like
-// normdata.txt it is checked in: Go's unicode package exposes neither
-// Grapheme_Cluster_Break nor Extended_Pictographic. gen_gcbdata.py
-// regenerates it from the UCD files of a named release.
-//
 //go:embed gcbdata.txt
 var gcbData string
 
-// Grapheme_Cluster_Break class IDs. The generated Fern hard-codes these
-// same numbers, so they are part of the table format: renumbering here
-// without renumbering there silently changes every boundary decision.
-//
-// Other is 0 because it is the default the lookup returns for the code
-// points the table omits.
 const (
 	gcbOther = iota
 	gcbCR
@@ -1155,7 +957,6 @@ const (
 	gcbClassCount
 )
 
-// gcbNames maps the UCD's property values, upper-cased, onto the IDs above.
 var gcbNames = map[string]int{
 	"CR": gcbCR, "LF": gcbLF, "CONTROL": gcbControl,
 	"EXTEND": gcbExtend, "ZWJ": gcbZWJ,
@@ -1171,9 +972,6 @@ type gcbRun struct {
 	class  int
 }
 
-// parseGCBData reads the embedded segmentation data. Malformed input
-// panics: it is generated and checked in, so a parse failure is a broken
-// commit rather than a condition to tolerate.
 func parseGCBData() (gcbs []gcbRun, extPict [][2]rune, version string) {
 	for _, line := range strings.Split(gcbData, "\n") {
 		if line == "" {
@@ -1220,7 +1018,6 @@ func encodeGCB(rs []gcbRun) string {
 	return b.String()
 }
 
-// decodeGCB mirrors the generated _gcb_of.
 func decodeGCB(t string, cp int) int {
 	lo, hi := 0, len(t)/gcbChars-1
 	for lo <= hi {
@@ -1238,8 +1035,6 @@ func decodeGCB(t string, cp int) int {
 	return gcbOther
 }
 
-// verifyGCB round-trips the emitted tables and checks the structural
-// invariants the binary search depends on.
 func verifyGCB(gcbTable, extT string, gcbs []gcbRun, extPict [][2]rune) {
 	for i, r := range gcbs {
 		if r.lo > r.hi {
@@ -1268,8 +1063,6 @@ func verifyGCB(gcbTable, extT string, gcbs []gcbRun, extPict [][2]rune) {
 			panic(fmt.Sprintf("unicodegen: ExtPict range U+%04X..U+%04X does not decode", r[0], r[1]))
 		}
 	}
-	// Spot-check the anchors the state machine keys on; a renumbering of
-	// the class IDs would pass the round-trip above but not this.
 	for _, tc := range []struct {
 		cp    rune
 		class int
@@ -1285,19 +1078,9 @@ func verifyGCB(gcbTable, extT string, gcbs []gcbRun, extPict [][2]rune) {
 	}
 }
 
-// wbdata.txt holds the UAX #29 word-segmentation source data, for the
-// same reason gcbdata.txt holds the grapheme data: Go's unicode package
-// does not expose Word_Break. gen_wbdata.py regenerates it from the UCD
-// files of a named release. Extended_Pictographic, which rule WB3c needs,
-// is read from gcbdata.txt rather than duplicated here.
-//
 //go:embed wbdata.txt
 var wbData string
 
-// Word_Break class IDs. As with the grapheme classes, the generated
-// Fern hard-codes these numbers, so they are part of the table format.
-// Other is 0 because it is what the lookup returns for the code points
-// the table omits.
 const (
 	wbOther = iota
 	wbCR
@@ -1340,8 +1123,6 @@ type wbRun struct {
 	class  int
 }
 
-// parseWBData reads the embedded word-segmentation data. Malformed
-// input panics, on the same reasoning as parseGCBData.
 func parseWBData() (wbs []wbRun, version string) {
 	for _, line := range strings.Split(wbData, "\n") {
 		if line == "" {
@@ -1380,7 +1161,6 @@ func encodeWB(rs []wbRun) string {
 	return b.String()
 }
 
-// decodeWB mirrors the generated _wb_of.
 func decodeWB(t string, cp int) int {
 	lo, hi := 0, len(t)/wbChars-1
 	for lo <= hi {
@@ -1398,8 +1178,6 @@ func decodeWB(t string, cp int) int {
 	return wbOther
 }
 
-// verifyWB round-trips the emitted table and checks the structural
-// invariants the binary search depends on.
 func verifyWB(wbTable string, wbs []wbRun) {
 	for i, r := range wbs {
 		if r.lo > r.hi {
@@ -1417,8 +1195,6 @@ func verifyWB(wbTable string, wbs []wbRun) {
 			}
 		}
 	}
-	// Spot-check the anchors the state machine keys on; a renumbering of
-	// the class IDs would sail past the round-trip above but not this.
 	for _, tc := range []struct {
 		cp    rune
 		class int
@@ -1436,12 +1212,8 @@ func verifyWB(wbTable string, wbs []wbRun) {
 	}
 }
 
-// genStats is what main reports after a run; the tests ignore it.
 type genStats struct{ runs, tableBytes int }
 
-// generate renders the complete std/unicode.fern source. Split out of
-// main so the tests can regenerate in memory and compare against the
-// committed file.
 func generate() (string, genStats) {
 	caseT, runs, classes := tables()
 	stats := genStats{runs: len(runs), tableBytes: len(caseT)}
@@ -1453,10 +1225,6 @@ func generate() (string, genStats) {
 	cccT, decompT, composeT := encodeCCC(cccs), encodeDecomp(decomps), encodeCompose(prims)
 	verifyNorm(cccT, decompT, composeT, cccs, decomps, prims)
 
-	// Both quick-check sets fall out of the tables already parsed, so
-	// normdata.txt carries no separate quick-check data. NFD=No is
-	// "decomposes at all"; NFC=No is "decomposes but never recomposes",
-	// which is the Full_Composition_Exclusion property restated.
 	decomposes := make(map[rune]bool, len(decomps))
 	for _, d := range decomps {
 		decomposes[d.cp] = true
@@ -1469,9 +1237,6 @@ func generate() (string, genStats) {
 	nfdNo := coalesce(func(r rune) bool { return decomposes[r] || isHangul(r) })
 	nfcNo := coalesce(func(r rune) bool { return decomposes[r] && !recomposes[r] })
 
-	// NFC_QC=Maybe: the trailing halves of the primary composites. Their
-	// presence cannot be decided by a local test, so the quick check has
-	// to escalate to a full comparison — see the generated is_nfc.
 	combinesLeft := make(map[rune]bool, len(prims))
 	for _, p := range prims {
 		combinesLeft[p.b] = true
@@ -1492,138 +1257,46 @@ func generate() (string, genStats) {
 	stats.tableBytes += len(wbTable)
 
 	var b strings.Builder
-	fmt.Fprintf(&b, `// std/unicode — Unicode case mapping + character classes.
+	fmt.Fprintf(&b, `// This module converts Unicode case and classifies characters.
 //
-// GENERATED by cmd/unicodegen. Do NOT edit by hand — re-run
-// `+"`go run ./cmd/unicodegen internal/stdlib/std/unicode.fern`"+` to
-// refresh after a Go toolchain upgrade. Three oracles, each at its own
-// Unicode version:
-//   - case mapping and character classes: the Go standard library's
-//     unicode package, Unicode %s;
-//   - normalization: the UCD, Unicode %s (cmd/unicodegen/normdata.txt);
-//   - segmentation: the UCD, Unicode %s (gcbdata.txt) and %s (wbdata.txt).
-//
-// What std/string's plain-named case methods delegate to, and the
-// complement to its byte-wise to_ascii_* twins. Four families:
-//   - Case mapping: to_upper / to_lower on strings and char values
-//     / swap_case / capitalize / title_case / eq_ignore_case — over
-//     every code point (Latin, Greek, Cyrillic, Armenian, fullwidth, …),
-//     decoding UTF-8 via std/utf8 and re-encoding. See the caveats below
-//     for which mappings are full and which are simple.
-//   - Character classes: is_letter / is_digit / is_alnum / is_whitespace
-//     / is_upper / is_lower over a code point, via range binary search.
-//   - Normalization: nfc / nfd / is_nfc / is_nfd / eq_canonical, so
-//     canonically-equivalent text compares equal. NFKC/NFKD are out of
-//     scope by decision — a second full table for a lossy transform.
-//   - Segmentation (UAX #29): graphemes / grapheme_count /
-//     reverse_graphemes for what a reader calls a character, and
-//     word_segments / words / word_count for word boundaries.
-//
-// Scope + caveats:
-//   - String-level to_upper / to_lower do FULL mapping: a code point may
-//     expand to several (`+"`ß`"+` → `+"`SS`"+`, the ligatures, the Greek
-//     iota-subscript forms). The char methods to_upper and
-//     to_lower stay SIMPLE (1:1) — a 1→N expansion has no single
-//     code point to return.
-//   - One CONDITIONAL rule is applied when lowercasing: Greek Final_Sigma,
-//     so a word-final `+"`Σ`"+` becomes `+"`ς`"+` and a medial one `+"`σ`"+`. The LOCALE
-//     tailorings (Turkish dotless i, Lithuanian) are not, by design.
-//   - is_digit is the decimal-digit class (Unicode Nd); is_letter is the
-//     full Letter category; is_whitespace matches unicode.IsSpace.
-//   - Not locale-aware (no Turkish / Lithuanian tailoring), by design.
-//
-// Representation: every table below is a STRING literal, not an array —
-// static rodata, so a lookup allocates nothing and no table is ever
-// "built". Fields are 4 characters of a 6-bit alphabet (24 bits each),
-// over the two printable spans 48..91 and 93..112 so no character ever
-// needs an escape. Deltas are biased by 2^23. See cmd/unicodegen for the
-// record layouts and the generator-side round-trip verification.
-//
-// When const/static arrays land as a language feature (COMPTIME-BRIEF),
-// this encoding should be DELETED in favour of them — it exists only
-// because a Fern array literal is executable code.
-//
-// Every entry point ASCII-fast-paths before touching a table: the
-// tables cover ASCII too, but the common case shouldn't pay a binary
-// search for it.
+// Generator: cmd/unicodegen.
+// Unicode versions: Go %s, normalization %s, grapheme boundaries %s, word boundaries %s.
+// Use `+"`go run ./cmd/unicodegen internal/stdlib/std/unicode.fern`"+` to regenerate this file.
 
 import "std/utf8" as utf8;
 
 `, unicode.Version, normDataVersion(), strings.Fields(gcbVersion)[0], strings.Fields(wbVersion)[0])
 
-	emitTable(&b, "_case_table",
-		"Case-mapping runs: lo | hi | kind | dUpper+2^23 | dLower+2^23.\n// kind 0 = constant deltas; kind 1 = alternating pairs, even offset\n// from lo is the uppercase half.",
-		caseT, len(runs), recChars)
+	emitTable(&b, "_case_table", caseT)
 	for _, name := range []string{"letter", "digit", "space", "upper", "lower", "cased", "caseignorable"} {
 		c := classes[name]
-		emitTable(&b, "_"+name+"_ranges",
-			fmt.Sprintf("Inclusive code-point ranges for the %s class: lo | hi.", name),
-			c.table, c.count, rangeChars)
+		emitTable(&b, "_"+name+"_ranges", c.table)
 	}
-	emitTable(&b, "_full_upper_table",
-		"Full (1->N) uppercase: from | to0 | to1 | to2, trailing 0 = absent.\n// The unconditional SpecialCasing set — what the 1:1 table cannot say.",
-		encodeFull(fullUpper), len(fullUpper), fullChars)
-	emitTable(&b, "_full_lower_table",
-		"Full (1->N) lowercase: from | to0 | to1 | to2, trailing 0 = absent.",
-		encodeFull(fullLower), len(fullLower), fullChars)
-	emitTable(&b, "_fold_table",
-		"Case FOLDING deltas: from | to0 | to1 | to2, trailing 0 = absent.\n// Only where the fold differs from simple lowercase — everything else\n// falls through to the lowercase table.",
-		encodeFull(foldExceptions), len(foldExceptions), fullChars)
+	emitTable(&b, "_full_upper_table", encodeFull(fullUpper))
+	emitTable(&b, "_full_lower_table", encodeFull(fullLower))
+	emitTable(&b, "_fold_table", encodeFull(foldExceptions))
 
-	emitTable(&b, "_ccc_ranges",
-		fmt.Sprintf("Canonical combining classes (UCD %s): lo | hi | class. Only nonzero\n// classes are stored; everything absent is a starter (class 0).", normDataVersion()),
-		cccT, len(cccs), cccChars)
-	emitTable(&b, "_decomp_table",
-		"Canonical decompositions, FULLY expanded and already in canonical\n// order: cp | to0 | to1 | to2 | to3, trailing 0 = absent. Storing the\n// recursive expansion rather than the one-step mapping means NFD needs\n// one lookup and no fixpoint loop. Hangul is absent by design — it\n// decomposes arithmetically.",
-		decompT, len(decomps), decompChars)
-	emitTable(&b, "_compose_table",
-		"Primary composites, sorted by the PAIR: a | b | composed. This is\n// NOT the inverse of the table above — composition recombines one step\n// at a time, so the key is the one-step pair. Composition-excluded\n// characters are omitted, which is how Full_Composition_Exclusion is\n// represented here.",
-		composeT, len(prims), composeChars)
-	emitTable(&b, "_nfc_no_ranges",
-		"Quick-check NFC=No: code points that never survive NFC unchanged.\n// Lets is_nfc reject without allocating a normalized copy.",
-		encodeRanges(nfcNo), len(nfcNo), rangeChars)
-	emitTable(&b, "_nfc_maybe_ranges",
-		"Quick-check NFC=Maybe: marks that can combine with what precedes\n// them. Seeing one means the answer cannot be decided locally.",
-		encodeRanges(nfcMaybe), len(nfcMaybe), rangeChars)
-	emitTable(&b, "_nfd_no_ranges",
-		"Quick-check NFD=No: code points that decompose, Hangul included.\n// Lets is_nfd answer without allocating.",
-		encodeRanges(nfdNo), len(nfdNo), rangeChars)
+	emitTable(&b, "_ccc_ranges", cccT)
+	emitTable(&b, "_decomp_table", decompT)
+	emitTable(&b, "_compose_table", composeT)
+	emitTable(&b, "_nfc_no_ranges", encodeRanges(nfcNo))
+	emitTable(&b, "_nfc_maybe_ranges", encodeRanges(nfcMaybe))
+	emitTable(&b, "_nfd_no_ranges", encodeRanges(nfdNo))
 
-	emitTable(&b, "_gcb_ranges",
-		fmt.Sprintf("Grapheme_Cluster_Break (UAX #29, UCD %s): lo | hi | class.\n"+
-			"// Class Other (0) is the default and is NOT stored -- it covers\n"+
-			"// almost every code point, so storing it would bloat the table for\n"+
-			"// no information. Class IDs are fixed by cmd/unicodegen and are\n"+
-			"// part of this table's format.", gcbVersion),
-		gcbTable, len(gcbs), gcbChars)
-	emitTable(&b, "_extpict_ranges",
-		"Extended_Pictographic ranges: lo | hi. Emoji, needed for the\n"+
-			"// ZWJ-sequence rule (GB11) -- it is a separate property from the\n"+
-			"// break classes above, so a code point can be both.",
-		extT, len(extPict), rangeChars)
+	emitTable(&b, "_gcb_ranges", gcbTable)
+	emitTable(&b, "_extpict_ranges", extT)
 
-	emitTable(&b, "_wb_ranges",
-		fmt.Sprintf("Word_Break (UAX #29, UCD %s): lo | hi | class. Class Other (0)\n"+
-			"// is the default and is NOT stored, on the same reasoning as the\n"+
-			"// grapheme table above. Class IDs are fixed by cmd/unicodegen and\n"+
-			"// are part of this table's format.", wbVersion),
-		wbTable, len(wbs), wbChars)
+	emitTable(&b, "_wb_ranges", wbTable)
 
-	b.WriteString(`// _dig decodes one table character to its 6-bit value. The alphabet
-// skips ` + "`\\`" + ` (92), so the two spans are 48..91 and 93..112.
-function _dig(c: i32): i32 {
+	b.WriteString(`function _dig(c: i32): i32 {
     if (c <= 91) { return c - 48; }
     return c - 49;
 }
 
-// _fld reads the 24-bit field at character offset ` + "`i`" + `.
 function _fld(t: string, i: i32): i32 {
     return (_dig(t[i] as i32) << 18) | (_dig(t[i + 1] as i32) << 12) | (_dig(t[i + 2] as i32) << 6) | _dig(t[i + 3] as i32);
 }
 
-// _case_apply maps ` + "`cp`" + ` through the case table — uppercase when
-// ` + "`want_upper`" + `, lowercase otherwise — returning ` + "`cp`" + ` unchanged when it
-// has no mapping. Binary search over 20-character records; no allocation.
 function _case_apply(cp: i32, want_upper: boolean): i32 {
     let t: string = _case_table();
     let lo: i32 = 0;
@@ -1649,9 +1322,6 @@ function _case_apply(cp: i32, want_upper: boolean): i32 {
     return cp;
 }
 
-// _upper_cp / _lower_cp are the i32 workers the rest of this module uses;
-// the public surface is the ` + "`char`" + ` methods below. Keeping the internals on
-// i32 avoids casting on every table lookup.
 function _upper_cp(cp: i32): i32 {
     if (cp < 128) {
         if (cp >= 97 && cp <= 122) { return cp - 32; }
@@ -1668,8 +1338,6 @@ function _lower_cp(cp: i32): i32 {
     return _case_apply(cp, false);
 }
 
-// _is_ascii reports whether every byte of ` + "`s`" + ` is below 0x80, so the
-// whole string can take the byte-fold fast path.
 function _is_ascii(s: string): boolean {
     let n: i32 = s.len();
     let i: i32 = 0;
@@ -1680,10 +1348,6 @@ function _is_ascii(s: string): boolean {
     return true;
 }
 
-// _ascii_fold remaps the 26 letters starting at ` + "`from`" + ` to those starting
-// at ` + "`to`" + `, leaving every other byte alone. The fast path for
-// to_upper / to_lower on ASCII input; a string with no letter to remap
-// comes back as it is.
 function _ascii_fold(s: string, from: i32, to: i32): string {
     let n: i32 = s.len();
     let first: i32 = 0;
@@ -1704,10 +1368,6 @@ function _ascii_fold(s: string, from: i32, to: i32): string {
     return string_from_bytes_unchecked(buf);
 }
 
-// _full_case returns the FULL (1->N) mapping of ` + "`cp`" + ` as an already
-// encoded string, or "" when ` + "`cp`" + ` has none and the simple table applies.
-// Binary search over 16-character records; a trailing 0 field means the
-// expansion is shorter than 3 code points.
 function _full_case(cp: i32, want_upper: boolean): string {
     let t: string = _full_lower_table();
     if (want_upper) { t = _full_upper_table(); }
@@ -1733,13 +1393,7 @@ function _full_case(cp: i32, want_upper: boolean): string {
     return "";
 }
 
-// _final_sigma reports whether the sigma at byte offset ` + "`at`" + ` in ` + "`s`" + ` is
-// word-FINAL in the Unicode sense: preceded by a Cased code point and NOT
-// followed by one, skipping Case_Ignorable code points on both sides.
-// That is the Final_Sigma condition from SpecialCasing, and it is why
-// ` + "`ΣΟΦΟΣ`" + ` lowercases to ` + "`σοφος`" + ` and not ` + "`σοφοσ`" + `.
 function _final_sigma(s: string, at: i32, sigma_len: i32): boolean {
-    // Look BACK for a cased code point, skipping case-ignorables.
     let before: boolean = false;
     let k: i32 = at;
     while (k > 0) {
@@ -1756,7 +1410,6 @@ function _final_sigma(s: string, at: i32, sigma_len: i32): boolean {
         }
     }
     if (!before) { return false; }
-    // Look FORWARD for a cased code point, skipping case-ignorables.
     let n: i32 = s.len();
     let i: i32 = at + sigma_len;
     while (i < n) {
@@ -1772,20 +1425,6 @@ function _final_sigma(s: string, at: i32, sigma_len: i32): boolean {
     return true;
 }
 
-// _map_upper and _map_lower decode ` + "`s`" + `, map every code point, and
-// re-encode. Malformed bytes each become U+FFFD, matching utf8.codepoints.
-//
-// FULL mapping: a code point with a 1->N expansion (` + "`ß`" + ` -> ` + "`SS`" + `, the
-// ligatures, the Greek iota-subscript forms) contributes several code
-// points, so the result can be longer than the input in BOTH bytes and
-// code points. Everything else takes the simple 1:1 table.
-//
-// These are deliberately TWO functions rather than one taking a direction
-// flag. Only the lowercase path needs Final_Sigma, and Final_Sigma reaches
-// the Cased and Case_Ignorable range tables — about 8.9 KB. With a shared
-// body, per-function DCE cannot tell that an uppercase-only program never
-// reaches them, so every such program paid for tables it could not use.
-// Do not merge these back together.
 function _map_upper(s: string): string {
     let out: string = "";
     let n: i32 = s.len();
@@ -1807,9 +1446,6 @@ function _map_upper(s: string): string {
     return out;
 }
 
-// The lowercase half, plus the one CONDITIONAL rule Fern applies: capital
-// sigma (U+03A3) becomes final sigma ` + "`ς`" + ` in word-final position and ` + "`σ`" + `
-// elsewhere. The locale tailorings (Turkish, Lithuanian) are not applied.
 function _map_lower(s: string): string {
     let out: string = "";
     let n: i32 = s.len();
@@ -1835,27 +1471,16 @@ function _map_lower(s: string): string {
     return out;
 }
 
-// ` + "`to_upper(s)`" + ` — ` + "`s`" + ` uppercased with FULL Unicode mapping, so
-// a code point may expand to several (` + "`ß`" + ` -> ` + "`SS`" + `). Pure-ASCII input takes
-// a byte fold and never touches a table.
 pub function to_upper(s: string): string {
     if (_is_ascii(s)) { return _ascii_fold(s, 97, 65); }
     return _map_upper(s);
 }
 
-// ` + "`to_lower(s)`" + ` — ` + "`s`" + ` lowercased with FULL Unicode mapping.
-// Greek Final_Sigma IS applied: a word-final ` + "`Σ`" + ` becomes ` + "`ς`" + `, a
-// medial one ` + "`σ`" + `.
 pub function to_lower(s: string): string {
     if (_is_ascii(s)) { return _ascii_fold(s, 65, 97); }
     return _map_lower(s);
 }
 
-// ` + "`case_fold(cp)`" + ` — the case-folded form of one code point, as an
-// encoded string. Folding is its own operation, NOT lowercasing: ` + "`ß`" + `
-// folds to ` + "`ss`" + ` and ` + "`ſ`" + ` folds to ` + "`s`" + `, neither of which the char ` + "`to_lower`" + `
-// does. Only the differing code points are tabulated; the rest fall
-// through to the simple lowercase mapping.
 function _fold_cp(cp: i32): string {
     let t: string = _fold_table();
     let lo: i32 = 0;
@@ -1880,10 +1505,6 @@ function _fold_cp(cp: i32): string {
     return utf8.utf8_encode((_lower_cp(cp)) as char);
 }
 
-// ` + "`case_fold(s)`" + ` — ` + "`s`" + ` mapped to a form suitable for caseless comparison.
-// NOT the same as lowercasing: folding ` + "`ß`" + ` gives ` + "`ss`" + `, so folding two
-// strings and comparing catches equivalences ` + "`to_lower`" + ` misses. The
-// result is for COMPARISON only — it is not meant to be displayed.
 pub function case_fold(s: string): string {
     if (_is_ascii(s)) { return _ascii_fold(s, 65, 97); }
     let out: string = "";
@@ -1901,11 +1522,6 @@ pub function case_fold(s: string): string {
     return out;
 }
 
-// ` + "`eq_ignore_case(a, b)`" + ` — caseless equality under full case FOLDING, so
-// ` + "`ß`" + ` and ` + "`ss`" + ` compare equal and ` + "`ſ`" + ` matches ` + "`s`" + `. Pure-ASCII
-// operands stream byte-wise and allocate nothing; anything else folds
-// both sides, because a fold can change length and so the two cannot be
-// walked in lockstep.
 pub function eq_ignore_case(a: string, b: string): boolean {
     if (_is_ascii(a) && _is_ascii(b)) {
         let na: i32 = a.len();
@@ -1924,18 +1540,12 @@ pub function eq_ignore_case(a: string, b: string): boolean {
     return case_fold(a) == case_fold(b);
 }
 
-// _swap_case_cp toggles one code point's case. Caseless code points
-// (digits, punctuation, CJK, …) pass through — ` + "`is_upper`" + ` / ` + "`is_lower`" + `
-// are both false for them, so neither branch fires.
 function _swap_case_cp(cp: i32): i32 {
     if (_is_upper_cp(cp)) { return _lower_cp(cp); }
     if (_is_lower_cp(cp)) { return _upper_cp(cp); }
     return cp;
 }
 
-// ` + "`swap_case(s)`" + ` — every uppercase code point becomes lowercase and vice
-// versa. Its own inverse on any string whose code points round-trip
-// under simple mapping.
 pub function swap_case(s: string): string {
     if (_is_ascii(s)) {
         let n: i32 = s.len();
@@ -1965,9 +1575,6 @@ pub function swap_case(s: string): string {
     return out;
 }
 
-// ` + "`capitalize(s)`" + ` — uppercase the FIRST code point, leave the rest
-// exactly as they are. Not Python's str.capitalize, which also
-// lowercases the tail; preserving the tail is the less lossy default.
 pub function capitalize(s: string): string {
     let n: i32 = s.len();
     if (n == 0) { return ""; }
@@ -1981,12 +1588,6 @@ pub function capitalize(s: string): string {
     }
 }
 
-// ` + "`title_case(s)`" + ` — uppercase the first code point of every
-// whitespace-separated word, leaving the rest of each word alone (so
-// "FOX" stays "FOX"). Word breaks are any Unicode whitespace, not just
-// U+0020 — the ASCII ` + "`to_ascii_title_case`" + ` breaks on the space byte
-// only, so a tab-separated string titles differently between the two.
-// This is a word-BREAK notion, not UAX #29 segmentation (#5633).
 pub function title_case(s: string): string {
     let out: string = "";
     let n: i32 = s.len();
@@ -2014,8 +1615,6 @@ pub function title_case(s: string): string {
     return out;
 }
 
-// _in_ranges binary-searches an inclusive-range table (8-character
-// lo | hi records, sorted and non-overlapping) for ` + "`cp`" + `.
 function _in_ranges(t: string, cp: i32): boolean {
     let lo: i32 = 0;
     let hi: i32 = t.len() / 8 - 1;
@@ -2029,31 +1628,25 @@ function _in_ranges(t: string, cp: i32): boolean {
     return false;
 }
 
-// ` + "`_is_letter_cp(cp)`" + ` — is ` + "`cp`" + ` in the Unicode Letter category (L*)?
 function _is_letter_cp(cp: i32): boolean {
     if (cp < 128) { return (cp >= 65 && cp <= 90) || (cp >= 97 && cp <= 122); }
     return _in_ranges(_letter_ranges(), cp);
 }
 
-// ` + "`_is_digit_cp(cp)`" + ` — is ` + "`cp`" + ` a Unicode decimal digit (category Nd)?
 function _is_digit_cp(cp: i32): boolean {
     if (cp < 128) { return cp >= 48 && cp <= 57; }
     return _in_ranges(_digit_ranges(), cp);
 }
 
-// ` + "`_is_alnum_cp(cp)`" + ` — a letter or a decimal digit.
 function _is_alnum_cp(cp: i32): boolean {
     return _is_letter_cp(cp) || _is_digit_cp(cp);
 }
 
-// ` + "`_is_whitespace_cp(cp)`" + ` — matches Go's unicode.IsSpace (space, tab,
-// newline, NBSP, the Unicode space separators, …).
 function _is_whitespace_cp(cp: i32): boolean {
     if (cp < 128) { return cp == 32 || (cp >= 9 && cp <= 13); }
     return _in_ranges(_space_ranges(), cp);
 }
 
-// ` + "`_is_upper_cp(cp)`" + ` / ` + "`_is_lower_cp(cp)`" + ` — Unicode upper/lowercase letters.
 function _is_upper_cp(cp: i32): boolean {
     if (cp < 128) { return cp >= 65 && cp <= 90; }
     return _in_ranges(_upper_ranges(), cp);
@@ -2065,56 +1658,31 @@ function _is_lower_cp(cp: i32): boolean {
 }
 
 
-// === The ` + "`char`" + ` surface ===
-//
-// A ` + "`char`" + ` is a Unicode scalar value, distinct in the checker from the
-// ` + "`i32`" + ` a byte is stored in (#5629). These are METHODS rather than free
-// functions because a free ` + "`to_upper(c: char)`" + ` would collide with
-// ` + "`to_upper(s: string)`" + ` above — and because ` + "`c.to_upper()`" + ` next to
-// ` + "`s.to_upper()`" + ` is exactly the point: the receiver TYPE says which of
-// the two operations you meant, where before both were ` + "`i32`" + ` and only a
-// naming convention told them apart.
-//
-// Case mapping here is SIMPLE (1:1). A 1->N expansion has no single
-// ` + "`char`" + ` to return, so ` + "`'ß'`" + ` maps to itself; use the string-level
-// ` + "`to_upper`" + ` when you need ` + "`SS`" + `. Rust draws the same line between
-// ` + "`char::to_uppercase`" + ` and ` + "`str::to_uppercase`" + `.
 
-// ` + "`c.to_upper()`" + ` — the simple uppercase of one scalar, or ` + "`c`" + ` unchanged.
 pub function (c: char) to_upper(): char {
     return _upper_cp(c as i32) as char;
 }
 
-// ` + "`c.to_lower()`" + ` — the simple lowercase of one scalar.
 pub function (c: char) to_lower(): char {
     return _lower_cp(c as i32) as char;
 }
 
-// ` + "`c.is_letter()`" + ` — is ` + "`c`" + ` in the Unicode Letter category (L*)?
 pub function (c: char) is_letter(): boolean {
     return _is_letter_cp(c as i32);
 }
 
-// ` + "`c.is_digit()`" + ` — is ` + "`c`" + ` a Unicode decimal digit (category Nd)? Note
-// this is the DECIMAL class, so it is true for Arabic-Indic and
-// fullwidth digits, not just ASCII ` + "`0-9`" + `.
 pub function (c: char) is_digit(): boolean {
     return _is_digit_cp(c as i32);
 }
 
-// ` + "`c.is_alnum()`" + ` — a letter or a decimal digit.
 pub function (c: char) is_alnum(): boolean {
     return _is_alnum_cp(c as i32);
 }
 
-// ` + "`c.is_whitespace()`" + ` — matches Go's unicode.IsSpace (space, tab,
-// newline, NBSP, the Unicode space separators, ...).
 pub function (c: char) is_whitespace(): boolean {
     return _is_whitespace_cp(c as i32);
 }
 
-// ` + "`c.is_upper()`" + ` / ` + "`c.is_lower()`" + ` — Unicode upper/lowercase letters.
-// Both are false for caseless scalars (digits, punctuation, CJK).
 pub function (c: char) is_upper(): boolean {
     return _is_upper_cp(c as i32);
 }
@@ -2123,12 +1691,6 @@ pub function (c: char) is_lower(): boolean {
     return _is_lower_cp(c as i32);
 }
 
-// _all_cp reports whether every code point of ` + "`s`" + ` satisfies the class
-// named by ` + "`kind`" + ` (0 letter, 1 letter-or-digit, 2 decimal digit). Empty
-// input is FALSE, matching the std/string predicates these back: "every
-// character is a letter" is not a useful claim about no characters.
-// Malformed bytes decode to U+FFFD, which is in none of the classes, so
-// invalid UTF-8 answers false rather than being skipped.
 function _all_cp(s: string, kind: i32): boolean {
     let n: i32 = s.len();
     if (n == 0) { return false; }
@@ -2148,28 +1710,18 @@ function _all_cp(s: string, kind: i32): boolean {
     return true;
 }
 
-// ` + "`is_alpha_only(s)`" + ` — every code point is a Unicode letter, so ` + "`élan`" + ` and
-// ` + "`Ελλάδα`" + ` qualify where the byte-wise ASCII check rejects them.
 pub function is_alpha_only(s: string): boolean {
     return _all_cp(s, 0);
 }
 
-// ` + "`is_alnum_only(s)`" + ` — every code point is a letter or a decimal digit.
 pub function is_alnum_only(s: string): boolean {
     return _all_cp(s, 1);
 }
 
-// ` + "`is_numeric(s)`" + ` — every code point is a Unicode decimal digit (category
-// Nd), which includes the Arabic-Indic and fullwidth digits, not just
-// ASCII 0-9. Note this is a DIGIT test, not a number-parse test: it says
-// nothing about signs, separators or overflow.
 pub function is_numeric(s: string): boolean {
     return _all_cp(s, 2);
 }
 
-// _ccc_of is the canonical combining class of a code point: 0 for a
-// starter, 1..254 for a combining mark. Nothing below U+0300 combines,
-// which covers all of ASCII without a search.
 function _ccc_of(cp: char): i32 {
     let n: i32 = cp as i32;
     if (n < 768) { return 0; }
@@ -2186,13 +1738,6 @@ function _ccc_of(cp: char): i32 {
     return 0;
 }
 
-// _decomp_append appends the full canonical decomposition of cp to out,
-// or cp itself when it does not decompose.
-//
-// Hangul is handled by the UAX #15 arithmetic rather than a lookup: the
-// 11172 syllables would otherwise dominate the table, and getting the
-// formula wrong is a classic normalization bug, so it is written out
-// once here and pinned by tests.
 function _decomp_append(out: char[], cp: char): char[] {
     let n: i32 = cp as i32;
     if (n >= 44032 && n < 55204) {
@@ -2228,10 +1773,6 @@ function _decomp_append(out: char[], cp: char): char[] {
     return out.append(cp);
 }
 
-// _canon_order puts combining marks into canonical order: a stable
-// insertion sort by combining class. Stability is required, not just
-// nice — reordering marks of EQUAL class would change the text. It also
-// runs linearly on already-ordered input, which is the common case.
 function _canon_order(cps: char[]): char[] {
     let n: i32 = cps.len();
     let i: i32 = 1;
@@ -2240,8 +1781,6 @@ function _canon_order(cps: char[]): char[] {
         if (c != 0) {
             let j: i32 = i;
             while (j > 0) {
-                // A starter has class 0, so this also stops the scan
-                // dead at one: marks never migrate across a starter.
                 if (_ccc_of(cps[j - 1]) <= c) { break; }
                 let tmp: char = cps[j - 1];
                 cps = cps.with(j - 1, cps[j]);
@@ -2254,13 +1793,9 @@ function _canon_order(cps: char[]): char[] {
     return cps;
 }
 
-// _compose_pair returns the primary composite of a + b, or 0 when the
-// pair does not compose. U+0000 is never a composite, so it is an
-// unambiguous "no".
 function _compose_pair(a: char, b: char): i32 {
     let x: i32 = a as i32;
     let y: i32 = b as i32;
-    // Hangul L + V, then LV + T — arithmetic again, matching _decomp_append.
     if (x >= 4352 && x < 4371 && y >= 4449 && y < 4470) {
         return 44032 + ((x - 4352) * 21 + (y - 4449)) * 28;
     }
@@ -2283,7 +1818,6 @@ function _compose_pair(a: char, b: char): i32 {
     return 0;
 }
 
-// _nfd_cps decomposes s into a canonically ordered code-point sequence.
 function _nfd_cps(s: string): char[] {
     let cps: char[] = utf8.codepoints(s);
     let out: char[] = [];
@@ -2295,14 +1829,6 @@ function _nfd_cps(s: string): char[] {
     return _canon_order(out);
 }
 
-// _compose runs the NFC composition pass over a decomposed, canonically
-// ordered sequence.
-//
-// The subtlety is BLOCKING: a mark can only combine with the last
-// starter if nothing between them has a class greater than or equal to
-// its own. prev_cc tracks the class of the character immediately
-// preceding, with -1 meaning "nothing between", which is what lets two
-// adjacent starters (Hangul L + V) compose.
 function _compose(cps: char[]): char[] {
     let n: i32 = cps.len();
     if (n == 0) { return cps; }
@@ -2337,27 +1863,16 @@ function _compose(cps: char[]): char[] {
     return out;
 }
 
-// ` + "`nfd(s)`" + ` — canonical decomposition. Precomposed characters are split
-// into base plus combining marks, and the marks are canonically ordered.
 pub function nfd(s: string): string {
     if (_is_ascii(s)) { return s; }
     return utf8.encode_all(_nfd_cps(s));
 }
 
-// ` + "`nfc(s)`" + ` — canonical composition, the form to normalize to when in
-// doubt. Text is decomposed first and then recombined, which is what
-// makes NFC a true normal form rather than a best effort.
-//
-// Split from nfd deliberately: per-function DCE means a program that
-// only ever calls nfd does not pay for the composition table.
 pub function nfc(s: string): string {
     if (_is_ascii(s)) { return s; }
     return utf8.encode_all(_compose(_nfd_cps(s)));
 }
 
-// ` + "`is_nfd(s)`" + ` — is s already in NFD? Answers from a quick-check table
-// without building a normalized copy, so the common "yes" costs one
-// pass and no allocation.
 pub function is_nfd(s: string): boolean {
     if (_is_ascii(s)) { return true; }
     let cps: char[] = utf8.codepoints(s);
@@ -2374,23 +1889,6 @@ pub function is_nfd(s: string): boolean {
     return true;
 }
 
-// ` + "`is_nfc(s)`" + ` — is s already in NFC? The three-state quick check from
-// UAX #15: a code point that never survives NFC answers No outright, a
-// misordered mark likewise, and everything else answers Yes without
-// allocating.
-//
-// The Maybe state is the one that cannot be shortcut. It is tempting to
-// ask "does this mark compose with the starter before it?" and answer
-// locally, but that is WRONG, because the preceding starter may itself
-// decompose and the marks then reorder around it. U+1E63 followed by a
-// cedilla is the counterexample: the pair does not compose, yet the
-// string is not NFC, because U+1E63 splits into s + dot-below and the
-// lower-class cedilla sorts in front of the dot, landing next to the s
-// where it does compose. So a Maybe escalates to the full comparison.
-//
-// That fallback is why is_nfc saves ALLOCATION but not binary size: it
-// reaches nfc, so it links the composition table. is_nfd has no such
-// escalation and stays cheap on both counts.
 pub function is_nfc(s: string): boolean {
     if (_is_ascii(s)) { return true; }
     let cps: char[] = utf8.codepoints(s);
@@ -2409,12 +1907,6 @@ pub function is_nfc(s: string): boolean {
     return true;
 }
 
-// ` + "`eq_canonical(a, b)`" + ` — are a and b the same text under canonical
-// equivalence? This is what to reach for when comparing user-supplied
-// text (search, dedup, usernames): NFC and NFD spellings of an accented
-// character are equal here and NOT equal under ` + "`==`" + `.
-//
-// The byte-equality fast path means identical strings never normalize.
 pub function eq_canonical(a: string, b: string): boolean {
     if (a == b) { return true; }
     return nfc(a) == nfc(b);
@@ -2422,9 +1914,6 @@ pub function eq_canonical(a: string, b: string): boolean {
 
 `)
 
-	// The class IDs are substituted from cmd/unicodegen's own constants
-	// rather than written out here, so the table encoder and the state
-	// machine that reads it cannot drift apart.
 	b.WriteString(strings.NewReplacer(
 		"$CR", strconv.Itoa(gcbCR),
 		"$LF", strconv.Itoa(gcbLF),
@@ -2439,9 +1928,7 @@ pub function eq_canonical(a: string, b: string): boolean {
 		"$L", strconv.Itoa(gcbL),
 		"$V", strconv.Itoa(gcbV),
 		"$T", strconv.Itoa(gcbT),
-	).Replace(`// _gcb_of is a code point's Grapheme_Cluster_Break class. Absent
-// code points are Other, which is the overwhelming majority.
-function _gcb_of(cp: char): i32 {
+	).Replace(`function _gcb_of(cp: char): i32 {
     let n: i32 = cp as i32;
     let t: string = _gcb_ranges();
     let lo: i32 = 0;
@@ -2456,71 +1943,32 @@ function _gcb_of(cp: char): i32 {
     return 0;
 }
 
-// _is_extpict — Extended_Pictographic, a property SEPARATE from the
-// break classes: an emoji is usually class Other and pictographic.
 function _is_extpict(cp: char): boolean {
     return _in_ranges(_extpict_ranges(), cp as i32);
 }
 
-// _gcb_break decides whether a cluster boundary falls between two
-// adjacent code points, following the UAX #29 rules in their numbered
-// order. The rules are order-sensitive: GB3 has to beat GB4, and the
-// catch-all GB999 only applies once every joining rule has declined.
-//
-//   prev / cur  break classes of the two code points
-//   ri          how many Regional_Indicators run up to prev
-//   pict        1 = prev ends ExtPict Extend*, 2 = ... followed by ZWJ
-//   cur_pict    is cur itself Extended_Pictographic
 function _gcb_break(prev: i32, cur: i32, ri: i32, pict: i32, cur_pict: boolean): boolean {
-    // GB3: CR x LF -- a Windows line ending is ONE cluster, not two.
     if (prev == $CR && cur == $LF) { return false; }
-    // GB4 / GB5: a control, CR or LF never joins anything either way.
     if (prev == $CR || prev == $LF || prev == $CONTROL) { return true; }
     if (cur == $CR || cur == $LF || cur == $CONTROL) { return true; }
-    // GB6 / GB7 / GB8: Hangul jamo compose into one syllable cluster.
     if (prev == $L && (cur == $L || cur == $V || cur == $LV || cur == $LVT)) { return false; }
     if ((prev == $LV || prev == $V) && (cur == $V || cur == $T)) { return false; }
     if ((prev == $LVT || prev == $T) && cur == $T) { return false; }
-    // GB9 / GB9a: combining marks, ZWJ and spacing marks attach to what
-    // precedes them -- this is the rule that keeps e + acute together.
     if (cur == $EXTEND || cur == $ZWJ) { return false; }
     if (cur == $SPACINGMARK) { return false; }
-    // GB9b: Prepend attaches forwards instead.
     if (prev == $PREPEND) { return false; }
-    // GB11: ExtPict Extend* ZWJ x ExtPict -- the emoji ZWJ sequences, so
-    // a family emoji is one cluster rather than three people and a join.
     if (pict == 2 && cur_pict) { return false; }
-    // GB12 / GB13: regional indicators pair up, so a flag is one cluster
-    // and FOUR indicators are TWO flags rather than one long run.
     if (prev == $RI && cur == $RI && ri % 2 == 1) { return false; }
-    // GB999: anything else breaks.
     return true;
 }
 
-// _pict_next advances the GB11 pictographic state.
 function _pict_next(pict: i32, cls: i32, cur_pict: boolean): i32 {
-    // A pictograph always (re)starts the sequence, including the one
-    // that just terminated a ZWJ join.
     if (cur_pict) { return 1; }
     if (pict == 1 && cls == $EXTEND) { return 1; }
     if (pict == 1 && cls == $ZWJ) { return 2; }
     return 0;
 }
 
-// ` + "`graphemes(s)`" + ` — split into extended grapheme clusters: what a
-// reader would call "characters". Combining sequences, emoji ZWJ
-// sequences, flags and Hangul syllables each stay whole.
-//
-// Elements are ` + "`str`" + ` VIEWS into s, sliced by byte offset, so the split
-// itself copies no text -- the clusters are contiguous runs of the
-// input and materialising them as owned strings would be pure overhead.
-//
-// A WARNING WORTH HEEDING, and the reason this is opt-in: reaching for
-// the n-th grapheme is usually a design mistake. It is O(n) to find, and
-// the answer is rarely what the problem actually needed. Prefer
-// iterating this result, or an operation that does not need to know
-// about clusters at all. Fern keeps ` + "`s.len()`" + ` in BYTES and ` + "`s[i]`" + ` a byte
-// index precisely so that the cheap operations stay visibly cheap.
 pub function graphemes(s: string): string[] {
     let out: string[] = [];
     let n: i32 = s.len();
@@ -2553,9 +2001,6 @@ pub function graphemes(s: string): string[] {
     return out.append((slice_unchecked(s, start, n) + ""));
 }
 
-// ` + "`grapheme_count(s)`" + ` — how many clusters, without building the array
-// of them. Deliberately a separate scan rather than ` + "`graphemes(s).len()`" + `:
-// counting should not allocate.
 pub function grapheme_count(s: string): i32 {
     let n: i32 = s.len();
     if (n == 0) { return 0; }
@@ -2584,12 +2029,6 @@ pub function grapheme_count(s: string): i32 {
     return count;
 }
 
-// ` + "`reverse_graphemes(s)`" + ` — reverse by cluster, which is the
-// correct-by-default sibling of ` + "`reverse_bytes`" + `. An accented letter or a
-// family emoji comes back intact rather than scrambled.
-//
-// ` + "`reverse_bytes`" + ` keeps its name and its place: it is the explicit one,
-// carrying the hazard in the name for callers who really do want bytes.
 pub function reverse_graphemes(s: string): string {
     let gs: string[] = graphemes(s);
     let out: string = "";
@@ -2601,7 +2040,6 @@ pub function reverse_graphemes(s: string): string {
     return out;
 }
 
-// _wb_of — Word_Break class of ` + "`" + `cp` + "`" + `, 0 (Other) when the table omits it.
 function _wb_of(cp: char): i32 {
     let t: string = _wb_ranges();
     let n: i32 = cp as i32;
@@ -2617,23 +2055,14 @@ function _wb_of(cp: char): i32 {
     return 0;
 }
 
-// _wb_ignorable — Extend / Format / ZWJ. Rule WB4 folds these into
-// whatever precedes them, so every rule numbered after it looks
-// straight past them in both directions.
 function _wb_ignorable(cls: i32): boolean {
     return cls == 4 || cls == 5 || cls == 7;
 }
 
-// _wb_needs_next — whether deciding a break before a code point of this
-// class can require looking at the one AFTER it (WB6, WB7b, WB12).
-// Only the mid-word punctuation classes do, which is what keeps the
-// scan linear: the lookahead is never taken on letters or digits.
 function _wb_needs_next(cls: i32): boolean {
     return cls == 11 || cls == 12 || cls == 13 || cls == 14 || cls == 15;
 }
 
-// _wb_next — class of the first non-ignorable code point at or after
-// byte offset ` + "`" + `i` + "`" + `, or -1 at end of input.
 function _wb_next(s: string, i: i32): i32 {
     let n: i32 = s.len();
     let j: i32 = i;
@@ -2651,86 +2080,41 @@ function _wb_next(s: string, i: i32): i32 {
     return 0 - 1;
 }
 
-// _wb_break decides whether a word boundary falls before the current
-// code point, following the UAX #29 rules in their numbered order. As
-// with the grapheme rules the order is essential: WB3 has to beat
-// WB3a, and WB999 only speaks once every joining rule has declined.
-//
-// The two histories are deliberately separate. ` + "`" + `raw_prev` + "`" + ` is the code
-// point physically before this one and is what rules WB3..WB3d see;
-// ` + "`" + `prev` + "`" + ` / ` + "`" + `prev2` + "`" + ` skip the WB4-ignorable classes and are what every
-// later rule sees. Collapsing them would break ` + "`" + `a<ZWJ>b` + "`" + `, where WB3c
-// needs the ZWJ but WB5 needs the ` + "`" + `a` + "`" + `.
-//
-//   prev2 / prev  classes of the two preceding non-ignorable points
-//   raw_prev      class of the immediately preceding point
-//   cur           class of the point a break is being decided before
-//   next          class of the next non-ignorable point, -1 at end
-//   ri            how many Regional_Indicators run up to prev
-//   cur_pict      is cur itself Extended_Pictographic
 function _wb_break(prev2: i32, prev: i32, raw_prev: i32, cur: i32, next: i32, ri: i32, cur_pict: boolean): boolean {
-    // WB3: CR x LF -- a Windows line ending is one unit, as in GB3.
     if (raw_prev == 1 && cur == 2) { return false; }
-    // WB3a / WB3b: a line break never joins anything either way.
     if (raw_prev == 3 || raw_prev == 1 || raw_prev == 2) { return true; }
     if (cur == 3 || cur == 1 || cur == 2) { return true; }
-    // WB3c: ZWJ x ExtPict, so an emoji ZWJ sequence stays one word.
     if (raw_prev == 5 && cur_pict) { return false; }
-    // WB3d: a run of spaces is ONE segment rather than one per space.
     if (raw_prev == 18 && cur == 18) { return false; }
-    // WB4: X (Extend | Format | ZWJ)* -> X. Never break before one.
     if (_wb_ignorable(cur)) { return false; }
 
-    // AHLetter = ALetter | Hebrew_Letter, the two that behave alike
-    // everywhere except WB7a/b/c.
     let ah_prev: boolean = prev == 10 || prev == 9;
     let ah_prev2: boolean = prev2 == 10 || prev2 == 9;
     let ah_cur: boolean = cur == 10 || cur == 9;
     let ah_next: boolean = next == 10 || next == 9;
-    // MidNumLetQ = MidNumLet | Single_Quote.
     let mid_letter_q: boolean = cur == 14 || cur == 13 || cur == 11;
     let prev_mid_letter_q: boolean = prev == 14 || prev == 13 || prev == 11;
     let mid_num_q: boolean = cur == 15 || cur == 13 || cur == 11;
     let prev_mid_num_q: boolean = prev == 15 || prev == 13 || prev == 11;
 
-    // WB5: letters run together.
     if (ah_prev && ah_cur) { return false; }
-    // WB6 / WB7: one mid-word punctuation mark joins BOTH sides, but
-    // only when a letter follows it -- which is what keeps the full
-    // stop in "can't stop." attached on the left and loose on the
-    // right. This is the pair of rules the lookahead exists for.
     if (ah_prev && mid_letter_q && ah_next) { return false; }
     if (ah_prev2 && prev_mid_letter_q && ah_cur) { return false; }
-    // WB7a / WB7b / WB7c: the Hebrew geresh and gershayim.
     if (prev == 9 && cur == 11) { return false; }
     if (prev == 9 && cur == 12 && next == 9) { return false; }
     if (prev2 == 9 && prev == 12 && cur == 9) { return false; }
-    // WB8 / WB9 / WB10: digits run together and bind to letters, so
-    // "3rd" and "x2" are each one word.
     if (prev == 16 && cur == 16) { return false; }
     if (ah_prev && cur == 16) { return false; }
     if (prev == 16 && ah_cur) { return false; }
-    // WB11 / WB12: the same join for numeric punctuation, so "3.14"
-    // and "1,000" survive whole.
     if (prev2 == 16 && prev_mid_num_q && cur == 16) { return false; }
     if (prev == 16 && mid_num_q && next == 16) { return false; }
-    // WB13: Katakana runs together -- Japanese has no spaces, and this
-    // is as far as UAX #29 goes without a dictionary.
     if (prev == 8 && cur == 8) { return false; }
-    // WB13a / WB13b: ExtendNumLet (underscore and friends) glues
-    // word-like things on either side, so ` + "`" + `snake_case` + "`" + ` is one word.
     if ((ah_prev || prev == 16 || prev == 8 || prev == 17) && cur == 17) { return false; }
     if (prev == 17 && (ah_cur || cur == 16 || cur == 8)) { return false; }
-    // WB15 / WB16: regional indicators pair up, as in GB12/GB13.
     if (prev == 6 && cur == 6 && ri % 2 == 1) { return false; }
-    // WB999: anything else breaks.
     return true;
 }
 
-// _wb_is_word reports whether the segment ` + "`" + `s[a:b]` + "`" + ` is word-LIKE: it
-// holds at least one letter or digit. This is what separates ` + "`" + `words` + "`" + `
-// from ` + "`" + `word_segments` + "`" + ` -- spaces, punctuation runs and line breaks are
-// segments of the text but are not words of it.
 function _wb_is_word(s: string, a: i32, b: i32): boolean {
     let i: i32 = a;
     while (i < b) {
@@ -2747,22 +2131,6 @@ function _wb_is_word(s: string, a: i32, b: i32): boolean {
     return false;
 }
 
-// ` + "`" + `word_segments(s)` + "`" + ` — split at every UAX #29 word boundary, losslessly:
-// the pieces concatenate back to ` + "`" + `s` + "`" + `, so the spaces and the punctuation
-// come back as segments of their own. This is the one to reach for when
-// the gaps matter — re-joining after a transform, or highlighting.
-//
-// Elements are ` + "`" + `str` + "`" + ` VIEWS into s, as with ` + "`" + `graphemes` + "`" + `, so the split
-// copies no text.
-//
-// What the segmentation is and is not: it is the language-independent
-// default from UAX #29, which is right for Latin, Greek, Cyrillic,
-// Hebrew, Arabic and the rest of the space-separated world, and it
-// keeps ` + "`" + `can't` + "`" + `, ` + "`" + `3.14` + "`" + `, ` + "`" + `snake_case` + "`" + ` and emoji ZWJ sequences whole.
-// It is NOT a substitute for a dictionary in Thai, Lao, Khmer or
-// Japanese: those scripts do not mark word boundaries with spaces, and
-// UAX #29 says so itself. Han and Hiragana therefore segment per code
-// point, and Katakana runs stay together (WB13).
 pub function word_segments(s: string): string[] {
     let out: string[] = [];
     let n: i32 = s.len();
@@ -2800,13 +2168,6 @@ pub function word_segments(s: string): string[] {
     return out.append((slice_unchecked(s, start, n) + ""));
 }
 
-// ` + "`" + `words(s)` + "`" + ` — the word-like segments only: what a reader would count
-// as words, with the whitespace and punctuation runs dropped. Built on
-// ` + "`" + `word_segments` + "`" + `, so the same caveats about Thai and Japanese apply.
-//
-// Note this is NOT ` + "`" + `s.split(" ")` + "`" + ` with extra steps: it keeps ` + "`" + `can't` + "`" + `
-// and ` + "`" + `3.14` + "`" + ` whole, splits ` + "`" + `hello,world` + "`" + ` without a space to help it,
-// and works on text with no ASCII spaces in it at all.
 pub function words(s: string): string[] {
     let segs: string[] = word_segments(s);
     let out: string[] = [];
@@ -2821,9 +2182,6 @@ pub function words(s: string): string[] {
     return out;
 }
 
-// ` + "`" + `word_count(s)` + "`" + ` — how many words, without building the array of them.
-// A separate scan for the same reason ` + "`" + `grapheme_count` + "`" + ` is one: counting
-// should not allocate.
 pub function word_count(s: string): i32 {
     let n: i32 = s.len();
     if (n == 0) { return 0; }

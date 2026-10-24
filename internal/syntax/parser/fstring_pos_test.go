@@ -8,21 +8,10 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/diag"
 )
 
-// An f-string interpolant is sub-parsed from raw text by a fresh lexer
-// that numbers the fragment from 1:1, so every node it produces has to
-// be rebased onto where the interpolant sits in the enclosing file
-// (#6989). Unrebased, every node inside `f"{…}"` claimed 1:1 and every
-// diagnostic against it pointed at the first character of the file.
-//
-// Multiple interpolants are the discriminating case: rebasing onto the
-// f-string token's own position gets the first one roughly right and
-// every later one wrong.
 func TestFStringInterpolantPositions(t *testing.T) {
 	cases := []struct {
 		name string
 		src  string
-		// want is the position of each interpolant's root Expr, in
-		// source order.
 		want []ast.Position
 	}{
 		{
@@ -72,9 +61,6 @@ func TestFStringInterpolantPositions(t *testing.T) {
 	}
 }
 
-// The rebase has to reach every node in the sub-parsed expression, not
-// only its root — a binary operand or a call argument is what a
-// diagnostic usually points at.
 func TestFStringInterpolantInnerNodePositions(t *testing.T) {
 	prog, err := Parse(`function main(): i32 { let s = f"{a + bb}"; return 0; }`)
 	if err != nil {
@@ -93,8 +79,6 @@ func TestFStringInterpolantInnerNodePositions(t *testing.T) {
 	}
 }
 
-// A placeholder holds one expression. Anything left over is P001 at the
-// first leftover token, once per f-string (#12648).
 func TestFStringTrailingTokensRejected(t *testing.T) {
 	cases := []struct {
 		name string

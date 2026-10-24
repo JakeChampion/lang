@@ -1,7 +1,3 @@
-// Package e2eharness holds the shared e2e test harness — driver builds,
-// tooling discovery, caches — used by both internal/testing/e2e and
-// internal/testing/e2ecompiler (#4398 part 3). Extracted verbatim from
-// internal/testing/e2e/self_host_fixpoint_test.go.
 package e2eharness
 
 import (
@@ -10,11 +6,6 @@ import (
 	"testing"
 )
 
-// BuildBin assembles+links asm into dir/name and returns its path. The
-// (asm → static binary) link is content-addressed and cached process-
-// wide (see self_host_buildcache_test.go): identical asm links once and
-// later callers get a copy of the cached binary. The dir/name.s source
-// is still written for callers/diagnostics that read it.
 func BuildBin(t *testing.T, gcc, dir, name, asm string) string {
 	t.Helper()
 	asmPath := filepath.Join(dir, name+".s")

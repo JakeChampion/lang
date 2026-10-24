@@ -1,5 +1,5 @@
 import "std/string";
-// String prelude methods: to_upper, len, contains.
+
 function main(): i32 {
     let s: string = "Hello, Fern";
     print(s.to_upper());

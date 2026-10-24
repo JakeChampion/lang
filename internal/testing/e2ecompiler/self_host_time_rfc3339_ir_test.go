@@ -2,20 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// timeRfc3339IRCases exercise std/time's RFC-3339 surface — `format_rfc3339`
-// (Instant -> string) and `instant_parse_rfc3339` (string -> Option[Instant]) —
-// through the self-host IR path on x86-64 + wasm. This is the last std/time
-// "self-host pending" piece (after the pure-i32 helpers, the Date civil-date
-// methods, and `date_parse_iso`): it adds an **i64 struct field** (`sec: i64`)
-// to the mix — i64 arithmetic (mul/div/mod, `as i64` / `as i32` casts), an
-// i64-carrying struct constructor, and `Some(Moment{ sec: <i64>, ... })`.
-//
-// The bodies are std/time's `format_rfc3339` / `instant_parse_rfc3339` verbatim
-// except the structs are named `Civil` / `Moment` (the built-in `Date` /
-// `Instant` names are reserved, E010) and `int.int_to_string` is written
-// `.to_string()`. `import "std/i32"` lets the interpreter oracle resolve
-// `.to_string()`. Each case returns a value kept <= 126 and is oracle-checked
-// against the interpreter. FEATURE-AUDIT std/time row.
 const timeRfc3339IRPrelude = `import "std/i32";
 struct Civil { year: i32, month: i32, day: i32 }
 struct Moment { sec: i64, nsec: i32 }
@@ -107,21 +93,13 @@ var timeRfc3339IRCases = []struct {
 	name string
 	main string
 }{
-	// Parse -> Some; extract the hour from the i64 sec field (12).
 	{"parse-hour", `match (instant_parse_rfc3339("2024-06-13T12:34:56Z")) { Some(m) => { return ((m.sec % (86400 as i64)) / (3600 as i64)) as i32; }, None => { return 100; }, }`},
-	// Parse -> Some; the seconds-of-minute field (56).
 	{"parse-seconds", `match (instant_parse_rfc3339("2024-06-13T12:34:56Z")) { Some(m) => { return (m.sec % (60 as i64)) as i32; }, None => { return 100; }, }`},
-	// Parse with fraction -> Some; nsec = 500000000, /1e8 = 5.
 	{"parse-fraction", `match (instant_parse_rfc3339("2024-06-13T12:34:56.5Z")) { Some(m) => { return m.nsec / 100000000; }, None => { return 100; }, }`},
-	// Too short -> None -> sentinel 7.
 	{"parse-too-short", `match (instant_parse_rfc3339("2024")) { Some(m) => { return 0; }, None => { return 7; }, }`},
-	// Missing 'T' separator -> None -> sentinel 8.
 	{"parse-bad-sep", `match (instant_parse_rfc3339("2024-06-13X12:34:56Z")) { Some(m) => { return 0; }, None => { return 8; }, }`},
-	// format_rfc3339 of a whole-second instant: "YYYY-MM-DDTHH:MM:SSZ" -> 20.
 	{"format-len", `let m: Moment = Moment { sec: 1718281496 as i64, nsec: 0 }; return m.format_rfc3339().len();`},
-	// format_rfc3339 with a fraction adds ".nnnnnnnnn" (10 chars) -> 30.
 	{"format-frac-len", `let m: Moment = Moment { sec: 1718281496 as i64, nsec: 500000000 }; return m.format_rfc3339().len();`},
-	// Round-trip: parse then format; first byte is '2' (50).
 	{"roundtrip-firstbyte", `match (instant_parse_rfc3339("2024-06-13T12:34:56Z")) { Some(m) => { return m.format_rfc3339()[0] as i32; }, None => { return 100; }, }`},
 }
 
@@ -129,8 +107,6 @@ func timeRfc3339IRSrc(mainBody string) string {
 	return timeRfc3339IRPrelude + "\nfunction main(): i32 { " + mainBody + " }\n"
 }
 
-// TestSelfHostTimeRfc3339IR compiles each case with the self-host CLI for
-// x86-64 and wasm and checks the exit code against the interpreter.
 func TestSelfHostTimeRfc3339IR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	interpBin := buildLangBinForInterp(t)

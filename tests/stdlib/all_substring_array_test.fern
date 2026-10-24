@@ -1,16 +1,5 @@
 import "std/test";
 
-// tests/stdlib/all_substring_array_test.fern — batch 24
-// additions to std/test:
-//   * `test.assert_all_starts_with(arr, prefix)` /
-//     `test.assert_all_ends_with(arr, suffix)` /
-//     `test.assert_all_contain(arr, needle)` — substring
-//     property must hold across every element of the
-//     string array.
-//   * `test.assert_starts_with_any(s, prefixes)` /
-//     `test.assert_ends_with_any(s, suffixes)` — single string
-//     matches at least one of the supplied options.
-
 function test_all_starts_with_pass(): test.TestOutcome {
   return test.assert_all_starts_with(
     ["[INFO] starting", "[INFO] ready", "[INFO] done"],
@@ -32,12 +21,9 @@ function test_all_starts_with_first_violation_reports(): test.TestOutcome {
       return test.fail("violation missed");
     },
     Fail(msg) => {
-      // First non-matching index is 1.
       if (!msg.contains("index 1")) {
         return test.fail("expected 'index 1' in failure: " + msg);
       }
-      // Failure should also embed the offending value
-      // so the test reader can pinpoint the bad line.
       if (!msg.contains("[WARN] bad")) {
         return test.fail("expected '[WARN] bad' in failure: " + msg);
       }
@@ -118,9 +104,6 @@ function test_starts_with_any_no_match_reports(): test.TestOutcome {
       if (!msg.contains("ftp://example.com")) {
         return test.fail("expected value in failure: " + msg);
       }
-      // The failure renders "matches none of N prefixes"
-      // — locking in the count rendering so a regression
-      // would surface immediately.
       if (!msg.contains("none of 2")) {
         return test.fail("expected 'none of 2' in failure: " + msg);
       }

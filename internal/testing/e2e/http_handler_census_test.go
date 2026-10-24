@@ -11,10 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The Go compiler's twin of TestSelfHostHTTPHandlerCensus, and the
-// bounded-serve exit criterion of #9853 on this compiler: std/serve's
-// production accept loop bounded to 32 completed requests, every response
-// checked, and the leak census balanced with zero live bytes.
 func TestHTTPHandlerCensus(t *testing.T) {
 	compiler := buildFernCLI(t)
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
@@ -31,8 +27,6 @@ func TestArm64DarwinHTTPHandlerCensus(t *testing.T) {
 	checkHTTPHandlerCensus(t, buildFernCLI(t), "arm64-darwin", func(p string) *exec.Cmd { return exec.Command(p) }, e2eharness.RunHTTPHandlerCensus, 32)
 }
 
-// nativeServerRunner is how a built server is launched for a target: under
-// qemu where the host cannot run it, directly otherwise.
 func nativeServerRunner(t *testing.T, target string) func(string) *exec.Cmd {
 	t.Helper()
 	if target == "arm64-linux" {
@@ -48,9 +42,6 @@ func nativeServerRunner(t *testing.T, target string) func(string) *exec.Cmd {
 	}
 }
 
-// checkHTTPHandlerCensus builds the bounded production loop for a target
-// under the leak check, drives it with `client` for `rounds` requests, and
-// requires the census balanced with zero live bytes.
 func checkHTTPHandlerCensus(t *testing.T, compiler, target string, run func(string) *exec.Cmd, client func(*testing.T, *exec.Cmd, int) string, rounds int) {
 	t.Helper()
 	dir := t.TempDir()
@@ -72,7 +63,6 @@ func checkHTTPHandlerCensus(t *testing.T, compiler, target string, run func(stri
 	}
 }
 
-// leakSummaryIn finds the census report among a server's other output.
 func leakSummaryIn(t *testing.T, out string) (allocs, frees, live int64) {
 	t.Helper()
 	for _, line := range strings.Split(out, "\n") {

@@ -1,6 +1,6 @@
 import "std/string";
-// split_once returns Option[(string, string)]; destructure via tuple
-// field access on the bound value.
+
+
 function main(): i32 {
     match ("key=value".split_once("=")) {
         Some(kv) => {

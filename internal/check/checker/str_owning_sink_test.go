@@ -5,9 +5,6 @@ import (
 	"testing"
 )
 
-// A builtin that keeps its argument in the value it returns is an owning sink,
-// so the borrow that lets a `str` reach a `string` parameter does not apply
-// there: the view would outlive the bytes it names.
 func TestStrIntoAStoringBuiltinIsRefused(t *testing.T) {
 	const hint = "add `.to_owned()`"
 	bad := []struct{ name, body, want string }{

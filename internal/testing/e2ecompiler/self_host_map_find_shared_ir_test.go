@@ -4,18 +4,6 @@ import (
 	"testing"
 )
 
-// A map's key search, per key kind, through all four operations that probe
-// it: insert, get_or, has and without.
-//
-// Three programs, one per key kind, each driving the search through all four
-// operations so one that only insert (or only without) reaches cannot pass on a
-// sibling's coverage:
-//
-//	152 = present*100 + absent-defaults-to-5 *10 + overwritten-then-read 2
-//
-// Each digit fails differently. 90 means the shared helper found nothing where
-// the key is present; 91 means it claimed a hit on a key that was never
-// inserted — the two directions a botched three-way dispatch takes.
 const (
 	mapFindStrSrc = `import "core/map";
 function main(): i32 {
@@ -45,11 +33,6 @@ function main(): i32 {
     return m.get_or(10, 0) * 100 + m.get_or(99, 5) * 10 + m.get_or(20, 0);
 }
 `
-	// The struct key is the case that matters most: it is the only one that
-	// reaches the derived `__fn_K__eq` through the runtime code address the
-	// `eqfn: i32` parameter carries, and the only one where comparing the key
-	// BOX pointers instead would still find the key it was just handed. Each
-	// lookup below builds a FRESH key, so a pointer compare answers 90.
 	mapFindStructSrc = `import "core/map";
 import "core/cmp";
 @derive(cmp.Eq, cmp.Hash)
@@ -79,8 +62,6 @@ func mapFindCases() []struct{ name, src string } {
 
 const mapFindFailFmt = "%s exited %d, want 152 (90=the search missed a present key, 91=it hit a key that was never inserted)"
 
-// TestSelfHostMapFindSharedIRX86_64 runs each key kind on x86-64. 152 is the
-// interpreter's answer for all three, taken as the oracle.
 func TestSelfHostMapFindSharedIRX86_64(t *testing.T) {
 	cli := newStrictCLI(t)
 	for _, tc := range mapFindCases() {
@@ -92,7 +73,6 @@ func TestSelfHostMapFindSharedIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostMapFindSharedIRArm64 is the same three programs under qemu.
 func TestSelfHostMapFindSharedIRArm64(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
 	cli := newStrictCLI(t)

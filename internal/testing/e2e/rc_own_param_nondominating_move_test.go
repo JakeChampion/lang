@@ -1,20 +1,3 @@
-// Move-on-call claims an `own` param whole-function from its textually-last
-// occurrence and silences the exit sweep on EVERY path — sound only where the
-// transfer dominates every exit, which nothing checked (#8146).
-//
-// The two shapes below are what a non-dominating claim costs at run time. Both
-// are silent: the program's answer is right either way, and the leak detector
-// is the only thing that sees the second one at all.
-//
-//   - a return that hands the param back instead of transferring it keeps its
-//     return-transfer inc while losing the sweep dec that balanced it, so the
-//     box is retained one time too many per call. The stale box holds a
-//     reference to every rc-tracked field, so the NEXT append to one sees the
-//     buffer at rc 2 and copies it whole — quadratic bytes, correct output.
-//     That is the x86 assembler's 16 MB `.text` buffer taking a 32 MB copy
-//     every other instruction, and the 16 GiB arena it exhausted.
-//   - an exit that neither transfers nor returns the param loses the sweep
-//     with nothing to replace it, which is a plain leak of the whole box.
 package e2e
 
 import (
@@ -22,11 +5,6 @@ import (
 	"testing"
 )
 
-// ownParamNonDominatingCliffSrc is the reduced #8146 shape: an `own` param
-// self-updated and returned on one branch, transferred to another `own`
-// parameter on the other. The transfer is the textually-last occurrence, so it
-// is what move-on-call claims, but the loop only ever takes the FIRST branch.
-// Every append must still mutate in place.
 const ownParamNonDominatingCliffSrc = `struct S { code: i32[], n: i32 }
 function push(buf: i32[], v: i32): i32[] { return buf.append(v); }
 function bump(own s: S, v: i32): S { return S { ...s, n: s.n + v }; }
@@ -46,10 +24,6 @@ function main(): i32 {
     return __arr_push_shared_count();
 }`
 
-// ownParamNonDominatingLeakSrc is the other arm: the early exit returns a
-// scalar, so the param is neither transferred nor handed back on that path.
-// Under the unguarded claim its box was never released — 100% of the structs
-// this loop builds.
 const ownParamNonDominatingLeakSrc = `struct S { code: i32[], n: i32 }
 function bump(own s: S, v: i32): S { return S { ...s, n: s.n + v }; }
 function emit(own s: S, v: i32): i32 {

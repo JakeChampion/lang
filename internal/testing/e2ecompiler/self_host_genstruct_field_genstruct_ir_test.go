@@ -7,18 +7,6 @@ import (
 	"testing"
 )
 
-// genStructFieldGenStructIRCase is a self-host program where a generic struct's
-// FIELD is itself a generic struct parameterised by the outer type param —
-// `struct Holder[U] { b: Box[U] }`. When `Holder[i32]` is monomorphised, the
-// cloned field `Box[U]` substitutes to `Box[i32]` (already handled via mg_ty) —
-// but inferring the OUTER key from the field literal failed: the inner literal
-// `Box { v: 9 }` is rewritten to `Box__i32 { … }` BEFORE the outer key is
-// inferred, and `bind_unify` couldn't unify the field pattern `Box[U]` against
-// the mangled concrete `Box__i32`, so `U` stayed unbound and the module bailed.
-// The fix teaches `bind_unify` to recover a mangled clone's type args
-// (`Box__i32` → `[i32]`) and unify them with the generic pattern. Native handles
-// it, so this closes a goal-1 IR-subset gap (the struct sibling of #3679). Each
-// exit code is pinned against the native interpreter oracle and kept <= 120.
 type genStructFieldGenStructIRCase struct {
 	name     string
 	src      string
@@ -26,28 +14,24 @@ type genStructFieldGenStructIRCase struct {
 }
 
 var genStructFieldGenStructIRCases = []genStructFieldGenStructIRCase{
-	// the core shape: a generic struct field holding another generic struct.
 	{"i32_field", `struct Box[T] { v: T }
 struct Holder[U] { b: Box[U] }
 function main(): i32 {
     let h: Holder[i32] = Holder { b: Box { v: 9 } };
     return h.b.v;
 }`, 9},
-	// string field, method dispatch on the innermost value.
 	{"string_field", `struct Box[T] { v: T }
 struct Holder[U] { b: Box[U] }
 function main(): i32 {
     let h: Holder[string] = Holder { b: Box { v: "hey" } };
     return h.b.v.len();
 }`, 3},
-	// the outer struct also has a plain field alongside the generic one.
 	{"mixed_fields", `struct Box[T] { v: T }
 struct Holder[U] { tag: i32, b: Box[U] }
 function main(): i32 {
     let h: Holder[i32] = Holder { tag: 3, b: Box { v: 4 } };
     return h.tag + h.b.v;
 }`, 7},
-	// two distinct instantiations of the outer struct coexisting.
 	{"two_instantiations", `struct Box[T] { v: T }
 struct Holder[U] { b: Box[U] }
 function main(): i32 {
@@ -55,15 +39,12 @@ function main(): i32 {
     let c: Holder[string] = Holder { b: Box { v: "xyz" } };
     return a.b.v + c.b.v.len();
 }`, 7},
-	// the outer struct arrives as a function parameter.
 	{"struct_param", `struct Box[T] { v: T }
 struct Holder[U] { b: Box[U] }
 function get(h: Holder[i32]): i32 { return h.b.v; }
 function main(): i32 { return get(Holder { b: Box { v: 6 } }); }`, 6},
 }
 
-// TestSelfHostGenStructFieldGenStructIRX86_64 runs each case through the
-// self-host asm_run driver.
 func TestSelfHostGenStructFieldGenStructIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -97,8 +78,6 @@ func TestSelfHostGenStructFieldGenStructIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostGenStructFieldGenStructWasmIR is the wasm sibling: the struct pass
-// is a target-independent parser pass, so the wasm IR backend gets these free.
 func TestSelfHostGenStructFieldGenStructWasmIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range genStructFieldGenStructIRCases {

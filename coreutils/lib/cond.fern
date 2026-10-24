@@ -1,41 +1,6 @@
-// coreutils/lib/cond.fern — the conditional expression test(1) and [(1)
-// evaluate. The two utilities are one program: `[` requires a closing
-// `]` and honours `--help` / `--version` where `test` treats them as
-// strings, and everything after that is shared, so it lives here.
-//
-// The exit status is the value: 0 true, 1 false, 2 for an expression
-// that does not parse or an operand that is not what its operator
-// needs. Nothing is written to stdout.
-//
-// The grammar is GNU's, which is POSIX's four-argument table plus
-// GNU's own recursive descent for anything longer, and the two do
-// not agree with each other — `x = y -a` is "missing argument" while
-// `( x ) )` is also "missing argument" but for the opposite reason —
-// so the shape below follows what the reference binary does rather
-// than what a fresh grammar would. In particular:
-//
-//   - With one to four arguments the count decides the reading, not
-//     the tokens: `-a x` is a unary operator that does not exist,
-//     `( = )` is a string comparison of "(" and ")", and `! x y` is
-//     an error about `y`.
-//   - `-a` and `-o` are the general parser's, evaluated left to right
-//     with `-a` binding tighter, and BOTH sides are always evaluated:
-//     `'' -a 1 -eq a` still reports the bad integer.
-//   - A parenthesis in the general parser re-enters the four-argument
-//     table with whatever is inside, if that is at most four tokens.
-//   - `-l STRING` stands in for an integer operand on either side of
-//     the six numeric operators, and is silently a string operand of
-//     the string ones.
-//
-// Integers are compared as digit strings of any length, so leading
-// zeros, an explicit sign, and surrounding blanks are all accepted and
-// `-0` equals `0`. File predicates never report a failure: a path that
-// cannot be stat'ed is simply false.
 import "./filetype";
 import "./gnu";
 
-// `run(bracket)` — the whole program. `bracket` selects the `[` rules;
-// `help` / `name` are what `[ --help` / `[ --version` print.
 pub function run(bracket: boolean, name: string, help: string): i32 {
   let argv: string[] = args();
   let argc: i32 = argv.len();
@@ -64,10 +29,6 @@ function die(msg: string): void {
   exit(2);
 }
 
-// ---- the argument cursor ---------------------------------------------------
-//
-// `pos` indexes argv the way GNU's does: argv[0] is the program and
-// `argc` is one past the last token (with `]` already dropped).
 struct S { argv: string[], pos: i32, argc: i32 }
 
 function tok(s: S): string {
@@ -82,7 +43,6 @@ function left(s: S): i32 {
   return s.argc - s.pos;
 }
 
-// Running out of arguments names the LAST one, wherever the cursor is.
 function beyond(s: S): void {
   die("missing argument after " + gnu.quote(s.argv[s.argc - 1]));
 }
@@ -99,22 +59,14 @@ function skip(s: S, n: i32): S {
   return S { ...s, pos: s.pos + n };
 }
 
-// A token shaped like a unary operator: a dash and exactly one more byte.
 function unary_shaped(t: string): boolean {
   return t.len() == 2 && t[0] as i32 == 45;
 }
 
-// The same INSIDE an expression, where `-a` and `-o` are the
-// connectives instead: since 9.6 `test -a -a -a` is three strings
-// rather than a unary `-a` applied to one. The two-argument form still
-// reads them as operators, so `test -a x` is still a unary fault.
 function unary_shaped_in_expr(t: string): boolean {
   return unary_shaped(t) && t[1] as i32 != 97 && t[1] as i32 != 111;
 }
 
-// `<` and `>` joined the binary operators in 9.6, as POSIX:2024 asks:
-// they compare the two strings in collating order, which in the C
-// locale is byte order.
 function is_binop(t: string): boolean {
   return t == "=" || t == "==" || t == "!=" || t == "<" || t == ">" || is_intop(t) || t == "-nt" || t == "-ot" || t == "-ef";
 }
@@ -123,7 +75,6 @@ function is_intop(t: string): boolean {
   return t == "-eq" || t == "-ne" || t == "-lt" || t == "-le" || t == "-gt" || t == "-ge";
 }
 
-// ---- the argument-count table ----------------------------------------------
 function one_argument(s: S): (boolean, S) {
   return (tok(s).len() > 0, advance(s, false));
 }
@@ -191,10 +142,6 @@ function posixtest(s: S, nargs: i32): (boolean, S) {
   return expr(s);
 }
 
-// ---- the general grammar ---------------------------------------------------
-//
-// or → and (`-o` and)* ; and → term (`-a` term)* ; both sides of each
-// are evaluated whatever the other said.
 function expr(s: S): (boolean, S) {
   if (s.pos >= s.argc) {
     beyond(s);
@@ -269,9 +216,6 @@ function primary(s: S): (boolean, S) {
   return one_argument(s);
 }
 
-// A parenthesised group re-enters the count table with what is inside,
-// when a `)` closes it within four tokens; otherwise everything to the
-// end of the arguments is the inside, and the `)` is expected after.
 function paren(s0: S): (boolean, S) {
   let s: S = advance(s0, true);
   let nargs: i32 = 1;
@@ -284,8 +228,6 @@ function paren(s0: S): (boolean, S) {
   }
   let r: (boolean, S) = posixtest(s, nargs);
   s = r.1;
-  // Past `argc` there is still the `]` of the bracket form, and GNU
-  // names it: `[ ( x` says "found ']'" where `test ( x` says nothing.
   if (s.pos >= s.argv.len()) {
     die("')' expected");
   }
@@ -295,21 +237,12 @@ function paren(s0: S): (boolean, S) {
   return (r.0, advance(s, false));
 }
 
-// ---- integers --------------------------------------------------------------
-//
-// An integer operand is a sign and a run of digits, with blanks
-// allowed on either side and any number of digits. It is kept as a
-// sign plus the digits with the leading zeros gone, so the comparison
-// is by length and then bytes, and `-0` is zero.
 struct Int { neg: boolean, digits: string }
 
-// Only a space or a tab, which is what a PREFIX operand is scanned with.
 function is_blank(b: i32): boolean {
   return b == 32 || b == 9;
 }
 
-// What surrounds an integer operand: every isspace byte, not just the
-// two isblank ones. GNU <= 9.4 refused `test $'\n1' -eq 1`.
 function is_space(b: i32): boolean {
   return b == 32 || b >= 9 && b <= 13;
 }
@@ -409,12 +342,6 @@ function relate(op: string, c: i32): boolean {
   return c >= 0;
 }
 
-// ---- binary operators ------------------------------------------------------
-//
-// `l_is_l` says the left operand is `-l STRING`; the right one is
-// whenever `-l` stands where the right operand would and a token
-// follows it — for every operator, which is why `abc = -l abc` is a
-// four-token comparison of "=" against "abc".
 function binary_operator(s0: S, l_is_l: boolean): (boolean, S) {
   let s: S = s0;
   if (l_is_l) {
@@ -443,10 +370,6 @@ function binary_operator(s0: S, l_is_l: boolean): (boolean, S) {
     }
     return (file_pair(name, at(s, s.pos - 3), at(s, s.pos - 1)), s);
   }
-  // The operands are read from the OPERATOR's own position, not from
-  // where `-l` left the cursor: `[ = = -l = ]` compares "=" against
-  // "-l". GNU <= 9.4 read them from the cursor and compared "=" with
-  // "=" instead.
   let left: string = at(s, op - 1);
   let right_str: string = at(s, op + 1);
   if (name == "<") {
@@ -462,7 +385,6 @@ function binary_operator(s0: S, l_is_l: boolean): (boolean, S) {
   return (equal, skip(s, 3));
 }
 
-// strcoll in the C locale: byte order, with a shorter prefix first.
 function byte_less(a: string, b: string): boolean {
   let n: i32 = a.len();
   if (b.len() < n) {
@@ -485,7 +407,6 @@ function int_operand(t: string, is_length: boolean): Int {
   return find_int(t);
 }
 
-// ---- files -----------------------------------------------------------------
 function kind_of(path: string, follow: boolean): u32 {
   if (follow) {
     match (stat(path)) {
@@ -580,7 +501,6 @@ function owned_by_egid(path: string): boolean {
   return false;
 }
 
-// `-N`: modified since last read — the mtime is past the atime.
 function modified_since_read(path: string): boolean {
   match (stat(path)) {
     Ok(st) => {
@@ -609,9 +529,6 @@ function time_cmp(s1: i64, n1: i64, s2: i64, n2: i64): i32 {
   return 0;
 }
 
-// `-nt` / `-ot` / `-ef`. A missing file decides the answer before any
-// comparison: `-nt` is true when only the right file is missing,
-// `-ot` when only the left one is, and `-ef` needs both.
 function file_pair(op: string, a: string, b: string): boolean {
   if (op == "-nt") {
     return newer(a, b);
@@ -660,9 +577,6 @@ function same_file(a: string, b: string): boolean {
   return false;
 }
 
-// `-t FD`: a terminal is on that descriptor. The operand is parsed as
-// an integer like any other; one that is negative or past INT_MAX is
-// simply not a terminal.
 function is_terminal(arg: string): boolean {
   let n: Int = find_int(arg);
   if (n.neg || n.digits.len() > 10) {
@@ -680,7 +594,6 @@ function is_terminal(arg: string): boolean {
   return isatty(fd as i32);
 }
 
-// ---- unary operators -------------------------------------------------------
 function unary_operator(s0: S): (boolean, S) {
   let name: string = tok(s0);
   let letter: i32 = name[1] as i32;
@@ -742,9 +655,6 @@ function unary_value(letter: i32, arg: string): boolean {
   return unary_mode(letter, arg);
 }
 
-// The predicates answered by `st_mode` alone: the file type
-// (`-b -c -d -f -p -S`, and `-h` / `-L` without following the link)
-// and the three special bits (`-u -g -k`).
 function unary_mode(letter: i32, arg: string): boolean {
   if (letter == 117) {
     return mode_bit(arg, 2048 as u32);

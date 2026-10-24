@@ -8,10 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// #9853's per-request gate, bump half: requests on one keep-alive connection
-// reuse what earlier ones freed, so the bump high-water mark stops moving.
-// Built through the self-host CLI with the semantic lowering required, so a
-// function the lowering refused fails the build.
 func TestSelfHostBumpPerRequest(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := filepath.Join(t.TempDir(), "main.fern")

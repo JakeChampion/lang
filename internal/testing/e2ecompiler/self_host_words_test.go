@@ -9,12 +9,6 @@ import (
 	"testing"
 )
 
-// wordsDriver emits one program for a native target twice, once as text alone
-// and once handing the assembler records where the emitter has a form for
-// them (encoded instructions, label ids, branches by id), and assembles both.
-// The two must produce the same code, data and unwind image: a record is only
-// ever what its text would have assembled to, and the `.cfi_*` lines between
-// records land where they landed between the text lines.
 const wordsDriver = `import "./parser"; import "./lexer"; import "./checker"; import "./asm_arm64_ir"; import "./arm64_native";
 import "./asm_ir"; import "./x86_native"; import "./util";
 import "./modloader"; import "./flatten"; import "./treeshake"; import "./semlower";
@@ -123,16 +117,10 @@ func TestSelfHostWordsMatchText(t *testing.T) {
 	}
 	driver := buildSelfHostBin(t, gcc, dir, "words.fern", "words")
 	program := semsourceProgram(t, semsourceRCProgram)
-	// share is the floor, in percent, under the share of the program's
-	// instructions that travel as records rather than text: under it, an
-	// emitter site stopped handing records over.
 	for _, tc := range []struct {
 		target string
 		share  int
 	}{
-		// arm64 sits near 86% on this program and x86 near 80%, most of
-		// the text being the hand-written runtime; x86 was 46% before its
-		// frames, moves and calls became records.
 		{"arm64-linux", 70},
 		{"x86-64-linux", 70},
 	} {

@@ -7,9 +7,6 @@ import (
 	"time"
 )
 
-// StartBodyUpstream listens on the loopback interface and answers every
-// connection's first request with a 200 carrying body, then closes. It
-// returns the port.
 func StartBodyUpstream(t *testing.T, body []byte) int {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -35,9 +32,6 @@ func StartBodyUpstream(t *testing.T, body []byte) int {
 	return ln.Addr().(*net.TCPAddr).Port
 }
 
-// FetchFutureFanoutSource is a program that fans two `fetch.fetch_future`
-// calls to the loopback upstream at port out through `async.gather` and
-// exits 42 when both bodies read "hello-world", 85 otherwise.
 func FetchFutureFanoutSource(port int) string {
 	return fmt.Sprintf(`import "std/async";
 import "std/fetch";
@@ -60,9 +54,6 @@ function main(): i32 {
 }`, port)
 }
 
-// FetchFutureLargeBodySource is a program that reads one `bodyLen`-byte
-// body through `fetch.fetch_future` and exits 42 when all of it came
-// back, else a small code from the length it got.
 func FetchFutureLargeBodySource(port, bodyLen int) string {
 	return fmt.Sprintf(`import "std/async";
 import "std/fetch";
@@ -77,7 +68,6 @@ function main(): i32 {
 }`, port, bodyLen)
 }
 
-// AlphabetBody is n bytes cycling through the lowercase alphabet.
 func AlphabetBody(n int) []byte {
 	body := make([]byte, n)
 	for i := range body {
@@ -86,12 +76,6 @@ func AlphabetBody(n int) []byte {
 	return body
 }
 
-// FetchAccumulatorSource is a program that reads one bodyLen-byte body
-// from the loopback upstream at port through `fetch.send` and then through
-// `fetch.fetch_future`, and pins how each accumulates it with the rc==1
-// cliff counters: `send`'s uniquely owned buffer never copies a shared
-// array, and the drain's captured chunk list copies pointers, three orders
-// of magnitude below a byte-wise accumulator. Exit 42 when both hold.
 func FetchAccumulatorSource(port, bodyLen int) string {
 	return fmt.Sprintf(`import "std/async";
 import "std/fetch";

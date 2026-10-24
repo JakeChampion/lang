@@ -7,34 +7,22 @@ import (
 	"testing"
 )
 
-// destructureFieldCases cover `let (a, b, c) = <source>` where the source is a
-// struct FIELD (#8458), including a nested field and a receiver field. Each
-// element takes the field's declared tuple type; read as an untyped 4 bytes, an
-// f64 element comes back as its bit pattern and an i64 truncates
-// (5000000001 → 705032705), with no diagnostic.
-//
-// Each case returns a value the interp oracle also computes, so the assertion
-// is the two agreeing rather than a hardcoded number.
 var destructureFieldCases = []struct {
 	name string
 	src  string
 }{
-	// The gap: an f64 element destructured out of a struct field.
 	{"destructure_field_f64", `struct P { t: (i32, f64) }
 function main(): i32 {
     let p: P = P { t: (7, 2.5) };
     let (a, b) = p.t;
     return a + (b * 10.0) as i32;
 }`},
-	// The 8-byte integer sibling — pins that the WIDTH comes from the tag,
-	// not only that the element exists.
 	{"destructure_field_i64", `struct P { w: (i64, i32) }
 function main(): i32 {
     let p: P = P { w: (5000000000, 7) };
     let (a, b) = p.w;
     return (a / 1000000000) as i32 + b;
 }`},
-	// A NESTED field source walks the same resolver.
 	{"destructure_nested_field_f64", `struct Inner { t: (i32, f64) }
 struct P { q: Inner }
 function main(): i32 {
@@ -42,30 +30,24 @@ function main(): i32 {
     let (a, b) = p.q.t;
     return a + (b * 10.0) as i32;
 }`},
-	// A RECEIVER field inside a method — the shape a compiler pass writes.
 	{"destructure_receiver_field_f64", `struct P { t: (i32, f64) }
 function (p: P) sum(): i32 {
     let (a, b) = p.t;
     return a + (b * 10.0) as i32;
 }
 function main(): i32 { let p: P = P { t: (7, 2.5) }; return p.sum(); }`},
-	// A string element off a field must still mark the slot a string.
 	{"destructure_field_string", `struct P { t: (i32, string) }
 function main(): i32 {
     let p: P = P { t: (7, "abcd") };
     let (a, b) = p.t;
     return a + b.len();
 }`},
-	// Negative guard: an all-i32 tuple field must stay 4-byte. A fix that
-	// widened on any non-empty tag would break this.
 	{"destructure_field_i32_narrow", `struct P { t: (i32, i32) }
 function main(): i32 {
     let p: P = P { t: (30, 12) };
     let (a, b) = p.t;
     return a + b;
 }`},
-	// The shapes that were already correct, kept as controls: a fix that
-	// disturbed the existing arms would show up here.
 	{"destructure_call_f64", `function mk(): (i32, f64) { return (7, 2.5); }
 function main(): i32 { let (a, b) = mk(); return a + (b * 10.0) as i32; }`},
 	{"destructure_local_f64", `function main(): i32 {
@@ -75,8 +57,6 @@ function main(): i32 { let (a, b) = mk(); return a + (b * 10.0) as i32; }`},
 }`},
 }
 
-// TestSelfHostDestructureFieldIR_X86_64 runs each case through the self-host
-// x86-64 IR path and compares against the interpreter.
 func TestSelfHostDestructureFieldIR_X86_64(t *testing.T) {
 	dir, mmc, stdlibRoot, gcc, runner, interpBin := annotateF64ProjDir(t)
 

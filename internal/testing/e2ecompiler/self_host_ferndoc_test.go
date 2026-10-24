@@ -12,12 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// #6642: the doc generator — doc-comment association (the join between the
-// lexer's comment stream and the parser's declarations) and the Markdown
-// rendering over it, which `fern -doc` writes and the docs site publishes.
-
-// TestSelfHostFerndocSelfChecks runs the driver's own assertions. A non-zero
-// exit is the failing case's id.
 func TestSelfHostFerndocSelfChecks(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -40,11 +34,6 @@ func TestSelfHostFerndocSelfChecks(t *testing.T) {
 	}
 }
 
-// TestSelfHostFernDocPage pins the page `fern -doc` renders for a module with
-// every declaration shape — front matter, intro, one section per public
-// declaration in source order with its signature and doc, and the
-// implementations table — byte for byte: a doc generator's whole output is
-// its contract.
 func TestSelfHostFernDocPage(t *testing.T) {
 	fernBin := buildFernDocCLI(t)
 	want, err := os.ReadFile(filepath.Join("testdata", "ferndoc", "shapes.md"))
@@ -60,11 +49,6 @@ func TestSelfHostFernDocPage(t *testing.T) {
 	}
 }
 
-// TestSelfHostFernDocMode drives `-doc` over the stdlib the way the docs site
-// does, one invocation per namespace into one directory, and pins what the
-// tree walk adds around a page: a page per module with a public declaration,
-// a module's page the same whether it is rendered alone or in the walk, and a
-// usage error for a directory with no -o.
 func TestSelfHostFernDocMode(t *testing.T) {
 	if testing.Short() {
 		t.Skip("stdlib sweep is slow; skipped under -short")
@@ -117,8 +101,6 @@ func TestSelfHostFernDocMode(t *testing.T) {
 	}
 }
 
-// buildFernDocCLI builds the `fern` CLI driver for the -doc tests, which pass
-// host paths as argv and so run only natively.
 func buildFernDocCLI(t *testing.T) string {
 	t.Helper()
 	gcc, runner := x86_64Tooling(t)
@@ -130,11 +112,6 @@ func buildFernDocCLI(t *testing.T) string {
 	return buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
 }
 
-// stdlibPageNames is the page each stdlib module with something to document
-// gets: its path under std/ or core/ with separators joined by `_`. The two
-// namespaces share one output directory, so a name both want is an error: the
-// second namespace's page would replace the first's. The `_test_` stubs are
-// fixtures, not API.
 func stdlibPageNames(t *testing.T, stdlib string) map[string]bool {
 	t.Helper()
 	out := map[string]bool{}
@@ -172,8 +149,6 @@ func stdlibPageNames(t *testing.T, stdlib string) map[string]bool {
 	return out
 }
 
-// documentsAnything is whether `fern -doc` writes a page for a module: one with
-// a public declaration or an impl block.
 func documentsAnything(t *testing.T, path, src string) bool {
 	t.Helper()
 	prog, err := parser.Parse(src)
@@ -211,7 +186,6 @@ func documentsAnything(t *testing.T, path, src string) bool {
 	return false
 }
 
-// pageSet reads a directory of generated pages into name → bytes.
 func pageSet(t *testing.T, dir string) map[string][]byte {
 	t.Helper()
 	ents, err := os.ReadDir(dir)
@@ -232,8 +206,6 @@ func pageSet(t *testing.T, dir string) map[string][]byte {
 	return out
 }
 
-// firstPageDiff reports the first differing line with a little context. A whole
-// page is thousands of bytes and a full dump buries the one line that moved.
 func firstPageDiff(want, got string) string {
 	w := strings.Split(want, "\n")
 	g := strings.Split(got, "\n")

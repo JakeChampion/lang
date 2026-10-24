@@ -9,15 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// interpStdlibModloadCases are stdlib-importing programs run through the
-// self-hosted CLI's `-interp`, the only self-host engine that resolves
-// imports. Every one of them reaches the raw-memory intrinsics the stdlib's
-// string builders are made of — `__alloc_u8` to stage a byte buffer, `.with`
-// to fill it, `string_from_bytes_unchecked` to pack it back into a string —
-// so before #5998 they all stopped at `undefined function: __alloc_u8`.
-//
-// Each case is oracle-checked against the native interpreter, which resolves
-// the same imports, rather than against a hardcoded exit code.
 var interpStdlibModloadCases = []struct {
 	name string
 	src  string
@@ -104,139 +95,49 @@ function main(): i32 {
   if (change().to_upper() != 'É' || read().to_upper() != 'É') { return 2; }
   return 7;
 }`},
-	// The issue's repro: `__string_case_fold` — alloc a buffer, fill it byte
-	// by byte, pack it back.
 	{"ascii-case-fold", "import \"std/string\";\nfunction main(): i32 {\n  let s: string = \"AbC\";\n  if (s.to_ascii_lower() == \"abc\" && s.to_ascii_upper() == \"ABC\") { return 7; }\n  return 1;\n}\n"},
-	// The same shape reached through core/int's digit buffer.
 	{"int-to-string", "import \"std/i32\";\nfunction main(): i32 {\n  let n: i32 = -1234;\n  if (n.to_string() == \"-1234\") { return 7; }\n  return 1;\n}\n"},
-	// `s.bytes()`, whose compiled body is a `__memcpy` out of the string
-	// payload and is answered directly against the boxed value instead.
 	{"string-bytes", "import \"std/string\";\nfunction main(): i32 {\n  let bs: u8[] = \"hey\".bytes();\n  if (bs.len() == 3 && (bs[0] as i32) == 104) { return 7; }\n  return 1;\n}\n"},
-	// std/string's search family bottoms out in the __memchr scan kernel.
 	{"split-find", "import \"std/string\";\nfunction main(): i32 {\n  let parts: string[] = \"a,b,c\".split(\",\");\n  if (parts.len() == 3 && parts[1] == \"b\") { return 7; }\n  return 1;\n}\n"},
 	{"trim-replace-repeat", "import \"std/string\";\nfunction main(): i32 {\n  let t: string = \"  hello world  \".trim().to_owned();\n  if (t != \"hello world\") { return 1; }\n  if (t.replace(\"world\", \"there\") != \"hello there\") { return 2; }\n  if (\"ab\".repeat(3) != \"ababab\") { return 3; }\n  return 7;\n}\n"},
 	{"hex-encode", "import \"std/hex\";\nimport \"std/string\";\nfunction main(): i32 {\n  if (hex.encode(\"AB\".bytes()) == \"4142\") { return 7; }\n  return 1;\n}\n"},
 	{"base64-encode", "import \"std/base64\";\nimport \"std/string\";\nfunction main(): i32 {\n  if (base64.encode(\"hi\".bytes()) == \"aGk=\") { return 7; }\n  return 1;\n}\n"},
-	// core/map is the stdlib's heaviest raw-memory consumer — its kv buffer
-	// is hand-laid-out through __load_i32 / __store_ptr / __ptr_width. Both
-	// engines answer Map from a native map value instead of running those
-	// bodies, and this pins that the modload path keeps doing so.
 	{"map-insert-get", "import \"core/map\";\nfunction main(): i32 {\n  let m: Map[string, i32] = map_new(8);\n  m = m.insert(\"a\", 1);\n  m = m.insert(\"b\", 2);\n  m = m.insert(\"a\", 3);\n  let total: i32 = m.get_or(\"a\", 0) + m.get_or(\"b\", 0);\n  if (m.len() == 2 && total == 5) { return 7; }\n  return 1;\n}\n"},
 	{"map-keys", "import \"core/map\";\nfunction main(): i32 {\n  let m: Map[i32, i32] = map_new(4);\n  let i: i32 = 0;\n  while (i < 5) { m = m.insert(i, i * i); i = i + 1; }\n  let sum: i32 = 0;\n  let ks: i32[] = m.keys();\n  let j: i32 = 0;\n  while (j < ks.len()) { sum = sum + m.get_or(ks[j], 0); j = j + 1; }\n  if (sum == 30 && m.len() == 5) { return 7; }\n  return 1;\n}\n"},
-	// An imported module's enum, constructed and matched by its bare variants.
 	{"imported-enum", "import \"std/json\";\nfunction main(): i32 {\n  let v: json.JsonValue = JNumber(\"42\");\n  match (v) {\n    JNumber(s) => { if (s == \"42\") { return 7; } return 1; },\n    JNull => { return 2; },\n    _ => { return 3; }\n  }\n}\n"},
-	// The intrinsics called directly, without a stdlib body in between.
 	{"alloc-fill-pack", "function main(): i32 {\n  let buf: u8[] = __alloc_u8(3);\n  buf = buf.with(0, 102 as u8);\n  buf = buf.with(1, 111 as u8);\n  buf = buf.with(2, 111 as u8);\n  if (string_from_bytes_unchecked(buf) == \"foo\") { return 7; }\n  return 1;\n}\n"},
 	{"memchr-ascii-run", "function main(): i32 {\n  if (__memchr(\"abcb\", 98, 2) != 3) { return 1; }\n  if (__memchr(\"abc\", 122, 0) != 0 - 1) { return 2; }\n  if (__ascii_run(\"abé\", 0) != 2) { return 3; }\n  return 7;\n}\n"},
 	{"scan-set", "function main(): i32 {\n  let set: u8[] = __alloc_u8(256);\n  set = set.with(32, 1 as u8);\n  if (__scan_set(\"ab cd\", 0, set) != 2) { return 1; }\n  if (__scan_set(\"ab cd\", 3, set) != 5) { return 2; }\n  let short: u8[] = [0 as u8, 1 as u8];\n  if (__scan_set(\"ab\\x01\", 0, short) != 2) { return 3; }\n  return 7;\n}\n"},
 	{"count-runs", "function main(): i32 {\n  let set: u8[] = __alloc_u8(256);\n  set = set.with(32, 1 as u8);\n  if (__count_runs(\"a b  c\", 0, set) != 2) { return 1; }\n  if (__count_runs(\" a\", 1, set) != 0) { return 2; }\n  return 7;\n}\n"},
 	{"bsd-sum", "function main(): i32 {\n  if (__bsd_sum(\"ab\", 0) != 32914) { return 1; }\n  if (__bsd_sum(\"\", 70000) != 4464) { return 2; }\n  return 7;\n}\n"},
-	// Values from the independent implementation TestStrHashPins pins:
-	// one word, a word plus an overlapping tail, and under a word.
 	{"str-hash", "function main(): i32 {\n  if (__str_hash(\"abcdefgh\", 0) != 939000468) { return 1; }\n  if (__str_hash(\"abcdefghi\", 0) != 0 - 2056207145) { return 2; }\n  if (__str_hash(\"a\", 0) != 694301555) { return 3; }\n  if (__str_hash(\"hello, world\", 0 - 1) != 0 - 194608413) { return 4; }\n  return 7;\n}\n"},
 	{"buf-push-mapped", "function main(): i32 {\n  let b: usize = buf_new(4);\n  let t: u8[] = [65 as u8, 66 as u8];\n  buf_push_mapped(b, \"\\x00\\x01z\", t);\n  if (buf_take(b) != \"ABz\") { return 1; }\n  buf_free(b);\n  return 7;\n}\n"},
 	{"buf-push-filtered", "function main(): i32 {\n  let b: usize = buf_new(4);\n  let d: u8[] = [0 as u8, 1 as u8];\n  buf_push_filtered(b, \"\\x00\\x01z\\x01\", d);\n  if (buf_take(b) != \"\\x00z\") { return 1; }\n  buf_free(b);\n  return 7;\n}\n"},
 	{"buf-push-expanded", "function main(): i32 {\n  let b: usize = buf_new(4);\n  let t: u8[] = [2 as u8, 94 as u8, 64 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8];\n  buf_push_expanded(b, \"\\x00z\", t);\n  if (buf_take(b) != \"^@z\") { return 1; }\n  buf_free(b);\n  return 7;\n}\n"},
-	// The CRC kernel, which is the family's odd one in two ways the interp
-	// has to get right on its own: its STRING is the second argument, so it
-	// cannot ride __memchr's destructure the way __count_byte does, and it
-	// CARRIES a crc in — so an empty string must hand back exactly what it
-	// was given, and cutting a string in two must fold to the same answer as
-	// one call. Values from the Go oracle in internal/testing/e2e/crc32_cksum_test.go.
 	{"crc32-cksum", "function main(): i32 {\n  if (__crc32_cksum(0, \"\") != 0) { return 1; }\n  if (__crc32_cksum(12345, \"\") != 12345) { return 2; }\n  if (__crc32_cksum(0, \"hello world\") != 1937437358) { return 3; }\n  if (__crc32_cksum(0 - 1, \"x\") != 0 - 2001448981) { return 4; }\n  if (__crc32_cksum(__crc32_cksum(0, \"hello \"), \"world\") != 1937437358) { return 5; }\n  return 7;\n}\n"},
-	// The comparison kernel, whose CLAMPS are the contract rather than
-	// defensive tidying: an offset past the end leaves nothing to compare, a
-	// negative one reads from 0, and an `n` past either range answers the
-	// shorter length so a caller's `== n` equality test correctly fails.
 	{"mismatch", "function main(): i32 {\n  if (__mismatch(\"hello\", 0, \"hello\", 0, 5) != 5) { return 1; }\n  if (__mismatch(\"abc\", 0, \"abd\", 0, 3) != 2) { return 2; }\n  if (__mismatch(\"zzabc\", 2, \"qqqabd\", 3, 3) != 2) { return 3; }\n  if (__mismatch(\"ab\", 0, \"abcdef\", 0, 6) != 2) { return 4; }\n  if (__mismatch(\"abc\", 0 - 4, \"abc\", 0, 3) != 3) { return 5; }\n  if (__mismatch(\"abc\", 99, \"abc\", 0, 3) != 0) { return 6; }\n  return 7;\n}\n"},
-	// The capacity-carrying string builder, the whole family in one pass:
-	// the reserve, the three pushes, the length, the take that RE-ARMS the
-	// builder rather than closing it, and the free. std/array's `join` and
-	// every std/io_buffered writer bottom out here, and a handle kept in a
-	// struct field is the shape BufWriter is made of — two copies of the
-	// struct share one buffer, so a push through one shows through the
-	// other.
 	{"buf-builder", "struct Acc { h: usize }\nfunction push_twice(a: Acc, s: string): Acc { buf_push(a.h, s); buf_push(a.h, s); return a; }\nfunction main(): i32 {\n  let b: usize = buf_new(4);\n  if (buf_len(b) != 0) { return 1; }\n  buf_push(b, \"ab\");\n  buf_push_byte(b, 99);\n  buf_push_range(b, \"xdefy\", 1, 4);\n  if (buf_len(b) != 6) { return 2; }\n  if (buf_take(b) != \"abcdef\") { return 3; }\n  if (buf_len(b) != 0) { return 4; }\n  let acc: Acc = Acc { h: b };\n  let copied: Acc = push_twice(acc, \"z\");\n  if (buf_len(acc.h) != 2) { return 5; }\n  if (buf_take(copied.h) != \"zz\") { return 6; }\n  buf_push_byte(b, 321);\n  if (buf_take(b) != \"A\") { return 8; }\n  buf_free(b);\n  return 7;\n}\n"},
 	{"float-bits-roundtrip", "function main(): i32 {\n  if (f64_from_bits(f64_bits(1.5)) != 1.5) { return 1; }\n  if (f32_from_bits(f32_bits(0.5 as f32)) != (0.5 as f32)) { return 2; }\n  return 7;\n}\n"},
-	// `let (a, b) = tuple` is one StmtVar carrying a comma-joined name; the
-	// interpreter used to bind that name whole, so std/json's parser (which
-	// destructures on every step) died on an undefined identifier.
 	{"tuple-destructure", "function pair(): (i32, i32) { return (3, 4); }\nfunction main(): i32 {\n  let (a, b) = pair();\n  return a + b;\n}\n"},
-	// std/json is the stdlib module #6808 was reported against: `JsonValue` was
-	// then injected by the front end, so its variants had no declaration in the
-	// parsed AST and the parser ran to completion only to stop at
-	// `undefined function: JNumber` when it went to build a value.
 	{"json-parse-array", "import \"std/json\";\nfunction main(): i32 {\n  match (json.json_parse(\"[1,2,3]\")) {\n    Some(v) => {\n      match (v) {\n        JArray(items) => {\n          match (items[1]) {\n            JNumber(s) => { if (s == \"2\") { return 7; } return 1; },\n            _ => { return 2; }\n          }\n        },\n        _ => { return 3; }\n      }\n    },\n    None => { return 4; }\n  }\n}\n"},
-	// The object shape, which reaches JNumber through a `JsonObject` payload
-	// and a `.get` returning `Option[JsonValue]`.
 	{"json-parse-object", "import \"std/json\";\nfunction main(): i32 {\n  match (json.json_parse(\"{\\\"a\\\":[1,2,3]}\")) {\n    Some(v) => {\n      match (v) {\n        JObject(m) => {\n          match (m.get(\"a\")) {\n            Some(arr) => {\n              match (arr) {\n                JArray(items) => {\n                  match (items[1]) {\n                    JNumber(s) => { if (s == \"2\") { return 7; } return 1; },\n                    _ => { return 2; }\n                  }\n                },\n                _ => { return 3; }\n              }\n            },\n            None => { return 4; }\n          }\n        },\n        _ => { return 5; }\n      }\n    },\n    None => { return 6; }\n  }\n}\n"},
-	// Round-tripping a hand-built document through the encoder: construction on
-	// the way in, variant matching on the way out.
 	{"json-encode-roundtrip", "import \"std/json\";\nfunction main(): i32 {\n  let doc: json.JsonValue = JArray([JBool(true), JString(\"hi\"), JNull]);\n  if (json.json_encode(doc) != \"[true,\\\"hi\\\",null]\") { return 1; }\n  match (json.json_parse(json.json_encode(doc))) {\n    Some(JArray(items)) => { if (items.len() == 3) { return 7; } return 2; },\n    _ => { return 3; }\n  }\n}\n"},
-	// A user enum through the CLI's module loader, which merges every imported
-	// module's decls before the interpreter sees them.
 	{"user-enum-with-stdlib", "import \"std/string\";\nenum Tok { Word(string), Num(i32) }\nfunction render(t: Tok): string {\n  match (t) { Word(w) => { return w.to_ascii_upper(); }, Num(_) => { return \"#\"; } }\n}\nfunction main(): i32 {\n  if (render(Word(\"ok\")) == \"OK\" && render(Num(3)) == \"#\") { return 7; }\n  return 1;\n}\n"},
-	// std/f64's shortest-round-trip formatter is written almost entirely in
-	// u64, so #6810's signed 64-bit carrier showed up here as a WRONG ANSWER:
-	// the significand went negative inside __db_shortest64 and `1.5` rendered
-	// starting with `-`. The far ends of the range are the interesting half:
-	// they only agree once both engines read the LITERAL to the same double
-	// (#6824), so what fails here first is the literal reader rather than the
-	// formatter — TestSelfHostInterpFloatLiteralBits separates the two.
-	// A hex literal wider than 32 bits keeps all 64 (std/f64's tables are
-	// u64 arrays of them), and __mulhi_u64's result is unsigned.
 	{"u64-hex-literals", "import \"std/u64\";\nconst T: u64[] = [0x8000000000000001u64, 0x7fffffffffffffffu64];\nfunction main(): i32 {\n  let a: u64 = 0x8000000000000001u64;\n  if (a.to_string() != \"9223372036854775809\") { return 1; }\n  if (T[1].to_string() != \"9223372036854775807\") { return 2; }\n  if (__mulhi_u64(a, T[1]).to_string() != \"4611686018427387903\") { return 3; }\n  return 7;\n}\n"},
 	{"float-to-string-shortest", "import \"std/f64\";\nfunction main(): i32 {\n  if ((1.5).to_string() != \"1.5\") { return 1; }\n  if ((0.1).to_string() != \"0.1\") { return 2; }\n  if ((1234.5678).to_string() != \"1234.5678\") { return 3; }\n  if ((0.0 - 2.5).to_string() != \"-2.5\") { return 4; }\n  if ((1e21).to_string() != \"1e+21\") { return 5; }\n  if ((100.0).to_string() != \"100\") { return 6; }\n  if ((0.5).to_string() != \"0.5\") { return 8; }\n  return 7;\n}\n"},
 	{"float-to-string-wide-range", "import \"std/f64\";\nfunction main(): i32 {\n  if ((1e30).to_string() != \"1e+30\") { return 1; }\n  if ((1e100).to_string() != \"1e+100\") { return 2; }\n  if ((1e-100).to_string() != \"1e-100\") { return 3; }\n  if ((2.5e-10).to_string() != \"2.5e-10\") { return 4; }\n  if ((1e-7).to_string() != \"1e-7\") { return 5; }\n  if ((8.98846567431158e307).to_string() != \"8.98846567431158e+307\") { return 6; }\n  if ((1.7976931348623157e308).to_string() != \"1.7976931348623157e+308\") { return 8; }\n  if ((5e-324).to_string() != \"5e-324\") { return 9; }\n  if ((1.2345678901234567e-5).to_string() != \"1.2345678901234568e-5\") { return 10; }\n  return 7;\n}\n"},
-	// core/int's u64 stringifier is the other u64-heavy stdlib body, and the
-	// two values here straddle the sign boundary the carrier was losing.
 	{"u64-to-string", "import \"std/u64\";\nfunction main(): i32 {\n  let big: u64 = 9223372036854775807;\n  big = big + (1 as u64);\n  if (big.to_string() != \"9223372036854775808\") { return 1; }\n  let maxv: u64 = (0 as u64) - (1 as u64);\n  if (maxv.to_string() != \"18446744073709551615\") { return 2; }\n  return 7;\n}\n"},
-	// std/u64's methods, which only come within reach once a u64 value
-	// dispatches on `u64` rather than `i64`.
 	{"u64-receiver-methods", "import \"std/u64\";\nfunction main(): i32 {\n  let big: u64 = (0 as u64) - (2 as u64);\n  if (big.min(1 as u64) != (1 as u64)) { return 1; }\n  if (big.max(1 as u64) != big) { return 2; }\n  if (!big.is_even()) { return 3; }\n  if (big.saturating_add(9 as u64) != (0 as u64) - (1 as u64)) { return 4; }\n  if ((2 as u64).pow(63) != 9223372036854775808 as u64) { return 5; }\n  return 7;\n}\n"},
-	// The whole of std/array, which an array receiver type name puts in reach
-	// (#6809): the issue's own repro first, then the closure-taking generics —
-	// dispatch resolving is only half of it, the bodies have to run — then the
-	// receivers pinned to one element type.
 	{"array-reverse", "import \"std/array\";\nfunction main(): i32 {\n  let xs: i32[] = [3, 1, 2];\n  let ys: i32[] = xs.reverse();\n  if (ys[0] == 2) { return 7; }\n  return 1;\n}\n"},
 	{"array-closure-methods", "import \"std/array\";\nfunction main(): i32 {\n  let xs: i32[] = [3, 1, 2];\n  let ys: i32[] = xs.map((v: i32): i32 => { return v * 2; });\n  if (ys.len() != 3 || ys[0] != 6) { return 1; }\n  let big: i32[] = ys.filter((v: i32): boolean => { return v > 3; });\n  if (big.len() != 2) { return 2; }\n  let total: i32 = xs.fold(0, (acc: i32, v: i32): i32 => { return acc + v; });\n  if (total != 6) { return 3; }\n  return 7;\n}\n"},
 	{"array-predicate-methods", "import \"std/array\";\nfunction main(): i32 {\n  let xs: i32[] = [3, 1, 2];\n  if (xs.is_empty()) { return 1; }\n  if (!xs.any((v: i32): boolean => { return v == 2; })) { return 2; }\n  if (xs.all((v: i32): boolean => { return v > 2; })) { return 3; }\n  if (xs.count_where((v: i32): boolean => { return v > 1; }) != 2) { return 4; }\n  match (xs.first()) { Some(v) => { if (v != 3) { return 5; } }, None => { return 6; } }\n  match (xs.find((v: i32): boolean => { return v == 1; })) { Some(v) => { if (v != 1) { return 8; } }, None => { return 9; } }\n  return 7;\n}\n"},
 	{"array-concrete-helpers", "import \"std/array\";\nfunction main(): i32 {\n  let xs: i32[] = [3, 1, 2];\n  if (xs.sum() != 6) { return 1; }\n  if (xs.product() != 6) { return 2; }\n  match (xs.max()) { Some(v) => { if (v != 3) { return 3; } }, None => { return 4; } }\n  if (xs.reverse()[0] != 2) { return 5; }\n  if (xs.cumsum()[2] != 6) { return 6; }\n  let ws: string[] = [\"a\", \"b\", \"a\"];\n  if (ws.join(\"-\") != \"a-b-a\") { return 8; }\n  if (!ws.contains(\"b\")) { return 9; }\n  if (ws.distinct().len() != 2) { return 10; }\n  return 7;\n}\n"},
-	// `.index_of()` / `.contains()` on a non-string element WITH the import
-	// present (#6801). This spelling used to be the divergence: native
-	// resolved it to the string[]-only method and reported
-	// `expected string[], got i32[]`, while the import-free driver dialect
-	// lowered it through irlower's builtin intercept. Now both sides go
-	// through one Eq-bounded generic — and since the two engines are compared
-	// against each other, a self-host regression on the generic shows up here.
 	{"array-index-of-generic", "import \"std/array\";\nfunction main(): i32 {\n  let xs: i32[] = [3, 1, 2];\n  match (xs.index_of(1)) { Some(i) => { if (i != 1) { return 1; } }, None => { return 1; } }\n  match (xs.index_of(9)) { Some(_) => { return 2; }, None => {} }\n  if (!xs.contains(2)) { return 3; }\n  if (xs.contains(9)) { return 4; }\n  let bs: u8[] = [7 as u8, 8 as u8];\n  match (bs.index_of(8 as u8)) { Some(i) => { if (i != 1) { return 5; } }, None => { return 5; } }\n  if (!bs.contains(7 as u8)) { return 6; }\n  let ws: string[] = [\"a\", \"bb\"];\n  match (ws.index_of(\"bb\")) { Some(i) => { if (i != 1) { return 8; } }, None => { return 8; } }\n  match (ws.index_of(\"zz\")) { Some(_) => { return 9; }, None => {} }\n  return 7;\n}\n"},
-	// std/num's `sum` / `product` / `cumsum` seed their accumulator from a
-	// RECEIVER-LESS trait function reached through the bound type parameter
-	// (`let acc: T = T.zero();`). Native monomorphises that away before its
-	// interpreter runs; this engine erases generics instead, so `T` has to be
-	// pinned from the argument values — and the empty case has no element to
-	// pin it from, which is what makes `sum([])` the interesting row.
 	{"num-identity-generics", "import \"std/num\";\nfunction main(): i32 {\n  let xs: i32[] = [1, 2, 3];\n  if (num.sum(xs) != 6) { return 1; }\n  if (num.product(xs) != 6) { return 2; }\n  if (num.cumsum(xs)[2] != 6) { return 3; }\n  let ws: i64[] = [1, 2, 3];\n  if (num.sum(ws) != 6) { return 4; }\n  let fs: f64[] = [1.5, 2.5];\n  if (num.sum(fs) != 4.0) { return 5; }\n  let none: i32[] = [];\n  if (num.sum(none) != 0) { return 6; }\n  if (num.product(none) != 1) { return 8; }\n  return 7;\n}\n"},
-	// The same associated call spelled on a concrete type, and reached through
-	// a USER impl rather than a primitive one.
 	{"assoc-fn-user-impl", "import \"std/num\";\nstruct P { x: i32, y: i32 }\nimpl num.Add for P { function add(self: Self, o: Self): Self { return P { x: self.x + o.x, y: self.y + o.y }; } }\nimpl num.Zero for P { function zero(): Self { return P { x: 0, y: 0 }; } }\nfunction main(): i32 {\n  if (i32.zero() != 0) { return 1; }\n  if (P.zero().x != 0) { return 2; }\n  let ps: P[] = [P { x: 1, y: 2 }, P { x: 3, y: 4 }];\n  let t: P = num.sum(ps);\n  if (t.x != 4 || t.y != 6) { return 3; }\n  let none: P[] = [];\n  if (num.sum(none).y != 0) { return 4; }\n  return 7;\n}\n"},
-	// The Display spine: print / write / eprint take any type with a
-	// `to_string(): string` in scope — a scalar's from the stdlib import, a
-	// struct's from its own method. Native's checker rewrites the argument to
-	// `arg.to_string()`; the self-host -interp runs no checker, and refused
-	// every non-string with `print: argument must be a string`.
 	{"print-display-arg", "import \"std/i32\";\nstruct P { x: i32 }\nfunction (p: P) to_string(): string { return \"P(\" + p.x.to_string() + \")\"; }\nfunction main(): i32 {\n  let n: i32 = 42;\n  print(n);\n  write(P { x: 3 });\n  print(\"\");\n  eprint(n + 1);\n  print(\"done\");\n  return 7;\n}\n"},
 }
 
-// TestSelfHostInterpStdlibModload drives `fern -interp <prog> <stdlib-root>`
-// on the self-hosted CLI — the one self-host engine with a module loader, and
-// so the only place a stdlib-importing program can be interpreted at all. The
-// bare `interp_run.fern` driver (TestSelfHostInterpDriver*) reads raw stdin
-// through parser.parse_module with no loader, so no `std/` or `core/` import
-// resolves there for any engine.
-//
-// Use the current compiler built for the host, including native ARM64 Linux.
-// The interpreter reads host filesystem paths and needs no cross runner.
 func TestSelfHostInterpStdlibModload(t *testing.T) {
 	fernBin := e2eharness.SelfHostCLI(t)
 	interpBin := buildLangBinForInterp(t)

@@ -5,18 +5,6 @@ import (
 	"testing"
 )
 
-// --- Block-scoped reclaim, the rest of the family (#6127) --------------------
-//
-// A heap value declared inside a loop body is released once per pass, so each
-// `round` below reaches allocs == frees at live_bytes 0. The cases cover one
-// container shape each: arr-of-arr, string array, struct array, optional
-// arr-of-arr, rc tuple, and the array-of-structs / array-of-tuples shapes read
-// through `.len()`, which is a borrow rather than an escape (#6291).
-//
-// The rc-payload enum and the flat Option are consumed by a match inside the
-// block, which frees the value before the block ends (#4357). They are pinned
-// balanced so that a second release at block end cannot creep in.
-
 func TestSelfHostBlockScopedClassesX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
@@ -89,7 +77,6 @@ function main(): i32 {
 			want: 42,
 		},
 		{
-			// `ids` hides "alpha" from the static-box plan, so `xs` is a heap box.
 			name: "strarr_declared_in_loop",
 			src: `@noinline function ids(s: string): string { return s; }
 function round(r: i32): i32 {
@@ -152,9 +139,6 @@ function main(): i32 {
 			want: 23,
 		},
 		{
-			// Needs BOTH "TUPRC:" and "TUPRCS:" — the rebind credit and the exit-sweep
-			// credit #6251 added. With only the first switched this measured exactly
-			// its unfixed 8000, which is why it has its own case.
 			name: "rc_tuple_declared_in_loop",
 			src: `function round(r: i32): i32 {
     let acc: i32 = 0;
@@ -175,8 +159,6 @@ function main(): i32 {
 			want: 42,
 		},
 		{
-			// Freed by the consuming match before the block ends (#4357), so a
-			// block-end release as well would free it twice.
 			name: "rc_payload_enum_in_loop_stays_balanced",
 			src: `enum E { Full(i32[]), Nil }
 function round(r: i32): i32 {
@@ -198,7 +180,6 @@ function main(): i32 {
 			want: 23,
 		},
 		{
-			// The Option sibling of the case above, same reason, same double-free risk.
 			name: "flat_option_in_loop_stays_balanced",
 			src: `function round(r: i32): i32 {
     let acc: i32 = 0;
@@ -219,13 +200,6 @@ function main(): i32 {
 			want: 42,
 		},
 		{
-			// ARRSTRUCT — an array-of-structs-with-an-array-field, read
-			// through `.len()`. This leaked 67200 at #6285 and was closed by
-			// #6291 (`.len()` is a borrow, not an escape), i.e. as a SIDE
-			// EFFECT of a fix aimed elsewhere. Nothing pinned it, so it is
-			// pinned here: the `.len()` read is the whole point of the case
-			// and must not be swapped for an element access, which was
-			// already clean at #6285 and would pin nothing.
 			name: "arrstruct_len_declared_in_loop",
 			src: `struct P { xs: i32[], n: i32 }
 function round(r: i32): i32 {
@@ -247,8 +221,6 @@ function main(): i32 {
 			want: 23,
 		},
 		{
-			// ARRTUP — the tuple sibling of the case above, 60800 at #6285
-			// and closed by the same commit. Same reason for the `.len()`.
 			name: "arrtup_len_declared_in_loop",
 			src: `function round(r: i32): i32 {
     let acc: i32 = 0;
@@ -273,11 +245,6 @@ function main(): i32 {
 	}
 }
 
-// TestSelfHostBlockScopedClassesHazardsX86_64 — the block-scoped shapes these
-// classes must still REFUSE. Freeing a retired slot at function exit is sound
-// only while that slot is the sole reference to its value, so each of these
-// keeps a live reference past the block. They assert BEHAVIOUR: the failure mode
-// is a wrong answer or a crash, not a leak. Every `want` is from `fern -interp`.
 func TestSelfHostBlockScopedClassesHazardsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -290,8 +257,6 @@ func TestSelfHostBlockScopedClassesHazardsX86_64(t *testing.T) {
 		want int
 	}{
 		{
-			// Each block-scoped buffer is moved into a container that outlives the
-			// loop and is read after it.
 			name: "arr_escapes_into_an_outer_container",
 			src: `function round(r: i32): i32 {
     let keep: i32[][] = [];
@@ -315,8 +280,6 @@ function main(): i32 {
 			want: 72,
 		},
 		{
-			// A block-scoped string[] both aliased outward and passed to a call.
-			// `ids` hides "alpha" from the static-box plan, so `xs` is a heap box.
 			name: "strarr_aliased_and_passed_to_a_call",
 			src: `@noinline function ids(s: string): string { return s; }
 function keepit(xs: string[]): i32 { return xs.len(); }
@@ -341,8 +304,6 @@ function main(): i32 {
 			want: 57,
 		},
 		{
-			// A block-scoped Option[<arr>][] aliased outward — freeing it would dangle
-			// both the option boxes and their payload buffers.
 			name: "optaarr_aliased_to_an_outer_local",
 			src: `function round(r: i32): i32 {
     let acc: i32 = 0;

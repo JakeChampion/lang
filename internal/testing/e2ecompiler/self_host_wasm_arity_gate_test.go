@@ -9,13 +9,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostWasmArityGate pins #4360: an arg-count mismatch must REJECT on
-// the self-host wasm drivers (exit 1 + an E004 diagnostic on stderr, nothing
-// emitted), matching the Go compiler's check-time error — it used to pass
-// through the emitter and miscompile. The gate is asmcore.check_call_arity, a
-// conservative free-function arity slice: the accept cases pin that its
-// skip-rules (defaulted args, locals shadowing a function name, method calls)
-// never reject a valid program.
 func TestSelfHostWasmArityGate(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -23,7 +16,6 @@ func TestSelfHostWasmArityGate(t *testing.T) {
 	wasmRunDriver := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 	irDriver := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "wasm_ir_run")
 
-	// run pipes src to a driver and returns (stdout, stderr, exit code).
 	run := func(t *testing.T, bin string, src string) ([]byte, []byte, int) {
 		t.Helper()
 		cmd := runX86_64Bin(runner, bin)
@@ -38,10 +30,8 @@ func TestSelfHostWasmArityGate(t *testing.T) {
 		name string
 		src  string
 	}{
-		// The issue's repro shape: plain free-function call, one arg short.
 		{"too-few", "function f(a: i32, b: i32): i32 { return a + b; } function main(): i32 { return f(1); }"},
 		{"too-many", "function g(a: i32): i32 { return a; } function main(): i32 { return g(1, 2); }"},
-		// Nested inside an expression and a while body.
 		{"nested", "function h(a: i32, b: i32): i32 { return a * b; } function main(): i32 { let s = 0; while (s < 3) { s = s + h(1); } return s; }"},
 	}
 	accepts := []struct {
@@ -50,10 +40,7 @@ func TestSelfHostWasmArityGate(t *testing.T) {
 		want int
 	}{
 		{"exact", "function f(a: i32, b: i32): i32 { return a + b; } function main(): i32 { return f(40, 2); }", 42},
-		// Omitted defaulted arg: fill_default_args runs before the gate.
 		{"default-arg", "function inc(n: i32, by: i32 = 1): i32 { return n + by; } function main(): i32 { return inc(41); }", 42},
-		// A local shadowing a module function name is a fn-value call — the
-		// gate must skip it (function-wide shadow set).
 		{"shadowed", "function dbl(n: i32): i32 { return n * 2; } function pick(f: (i32) => i32, n: i32): i32 { return f(n); } function main(): i32 { return pick(dbl, 21); }", 42},
 	}
 

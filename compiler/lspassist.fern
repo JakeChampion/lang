@@ -1,8 +1,3 @@
-// compiler/lspassist.fern — what `fern -lsp` answers a completion, signature
-// help, document symbol or inlay hint request from: the program lspquery.fern
-// keeps for a document, read through the same view, tokens and scopes a hover
-// reads. Positions are the bundle's, as there; lsp.fern is the wire.
-
 import "./ast";
 import "./astwalk";
 import "./checker";
@@ -14,10 +9,6 @@ import "./parser";
 import "./typeinfo";
 import "./util";
 
-// ---- Completion ----
-
-// Item is a completion item: the name offered, its LSP CompletionItemKind,
-// and the detail shown beside it ("" for none).
 pub struct Item { label: string, kind: i32, detail: string }
 
 const CI_METHOD: i32 = 2;
@@ -38,10 +29,6 @@ const CI_CONSTANT: i32 = 21;
 
 const CI_STRUCT: i32 = 22;
 
-// completion is what may be written at `line`, `col`, sorted by label: after
-// a `.`, the members of what precedes it; elsewhere the bindings of the
-// enclosing function, the module's declarations, the built-in enums and the
-// keywords.
 pub function completion(p: lspquery.Program, line: i32, col: i32): Item[] {
   let v: lspquery.View = lspquery.view_of(p);
   let m: i32 = util.pos_file_index(line);
@@ -63,8 +50,6 @@ pub function completion(p: lspquery.Program, line: i32, col: i32): Item[] {
   return sorted(items);
 }
 
-// bound_items offers a function's bindings: those of its body first, then its
-// parameters, each described by its type.
 function bound_items(bs: Bound[]): Item[] {
   let out: Item[] = [];
   for b in bs {
@@ -80,9 +65,6 @@ function bound_items(bs: Bound[]): Item[] {
   return out;
 }
 
-// global_items offers module `m`'s functions, constants, structs and enums
-// with their variants, as the module writes them (`own` is its prefix in the
-// bundle), and the built-in Option and Result.
 function global_items(s: checker.Scope, mod: parser.Module, m: i32, own: string, own acc: Item[]): Item[] {
   for fd in mod.funcs {
     if (lspquery.declared_in(fd.line, m) && offered_func(fd, fd.name)) {
@@ -105,18 +87,14 @@ function global_items(s: checker.Scope, mod: parser.Module, m: i32, own: string,
   return acc;
 }
 
-// offered_func: is `fd`, written `shown`, a free function completion offers?
 function offered_func(fd: parser.FuncDecl, shown: string): boolean {
   return fd.receiver_type.len() == 0 && visible(shown);
 }
 
-// offered_struct: is `sd` a struct of its own, not an enum's variant?
 function offered_struct(sd: parser.StructDecl): boolean {
   return sd.enum_owner.len() == 0 && visible(sd.name);
 }
 
-// struct_item offers struct `sd`, declared in the module bundled under
-// `prefix`.
 function struct_item(sd: parser.StructDecl, prefix: string): Item {
   let shown: string = lspquery.unprefixed(sd.name, prefix);
   return Item { label: shown, kind: CI_STRUCT, detail: "struct " + shown + lspquery.type_params(sd.type_params) };
@@ -130,7 +108,6 @@ function func_item(s: checker.Scope, name: string, shown: string): Item {
   return Item { label: shown, kind: CI_FUNCTION, detail: util.show_type_vars(lspquery.func_text(shown, sig)) };
 }
 
-// enum_items offers enum `name` and each of its variants.
 function enum_items(s: checker.Scope, name: string, variants: string[], own: string, own acc: Item[]): Item[] {
   let shown: string = lspquery.unprefixed(name, own);
   let module: string = checker.enum_sig(s, name).module;
@@ -141,8 +118,6 @@ function enum_items(s: checker.Scope, name: string, variants: string[], own: str
   return acc;
 }
 
-// visible reports whether a name is one a program writes: the front end's own
-// helpers and temporaries begin `__`.
 function visible(name: string): boolean {
   return name.len() > 0 && !util.str_has_prefix(name, "__");
 }
@@ -151,10 +126,6 @@ function type_text(t: typeinfo.Type): string {
   return util.show_type_vars(checker.type_label(t));
 }
 
-// ---- Members ----
-
-// member_dot is the index of the `.` a completion at `line`, `col` follows,
-// past any of the member's name already written, or -1.
 function member_dot(toks: lspquery.Tok[], line: i32, col: i32): i32 {
   let i: i32 = lspquery.after(toks, line, col) - 1;
   if (i >= 0 && toks[i].ident && toks[i].line == line && col <= toks[i].col + toks[i].text.len()) {
@@ -166,9 +137,6 @@ function member_dot(toks: lspquery.Tok[], line: i32, col: i32): i32 {
   return 0 - 1;
 }
 
-// members is what may follow the `.` at token `dot`: what a module exports
-// after its alias, an enum's variants after its name, else the fields and
-// methods of the value before it.
 function members(v: checker.QueryView, toks: lspquery.Tok[], quals: flatten.Qualifiers, m: i32, dot: i32): Item[] {
   let s: checker.Scope = checker.module_scope(v);
   let recv: lspquery.Tok = toks[dot - 1];
@@ -187,8 +155,6 @@ function members(v: checker.QueryView, toks: lspquery.Tok[], quals: flatten.Qual
   return value_members(v, toks, m, dot);
 }
 
-// own_first is the bundled names a bare `name` written in a module with
-// prefix `own` may be: its own declaration's, then the name itself.
 function own_first(own: string, name: string): string[] {
   if (own.len() > 0) {
     return [own + "__" + name, name];
@@ -196,7 +162,6 @@ function own_first(own: string, name: string): string[] {
   return [name];
 }
 
-// export_items is what the module bundled under `prefix` exports.
 function export_items(s: checker.Scope, mod: parser.Module, prefix: string): Item[] {
   let out: Item[] = [];
   let head: string = prefix + "__";
@@ -218,8 +183,6 @@ function export_items(s: checker.Scope, mod: parser.Module, prefix: string): Ite
   return out;
 }
 
-// exported: is a declaration bundled as `name` a `pub` one of the module
-// whose names start with `head`?
 function exported(is_pub: boolean, name: string, head: string): boolean {
   return is_pub && util.str_has_prefix(name, head);
 }
@@ -232,8 +195,6 @@ function variant_items(s: checker.Scope, u: checker.UnionSig): Item[] {
   return out;
 }
 
-// value_members is the members of the value whose field access is written at
-// the `.` at token `dot`, as the checker types it there.
 function value_members(v: checker.QueryView, toks: lspquery.Tok[], m: i32, dot: i32): Item[] {
   let d: lspquery.Tok = toks[dot];
   let f: i32 = lspquery.enclosing(v.mod, toks, m, d.line, d.col);
@@ -251,8 +212,6 @@ function value_members(v: checker.QueryView, toks: lspquery.Tok[], m: i32, dot: 
       }
     }
   }
-  // An access that does not parse yet: a name before the `.` that the
-  // function binds is typed as it is bound.
   let recv: lspquery.Tok = toks[dot - 1];
   let t: typeinfo.Type = bound_type(bound_in_func(v, fd), recv, d);
   if (recv.ident && known(t)) {
@@ -261,8 +220,6 @@ function value_members(v: checker.QueryView, toks: lspquery.Tok[], m: i32, dot: 
   return out;
 }
 
-// bound_type is the type of the last of `bs` named as `name` is that is not a
-// `let` coming after `at`.
 function bound_type(bs: Bound[], name: lspquery.Tok, at: lspquery.Tok): typeinfo.Type {
   let t: typeinfo.Type = typeinfo.TypeUnknown { reason: "unbound" };
   for b in bs {
@@ -284,8 +241,6 @@ function skip_stmt(st: ast.Stmt, own acc: ast.ExprFieldAccess[]): ast.ExprFieldA
   return acc;
 }
 
-// type_members is the fields of a struct and the methods of any type: those
-// declared on it, std/array's for an array, and the built-in ones.
 function type_members(s: checker.Scope, t: typeinfo.Type): Item[] {
   let out: Item[] = [];
   if let typeinfo.TypeStruct(st) = t {
@@ -323,21 +278,13 @@ function method_item(name: string, parts: lspquery.Parts): Item {
   return Item { label: name, kind: CI_METHOD, detail: util.show_type_vars(lspquery.parts_text(name, parts)) };
 }
 
-// ---- Bindings ----
-
-// Bound is a name a function binds, as written, with its type: a parameter
-// (of the function or of a lambda in it), or a binding of its body — for a
-// `let`, with the statement's position and whether it annotates the type.
 struct Bound { name: string, t: typeinfo.Type, param: boolean, let_line: i32, let_col: i32, annotated: boolean }
 
-// bound_in_func is every name `fd` binds, typed as the checker types it where
-// it is bound: the receiver and parameters, then each binding of the body.
 function bound_in_func(v: checker.QueryView, fd: parser.FuncDecl): Bound[] {
   let s: checker.Scope = checker.func_scope(v, fd);
   return bound_in(fd.body, s, added(0, s, true, 0, 0, true, []));
 }
 
-// added is the bindings `s` holds past its first `from`.
 function added(from: i32, s: checker.Scope, param: boolean, line: i32, col: i32, annotated: boolean, own acc: Bound[]): Bound[] {
   let i: i32 = from;
   while (i < s.names.len()) {
@@ -361,8 +308,6 @@ function bound_in(stmts: ast.Stmt[], s: checker.Scope, own acc: Bound[]): Bound[
   return acc;
 }
 
-// bound_in_stmt is the bindings of the blocks, arms, loops and lambdas `st`
-// holds, each walked in the scope the checker walks it in.
 function bound_in_stmt(st: ast.Stmt, s: checker.Scope, own acc: Bound[]): Bound[] {
   match (st) {
     ast.StmtIf(f) => {
@@ -413,8 +358,6 @@ function bound_in_arms(m: ast.StmtMatch, s: checker.Scope, own acc: Bound[]): Bo
   return acc;
 }
 
-// bound_in_expr is the bindings of each lambda `e` holds: its parameters and
-// its body's.
 function bound_in_expr(e: ast.Expr, s: checker.Scope, own acc: Bound[]): Bound[] {
   for lm in lspquery.lambdas(e) {
     let inner: checker.Scope = checker.lambda_body_scope(lm, s);
@@ -423,14 +366,8 @@ function bound_in_expr(e: ast.Expr, s: checker.Scope, own acc: Bound[]): Bound[]
   return acc;
 }
 
-// ---- Signature help ----
-
-// Signature is the signature of the call a position is in: its label, the
-// byte span of each parameter's in it, and the parameter the position is on.
 pub struct Signature { found: boolean, label: string, starts: i32[], ends: i32[], active: i32 }
 
-// signature_help is the signature of the innermost call whose argument list
-// holds `line`, `col`: a function's, a module's function's or a method's.
 pub function signature_help(p: lspquery.Program, line: i32, col: i32): Signature {
   let none: Signature = Signature { found: false, label: "", starts: [], ends: [], active: 0 };
   let v: lspquery.View = lspquery.view_of(p);
@@ -448,10 +385,6 @@ pub function signature_help(p: lspquery.Program, line: i32, col: i32): Signature
   return signature(name, parts, commas);
 }
 
-// call_at is the index of the name a call whose argument list holds `line`,
-// `col` is made through — the token before its unmatched `(` — and how many of
-// its arguments come before the position; -1 when the position is in no
-// argument list, or in a block or brackets inside one.
 function call_at(toks: lspquery.Tok[], line: i32, col: i32): (i32, i32) {
   let depth: i32 = 0;
   let commas: i32 = 0;
@@ -491,9 +424,6 @@ function punct(t: lspquery.Tok): string {
   return t.text;
 }
 
-// callee_parts is the name written at token `i` and the signature of what it
-// calls there: what the syntax tree has at it, or when the tree has nothing
-// there (the call does not parse), the function its spelling names.
 function callee_parts(v: checker.QueryView, toks: lspquery.Tok[], quals: flatten.Qualifiers, i: i32): (string, lspquery.Parts) {
   let t: lspquery.Tok = toks[i];
   let (site, ok) = lspquery.site_at(toks, quals, t.line, t.col);
@@ -520,9 +450,6 @@ function callee_parts(v: checker.QueryView, toks: lspquery.Tok[], quals: flatten
   return (t.text, lspquery.no_parts());
 }
 
-// signature lays out `function name(p1, p2): ret`, marking each parameter's
-// span, with the parameter after `commas` commas active — the last one, when
-// there are more arguments than parameters.
 function signature(name: string, parts: lspquery.Parts, commas: i32): Signature {
   let label: string = "function " + name + "(";
   let starts: i32[] = [];
@@ -548,11 +475,6 @@ function signature(name: string, parts: lspquery.Parts, commas: i32): Signature 
   return Signature { found: true, label: label + "): " + util.show_type_vars(parts.ret), starts: starts, ends: ends, active: active };
 }
 
-// ---- Document symbols ----
-
-// Symbol is an outline entry: a declaration's name, detail and LSP
-// SymbolKind, the bundle span of the whole declaration — from `line`, `col` to
-// just past `end_line`, `end_col` — and of its name, and its members.
 pub struct Symbol { name: string, detail: string, kind: i32, line: i32, col: i32, end_line: i32, end_col: i32, name_line: i32, name_col: i32, children: Symbol[] }
 
 pub const SK_METHOD: i32 = 6;
@@ -569,15 +491,12 @@ pub const SK_ENUM_MEMBER: i32 = 22;
 
 pub const SK_STRUCT: i32 = 23;
 
-// symbols is module `m`'s outline: its functions and methods, structs with
-// their fields, enums with their variants, and constants, as it declares them.
 pub function symbols(p: lspquery.Program, m: i32): Symbol[] {
   let mod: parser.Module = lspquery.parsed_module(p, m);
   let toks: lspquery.Tok[] = lspquery.module_toks(p, m);
   return type_symbols(p, m, mod, toks, func_symbols(mod, toks));
 }
 
-// func_symbols is a module's functions and methods.
 function func_symbols(mod: parser.Module, toks: lspquery.Tok[]): Symbol[] {
   let out: Symbol[] = [];
   for fd in mod.funcs {
@@ -592,7 +511,6 @@ function func_symbols(mod: parser.Module, toks: lspquery.Tok[]): Symbol[] {
   return out;
 }
 
-// type_symbols adds a module's structs, enums and constants to `out`.
 function type_symbols(p: lspquery.Program, m: i32, mod: parser.Module, toks: lspquery.Tok[], own out: Symbol[]): Symbol[] {
   for sd in mod.structs {
     if (sd.enum_owner.len() == 0 && visible(sd.name)) {
@@ -612,8 +530,6 @@ function type_symbols(p: lspquery.Program, m: i32, mod: parser.Module, toks: lsp
   return out;
 }
 
-// decl_symbol is the declaration at `line`, `col` that declares `name`: from
-// its `pub`, if any, to the end of its body, or of its `;` for a `statement`.
 function decl_symbol(toks: lspquery.Tok[], line: i32, col: i32, name: string, detail: string, kind: i32, statement: boolean): Symbol {
   let start: i32 = lspquery.after(toks, line, col);
   if (start > 0 && toks[start - 1].text == "pub" && !toks[start - 1].ident) {
@@ -649,8 +565,6 @@ function tok_len(t: lspquery.Tok): i32 {
   return 1;
 }
 
-// statement_end is the index of the `;` ending the declaration whose tokens
-// start at `from`, or -1.
 function statement_end(toks: lspquery.Tok[], from: i32): i32 {
   let depth: i32 = 0;
   let i: i32 = from;
@@ -668,7 +582,6 @@ function statement_end(toks: lspquery.Tok[], from: i32): i32 {
   return 0 - 1;
 }
 
-// member_symbol is a field's or variant's entry: the name, alone.
 function member_symbol(toks: lspquery.Tok[], i: i32, name: string, detail: string, kind: i32): Symbol {
   let t: lspquery.Tok = toks[i];
   return Symbol { name: name, detail: detail, kind: kind, line: t.line, col: t.col, end_line: t.line, end_col: t.col + name.len(), name_line: t.line, name_col: t.col, children: [] };
@@ -700,8 +613,6 @@ function enum_symbol(toks: lspquery.Tok[], ed: parser.EnumDecl): Symbol {
   return Symbol { ...s, children: variants };
 }
 
-// variant_tok is the index of the variant `name` declared at the top level of
-// the enum body that token `from` is in or before, or -1.
 function variant_tok(toks: lspquery.Tok[], from: i32, name: string): i32 {
   let depth: i32 = 0;
   let i: i32 = from;
@@ -722,7 +633,6 @@ function variant_tok(toks: lspquery.Tok[], from: i32, name: string): i32 {
   return 0 - 1;
 }
 
-// decl_sig is `function name(T1, T2): R` as the declaration spells it.
 function decl_sig(fd: parser.FuncDecl): string {
   let ps: string[] = [];
   for pd in fd.params {
@@ -735,8 +645,6 @@ function decl_sig(fd: parser.FuncDecl): string {
   return util.show_type_vars(lspquery.parts_text(fd.name, lspquery.Parts { found: true, params: ps, ret: ret }));
 }
 
-// const_type is constant `fd`'s type: as written, else as the checker infers
-// it from the value.
 function const_type(p: lspquery.Program, m: i32, fd: parser.FuncDecl): string {
   if (fd.ret_type.len() > 0) {
     return util.show_type_vars(fd.ret_type);
@@ -750,14 +658,8 @@ function const_type(p: lspquery.Program, m: i32, fd: parser.FuncDecl): string {
   return type_text(checker.func_sig(checker.module_scope(v.types), bundled).ret_type);
 }
 
-// ---- Inlay hints ----
-
-// Hint is an inlay hint: the type `label` shown at `line`, `col`, just past
-// the name it describes.
 pub struct Hint { line: i32, col: i32, label: string }
 
-// inlay_hints is the type of each `let` of module `m` that does not write one,
-// for the functions that reach into lines `lo` to `hi`.
 pub function inlay_hints(p: lspquery.Program, m: i32, lo: i32, hi: i32): Hint[] {
   let v: lspquery.View = lspquery.view_of(p);
   let toks: lspquery.Tok[] = lspquery.module_toks(p, m);
@@ -774,15 +676,10 @@ pub function inlay_hints(p: lspquery.Program, m: i32, lo: i32, hi: i32): Hint[] 
   return out;
 }
 
-// func_hints adds a hint for each of a function's `let` bindings whose type
-// was inferred, at most one at a position: a generic function's instances
-// share their declaration's positions.
 function func_hints(toks: lspquery.Tok[], quals: flatten.Qualifiers, bs: Bound[], own out: Hint[]): Hint[] {
   for b in bs {
     if (b.let_line > 0 && visible(b.name) && known(b.t)) {
       let i: i32 = lspquery.first_ident(toks, lspquery.after(toks, b.let_line, b.let_col), b.name);
-      // Literal settlement writes inferred types into the checked AST. The
-      // source tokens still distinguish those from a written annotation.
       if (i >= 0 && (!b.annotated || i + 1 < toks.len() && toks[i + 1].text == "=") && !hinted(out, toks[i].line, toks[i].col + b.name.len())) {
         out = out.append(Hint { line: toks[i].line, col: toks[i].col + b.name.len(), label: ": " + written(quals, type_text(b.t)) });
       }
@@ -791,9 +688,6 @@ function func_hints(toks: lspquery.Tok[], quals: flatten.Qualifiers, bs: Bound[]
   return out;
 }
 
-// written is a type label as the module whose qualifiers are `q` writes it:
-// a bundled name `prefix__Name` of a module it imports as `alias.Name`, and
-// one of its own as `Name`.
 function written(q: flatten.Qualifiers, label: string): string {
   let out: string = "";
   let i: i32 = 0;
@@ -843,10 +737,6 @@ function hinted(hs: Hint[], line: i32, col: i32): boolean {
   return false;
 }
 
-// ---- Sorting ----
-
-// sorted is `items` in byte order of their labels, items with equal labels in
-// the order given.
 function sorted(items: Item[]): Item[] {
   if (items.len() < 2) {
     return items;

@@ -4,10 +4,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostArrTupReclaimIRArm64 is the arm64 leg of
-// TestSelfHostArrTupReclaimIRX86_64: the array-of-tuples element reclaim is
-// decided in the target-independent lowering, so arm64 must give the same
-// answers. Case table shared with the x86-64 leg.
 func TestSelfHostArrTupReclaimIRArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range arrtupReclaimCases {

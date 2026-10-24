@@ -5,13 +5,6 @@ import (
 	"testing"
 )
 
-// `own` is checked, not decorative, at EVERY parameter position — an arrow
-// lambda's and a nested declaration's as much as a top-level one's. Dropping it
-// turned a compiling fold into one the checker rejects: the consuming function
-// type the fold declares no longer matched the visitor handed to it.
-//
-// The property is "the output still compiles", so each case is type-checked
-// rather than string-matched alone.
 func TestFormatKeepsOwnAtEveryParamPosition(t *testing.T) {
 	for _, tc := range []struct {
 		name string

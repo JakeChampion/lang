@@ -12,12 +12,6 @@ import (
 	"time"
 )
 
-// httpHandlerSrc is the full edge-handler program: std/http + std/serve + a
-// `handle` function. Its merged stdlib closure is ~925 functions, so it is the
-// canonical over-budget program — the shape the per-module IR rescue exists for.
-//
-// (main is explicit because the self-host checker has no `handle`-only auto-main
-// synthesis; native's synthesiseHandleMain is checker-side and native-only.)
 const httpHandlerSrc = `import "std/http";
 import "std/serve";
 import "std/platform";
@@ -31,21 +25,6 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostHttpHandlerRoutesIRX86_64 pins the routing and the LINKABILITY of
-// the edge-handler program through the file-based self-host driver.
-//
-// The merged closure crosses the 512-function IR budget, so the program must
-// take the driver's over-budget rescue; every one of its functions lowers on the
-// IR path, and builtins like `tcp_listen`, `tcp_send`, `poll` and
-// `tcp_pollable` must leave no dangling `__fn_` symbol at link.
-//
-// Linking is the assertion that matters here: it is what catches a unit whose
-// runtime helper the entry never emitted (the all_runtime_need_roots gap) and a
-// shape symbol defined twice in one stream (the `.weak` merge only happens
-// across separate object files, not within one).
-//
-// TestSelfHostHttpHandlerServesX86_64 below goes one step further and
-// serves real requests through it.
 func TestSelfHostHttpHandlerRoutesIRX86_64(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 
@@ -56,17 +35,9 @@ func TestSelfHostHttpHandlerRoutesIRX86_64(t *testing.T) {
 	if !strings.Contains(asm, ".Lssa_") {
 		t.Fatal("no .Lssa_ labels — the program did not lower through the IR")
 	}
-	// buildBin fails the test on a link error, which is the point: an undefined
-	// __fern_* or a doubly-defined __fern_shp_* both surface here.
 	buildBin(t, gcc, progDir, "http_handler", asm)
 }
 
-// TestSelfHostOverBudgetRoutesIRArm64 pins that `-target arm64-linux` reaches the IR
-// path for the same over-budget programs, through the same per-module rescue
-// the x86 leg has.
-//
-// Only the x86-built driver is needed — asserting the ROUTING reads the emitted
-// assembly, so no aarch64 cross toolchain is involved.
 func TestSelfHostOverBudgetRoutesIRArm64(t *testing.T) {
 	_, runner, driverBin := buildModloadDriverX86(t)
 
@@ -95,13 +66,6 @@ function main(): i32 {
 	}
 }
 
-// TestSelfHostOverBudgetProgramsRunX86_64 pins the per-module rescue on two
-// programs that pull in the same ~925-function stdlib closure:
-//
-//   - http-parse takes the concat like every other over-budget program and
-//     must run correctly; it is where two IR-path over-frees surfaced (the
-//     container-read alias and the param-receiver append).
-//   - raw-socket-serve drives a real socket through the concat — and serves.
 func TestSelfHostOverBudgetProgramsRunX86_64(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 
@@ -136,9 +100,6 @@ function main(): i32 {
 	t.Run("raw-socket-serve", func(t *testing.T) {
 		port := freeTCPPort(t)
 
-		// std/http is imported to pull in the over-budget closure; the socket
-		// work uses the builtins directly, so no fn value crosses a unit
-		// boundary — the serve-loop shape is covered by TestSelfHostHttpHandlerServes.
 		src := fmt.Sprintf(`import "std/http";
 function main(): i32 {
     let fd: i32 = tcp_listen(%d);
@@ -193,24 +154,12 @@ function main(): i32 {
 	})
 }
 
-// TestSelfHostHttpHandlerServesX86_64 is the final step for the edge-handler
-// program: compiled by the SELF-HOSTED compiler, it answers real HTTP.
-//
-// It is the whole edge-handler stack at once — std/serve's accept/recv/deadline
-// loop, std/http's request parse and response serialise, the builtin
-// HttpRequest / HttpResponse / Platform layouts, and the handler itself reached
-// as a fn VALUE handed across a per-module unit boundary (#5698). Two requests
-// on separate connections, because the second only answers correctly if the
-// first request's allocations were reclaimed rather than leaked or reused.
 func TestSelfHostHttpHandlerServesX86_64(t *testing.T) {
 	checkSelfHostHttpHandlerServes(t, func(port int) string {
 		return fmt.Sprintf("return serve.run(%d, serve.config(), handle);", port)
 	})
 }
 
-// The same loop through serve.run (#9853): a backlog of 4 and
-// SO_REUSEPORT on the listener, which reach tcp_listen_with through the
-// self-host's own lowering of the struct spread.
 func TestSelfHostHttpHandlerServesWithOptionsX86_64(t *testing.T) {
 	checkSelfHostHttpHandlerServes(t, func(port int) string {
 		return fmt.Sprintf("let opts: serve.Config = serve.Config { ...serve.config(), backlog: 4, reuse_port: true };\n    return serve.run(%d, opts, handle);", port)
@@ -228,13 +177,6 @@ func checkSelfHostHttpHandlerServes(t *testing.T, entry func(port int) string) {
 	checkServes(t, binCmd(runner, buildBin(t, gcc, progDir, "http_serve", asm)), port)
 }
 
-// TestSelfHostHttpHandlerServesArm64 is the same server built for arm64 Linux
-// the way `fern -target arm64-linux -o` builds it, through the self-host's own
-// assembler and ELF writer, and run under qemu-aarch64 off arm64 hosts. Every
-// request runs its handler as a task, whose .bss state block that assembler
-// once sized short, putting the heap allocator's globals on top of it: the
-// server bound its port, then faulted on the first request (#11377). Linking
-// the emitted text with GNU as instead never runs that assembler.
 func TestSelfHostHttpHandlerServesArm64(t *testing.T) {
 	_, qemu := arm64Tooling(t)
 	cli := buildSelfHostCLI(t)
@@ -261,8 +203,6 @@ function main(): i32 {
 `, mainBody)
 }
 
-// checkServes starts the server cmd and makes two requests on separate
-// connections to it on port.
 func checkServes(t *testing.T, cmd *exec.Cmd, port int) {
 	t.Helper()
 	if err := cmd.Start(); err != nil {
@@ -297,8 +237,6 @@ func checkServes(t *testing.T, cmd *exec.Cmd, port int) {
 			t.Errorf("GET %s response = %q, want it to contain %q", path, resp, want)
 		}
 	}
-	// The server must still be running: serve.run loops, and a crash mid-request
-	// is exactly the #5698 failure this pins.
 	if cmd.ProcessState != nil && cmd.ProcessState.Exited() {
 		t.Errorf("server exited (code %d) instead of continuing to serve", cmd.ProcessState.ExitCode())
 	}

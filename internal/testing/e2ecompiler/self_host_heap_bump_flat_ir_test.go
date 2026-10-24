@@ -6,51 +6,13 @@ import (
 	"testing"
 )
 
-// --- The heap-bump FLATNESS gate on the self-host IR path (#4365) ------------
-//
-// One probe pins many reclaim shapes: run the same program at a small and a
-// large iteration count and require `__heap_bump_bytes()` to report the SAME
-// high-water mark for both. A shape that reclaims is flat; a shape that leaks
-// tracks the iteration count. self_host_heap_bump_bytes_ir_test.go pins the
-// BUILTIN, not any shape's flatness, and the fixpoint is structurally blind to
-// a stable over-allocation (a compiler that leaks identically in both
-// generations still reproduces itself).
-//
-// Each row is measured against the compiler's own reclaim, never against an
-// absolute number: box sizes and temp strategies move the totals, so the
-// contract is FLATNESS, and the retained control below is what proves a flat
-// row still allocates.
-//
-// Rows deliberately absent:
-//
-//   - An enum scrutinee that is never bound (`match (mk(i)) { … }`) is NOT flat
-//     — 160 -> 128 at N=50/200, wrapping a growing byte count through the
-//     exit-code byte. That is #6393, an open leak on all three backends, so
-//     gating it here would pin a bug rather than a behaviour.
-//   - A string-array element built from literals reports an exact 0 on the
-//     self-host: it allocates nothing, so flatness holds vacuously and the row
-//     would gate nothing. Every row below is required to allocate — shown either
-//     by its own non-zero high-water or, where #7080 made the setup literals
-//     free, by a `retained` control that must grow.
 type heapBumpFlatCase struct {
-	name string
-	src  func(n string) string
-	// retained is an optional control for a row whose own high-water is 0.
-	// Since #7080 a string literal is static data, so a row whose only visible
-	// allocation was its setup literals now reports 0 even though the shape it
-	// exercises allocates and reclaims exactly as before — the intermediates are
-	// served from the freelist, so the arena bump never saw them either way.
-	//
-	// The control runs the same shape with the results RETAINED, which the
-	// freelist cannot satisfy, and must grow. That is the evidence the `small ==
-	// 0` guard was reaching for; the guard itself only ever measured the setup.
-	// Rows without a control keep the guard, which still discriminates for them.
+	name     string
+	src      func(n string) string
 	retained func(n string) string
 }
 
 var heapBumpFlatCases = []heapBumpFlatCase{
-	// A concat chain's intermediates: three temps per iteration, all dead at the
-	// end of the statement.
 	{name: "nested-concat", src: func(n string) string {
 		return `function main(): i32 {
     let before: i32 = (__heap_bump_bytes() as i32);
@@ -74,7 +36,6 @@ var heapBumpFlatCases = []heapBumpFlatCase{
     return 0;
 }`
 	}},
-	// The receiver of a borrowing method is still a temp the caller owns.
 	{name: "len-receiver", src: func(n string) string {
 		return `function main(): i32 {
     let before: i32 = (__heap_bump_bytes() as i32);
@@ -87,8 +48,6 @@ var heapBumpFlatCases = []heapBumpFlatCase{
     return (__heap_bump_bytes() as i32) - before;
 }`
 	}},
-	// An array literal evaluated as a STATEMENT: nothing ever reads it, so
-	// nothing but the drop insertion can free it.
 	{name: "stmt-temp", src: func(n string) string {
 		return `function main(): i32 {
     let before: i32 = (__heap_bump_bytes() as i32);
@@ -97,8 +56,6 @@ var heapBumpFlatCases = []heapBumpFlatCase{
     return (__heap_bump_bytes() as i32) - before;
 }`
 	}},
-	// A discarded call RESULT, in both of the shapes that carry rc: a struct box
-	// and an array buffer.
 	{name: "discarded-call-struct", src: func(n string) string {
 		return `struct P { x: i32, y: i32, a:i32, b:i32, c:i32 }
 @noinline function mk(v: i32): P { return P { x: v, y: v, a:0, b:0, c:0 }; }
@@ -118,8 +75,6 @@ function main(): i32 {
     return (__heap_bump_bytes() as i32) - before;
 }`
 	}},
-	// A fresh array handed to a BORROWING callee: the caller keeps the only
-	// reference and must release it after the call returns.
 	{name: "call-arg-temp", src: func(n string) string {
 		return `function sum3(xs: i32[]): i32 { return xs[0] + xs[1] + xs[2]; }
 function main(): i32 {
@@ -131,8 +86,6 @@ function main(): i32 {
     return (__heap_bump_bytes() as i32) - before;
 }`
 	}},
-	// A `__alloc_u8` buffer rebound through `.with`, which supersedes the old
-	// buffer once per call.
 	{name: "literal-alloc", src: func(n string) string {
 		return `function main(): i32 {
     let before: i32 = (__heap_bump_bytes() as i32);
@@ -148,8 +101,6 @@ function main(): i32 {
     return (__heap_bump_bytes() as i32) - before;
 }`
 	}},
-	// A struct local rebound to a fresh literal: the superseded box AND its
-	// replaced string field both have to go (the #4355 / #6703 admission).
 	{name: "replaced-field", src: func(n string) string {
 		return `struct S { name: string, n: i32 }
 function main(): i32 {
@@ -161,8 +112,6 @@ function main(): i32 {
     return (__heap_bump_bytes() as i32) - before;
 }`
 	}},
-	// A tuple box bound to a loop-scoped local. It carries an array element
-	// because a scalar tuple is not heap-allocated.
 	{name: "tuple-temp", src: func(n string) string {
 		return `function main(): i32 {
     let before: i32 = (__heap_bump_bytes() as i32);
@@ -173,10 +122,6 @@ function main(): i32 {
     return (__heap_bump_bytes() as i32) - before;
 }`
 	}},
-	// A map LOOKUP. The Option box `m.get(k)` builds is consumed by the match
-	// and nothing else can reach it, and the fresh string-literal key is not
-	// retained by the lookup. Both edges are covered because they were separate
-	// leaks: a HIT carries a payload out of the map, a MISS does not (#6875).
 	{name: "map-get", src: func(n string) string {
 		return `import "core/map";
 function main(): i32 {
@@ -194,7 +139,6 @@ function main(): i32 {
     return (__heap_bump_bytes() as i32) - before;
 }`
 	}},
-	// A nested array: the outer buffer's drop has to walk its elements.
 	{name: "nested-array", src: func(n string) string {
 		return `function main(): i32 {
     let before: i32 = (__heap_bump_bytes() as i32);
@@ -207,22 +151,11 @@ function main(): i32 {
 	}},
 }
 
-// The two iteration counts. A leak of one box per iteration moves the mark by
-// 150 * (box size) between them, which no wrap can hide as equality.
 const (
 	heapBumpFlatSmallN = "50"
 	heapBumpFlatLargeN = "200"
 )
 
-// TestSelfHostHeapBumpFlatIRX86_64 — small-N == large-N for every shape, on the
-// binary the SELF-HOST compiler emits.
-//
-// The exit code carries the byte delta, so it is read modulo 256; that is what
-// makes this an equality test between two runs of the same program rather than
-// an absolute assertion. A leak that happened to be an exact multiple of 256
-// per 150 iterations would evade it, which is why the small-N run must also be
-// non-zero: a shape that allocates nothing cannot fail, and a row that cannot
-// fail is not a gate.
 func TestSelfHostHeapBumpFlatIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -252,9 +185,6 @@ func TestSelfHostHeapBumpFlatIRX86_64(t *testing.T) {
 					t.Fatalf("%s allocated nothing at N=%s — the probe is not exercising the path, so the "+
 						"flatness below would hold vacuously", tc.name, heapBumpFlatSmallN)
 				}
-				// The shape's own high-water is 0. Prove it still allocates by
-				// running it with the results retained, which the freelist cannot
-				// satisfy — otherwise the flatness below is vacuous after all.
 				src := tc.retained(heapBumpFlatSmallN) + "\n"
 				asm := compile(t, src)
 				bin := buildBin(t, gcc, dir, fmt.Sprintf("hbf_%s_retained", strings.ReplaceAll(tc.name, "-", "_")), asm)

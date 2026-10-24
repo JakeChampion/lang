@@ -4,28 +4,10 @@ import (
 	"testing"
 )
 
-// --- A string local REBOUND from a producer call ------------------------------
-//
-// `let x: string = mk("x"); x = mk("yz");` frees the superseded box at the
-// reassignment and the final one at scope exit, exactly as a rebound concat
-// (`let x = "a" + b; x = "c" + d;`) does: `mk` returns a fresh box. It is the
-// `str__rebind__{read,unused}` pair of the leak matrix (#5338).
-//
-// Three shapes could over-release: an alias bound before the rebind (which
-// would point at a box the rebind frees), a rebind from a non-fresh value
-// (which would alias a live box), and a store into a container. Each reads its
-// value back after 200 rounds of churn have recycled the freelist, and each
-// answers identically on `bin/fern -interp` and the self-host. Every row
-// balances.
-
 const strRebindDecl = `function mkstr(a: string): string { return a + "-long-enough-to-heap-allocate"; }
 function churn(i: i32): i32 { let a: string = mkstr("c"); let b: string = mkstr("d"); return a.len() + b.len(); }
 `
 
-// strRebindChurnMain drives 200 rounds and separates the failure modes: a
-// negative round result (a value read back wrong, i.e. an over-release) exits
-// 100, a non-zero underflow counter exits 99, and reading freed memory
-// segfaults on its own.
 const strRebindChurnMain = `
 function main(): i32 {
     let acc: i32 = 0; let i: i32 = 0; let bad: i32 = 0;
@@ -38,7 +20,6 @@ function main(): i32 {
 func strRebindCases() []arrenumShareCase {
 	return []arrenumShareCase{
 		{
-			// THE CELL, in the matrix's own spelling. 400/0 before, 400/400 now.
 			name: "producer_rebind_read",
 			src: `function mkstr(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
@@ -58,9 +39,6 @@ function main(): i32 {
 			want: 68,
 		},
 		{
-			// The same shape with strings too long for SSO, so native allocates
-			// too and the two compilers can be compared on the accounting
-			// rather than only on the exit.
 			name: "producer_rebind_heap",
 			src: strRebindDecl + `function round(i: i32): i32 {
     let t: i32 = 0;
@@ -78,8 +56,6 @@ function main(): i32 {
 			want: 46,
 		},
 		{
-			// A rebind inside an `if`, so half the rounds take it and half
-			// leave the declaration's box to the exit sweep.
 			name: "conditional_rebind",
 			src: strRebindDecl + `function round(i: i32): i32 {
     let x: string = mkstr("x");
@@ -91,8 +67,6 @@ function main(): i32 {
 			want: 6,
 		},
 		{
-			// A loop rebind: three superseded boxes per round, each freed at
-			// its own store rather than accumulating.
 			name: "loop_rebind",
 			src: strRebindDecl + `function round(i: i32): i32 {
     let x: string = mkstr("x");
@@ -105,9 +79,6 @@ function main(): i32 {
 			want: 72,
 		},
 		{
-			// The rebind CONSUMES the local (`x = mk(x)`), which is the
-			// accumulator's own shape reached through a producer rather than a
-			// concat. Native leaks this one; the self-host does not.
 			name: "self_consuming_rebind",
 			src: strRebindDecl + `function round(i: i32): i32 {
     let x: string = mkstr("x");
@@ -119,9 +90,6 @@ function main(): i32 {
 			want: 31,
 		},
 		{
-			// The final value is MOVED OUT by a bare `return x`, which the
-			// class already treats as safe. The superseded box is still freed
-			// at the rebind; the returned one is the caller's.
 			name: "moved_out_return",
 			src: strRebindDecl + `function grab(i: i32): string { let x: string = mkstr("x"); x = mkstr("yz"); return x; }
 function round(i: i32): i32 {
@@ -134,8 +102,6 @@ function round(i: i32): i32 {
 			want: 23,
 		},
 		{
-			// Control: the single-bind sibling, clean before this change. If it
-			// moves, the widening reached past the rebind it is scoped to.
 			name: "single_bind_unchanged",
 			src: `function mkstr(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
@@ -153,10 +119,6 @@ function main(): i32 {
 			want: 51,
 		},
 		{
-			// An alias is bound BEFORE the rebind, so crediting would
-			// free a box `y` still points at. This is the hazard the class's
-			// own comment names, and it is why the fix is the registry rather
-			// than a loosened gate.
 			name: "refused_alias_before_rebind",
 			src: strRebindDecl + `function round(i: i32): i32 {
     let want: i32 = mkstr("x").len();
@@ -170,8 +132,6 @@ function main(): i32 {
 			want: 16,
 		},
 		{
-			// The rebind value is another LIVE local, not a fresh box,
-			// so the slot would hold an alias at exit.
 			name: "refused_nonfresh_rebind",
 			src: strRebindDecl + `function round(i: i32): i32 {
     let other: string = mkstr("o");
@@ -184,8 +144,6 @@ function main(): i32 {
 			want: 72,
 		},
 		{
-			// The final value is stored into a container, which
-			// outlives the sweep.
 			name: "refused_container_store",
 			src: strRebindDecl + `function round(i: i32): i32 {
     let x: string = mkstr("x");
@@ -200,9 +158,6 @@ function main(): i32 {
 	}
 }
 
-// TestSelfHostStrRebindProducerX86_64 — a string local rebound from a
-// whole-program-proven fresh producer is the accumulator class's own shape, and
-// the gates that keep an alias or a non-fresh rebind out still do.
 func TestSelfHostStrRebindProducerX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

@@ -1,9 +1,5 @@
 package e2eharness
 
-// ModuleQualifiedVariantProbe constructs and matches an imported module's
-// enum variants through the `mod.Variant` spelling (#10430), including the
-// two `std/net` variants whose names `IoError` also declares. Exit 42 iff
-// every check holds; a failing check prints its number and exits 1.
 func ModuleQualifiedVariantProbe() string {
 	return `import "std/net";
 

@@ -2,14 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for the integer checked_shl / checked_shr helpers —
-// std/i32, std/i64, std/u32, std/u64, the method forms of `<<?` / `>>?`. Both
-// return None for an amount outside [0, width), and checked_shl also when bits
-// are shifted out. Checks an in-range shift, the top-bit shift, a shift that
-// loses bits, an out-of-range and a negative amount, and the signed-arithmetic
-// vs unsigned-logical >> distinction.
-// Returns 42 iff every check holds across interp / x86-64 / wasm / arm64; each
-// leg skips itself when its toolchain is absent.
 const intCheckedShiftProg = `
 import "std/i32";
 import "std/i64" as i64m;

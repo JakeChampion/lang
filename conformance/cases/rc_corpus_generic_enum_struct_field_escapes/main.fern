@@ -1,10 +1,10 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Generic-enum struct field that ESCAPES (Holder returned): the
-// Option box + Item + buffer must survive the constructor's exit
-// drop (the struct return-inc protects it). Churn forces same-size
-// reuse that would corrupt a strayed read after an over-release.
+
+
+
+
+
+
+
 import "core/int";
 struct Item { xs: i32[] }
 struct Holder { b: Option[Item], n: i32 }

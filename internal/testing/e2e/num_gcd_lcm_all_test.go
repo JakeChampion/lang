@@ -1,10 +1,5 @@
 package e2e
 
-// Differential coverage for the whole-array gcd / lcm folds `gcd_all` /
-// `lcm_all` on std/i32 and std/i64. `gcd_all` seeds at 0 (so empty -> 0),
-// `lcm_all` at 1 (empty -> 1); both fold the pairwise `gcd` / `lcm`. Returns
-// 42 iff every check holds across interp / x86-64 / wasm / arm64.
-
 import "testing"
 
 const numGcdLcmAllProg = `

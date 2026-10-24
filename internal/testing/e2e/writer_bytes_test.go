@@ -26,7 +26,6 @@ func runWriterBytesCommand(t *testing.T, cmd *exec.Cmd) {
 func checkWriterBytesOutput(t *testing.T, out []byte) {
 	t.Helper()
 	want := e2eharness.WriterBytesOutput()
-	// Some bootstrap runners print main's return value after its output.
 	if !bytes.Equal(out, want) && !bytes.Equal(out, append(want, []byte("0\n")...)) {
 		t.Fatalf("binary output differs: got %d bytes", len(out))
 	}
@@ -64,9 +63,6 @@ func TestWriterBytesInterp(t *testing.T) {
 }
 
 func TestWriterBytesCensus(t *testing.T) {
-	// Writes must retain nothing: compare a no-write control with repeated
-	// writes. TestSelfHostWriterBytes separately requires a zero-live census
-	// for the complete fixture, including short strings and closed-handle errors.
 	for _, tc := range []struct {
 		name string
 		run  func(*testing.T, string) (string, string, int)
@@ -146,8 +142,6 @@ func TestArm64DarwinWriterBytes(t *testing.T) {
 }
 
 func TestArm64WriterBytes(t *testing.T) {
-	// The shared fixture runners use the primary compiler. Exercise the Go
-	// CLI explicitly here; e2ecompiler owns the primary target matrix.
 	qemu := e2eharness.Arm64Runner(t)
 	bin := compileCLIWriterBytes(t, "arm64-linux", e2eharness.WriterBytesProgram, false)
 	runWriterBytesCommand(t, runArm64Bin(qemu, bin))

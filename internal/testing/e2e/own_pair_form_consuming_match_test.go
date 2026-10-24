@@ -1,14 +1,3 @@
-// Differential regression for #9901: a consuming (`own`-param) match arm whose
-// body returns a same-enum construction is reuse-paired (C2), which hands the
-// arm's box release AND its shared-branch payload retains to the reuse token
-// inside that construction. A PAIR-FORM return builds no box, so there is no
-// token: both were emitted nowhere at all. The payload binding was then an
-// uncounted alias of a box another binding still named, and the `.with` on it
-// read rc 1 and wrote through — `keep` observed the write.
-//
-// The oracle is the AST interpreter, which always answered correctly; every
-// compiled backend disagreed with it. Each case prints its result so all four
-// legs are compared by stdout.
 package e2e
 
 import "testing"
@@ -20,9 +9,6 @@ func TestOwnPairFormConsumingMatchDifferential(t *testing.T) {
 	cases := []struct {
 		name, src string
 	}{
-		// The repro: `keep` names the box across the consuming call, so the
-		// write must not reach it. interp = 11; compiled was 19 (= 10 + the 9
-		// `put` wrote through the alias).
 		{"aliased_local_pair_form", `import "std/i32";
 enum Box { Full(i32[]), Empty }
 @noinline
@@ -36,8 +22,6 @@ function main(): i32 {
     match (keep) { Full(xs) => { print((10 + xs[0]).to_string()); }, Empty => { print("1"); } }
     return 0;
 }`},
-		// The alias held by a container rather than a bare local, so the box's
-		// second reference is one a construction counted.
 		{"aliased_in_array_pair_form", `import "std/i32";
 enum Box { Full(i32[]), Empty }
 @noinline
@@ -51,10 +35,6 @@ function main(): i32 {
     match (holder[0]) { Full(xs) => { print((10 + xs[0]).to_string()); }, Empty => { print("1"); } }
     return 0;
 }`},
-		// Guard: with no alias the box IS unique, so the in-place update is
-		// sound and must still be taken — the answer is the written 9, on
-		// every leg. A fix that made the arm copy unconditionally passes the
-		// two cases above and fails here.
 		{"unaliased_pair_form_updates_in_place", `import "std/i32";
 enum Box { Full(i32[]), Empty }
 @noinline
@@ -67,10 +47,6 @@ function main(): i32 {
     match (b) { Full(xs) => { print((10 + xs[0]).to_string()); }, Empty => { print("1"); } }
     return 0;
 }`},
-		// Guard: the same shape on an enum too wide for the pair form, where
-		// the construction really does build a box and the reuse token really
-		// does carry the retains. This leg was correct before the fix and
-		// pins that the decline is narrow.
 		{"aliased_local_boxed_enum", `import "std/i32";
 enum Box3 { Full(i32[]), Half(i32[]), Empty }
 @noinline
@@ -100,11 +76,6 @@ function main(): i32 {
 	}
 }
 
-// ownPairFormConsumingMatchLeakBoundProgram pins the other half of #9901: the
-// pairing also took the arm's box release with it, so a pair-form consuming
-// traversal leaked one box per call. 5000 iterations must stay heap-flat
-// (< 512 B growth) with no rc underflow. Exit 98 is what the unfixed lowering
-// gives.
 const ownPairFormConsumingMatchLeakBoundProgram = `enum Box { Full(i32[]), Empty }
 
 @noinline

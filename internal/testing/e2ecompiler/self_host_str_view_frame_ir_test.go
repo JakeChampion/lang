@@ -2,46 +2,11 @@ package e2ecompiler
 
 import "testing"
 
-// strViewFrameCases pin #6713: a string slice `s[a:b]` is a zero-copy VIEW, and on the
-// register backends the self-host materialised its 24-byte box — [rc=-1, data, len] —
-// on the HEAP. The box is born immortal (rc=-1) because its data pointer aims into the
-// SOURCE string's buffer, so freeing it would release the middle of someone else's
-// allocation; immortal means every rc_dec skips it, so the box is unreclaimable by
-// construction. One per EVALUATION, unbounded in a loop, where native allocates nothing
-// at all for the same program.
-//
-// Measured with FERN_LEAKCHECK=1, self-host x86-64, on the issue's reproducer
-// (`while (i < k) { let t: str = s[0:1]; n = n + t.len(); i = i + 1; }`):
-//
-//	k    before                              after
-//	400  allocs=401 frees=0 live=9624        allocs=1 frees=0 live=24
-//	800  allocs=801 frees=0 live=19224       allocs=1 frees=0 live=24
-//
-// The fix is placement, not reclamation: a view whose every use BORROWS it takes its box
-// from three reserved frame slots instead of the arena, so it dies with the frame and the
-// count stops growing. Layout, the rc=-1 sentinel and every consumer are unchanged.
-//
-// The borrow whitelist is narrow (`.len()`, a byte index, a comparison / concat operand,
-// the source of a further slice) because there are two hazards, not one: a reference that
-// outlives the FRAME dangles, and — since one frame slot serves a site across every
-// iteration — a reference that outlives the next execution of the SITE silently reads the
-// newer view. Copying the name into a second local is the second hazard's shape, so the
-// escape cases below carry the value guards that turn a wrong admission into a wrong
-// ANSWER rather than only a byte count.
-//
-// The cases at the end of the list are #6604's: the same box in the same borrow
-// positions, but as an ANONYMOUS temp with no binding for the scan to approve, so
-// their whitelist is applied at the lowering call site instead.
-//
-// wasm is unaffected: its `str_slice` copies the bytes into a fresh inline block, so
-// there is no box to place.
 var strViewFrameCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// The reproducer, heap-bump guarded: 5000 rounds of a borrow-only view must not
-	// move the bump pointer.
 	{"strview-loop-flat", `function main(): i32 {
     let s: string = "hello world";
     let acc: i32 = 0;
@@ -56,8 +21,6 @@ var strViewFrameCases = []struct {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// VALUE guard on the same shape: varying bounds, and the bytes read back. A frame
-	// box the analysis placed wrongly shows up here as a wrong answer.
 	{"strview-value-exact", `function main(): i32 {
     let s: string = "abcdefgh";
     let acc: i32 = 0;
@@ -74,7 +37,6 @@ var strViewFrameCases = []struct {
     if (acc != 97 + 98 + 99 + 100 + 101 + 102) { return 97; }
     return 0;
 }`, 0},
-	// Concat and comparison operands are borrows too, and both read the bytes.
 	{"strview-concat-compare", `function main(): i32 {
     let s: string = "hello world";
     let hits: i32 = 0;
@@ -92,8 +54,6 @@ var strViewFrameCases = []struct {
     if (b1 < 0) { return 95; }
     return 0;
 }`, 0},
-	// A slice OF a view: the inner view's data pointer aims at the source buffer, not at
-	// the outer box, so it outlives it — both are eligible.
 	{"strview-nested-slice", `function main(): i32 {
     let s: string = "abcdefgh";
     let acc: i32 = 0;
@@ -110,11 +70,6 @@ var strViewFrameCases = []struct {
     if (acc != (400) % 251) { return 97; }
     return 0;
 }`, 0},
-	// ESCAPE negative — the view is RETURNED, so it must keep its heap box: a frame box
-	// would dangle the moment the callee's frame is gone. `churn` reuses that dead
-	// frame's slots before the view is read, which is what turns the dangle from
-	// "usually still there" into a wrong answer (it exits 96 with the borrow scan
-	// disabled).
 	{"strview-escape-return-safe", `function head(s: string): str { let t: str = slice_unchecked(s, 0, 4); return t; }
 function churn(n: i32): i32 {
     let a: i32 = n * 3;
@@ -141,9 +96,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// ESCAPE negative — the view is copied into a second local that survives into the
-	// NEXT iteration, where the site would have rewritten a shared frame box under it.
-	// This is the case a frame-only lifetime rule would get wrong.
 	{"strview-escape-alias-safe", `function main(): i32 {
     let s: string = "abcdefgh";
     let prev: str = slice_unchecked(s, 0, 2);
@@ -161,9 +113,6 @@ function main(): i32 {
     if (acc != 97 + 98 + 99 + 100 + 101) { return 97; }
     return 0;
 }`, 0},
-	// ESCAPE negative — the view is passed to a callee that KEEPS it, in an array
-	// outliving the frame that made the view. This is why a call argument is refused
-	// even though the caller's frame is still alive at the call itself.
 	{"strview-escape-arg-safe", `function keep(v: str, xs: str[]): str[] { return xs.append(v); }
 function build(s: string, k: i32): str[] {
     let xs: str[] = [];
@@ -186,8 +135,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// ESCAPE negative — the views are stored in a container the BUILDING frame returns,
-	// so every one of them outlives the frame that would have held its box.
 	{"strview-escape-store-safe", `function collect(s: string, k: i32): str[] {
     let xs: str[] = [];
     let i: i32 = 0;
@@ -217,12 +164,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// #6604: the same box, in the same borrow positions, with no NAME at all. An
-	// ANONYMOUS slice temp — `"x" + s[0:1]`, `s[a:b].len()`, `s[a:b] == "x"`,
-	// `s[a:b][i]`, `s[a:b][c:d]` — is consumed by the operator that built it, so it
-	// cannot outlive either the frame or its own site, and must not take a heap
-	// box. Measured on the issue's struct-rebind reproducer, x86-64: 9736 / 19200
-	// fresh bytes at 50 / 100 rounds with a heap box per temp, 136 / 0 without.
 	{"strview-temp-loop-flat", `function main(): i32 {
     let s: string = "hello world";
     let acc: i32 = 0;
@@ -249,9 +190,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// VALUE guard: every borrow position reads bytes back, with bounds that vary per
-	// iteration. A temp placed in a slot another live view owns prints as a wrong
-	// answer here rather than as a byte count.
 	{"strview-temp-value-exact", `function main(): i32 {
     let s: string = "abcdefgh";
     let u: string = "wxyz";
@@ -273,10 +211,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// ESCAPE negative — an anonymous slice in a position that is NOT a borrow (a call
-	// argument whose callee stores it) keeps its heap box. `churn` reuses the dead
-	// frame's slots before the views are read, so a wrongly-placed box is a wrong
-	// answer and not just a lucky read.
 	{"strview-temp-escape-arg-safe", `function collect(s: string, k: i32): str[] {
     let xs: str[] = [];
     let i: i32 = 0;
@@ -305,9 +239,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// ESCAPE negative — an anonymous slice RETURNED from a callee. The borrow
-	// positions are all inside the callee's own expression; a `return` is not one of
-	// them, so the box must stay on the heap to survive the frame.
 	{"strview-temp-escape-return-safe", `function head(s: string): str { return slice_unchecked(s, 0, 4); }
 function churn(n: i32): i32 {
     let a: i32 = n * 3;
@@ -336,8 +267,6 @@ function main(): i32 {
 
 const strViewFrameFailFmt = "%s = %d, want %d (98 = view box still per-evaluation; 99 = over-release/underflow; 94-97 = value corrupted)"
 
-// TestSelfHostStrViewFrameIRX86_64 runs the cases through the self-hosted CLI
-// for x86-64, heap-bump, underflow and value guarded.
 func TestSelfHostStrViewFrameIRX86_64(t *testing.T) {
 	cli := newStrictCLI(t)
 	for _, tc := range strViewFrameCases {
@@ -349,8 +278,6 @@ func TestSelfHostStrViewFrameIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrViewFrameIRArm64 is the arm64 leg, the other backend that
-// boxes a slice view.
 func TestSelfHostStrViewFrameIRArm64(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
 	cli := newStrictCLI(t)

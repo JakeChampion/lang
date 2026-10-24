@@ -1,22 +1,3 @@
-// compiler/effects.fern — `-effects`: the effect row of every function, the
-// per-FUNCTION sibling of `-capabilities` (docs/EFFECT-ROWS-BRIEF.md).
-//
-// A function's row is the set of effect labels it can reach by call-graph
-// reachability: the labels of the tagged builtins it calls, those of every
-// function it calls or names, and, when it calls through a function value
-// whose target is not statically known, those of every function that escapes
-// as a value anywhere in the program. The report prints each function that
-// reaches an effect with an example chain, then the counts the brief reads:
-// the row-size distribution, the origins against the inheritors, and how many
-// are charged an effect only through a function value.
-//
-// The graph is read from the AST as the loader leaves it. A name bound in the
-// function shadows a function of that name, and calling it is a call through
-// a function value unless it is bound to a lambda written there, whose body is
-// part of the function already. A method call is an edge to every method of
-// that name, as caps.fern follows them. Report mode only: nothing here
-// enforces.
-
 import "./ast";
 import "./astwalk";
 import "./caps";
@@ -24,13 +5,8 @@ import "./parser";
 import "./platforms";
 import "./util";
 
-// INDIRECT names the node a call through a function value reaches.
 const INDIRECT: string = "(function value)";
 
-// Graph is the call graph over a module's functions, by index. Edges, and the
-// tagged builtins each function calls, are flat lists grouped by caller:
-// caller k's run starts at edge_at[k] (and builtin_at[k]) and ends at the next
-// caller's.
 struct Graph {
   funcs: parser.FuncDecl[],
   edge_at: i32[],
@@ -42,7 +18,6 @@ struct Graph {
   esc_builtins: string[],
 }
 
-// Scan is one function's walk: what is bound in it, then what it calls.
 struct Scan {
   locals: string[],
   lambda_locals: string[],
@@ -55,9 +30,6 @@ struct Scan {
   esc_builtins: string[],
 }
 
-// Ctx is what the visitors read: the module's functions, the struct fields
-// that hold a function, and the tagged builtins, so the accumulator carries it
-// to them.
 struct Ctx { names: util.NameIndex, method_names: string[], fn_fields: util.NameIndex, tagged: util.NameIndex }
 
 struct Walk { ctx: Ctx, s: Scan, funcs: parser.FuncDecl[] }
@@ -93,7 +65,6 @@ function bind_stmt(st: ast.Stmt, own w: Walk): Walk {
   return w;
 }
 
-// bound adds the names a binder declares (`a`, or `a,b` for a destructure).
 function bound(locals: string[], binder: string): string[] {
   let out: string[] = locals;
   for n in astwalk.append_bound_name([], binder) {
@@ -127,7 +98,6 @@ function add_edge(s: Scan, callee: i32): Scan {
   return Scan { ...s, edges: s.edges.append(callee) };
 }
 
-// call_expr classifies each call by its callee.
 function call_expr(e: ast.Expr, own w: Walk): Walk {
   match (e) {
     ast.ExprCall(c) => {
@@ -172,8 +142,6 @@ function call_expr(e: ast.Expr, own w: Walk): Walk {
   return w;
 }
 
-// ident_expr makes a function named outside call position an edge, and marks
-// it as escaping: it is a value something can call later.
 function ident_expr(e: ast.Expr, own w: Walk): Walk {
   match (e) {
     ast.ExprIdent(id) => {
@@ -187,8 +155,6 @@ function ident_expr(e: ast.Expr, own w: Walk): Walk {
   return w;
 }
 
-// lambda_expr walks a lambda that is not applied where it is written: what its
-// body calls or names can run from wherever the value goes.
 function lambda_expr(e: ast.Expr, own w: Walk): Walk {
   match (e) {
     ast.ExprLambda(lm) => {
@@ -259,7 +225,6 @@ function has_i32(xs: i32[], v: i32): boolean {
   return false;
 }
 
-// context indexes what the walk looks names up in.
 function context(mod: parser.Module, tagged: string[]): Ctx {
   let names: string[] = [];
   let method_names: string[] = [];
@@ -283,7 +248,6 @@ function context(mod: parser.Module, tagged: string[]): Ctx {
   return Ctx { names: util.name_index(names), method_names: method_names, fn_fields: util.name_index(fn_fields), tagged: util.name_index(tagged) };
 }
 
-// add_scan appends function k's scan to the graph.
 function add_scan(g: Graph, k: i32, s: Scan): Graph {
   let edges: i32[] = g.edges;
   for e in s.edges {
@@ -345,10 +309,6 @@ function sorted(xs: string[]): string[] {
   return out;
 }
 
-// ─── solving ──────────────────────────────────────────────────────
-
-// Vocab is one capability vocabulary: its labels, sorted, each a bit of an
-// i64 row, and each tagged builtin's label.
 struct Vocab { labels: string[], builtins: string[], of: string[] }
 
 function bit_of(v: Vocab, builtin: string): i64 {
@@ -372,9 +332,6 @@ function label_names(v: Vocab, row: i64): string[] {
   return out;
 }
 
-// solve is the fixpoint: a row is its own builtins' labels, its callees' rows,
-// and, for a function calling through a value, the indirect row — the union
-// of every escaping function's row and of the builtins escaping lambdas call.
 function solve(g: Graph, v: Vocab, use_indirect: boolean): (i64[], i64) {
   let n: i32 = g.funcs.len();
   let direct: i64[] = [];
@@ -431,9 +388,6 @@ function solve(g: Graph, v: Vocab, use_indirect: boolean): (i64[], i64) {
   return (rows, indirect);
 }
 
-// witness is the shortest call chain from function `fn` to a builtin of its
-// row's first label, through the INDIRECT node where a call through a value
-// is how it gets there.
 function witness(g: Graph, v: Vocab, fn: i32, want: i64): string[] {
   let seen: i32[] = __alloc_i32(g.funcs.len() + 1);
   seen = seen.with(fn, 1);
@@ -523,8 +477,6 @@ function chain(g: Graph, order: i32[], parent: i32[], at: i32): string[] {
   return out;
 }
 
-// ─── report ───────────────────────────────────────────────────────
-
 function vocab(builtins: string[], labels: string[]): Vocab {
   let ls: string[] = [];
   for l in labels {
@@ -566,7 +518,6 @@ function joined(xs: string[], sep: string): string {
   return out;
 }
 
-// section is one vocabulary's report.
 function section(g: Graph, title: string, v: Vocab): string {
   let (rows, _) = solve(g, v, true);
   let (direct, _) = solve(g, v, false);
@@ -633,8 +584,6 @@ function section(g: Graph, title: string, v: Vocab): string {
   return out;
 }
 
-// display names a function as the report prints it: a method as
-// `Type.method`.
 function display(fd: parser.FuncDecl): string {
   if (fd.receiver_type.len() > 0) {
     return fd.receiver_type + "." + fd.name;
@@ -664,10 +613,6 @@ function index_of_i32(xs: i32[], v: i32): i32 {
   return 0 - 1;
 }
 
-// report is `-effects`' output for a loaded program: the call graph printed
-// under both capability vocabularies, which answer different questions —
-// authority (caps.fern) is what a dependency could do and leaves stdio out;
-// host (platforms.fern) is what the target must provide and counts it.
 pub function report(mod: parser.Module): string {
   let a: Vocab = authority();
   let h: Vocab = host();

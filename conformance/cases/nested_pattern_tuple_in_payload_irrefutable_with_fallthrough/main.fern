@@ -1,11 +1,11 @@
-// Nested match patterns (#5353) desugar at parse time to a flat outer arm that
-// re-matches the payload, so every backend sees only flat arms.
-//
-// An all-binder tuple sub-pattern is IRREFUTABLE, so the outer `_`
-// must not be appended after it inside the merged inner match — doing
-// so made the checker call the arm unreachable (E026) and the whole
-// program failed to compile. `_` is not the only covering shape.
-// exit: 9 + 50
+
+
+
+
+
+
+
+
 enum T2 { Pr((i32, i32)), Non }
 function g(t: T2): i32 {
   match (t) {

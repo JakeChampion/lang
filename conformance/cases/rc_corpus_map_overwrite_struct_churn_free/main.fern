@@ -1,13 +1,13 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Map OVERWRITE reclamation: re-`set`ting an existing key replaces
-// the value; for a struct value the IR pre-drops the old value via
-// __map_lookup_val + __drop_struct_Item (the runtime overwrite-dec
-// is a no-op for kind 4, so without this each replaced Item + its
-// xs buffer leaks). Three overwrites per key, churned 300x. The
-// live value is the LAST set: it.xs[0] = seed+4;
-// sum_{0..299}(k+4) = 44850 + 1200 = 46050.
+
+
+
+
+
+
+
+
+
+
 import "core/int";
 import "core/map";
 struct Item { xs: i32[] }

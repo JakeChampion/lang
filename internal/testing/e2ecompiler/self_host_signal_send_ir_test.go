@@ -6,27 +6,6 @@ import (
 	"testing"
 )
 
-// `signal_send` (#8377) through the SELF-HOST IR path, on each backend that
-// emits it. The op pops [pid, sig] and pushes Result[void, IoError] from one
-// kill(2) — asmcore.rt_src_signal_send, reached as
-// `call __fn___fern_signal_send`.
-//
-// The probe MEASURES delivery and the errno classification rather than
-// asserting the builtin compiles, because every wrong lowering still compiles
-// and links:
-//
-//   - operands pushed in the wrong order signals the SIGNAL number's process,
-//     which the delivery arm catches: the child outlives the call,
-//   - the wrong syscall number is -ENOSYS for everything, so nothing is
-//     delivered and no errno is the one expected,
-//   - filtering the pid the way process_alive does turns pid 0 from "my own
-//     process group" into a refusal, which the first arm catches,
-//   - dropping the Err arm loses the errno the caller reads its diagnostic
-//     out of.
-//
-// wasm's whole answer is a refusal: a component has no process table to
-// deliver to, so platforms.fern withholds the builtin on `proc`.
-// TestSelfHostSignalSendIRWasmRefused is that half.
 const signalSendSelfHostSource = `function main(): i32 {
     // pid 0 is the caller's OWN process group, which it may always signal, and
     // signal 0 delivers nothing. process_alive answers false for this same
@@ -86,8 +65,6 @@ const signalSendSelfHostSource = `function main(): i32 {
     return 0;
 }`
 
-// signalSendWasmProbe is the refusal probe: signal_send and nothing else, so
-// the refusal it draws is signal_send's own.
 const signalSendWasmProbe = `function main(): i32 {
     match (signal_send(1, 0)) {
         Ok(_) => { return 0; },
@@ -95,8 +72,6 @@ const signalSendWasmProbe = `function main(): i32 {
     }
 }`
 
-// TestSelfHostSignalSendIRX86_64 compiles the probe through the production
-// x86-64 IR driver and runs it.
 func TestSelfHostSignalSendIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -118,8 +93,6 @@ func TestSelfHostSignalSendIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostSignalSendIRArm64 runs the same probe through the arm64 IR
-// backend under qemu, where the helper's syscall number is asm-generic 129.
 func TestSelfHostSignalSendIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -142,11 +115,6 @@ func TestSelfHostSignalSendIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostSignalSendIRWasmRefused pins the wasm answer, which is a refusal
-// NAMING THE BUILTIN. A component has no process table, so platforms.fern
-// withholds `proc`; the wasm driver has to say so itself, because instruction
-// selection downstream sees only an IR op and would frame a deliberate gap as
-// a missing lowering.
 func TestSelfHostSignalSendIRWasmRefused(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

@@ -14,14 +14,6 @@ import (
 	"unsafe"
 )
 
-// Some errnos no unprivileged syscall answers reliably, so a test that needs
-// one re-executes its own binary as a launcher that installs a seccomp filter
-// failing chosen syscalls with it, then execs the program under test. The
-// filter is on the host's own syscall numbers, so it holds for a binary run
-// under qemu-user too: the emulator issues the host syscall on the guest's
-// behalf.
-//
-// The variable carries "ERRNO NR[,NR...] DIR".
 const seccompLauncherEnv = "FERN_TEST_SECCOMP_ERRNO"
 
 func init() {
@@ -82,34 +74,31 @@ type sockFprog struct {
 	filter *sockFilter
 }
 
-// failSyscallsWith installs, on the calling thread, a filter that answers
-// each of nrs with errno and allows everything else. An exec from the same
-// thread keeps it.
 func failSyscallsWith(nrs []uint32, errno uint32) error {
 	var arch uint32
 	switch runtime.GOARCH {
 	case "amd64":
-		arch = 0xC000003E // AUDIT_ARCH_X86_64
+		arch = 0xC000003E
 	case "arm64":
-		arch = 0xC00000B7 // AUDIT_ARCH_AARCH64
+		arch = 0xC00000B7
 	default:
 		return fmt.Errorf("no audit arch for %s", runtime.GOARCH)
 	}
 	const (
-		ldAbs      = 0x20 // BPF_LD | BPF_W | BPF_ABS
-		jeqK       = 0x15 // BPF_JMP | BPF_JEQ | BPF_K
-		retK       = 0x06 // BPF_RET | BPF_K
+		ldAbs      = 0x20
+		jeqK       = 0x15
+		retK       = 0x06
 		retAllow   = 0x7fff0000
 		retErrno   = 0x00050000
-		noNewPrivs = 38 // PR_SET_NO_NEW_PRIVS
-		setSeccomp = 22 // PR_SET_SECCOMP
-		modeFilter = 2  // SECCOMP_MODE_FILTER
+		noNewPrivs = 38
+		setSeccomp = 22
+		modeFilter = 2
 	)
 	n := len(nrs)
 	prog := []sockFilter{
-		{ldAbs, 0, 0, 4}, // seccomp_data.arch
+		{ldAbs, 0, 0, 4},
 		{jeqK, 0, uint8(n + 2), arch},
-		{ldAbs, 0, 0, 0}, // seccomp_data.nr
+		{ldAbs, 0, 0, 0},
 	}
 	for i, nr := range nrs {
 		var jf uint8
@@ -133,10 +122,6 @@ func failSyscallsWith(nrs []uint32, errno uint32) error {
 	return nil
 }
 
-// underSeccompErrno wraps argv in the launcher, which execs it in dir with
-// each of nrs failing with errno. The launcher itself starts here: the
-// package's other initialisers find the repository from the working
-// directory.
 func underSeccompErrno(t *testing.T, dir string, errno syscall.Errno, nrs []uintptr, argv ...string) *exec.Cmd {
 	t.Helper()
 	list := make([]string, len(nrs))

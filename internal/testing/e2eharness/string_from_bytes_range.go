@@ -5,12 +5,6 @@ import (
 	"testing"
 )
 
-// StringFromBytesRangeProgram checks string_from_bytes_range_unchecked
-// against string_from_bytes_unchecked of the same bytes: every range of a
-// 40-byte source, so lengths cross the inline-string and word boundaries;
-// the empty range at each end; bytes that are not UTF-8; and a source that is
-// changed after the copy, which the string must not see. It exits 0, or the
-// number of the first check that failed.
 const StringFromBytesRangeProgram = `function copied(b: u8[], from: i32, end: i32): string {
     let out: u8[] = __alloc_u8(end - from);
     let i: i32 = 0;
@@ -42,16 +36,12 @@ function main(): i32 {
     return 0;
 }`
 
-// StringFromBytesRangeTraps are the ranges of a six-byte source that trap the
-// way an array slice does, one per clause of the bounds check: a negative
-// start, an end past the source, and an end before the start.
 var StringFromBytesRangeTraps = []struct{ Name, From, End string }{
 	{"negative start", "0 - 1", "1"},
 	{"end past the source", "0", "7"},
 	{"end before start", "4", "2"},
 }
 
-// StringFromBytesRangeTrapProgram copies bytes[from, end) of a six-byte source.
 func StringFromBytesRangeTrapProgram(from, end string) string {
 	return `function main(): i32 {
     let b: u8[] = [97u8, 98u8, 99u8, 100u8, 101u8, 102u8];
@@ -63,8 +53,6 @@ func StringFromBytesRangeTrapProgram(from, end string) string {
 
 var leakcheckLine = regexp.MustCompile(`(?m)^leakcheck: allocs=([0-9]+) frees=([0-9]+) live_bytes=([0-9]+)$`)
 
-// CheckLeakcheckBalanced fails unless out carries a FERN_LEAKCHECK summary
-// with as many frees as allocations and no live bytes.
 func CheckLeakcheckBalanced(t *testing.T, out string) {
 	t.Helper()
 	m := leakcheckLine.FindStringSubmatch(out)

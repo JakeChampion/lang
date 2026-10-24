@@ -8,12 +8,6 @@ import (
 	"testing"
 )
 
-// A tuple literal holding a record's array field (`(r.n, r.xs)`) stored the
-// field read uncounted. For a string[] field the record lost its deep drop and
-// the buffer leaked (#10203); for an i32[] field the record's release freed a
-// buffer the tuple still read (#10314). The literal now retains the field, the
-// tuple local's kinds and a returned tuple's ARRF: flags release it, and the
-// field keeps its element walk.
 const tupleFieldShareDecls = `import "std/i32";
 struct Rec { n: i32, xs: string[] }
 struct Ints { n: i32, ys: i32[] }
@@ -111,8 +105,6 @@ function main(): i32 {
     return p.0 + p.1.len() + r.n + ys.len() + junk.len() + p.1[0].len();
 }
 `, 14},
-	// A callee-local record whose array field the returned tuple holds is swept
-	// at the return: the tuple's retain keeps the buffer for the caller (#10315).
 	{"callee_local_ints", `function mk(k: i32): (i32, i32[]) {
     let r: Ints = Ints { n: k, ys: [k, 1, 2] };
     return (r.n, r.ys);
@@ -139,9 +131,6 @@ function main(): i32 {
     return t.0 + t.1[1].len() + t.1.len() + acc - 32;
 }
 `, 8},
-	// The same shape with an array-of-structs and an array-of-enums field: the
-	// record's gated walk declines while the tuple holds the buffer, so the
-	// tuple's 'b' release walks the elements (#10326).
 	{"callee_local_structarr", `struct Pt { x: i32, tag: i32[] }
 struct Bag { n: i32, pts: Pt[] }
 function mk(k: i32): (i32, Pt[]) {
@@ -200,9 +189,6 @@ function main(): i32 {
     return p.0 + got + p.1.len() + r.n + acc - 72;
 }
 `, 10},
-	// An element the caller still holds: the record's array literal counts the
-	// borrowed parameter, so the tuple's element walk only decs it and the
-	// caller reads it back intact.
 	{"callee_local_structarr_caller_elem", `struct Pt { x: i32, tag: i32[] }
 struct Bag { n: i32, pts: Pt[] }
 function mk(p: Pt, k: i32): (i32, Pt[]) {
@@ -219,8 +205,6 @@ function main(): i32 {
     return p0.tag[1] + t.0 + t.1[0].tag[0] + acc - 72;
 }
 `, 17},
-	// An array field's length as a returned element, and a nested-array field
-	// as one (#10318).
 	{"callee_local_arrlen", `struct Fs { n: i32, ws: f64[] }
 function mk(k: i32): (i32, i32, i32) {
     let r: Ints = Ints { n: k, ys: [k, 1] };
@@ -255,15 +239,12 @@ function main(): i32 {
     return n + rows[0][0].len() + last[0].len() + rows.len();
 }
 `, 10},
-	// A tuple-typed PARAMETER holding a nested array, read back out of the
-	// parameter, so the run exercises the parameter's own mark site (#10477).
 	{"param_tuple_nested", `function peek(t: (i32, i32[][])): i32 { return t.0 + t.1[0][0] + t.1[1][1] + t.1.len(); }
 function main(): i32 {
     let src: (i32, i32[][]) = (3, [[3, 1], [2, 3]]);
     return peek(src) + src.0;
 }
 `, 14},
-	// Extracting the element to a new owner: never a second free.
 	{"refused_elem_extracted", `function main(): i32 {
     let r: Rec = Rec { n: 2, xs: ["ab", "cd"] };
     let p: (i32, string[]) = (r.n, r.xs);
@@ -303,8 +284,6 @@ func TestSelfHostTupleFieldShareX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostTupleFieldShareNative holds the `fern` CLI's build to the same
-// rows: every one clean, with the answer the self-host legs expect.
 func TestSelfHostTupleFieldShareNative(t *testing.T) {
 	boxedProbes(t)
 	_, runner := x86_64Tooling(t)

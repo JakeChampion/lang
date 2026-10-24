@@ -6,11 +6,6 @@ import (
 	"testing"
 )
 
-// A defer that reassigns the local a function is returning runs after the
-// value is captured, so the caller sees the value as it was at the return
-// (#10027). The return's transfer retain comes before the defers: without it
-// the deferred reassignment saw a unique cell and reused it in place, so
-// `record` answered the replacement and the larger program crashed.
 var deferReturnAliasCases = []struct {
 	name string
 	src  string

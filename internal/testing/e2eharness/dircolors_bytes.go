@@ -10,8 +10,6 @@ import (
 	"time"
 )
 
-// RunDircolorsByteCases pins GNU's raw output independently of its presence
-// on the target. The native differential corpus also checks these behaviors.
 func RunDircolorsByteCases(t *testing.T, bin string, runner []string, census func(*testing.T, string)) {
 	t.Helper()
 	cases := []struct{ name, input, shell, ls, diagnostic string }{

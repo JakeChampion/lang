@@ -1,8 +1,3 @@
-// Scoped physical proof for a three-word parent with two flat child slots.
-// Caller facts: consuming Parent/Child ABI, exact nominal shape, no finalizers.
-// Incoming child and either old slot may alias. Identity labels are obligations,
-// not pointer inequalities. Legacy checks admit only proven-null donors;
-// check_invocations recomputes incoming capacity before matched storage transfer.
 import "./ssa";
 import "./ssacreditguard" as guard;
 import "./ssacreditphi" as phi;
@@ -11,14 +6,10 @@ import "./ssacreditscalar" as scalar_effect;
 import "./ssacreditincoming" as incoming_capacity;
 import "./util";
 
-// Reference identities: 0=null, 1=old parent, 2=fresh parent, 3=incoming child,
-// 4=old left child, 5=old right child. Slots 0/1 belong to old, 2/3 to fresh.
 struct State { path: i32, parents: i32[], children: i32[], contents: i32[], credits: i32[], shapes: i32[], allocated: i32 }
 
 struct Incoming { state: State, edges: phi.Edge[] }
 
-// Caller proves this exact child field is a concrete signed i32. Roots name
-// credit obligations (3 incoming, 4 old left, 5 old right), not unequal pointers.
 pub struct ScalarField { root: i32, offset: i32 }
 
 struct CheckedCall { name: string, returns: boolean[], exits: boolean[] }
@@ -138,9 +129,6 @@ function reference_copy(c: Context, v: phi.Value): Context {
   return equal(out, out.state.path, total, 1, "unsupported reference identity");
 }
 
-// The checked helper reads stored pointers, not local credit balances. Null is
-// harmless; a non-null pointer without its contained credit is stale, even if
-// another local credit keeps an aliased allocation alive.
 function drop_children(c: Context, v: phi.Value): Context {
   let out = parent(c, v);
   out = equal(out, out.state.path, v.identity, 1, "only old-parent child drop admitted");
@@ -208,8 +196,6 @@ function scalar_call(c: Context, op: ssa.SInst, call: CheckedCall): Context {
     out = calc(out, 0, covered, path);
     covered = out.temp;
     if (call.exits[input]) {
-      // A non-returning process effect is not RC discharge. Keep the path,
-      // and refuse instead of silently erasing the caller's obligations.
       out = equal(out, path, 0, 1, "scalar call may exit with unproved caller obligations");
     }
     if (!call.returns[input]) {
@@ -258,8 +244,6 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
   if (out.error != "") {
     return out;
   }
-  // Definitions were validated before allocating state. Only this local
-  // instruction view uses slots; incoming sites and the supplied graph keep IDs.
   let op = ssa.SInst { ...physical, result: util.index_of_i32(c.ids, physical.result), args: args };
   let kind: i32 = -1;
   let identity: i32 = 0;
@@ -276,7 +260,7 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
     out = literal(out, op.imm);
     identity = out.temp;
   } else if (op.kind_tag == 46 && op.args.len() == 0 && op.imm == 0 && op.str == shape) {
-    kind = 2;  // Exact nominal shape, not a scalar or heap reference.
+    kind = 2;
   } else if (op.kind_tag == 7 && op.args.len() == 1 && op.imm == 0 && op.str == "") {
     let v = out.values[op.args[0]];
     kind = v.kind;
@@ -288,8 +272,6 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
     if (!narrow_number(out.values[op.args[0]]) || !narrow_number(out.values[op.args[1]])) {
       return failed(out, "integer add requires numeric operands");
     }
-    // Default-width machine add is pure and non-trapping. Do not calculate a
-    // constant or claim signed i32 range before the explicit narrowing cast.
     kind = 4;
   } else if (op.kind_tag == 10 && op.args.len() == 1 && op.str == "int_cast:i32" && op.imm == 0) {
     let v = out.values[op.args[0]];
@@ -301,8 +283,6 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
     if (!narrow_number(out.values[op.args[0]]) || !narrow_number(out.values[op.args[1]])) {
       return failed(out, "signed comparison requires narrowed numeric operands");
     }
-    // Unique SSA definitions keep repeated uses correlated. Predicate zero is
-    // reserved for parent uniqueness; comparisons never establish that fact.
     let p = guard.predicate(out.arena, op.result + 1);
     out = Context { ...out, arena: p.arena, error: p.error };
     kind = 0;
@@ -346,9 +326,6 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
       }
     }
     out = equal(out, out.state.path, covered, 1, "missing scalar child field layout");
-    // Kind 3 is an unknown numeric value, never a zero, credit or heap identity.
-    // Only the explicit numeric rules above may consume it. Unknown numeric
-    // values cannot supply pointer identities, Boolean masks or phi references.
     kind = 3;
   } else if (op.kind_tag == 40 && op.args.len() == 1 && (op.imm == 8 || op.imm == 16) && ssa.plain_str(op) == "") {
     let base = out.values[op.args[0]];
@@ -376,9 +353,6 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
       out = calc(out, 0, out.state.shapes[1], out.state.path);
       out = Context { ...out, state: State { ...out.state, shapes: out.state.shapes.with(1, out.temp) } };
     } else if ((op.imm == 8 || op.imm == 16) && source.kind == 0) {
-      // Clearing a unique old slot transfers its contained credit. Unlike a
-      // release, it also removes the stored pointer. A later clear cannot
-      // manufacture another credit from either null or stale contents.
       out = equal(out, out.state.path, source.identity, 0, "only null slot clearing admitted");
       out = equal(out, out.state.path, base.identity, 1, "only old-parent clearing admitted");
       out = equal(out, out.state.path, out.unique, 1, "clearing shared parent slot");
@@ -436,7 +410,7 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
     }
   } else if (op.kind_tag == 11 && call_index(calls, op.str) >= 0) {
     out = scalar_call(out, op, calls[call_index(calls, op.str)]);
-    kind = 0;  // Checked normal-return value is zero; no credit is created.
+    kind = 0;
   } else if (op.kind_tag == 11 && op.str == "__fern_alloc_reuse" && op.args.len() == 2 && ssa.plain_imm(op) == 0) {
     let donor = out.values[op.args[0]];
     let words = out.values[op.args[1]];
@@ -463,7 +437,7 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
       identity = out.unique;
     } else if (op.str == drop && op.imm == 0) {
       out = drop_children(out, v);
-      kind = 0;  // The independently checked children-only helper returns zero.
+      kind = 0;
     } else if (op.str == release && op.imm == 0) {
       out = parent(out, v);
       out = equal(out, out.state.path, v.identity, 1, "only old-parent release admitted");
@@ -477,14 +451,12 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
       }
       out = calc(out, 1, out.state.parents[0], out.state.path);
       out = Context { ...out, state: State { ...out.state, parents: out.state.parents.with(0, out.temp) } };
-      kind = 0;  // The independently checked helper returns scalar zero.
+      kind = 0;
     } else if (op.str == "__fern_rc_dec" && op.imm == 0 && old_parent_on_path(out, v)) {
       out = parent(out, v);
       out = equal(out, out.state.path, out.unique, 0, "shallow parent release requires shared parent");
       out = calc(out, 1, out.state.parents[0], out.state.path);
       out = Context { ...out, state: State { ...out.state, parents: out.state.parents.with(0, out.temp) } };
-      // External ownership keeps every shared slot alive. The returned pointer
-      // is only an alias: it creates no local parent or child credit.
       kind = 1;
       identity = v.identity;
     } else if (op.str == "__fern_rc_inc" && (op.imm == 0 || op.imm == 4) || op.str == "__fern_rc_dec" && op.imm == 0) {
@@ -518,8 +490,6 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
             out = equal(out, from_slot, out.state.credits[slot], 1, "duplicate slot release");
             out = calc(out, 1, out.state.credits[slot], from_slot);
             out = Context { ...out, state: State { ...out.state, credits: out.state.credits.with(slot, out.temp) } };
-            // Contents deliberately remain: this is a stale pointer until a
-            // checked store replaces it, not a cleared/null field.
           }
         }
         root = root + 1;
@@ -571,8 +541,6 @@ function outgoing(c: Context, term: ssa.STerm): Outgoing {
       targets = [term.t, term.f];
       paths = [yes, c.temp];
       if (term.t == term.f) {
-        // Both masks above must validate the condition, even on an
-        // infeasible path. A predecessor has one immutable phi row.
         c = calc(c, 0, yes, c.temp);
         let joined = c.temp;
         c = equal(c, 1, joined, c.state.path, "converged reuse edge coverage mismatch");
@@ -597,8 +565,6 @@ function last_value(f: ssa.SFunc): i32 {
 }
 
 function input_error(f: ssa.SFunc): string {
-  // Preserve the scoped refusal of unused trailing value capacity. Internal
-  // holes do not require state proportional to the external value extent.
   if (f.nparams != 2 || f.takes_env || f.nvals < 2 || last_value(f) < f.nvals - 1 || at(f, f.entry) < 0) {
     return "invalid reuse boundary";
   }
@@ -711,15 +677,10 @@ pub function check_fields(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, sha
   return check_calls(f, drop, release, shape, fields, []);
 }
 
-// Caller additionally proves each callee's selected Boolean/i32-to-void ABI.
-// Effects and outcomes are always recomputed from the supplied actual bodies.
 pub function check_calls(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, shape: string, fields: ScalarField[], assertions: ssa.SFunc[]): helper.Proof {
   return check_body(f, drop, release, shape, fields, assertions, false);
 }
 
-// The raw ABI/layout obligations of before_calls and check_calls still apply.
-// Recompute the exact incoming boundary with this SAME consumer body. Success
-// proves only its invocation, never the wrapper suffix or wrapper return.
 pub function check_invocations(wrapper: ssa.SFunc, producers: ssa.SFunc[], f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, old_shape: string, new_shape: string, fields: ScalarField[], assertions: ssa.SFunc[]): helper.Proof {
   let boundary = incoming_capacity.before_calls(wrapper, producers, [f], old_shape);
   if (!boundary.proof.ok) {

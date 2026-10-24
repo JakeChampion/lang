@@ -9,57 +9,21 @@ import (
 	"testing"
 )
 
-// The metadata writes on an entry that already exists (#9059) through the
-// SELF-HOST IR path: `chmod` and `set_file_times`.
-//
-// Neither can be proved by compiling. A `chmod` that lowered to nothing, to
-// the wrong syscall number, or with its two operands swapped still links and
-// still returns Ok; so does a `set_file_times` that wrote the modification
-// time into the access slot, dropped the nanosecond halves, or ignored the
-// omit bits. So every assertion here reads the metadata BACK through `stat`
-// and compares it exactly — the mode to twelve bits and each timestamp to the
-// nanosecond.
-//
-// `internal/testing/e2ecompiler` is PRIMARY for a self-host lowering change
-// (docs/TEST-GATES.md): the fixpoint is self-referential and cannot see a
-// stable miscompile of a construct the compiler does not itself use, and
-// nothing in the compiler chmods or sets a timestamp.
-//
-// The two timestamps the probe writes are distinct from each other, distinct
-// from any current clock reading, and both carry a non-zero nanosecond
-// remainder — so a swap, a truncation to seconds, or a stale value all show up
-// as a different number rather than as a plausible one.
-
-// Two timestamps, neither round and neither close to now. atime is the older
-// of the pair, so a swapped write puts the larger number in the smaller slot.
 const (
 	fsMetaATimeSec  = 1111111111
 	fsMetaATimeNsec = 222333444
 	fsMetaMTimeSec  = 1444555666
 	fsMetaMTimeNsec = 777888999
 
-	// The second round, which each omit leg half-writes.
 	fsMetaATime2Sec  = 1666777888
 	fsMetaATime2Nsec = 135792468
 	fsMetaMTime2Sec  = 1777888999
 	fsMetaMTime2Nsec = 864213579
 
-	// 0o5755: setuid and sticky on top of rwxr-xr-x. A backend that masked
-	// the mode to 0o777 before the syscall loses the top two and lands
-	// 0o755 instead.
-	fsMetaModeSuid = 0o5755
-	// 0o640, with nothing above the nine permission bits.
+	fsMetaModeSuid  = 0o5755
 	fsMetaModePlain = 0o640
 )
 
-// selfHostFsMetaSource is the probe, parameterised by the directory its paths
-// resolve against — "" for the wasm leg, which runs under its preopen.
-//
-// `withChmod` is off for wasm: neither WASI preview has permission bits, so
-// E066 refuses the builtin on that target (capability `fsmode`) and the wasm
-// probe is the same program with that block removed.
-//
-// Every failure returns its own exit code, so the number names the step.
 func selfHostFsMetaSource(prefix string, withChmod bool) string {
 	p := func(name string) string {
 		if prefix == "" {
@@ -198,9 +162,6 @@ func selfHostFsMetaSource(prefix string, withChmod bool) string {
 	return src
 }
 
-// selfHostFsMetaTree asserts what the probe left on disk, read through Go's
-// own stat rather than the compiler's — so a `stat` that agreed with a broken
-// `set_file_times` about the wrong value cannot make the probe self-consistent.
 func selfHostFsMetaTree(t *testing.T, dir string, withChmod bool) {
 	t.Helper()
 	fi, err := os.Stat(filepath.Join(dir, "meta.txt"))
@@ -214,8 +175,6 @@ func selfHostFsMetaTree(t *testing.T, dir string, withChmod bool) {
 		if perm := fi.Mode().Perm(); perm != fsMetaModePlain {
 			t.Errorf("meta.txt mode = %o, want %o", perm, fsMetaModePlain)
 		}
-		// The chmod before the last one set setuid and sticky; both have to
-		// be GONE, or the second chmod OR-ed where it should have replaced.
 		if high := fi.Mode() & (os.ModeSetuid | os.ModeSetgid | os.ModeSticky); high != 0 {
 			t.Errorf("meta.txt still carries %v after the final chmod", high)
 		}
@@ -229,16 +188,12 @@ func selfHostFsMetaTree(t *testing.T, dir string, withChmod bool) {
 			got, want)
 	}
 	if withChmod {
-		// Linux keeps every symlink at 0o777; the refused nofollow chmod_at
-		// must have left it there rather than reaching the target or the link.
 		if perm := li.Mode().Perm(); perm != 0o777 {
 			t.Errorf("meta.link mode = %o, want 777 — chmod_at follow=false changed a symlink on Linux", perm)
 		}
 	}
 }
 
-// TestSelfHostFsMetaIR is the x86-64 leg: the self-host driver emits the asm,
-// gcc links it, and the program runs against a real temporary directory.
 func TestSelfHostFsMetaIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -271,9 +226,6 @@ func TestSelfHostFsMetaIR(t *testing.T) {
 	selfHostFsMetaTree(t, work, true)
 }
 
-// TestSelfHostFsMetaIRArm64 is the same probe through the arm64 IR backend
-// under qemu. The two syscall numbers differ from x86-64's and the operand
-// reversal is a second hand-written sequence, so neither is taken on trust.
 func TestSelfHostFsMetaIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -307,15 +259,6 @@ func TestSelfHostFsMetaIRArm64(t *testing.T) {
 	selfHostFsMetaTree(t, work, true)
 }
 
-// TestSelfHostFsMetaWasmIR is the wasm leg. `set_file_times` is a real WASI
-// call (path_filestat_set_times), so it is exercised rather than classified
-// out; `chmod` is absent, because neither preview has permission bits and E066
-// refuses the builtin on that target.
-//
-// Preview 1 measures a timestamp in UNSIGNED nanoseconds since the epoch, so
-// the pair is folded to one count on the way across and split back apart by
-// the host — which is why the probe's nanosecond halves have to survive a
-// multiply and an add rather than being carried in their own field.
 func TestSelfHostFsMetaWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host fsmeta wasm IR e2e")

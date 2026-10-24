@@ -7,16 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostStructMultiLevelDropIRX86_64 covers the MULTI-LEVEL deep drop
-// (#2649): for `A { b: B }`, `B { c: C }`, `C { items: i32[] }`, dropping an `A`
-// local must release down the whole chain of DIRECT nested-struct fields, so C
-// frees `items` too. Each level releases a field only when it holds the sole
-// reference (rc 1), so a shared inner is left alone.
-//
-// Runtime signal is heap exhaustion: a long churn that leaks C.items each
-// iteration exhausts the bump heap and is SIGKILLed (137); with the multi-level
-// release it stays bounded (exit 0). Each items array goes through id so the
-// chain is built on the heap rather than placed as a constant.
 func TestSelfHostStructMultiLevelDropIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -48,12 +38,6 @@ func TestSelfHostStructMultiLevelDropIRX86_64(t *testing.T) {
 		}
 	}
 
-	// MULTI-LEVEL DEEP-DROP + CHURN: a 3-level chain `A -> B -> C{ items }`. Every
-	// struct in the chain is a fresh sole-owned literal (rc 1), so each is_unique gate
-	// passes and the whole chain reclaims C.items each iteration. Asserts the recursive
-	// `call __fn___struct_drop_B` (the non-leaf inner — impossible under the old leaf
-	// gate) is emitted, and that 150M alloc->drop cycles stay bounded (exit 0); a
-	// regression to the leaf-only drop leaks B.c + C.items every call -> SIGKILL (137).
 	run(t, `struct C { items: i32[] }
 @noinline function id(xs: i32[]): i32[] { return xs; }
 struct B { c: C, bt: i32 }
@@ -68,9 +52,6 @@ function main(): i32 {
     return s - 26;
 }`, "struct_multilevel_drop_churn", 0)
 
-	// VALUE-CORRECTNESS: the deep value is read back before the drop; a premature free
-	// of a live buffer down the chain would corrupt the read. a.b.c.items[0..15] sum to
-	// 136, + b.bt 2 + a.at 7 = 145.
 	run(t, `struct C { items: i32[] }
 @noinline function id(xs: i32[]): i32[] { return xs; }
 struct B { c: C, bt: i32 }
@@ -82,9 +63,6 @@ function main(): i32 {
     return sum + a.b.bt + a.at;
 }`, "struct_multilevel_drop_value", 145)
 
-	// FOUR-LEVEL: pushes the DAG one deeper (`W -> X -> Y -> Z{ items }`) to prove the
-	// transitive body-emission closure (need() re-checks) chains beyond depth-2 and the
-	// runtime recursion still terminates. items sum 136 + z/y/x/w tags = 136+1+2+3+4=146.
 	run(t, `struct Z { items: i32[], zt: i32 }
 @noinline function id(xs: i32[]): i32[] { return xs; }
 struct Y { z: Z, yt: i32 }

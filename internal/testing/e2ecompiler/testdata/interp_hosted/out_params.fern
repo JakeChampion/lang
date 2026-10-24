@@ -1,6 +1,6 @@
-// tcp_recv_into, udp_recvfrom and reactor_wait fill an array the caller owns:
-// the bytes reach the variable passed, directly or through functions that
-// pass it on, and a callee rebinding its own parameter does not reach back.
+
+
+
 import "std/i32";
 
 function recv_wrapped(fd: i32, buf: u8[]): i32 {
@@ -11,8 +11,8 @@ function recv_inner(fd: i32, into: u8[]): i32 {
   return tcp_recv_into(fd, into);
 }
 
-// Two statements write through the same parameter; the caller sees the
-// second write.
+
+
 function recv_twice(c: i32, s: i32, buf: u8[]): i32 {
   let sent: i32 = tcp_send_bytes(c, "1".bytes());
   let a: i32 = tcp_recv_into(s, buf);

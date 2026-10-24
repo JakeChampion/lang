@@ -1,17 +1,3 @@
-// coreutils/lib/fnmatch.fern — fnmatch(3) with flags 0, the pattern
-// matcher two utilities here need: `dircolors` validates the patterns
-// of its database with it, and `ls` matches a name against `-I` and
-// `--hide`.
-//
-// `std/glob` is NOT this. There `*` stops at `/`, `**` means something,
-// and a backslash escapes nothing; fnmatch with no flags has no path
-// awareness at all and a backslash quotes the byte after it.
-//
-// It is NOT what `ls --color` does with an LS_COLORS `*pattern` either
-// — that is a case-folded literal SUFFIX comparison, so `*a?c` there
-// colours the file actually called `a?c`.
-// Share the matcher while specializing text and borrowed-byte reads.
-// The borrowed wrapper stays within fnmatch_bytes and never escapes it.
 trait ByteInput {
   function byte_count(self: Self): i32;
   function byte_at(self: Self, at: i32): u8;
@@ -28,8 +14,6 @@ impl ByteInput for string {
 
 struct BytesInput { data: [u8] }
 
-// Retain one raw input and its bounds for patterns matched many times.
-// The range owns its input, so callers may release the original array.
 pub struct BytePattern { data: u8[], lo: i32, hi: i32 }
 
 impl ByteInput for BytePattern {
@@ -54,23 +38,10 @@ impl ByteInput for BytesInput {
   }
 }
 
-// Byte-wise in the C locale, and none of the FNM_* flags are set: `*`
-// and `?` cross `/`, a leading `.` is not special, and a backslash
-// escapes the byte after it.
-//
-// Two malformed shapes are worth naming because they part ways. A
-// bracket with no closing `]` is NOT an error — glibc restarts the
-// match with the `[` taken as an ordinary byte, so `[[:digit:]` against
-// `[d` matches (a literal `[`, then a bracket holding `:digit`). A
-// character class or collating symbol that is not one IS an error, and
-// the whole match fails however the bracket is negated. A pattern
-// ending in a lone backslash matches nothing.
 function fn_is_space(c: i32): boolean {
   return c == 32 || c >= 9 && c <= 13;
 }
 
-// Class names are ASCII. Compare the raw pattern range without constructing
-// text from bytes that may not be valid UTF-8.
 function fn_name[P: ByteInput](p: P, lo: i32, hi: i32, expected: string): boolean {
   if (hi - lo != expected.len()) {
     return false;
@@ -92,8 +63,6 @@ function fn_verdict(hit: boolean): i32 {
   return 0;
 }
 
-// Status is 1 for a match, 0 for a miss and -1 for an unknown class.
-// An unknown class invalidates the whole pattern, even inside a negation.
 function fn_class[P: ByteInput](p: P, lo: i32, hi: i32, c: i32): i32 {
   let alpha: boolean = c >= 65 && c <= 90 || c >= 97 && c <= 122;
   let digit: boolean = c >= 48 && c <= 57;
@@ -136,10 +105,6 @@ function fn_class[P: ByteInput](p: P, lo: i32, hi: i32, c: i32): i32 {
   return 0 - 1;
 }
 
-// One bracket expression starting at `p.byte_at(i)` (the `[`), matched against
-// byte ch. A positive result is the next pattern index after a match;
-// zero means no match, -1 invalid, and -2 an unclosed bracket that must
-// be treated as a literal opening bracket.
 function fn_bracket[P: ByteInput](p: P, start: i32, ch: i32): i32 {
   let n: i32 = p.byte_count();
   let i: i32 = start + 1;
@@ -160,9 +125,6 @@ function fn_bracket[P: ByteInput](p: P, start: i32, ch: i32): i32 {
       break;
     }
     first = false;
-    // GNU uses gnulib's non-glibc matcher on Darwin. Only character
-    // classes are special there: `[.x.]` and `[=x=]` remain ordinary
-    // bracket contents, including the first `]` ending that bracket.
     if (c == 91 && i + 1 < n && (p.byte_at(i + 1) as i32 == 58 || target_os() != "darwin" && (p.byte_at(i + 1) as i32 == 46 || p.byte_at(i + 1) as i32 == 61))) {
       let kind: i32 = p.byte_at(i + 1) as i32;
       let body: i32 = i + 2;
@@ -184,13 +146,10 @@ function fn_bracket[P: ByteInput](p: P, start: i32, ch: i32): i32 {
         }
         continue;
       }
-      // A collating symbol or an equivalence class is one byte in the
-      // C locale; anything longer names nothing.
       if (j - body != 1) {
         return 0 - 1;
       }
       let lo: i32 = p.byte_at(body) as i32;
-      // A `[.x.]` may open a range: `[[.a.]-c]`.
       let r: (i32, boolean) = fn_range(p, i, lo, ch, hit);
       i = r.0;
       hit = r.1;
@@ -219,8 +178,6 @@ function fn_bracket[P: ByteInput](p: P, start: i32, ch: i32): i32 {
   return 0;
 }
 
-// `lo` has been read; if a `-` follows that is not the bracket's last
-// byte, read the range's upper bound. Returns (next index, hit).
 function fn_range[P: ByteInput](p: P, at: i32, lo: i32, ch: i32, hit: boolean): (i32, boolean) {
   let n: i32 = p.byte_count();
   let i: i32 = at;
@@ -242,9 +199,6 @@ function fn_range[P: ByteInput](p: P, at: i32, lo: i32, ch: i32, hit: boolean): 
   return (i, hit);
 }
 
-// pi and si are the cursors a star backtracks over. Invalid patterns
-// stop retries; an ordinary mismatch advances the retry cursor. The result
-// is 1 for a match, 0 for a miss and -1 for an invalid pattern.
 function fn_match[P: ByteInput, S: ByteInput](p: P, pi0: i32, s: S, si0: i32): i32 {
   let pi: i32 = pi0;
   let si: i32 = si0;
@@ -278,7 +232,6 @@ function fn_match[P: ByteInput, S: ByteInput](p: P, pi0: i32, s: S, si0: i32): i
       continue;
     }
     if (c == 92) {
-      // A trailing backslash escapes nothing and matches nothing.
       if (pi + 1 >= pn) {
         return 0;
       }
@@ -298,7 +251,6 @@ function fn_match[P: ByteInput, S: ByteInput](p: P, pi0: i32, s: S, si0: i32): i
         return 0 - 1;
       }
       if (b == 0 - 2) {
-        // Unterminated: the `[` is an ordinary byte from here on.
         if (s.byte_at(si) as i32 != 91) {
           return 0;
         }
@@ -326,14 +278,11 @@ pub function fnmatch(pat: string, s: string): boolean {
   return fn_match(pat, 0, s, 0) > 0;
 }
 
-// Match borrowed bytes without copying or interpreting them as UTF-8.
 pub function fnmatch_bytes(pat: [u8], s: [u8]): boolean {
   let r: i32 = fn_match(BytesInput { data: pat }, 0, BytesInput { data: s }, 0);
   return r > 0;
 }
 
-// A raw configuration pattern can match an existing text value without
-// wrapping that value in a second byte-input record.
 pub function fnmatch_bytes_text(pat: [u8], s: string): boolean {
   return fn_match(BytesInput { data: pat }, 0, s, 0) > 0;
 }

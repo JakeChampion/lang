@@ -1,14 +1,14 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// #8719: a `?` inside a construction leaves through the exit sweep,
-// which sees named locals only, so the operands the literal had
-// already staged — a fresh temp, a moved local, an array, tuple or
-// payload element — were abandoned on Err. The field placed AFTER
-// the `?` is the analysis half: its move was claimed for the whole
-// statement, so the sweep skipped a local nothing had consumed.
-// Every shape runs down both paths. Before: 2240 bytes live on
-// arm64 and wasm, clean on each Ok path.
+
+
+
+
+
+
+
+
+
+
+
 struct Pair { a: i32[], b: i32 }
 enum Two { Both(i32[], i32), Neither }
 

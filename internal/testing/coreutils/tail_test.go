@@ -11,17 +11,6 @@ func init() {
 	registerCorpus("tail", tailCases)
 }
 
-// tailCases is tail(1)'s corpus.
-//
-// The counts, the headers and the obsolete form are head's mirrored,
-// and the corpus pins the two things tail adds to them: the seeking
-// paths — a regular file is read from its END, in 8 KiB blocks for
-// lines, so every count has a case that crosses a block boundary and
-// a case fed through a pipe — and following. A follow case never ends
-// on its own: the harness acts as the writer, firing each step once the
-// output has reached it, and stops both sides after `limit` bytes; the
-// polling interval and `---disable-inotify` keep GNU on the same loop.
-// `--pid` is parsed here but not followed with (#8767).
 func tailCases(t *testing.T) []invocation {
 	dir := t.TempDir()
 	twelve := catFile(t, dir, "twelve", "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n")
@@ -39,18 +28,11 @@ func tailCases(t *testing.T) []invocation {
 		t.Fatal(err)
 	}
 	d := filepath.Join(dir, "d")
-	// Past several 8 KiB blocks, so the backward walk and the forward
-	// skip both cross boundaries; a line that straddles one too.
 	big := catFile(t, dir, "big", seqLines(100000))
 	longLines := catFile(t, dir, "longlines", strings.Repeat(strings.Repeat("y", 5000)+"\n", 10))
-	// One line longer than a read block, so the terminator that ends it
-	// and the terminator before it cannot reach the hold in the same
-	// chunk. `---presume-input-pipe` over a regular file is what makes
-	// the reads full and the case deterministic.
 	straddle := catFile(t, dir, "straddle", strings.Repeat("a", 99999)+"\n"+strings.Repeat("b", 10)+"\n")
 	bigStdin := seqLines(100000)
 
-	// Followed files, one per case: the harness rewrites them.
 	follow := func(name, content string) string { return catFile(t, dir, name, content) }
 	g1 := follow("g1", "1\n2\n")
 	g2 := follow("g2", "1\n2\n")
@@ -69,7 +51,6 @@ func tailCases(t *testing.T) []invocation {
 	fol := func(args ...string) []string { return append(append([]string{}, poll...), args...) }
 
 	return []invocation{
-		// The last lines.
 		{name: "default ten", args: []string{twelve}},
 		{name: "n 3", args: []string{"-n", "3", f}},
 		{name: "n 0", args: []string{"-n", "0", f}},
@@ -89,7 +70,6 @@ func tailCases(t *testing.T) []invocation {
 		{name: "long lines", args: []string{"-n", "3", longLines}},
 		{name: "long lines one", args: []string{"-n", "1", longLines}},
 
-		// From the start.
 		{name: "n plus", args: []string{"-n", "+2", f}},
 		{name: "n plus zero", args: []string{"-n", "+0", f}},
 		{name: "n plus one", args: []string{"-n", "+1", f}},
@@ -101,7 +81,6 @@ func tailCases(t *testing.T) []invocation {
 		{name: "c plus past end", args: []string{"-c", "+100", five}},
 		{name: "big c from 300000", args: []string{"-c", "+300000", big}},
 
-		// Bytes.
 		{name: "c 2", args: []string{"-c", "2", five}},
 		{name: "c 0", args: []string{"-c", "0", five}},
 		{name: "c more than there are", args: []string{"-c", "100", five}},
@@ -112,7 +91,6 @@ func tailCases(t *testing.T) []invocation {
 		{name: "c suffix k", args: []string{"-c", "1k", five}},
 		{name: "c suffix b", args: []string{"-c", "1b", big}},
 
-		// Streams: a pipe, and a file told to be one.
 		{name: "stdin last 2", args: []string{"-n", "2"}, stdin: "1\n2\n3\n"},
 		{name: "stdin dash", args: []string{"-n", "2", "-"}, stdin: "1\n2\n3\n"},
 		{name: "stdin unterminated", args: []string{"-n", "2"}, stdin: "1\n2\n3"},
@@ -137,13 +115,11 @@ func tailCases(t *testing.T) []invocation {
 		{name: "presume pipe across a line longer than a read block", args: []string{"---presume-input-pipe", "-n", "2"}, stdinPath: straddle},
 		{name: "presume pipe inside a line longer than a read block", args: []string{"---presume-input-pipe", "-n", "1"}, stdinPath: straddle},
 
-		// -z.
 		{name: "zero terminated", args: []string{"-z", "-n", "2", zeros}},
 		{name: "zero terminated from start", args: []string{"-z", "-n", "+2", zeros}},
 		{name: "zero terminated long", args: []string{"--zero-terminated", "-n", "1", zeros}},
 		{name: "zero terminated stdin", args: []string{"-z", "-n", "2"}, stdin: "a\x00b\x00c\x00d"},
 
-		// Headers.
 		{name: "two files", args: []string{"-n", "1", f, x}},
 		{name: "stdin among files", args: []string{"-n", "1", f, "-", x}, stdin: "s\n"},
 		{name: "quiet", args: []string{"-q", "-n", "1", f, x}},
@@ -159,7 +135,6 @@ func tailCases(t *testing.T) []invocation {
 		{name: "header after a missing file", args: []string{"-n", "1", missing, f}},
 		{name: "missing between files", args: []string{"-n", "1", f, missing, f}},
 
-		// Errors.
 		{name: "missing file", args: []string{missing}},
 		{name: "missing raw name", args: []string{filepath.Join(dir, "no\xffsuch")}, rawByteName: true},
 		{name: "missing quoted name", args: []string{filepath.Join(dir, "no'such")}},
@@ -174,7 +149,6 @@ func tailCases(t *testing.T) []invocation {
 		{name: "double dash alone", args: []string{"--", f}},
 		{name: "dash file after double dash", args: []string{"-n", "1", "--", "-"}, stdin: "s\n"},
 
-		// Counts.
 		{name: "n empty", args: []string{"-n", "", f}},
 		{name: "n dash", args: []string{"-n", "-", f}},
 		{name: "n dash alone", args: []string{"-n", "-"}},
@@ -192,7 +166,6 @@ func tailCases(t *testing.T) []invocation {
 		{name: "c kib", args: []string{"-c", "1KiB", big}},
 		{name: "c kb", args: []string{"-c", "1kB", big}},
 
-		// The obsolete form.
 		{name: "obsolete bytes", args: []string{"-5c", five}},
 		{name: "obsolete lines", args: []string{"-2", f}},
 		{name: "obsolete plus", args: []string{"+2", f}},
@@ -213,9 +186,6 @@ func tailCases(t *testing.T) []invocation {
 		{name: "obsolete bad suffix", args: []string{"-2x", f}},
 		{name: "obsolete overflow", args: []string{"-99999999999999999999", f}},
 		{name: "obsolete b overflow", args: []string{"-99999999999999999b", f}},
-		// The obsolete form prints the raw errno, so where the overflow
-		// happened decides whether strerror text follows: 2^64/512 fits
-		// strtoumax and only the multiply overflows, 2^64 does not.
 		{name: "obsolete b overflow at the multiply", args: []string{"-36028797018963968b", f}},
 		{name: "obsolete b overflow in the digits", args: []string{"-18446744073709551616b", f}},
 		{name: "obsolete b just under the multiply", args: []string{"-36028797018963967b", f}},
@@ -235,7 +205,6 @@ func tailCases(t *testing.T) []invocation {
 		{name: "posix empty", args: []string{"+2", f}, env: []string{"_POSIX2_VERSION="}},
 		{name: "posix negative", args: []string{"-c", f}, env: []string{"_POSIX2_VERSION=-5"}},
 
-		// The follow options, parsed without following.
 		{name: "retry without follow", args: []string{"--retry", "-n", "1", f}},
 		{name: "pid without follow", args: []string{"--pid=1", "-n", "1", f}},
 		{name: "pid words", args: []string{"--pid=x", f}},
@@ -245,8 +214,6 @@ func tailCases(t *testing.T) []invocation {
 		{name: "pid repeated", args: []string{"--pid=1", "--pid=2", "-n", "1", f}},
 		{name: "pid repeated with a bad one", args: []string{"--pid=1", "--pid=x", "-n", "1", f}},
 
-		// --debug (9.10) names the --follow implementation, so without
-		// -f there is nothing to name.
 		{name: "debug without follow", args: []string{"--debug", "-n", "1", f}},
 		{name: "debug is unambiguous as --de", args: []string{"--de", "-n", "1", f}},
 		{name: "pid plus zero", args: []string{"--pid=+0", "-n", "1", f}},
@@ -291,11 +258,8 @@ func tailCases(t *testing.T) []invocation {
 		{name: "follow name missing no retry", args: []string{"--follow=name", missing}},
 		{name: "obsolete f missing", args: []string{"-5f", missing}},
 
-		// Following.
 		{name: "follow appends", args: fol("-f", "-n", "1", g1), limit: 4,
 			follow: []followStep{{after: 2, act: "append", path: g1, data: "3\n"}}},
-		// `--follow` bare: the long form's argument is optional, so the
-		// next token is an operand rather than a value.
 		{name: "follow bare long", args: fol("--follow", "-n", "1", g11), limit: 4,
 			follow: []followStep{{after: 2, act: "append", path: g11, data: "3\n"}}},
 		{name: "follow truncated", args: fol("-f", "-n", "1", g2), limit: 4,
@@ -310,13 +274,6 @@ func tailCases(t *testing.T) []invocation {
 			follow: []followStep{{after: 22, act: "remove", path: g6}, {after: 22, act: "append", path: k6, data: "k2\n"}, {after: 36, act: "truncate", path: g6, data: "new\n"}}},
 		{name: "follow two files", args: fol("-f", "-n", "1", g7, x), limit: 30,
 			follow: []followStep{{after: 20, act: "append", path: g7, data: "3\n"}}},
-		// The limit has to clear the WHOLE initial pass, not just reach the
-		// step: stderr is compared however the child ends, and the child is
-		// terminated on a stdout byte count, so a limit inside the startup
-		// output makes the directory diagnostic a race between the two
-		// implementations. Two `==> NAME <==` headers over temp paths are
-		// already ~140 bytes, so this reads past anything the case can
-		// produce and lets the deadline stop it.
 		{name: "follow with a directory operand", args: fol("-f", "-n", "1", g8, d), limit: 512,
 			follow: []followStep{{after: 27, act: "append", path: g8, data: "3\n"}}},
 		{name: "follow stdin regular file", args: fol("-f", "-n", "1"), stdinPath: g9, limit: 4,
@@ -326,7 +283,6 @@ func tailCases(t *testing.T) []invocation {
 		{name: "follow stdin pipe with a file", args: fol("-f", "-n", "1", "-", x), stdin: "s\n", limit: 36,
 			follow: []followStep{{after: 34, act: "append", path: x, data: "a\n"}}},
 
-		// Options.
 		{name: "help ambiguous s", args: []string{"--s", f}},
 		{name: "empty long name is ambiguous", args: []string{"--=x"}},
 		{name: "unknown option", args: []string{"--frobnicate", f}},
@@ -338,7 +294,6 @@ func tailCases(t *testing.T) []invocation {
 		{name: "options after operands", args: []string{f, "-n", "1"}},
 		{name: "posixly correct stops at the operand", args: []string{f, "-n", "1"}, env: []string{"POSIXLY_CORRECT=1"}},
 
-		// Write failures.
 		{name: "stdout full", args: []string{f}, stdout: stdoutFull},
 		{name: "stdout full big", args: []string{"-n", "50000", big}, stdout: stdoutFull},
 		{name: "stdout full from start", args: []string{"-n", "+1", big}, stdout: stdoutFull},
@@ -350,7 +305,6 @@ func tailCases(t *testing.T) []invocation {
 	}
 }
 
-// seqLines is `seq 1 n` as text.
 func seqLines(n int) string {
 	var b strings.Builder
 	for i := 1; i <= n; i++ {

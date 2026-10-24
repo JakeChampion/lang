@@ -1,23 +1,10 @@
 import "std/test";
 
-// tests/stdlib/one_of_none_of_test.fern — batch 23
-// additions to std/test:
-//   * `test.assert_one_of_i32(actual, allowed)` /
-//     `assert_one_of_string` — value belongs to an
-//     allowed set.
-//   * `test.assert_none_of_i32(actual, forbidden)` /
-//     `assert_none_of_string` — negative membership;
-//     value must NOT match any in the forbidden set.
-
 function test_one_of_i32_pass(): test.TestOutcome {
-  // Classic "exit code is one of [0, 1, 2]" use case.
   return test.assert_one_of_i32(1, [0, 1, 2]);
 }
 
 function test_one_of_i32_single_element(): test.TestOutcome {
-  // Degenerate case — single-element allowed set works
-  // the same as `assert_eq` but reads at the call
-  // site as "this is the only acceptable value".
   return test.assert_one_of_i32(42, [42]);
 }
 
@@ -35,8 +22,6 @@ function test_one_of_i32_missing_reports_set(): test.TestOutcome {
       return test.fail("expected fail for value not in set");
     },
     Fail(msg) => {
-      // Diagnostic must embed both the actual and the
-      // rendered allowed list.
       if (!msg.contains("99") || !msg.contains("[0, 1, 2]")) {
         return test.fail("expected '99' + '[0, 1, 2]' in failure: " + msg);
       }
@@ -58,7 +43,6 @@ function test_one_of_i32_empty_set_always_fails(): test.TestOutcome {
 }
 
 function test_one_of_string_pass(): test.TestOutcome {
-  // "HTTP method is one of the safe ones".
   return test.assert_one_of_string(
     "GET",
     ["GET", "HEAD", "OPTIONS"],
@@ -74,9 +58,6 @@ function test_one_of_string_missing_reports(): test.TestOutcome {
       return test.fail("expected POST to fail");
     },
     Fail(msg) => {
-      // Allowed values must be quoted in the diagnostic so
-      // "GET" reads distinctly from `GET` (unquoted i32-
-      // style rendering would be wrong here).
       if (!msg.contains("\"POST\"") || !msg.contains("\"GET\"")) {
         return test.fail("expected quoted POST + GET in failure: " + msg);
       }
@@ -86,7 +67,6 @@ function test_one_of_string_missing_reports(): test.TestOutcome {
 }
 
 function test_none_of_i32_pass(): test.TestOutcome {
-  // "Exit code is not any of these failure sentinels".
   return test.assert_none_of_i32(0, [127, 128, 130]);
 }
 
@@ -105,7 +85,6 @@ function test_none_of_i32_match_reports(): test.TestOutcome {
 }
 
 function test_none_of_i32_empty_forbidden_always_passes(): test.TestOutcome {
-  // Vacuous: nothing forbidden, anything is OK.
   let empty: i32[] = [];
   return test.assert_none_of_i32(42, empty);
 }

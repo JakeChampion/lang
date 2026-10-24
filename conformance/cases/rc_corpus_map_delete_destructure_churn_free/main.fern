@@ -1,11 +1,11 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// DESTRUCTURING the tuple — the spelling computeMapCowBindSites'
-// `*ast.Destructure` arm was written for, and which nothing covered.
-// It is the one shape the seam retain already reaches, so it isolates
-// what that retain does and does not buy.
-// Per iter: hit 2 + surviving "other" 3 = 5; 500x → 2500.
+
+
+
+
+
+
+
+
 import "core/int";
 import "core/map";
 import "std/string";

@@ -7,22 +7,6 @@ import (
 	"testing"
 )
 
-// __rmemchr is the third kernel of docs/ATLAS-PLATFORM-PLAN.md §3, and the
-// backward sibling §3.3 nominates: the LAST occurrence of a byte at or before
-// `from`, or -1.
-//
-// It ships SCALAR on all seven backends at once, which is §3.4's step 1. This
-// corpus is written now, while every body is still a byte loop, for the reason
-// __memchr's paid off: written afterwards it would have been written to fit
-// whatever the vector code did, and it already sweeps every 16-byte block
-// boundary a vector body will later have.
-//
-// Shared with the forward corpus in spirit but NOT in code, because the two
-// differ in the one place a shared generator would hide: `from` clamps
-// DOWN to len-1 here and UP to 0 there, so a negative `from` finds nothing
-// here and searches the whole string there.
-
-// rmemchrRef is the reference semantics, matching the interpreter builtin.
 func rmemchrRef(s string, b, from int) int {
 	if b < 0 || b > 255 {
 		return -1
@@ -50,14 +34,9 @@ func rmemchrCases() []struct {
 	}
 	var out []c
 
-	// Exhaustive over length and match position, straddling the 16-byte block
-	// a vector version will use (0..40 is two full blocks plus a partial tail
-	// either side).
 	for n := 0; n <= 40; n++ {
 		base := strings.Repeat("a", n)
-		// No match anywhere.
 		out = append(out, c{base, 'z', n})
-		// A match at each position, scanning from after / at / before it.
 		for at := 0; at < n; at++ {
 			withHit := base[:at] + "z" + base[at+1:]
 			out = append(out, c{withHit, 'z', n})
@@ -67,31 +46,23 @@ func rmemchrCases() []struct {
 		}
 	}
 
-	// Edge cases the sweep cannot express.
 	out = append(out,
-		c{"", 'a', 0},                       // empty haystack
-		c{"abc", 'a', 100},                  // from past the end clamps to the last index
-		c{"abc", 'c', -1},                   // ... and a negative one finds NOTHING, unlike
-		c{"abc", 'a', -5},                   //     __memchr, where it means "the whole string"
-		c{"abc", 256, 2},                    // byte above the range
-		c{"abc", -1, 2},                     // byte below the range
-		c{"aaa", 'a', 2},                    // LAST of several — the property the op exists for
-		c{"aba", 'a', 2},                    // a body copied from __memchr answers 0 here
-		c{"aba", 'a', 1},                    // ... and 0 here, which is right, so both are needed
-		c{"\x00b\x00", 0, 2},                // NUL is an ordinary byte, not a terminator
-		c{"\x00b\x00", 0, 1},                // ... and findable walking back past one
-		c{"\xff\xfe", 0xff, 1},              // high bytes are unsigned, not sign-extended
-		c{"\xff\xfe", 0xfe, 1},              //
-		c{strings.Repeat("q", 300), 'q', 0}, // long, match at the very start
+		c{"", 'a', 0},
+		c{"abc", 'a', 100},
+		c{"abc", 'c', -1},
+		c{"abc", 'a', -5},
+		c{"abc", 256, 2},
+		c{"abc", -1, 2},
+		c{"aaa", 'a', 2},
+		c{"aba", 'a', 2},
+		c{"aba", 'a', 1},
+		c{"\x00b\x00", 0, 2},
+		c{"\x00b\x00", 0, 1},
+		c{"\xff\xfe", 0xff, 1},
+		c{"\xff\xfe", 0xfe, 1},
+		c{strings.Repeat("q", 300), 'q', 0},
 	)
 
-	// x86-64's __rmemchr widens to a 32-byte AVX2 main loop with the
-	// 16-byte SSE2 loop kept as its tail (issue: `wc -l` at 16 bytes/
-	// iteration ran 25% more user time than glibc's AVX2 memchr at the same
-	// task), so every length here also needs a hit at each position
-	// straddling the 32-byte block boundary and the boundary between the
-	// AVX2 loop and its SSE2 tail — lengths just below/at/above one and two
-	// 32-byte blocks.
 	for _, n := range []int{31, 32, 33, 47, 48, 49, 63, 64, 65, 79, 80, 81} {
 		base := strings.Repeat("a", n)
 		out = append(out, c{base, 'z', n})
@@ -104,8 +75,6 @@ func rmemchrCases() []struct {
 		}
 	}
 
-	// Deterministic randoms over a small alphabet, so matches are dense and
-	// land at irregular offsets.
 	rng := rand.New(rand.NewSource(20260831))
 	for i := 0; i < 60; i++ {
 		n := rng.Intn(70)
@@ -119,9 +88,6 @@ func rmemchrCases() []struct {
 	return out
 }
 
-// runRmemchrCorpus drives the corpus through one backend and compares every
-// answer against rmemchrRef. Shared by every leg for memchr's reason: what
-// differs between backends is the kernel, not the expectation.
 func runRmemchrCorpus(t *testing.T, run func(t *testing.T, src string) string) {
 	t.Helper()
 	cases := rmemchrCases()
@@ -182,9 +148,6 @@ func TestArm64Rmemchr(t *testing.T) {
 	})
 }
 
-// The wasm leg adds a case class neither native leg has: a SHORT string lives
-// in its two words with no address at all, so the kernel reads it through
-// __fern_str_byte. Every haystack under 8 bytes here exercises that.
 func TestWASMRmemchr(t *testing.T) {
 	runRmemchrCorpus(t, func(t *testing.T, src string) string {
 		out, _ := invokeWasmtime(t, src)

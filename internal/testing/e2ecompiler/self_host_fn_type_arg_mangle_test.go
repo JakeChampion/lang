@@ -8,11 +8,6 @@ import (
 	"testing"
 )
 
-// A function type as a generic's type argument is part of the instance's
-// symbol. sanitize_key passed its `=>` through, so `G[(i32) => i32]` emitted
-// labels GNU as rejected (the self-host's own assembler took them); the arrow
-// is now an `fto` token that take_piece reads back as part of one argument. Found by fernsmith's generic
-// struct and enum productions.
 var fnTypeArgMangleCases = []struct {
 	name, src, want string
 }{
@@ -88,8 +83,6 @@ func TestSelfHostFnTypeArgMangle(t *testing.T) {
 	}
 }
 
-// gnuAsRun compiles src to x86-64 assembly, assembles and links it with gcc
-// as the differential legs do, and returns the program's stdout.
 func gnuAsRun(t *testing.T, gcc, fernBin, stdlibRoot, src string) string {
 	t.Helper()
 	dir := t.TempDir()

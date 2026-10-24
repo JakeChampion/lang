@@ -1,12 +1,3 @@
-// examples/vcl/vclfmt.fern — the driver: parse a .vcl file and print it
-// back, or report why it could not be parsed.
-//
-//   $ fern -interp vclfmt.fern -- testdata/sample.vcl
-//   $ fern -target x86-64-linux -o vclfmt vclfmt.fern && ./vclfmt f.vcl
-//
-// Exit status is 0 when the file parsed clean, 1 when it did not and 2
-// when it could not be read — so it works as a syntax check in a
-// pipeline, not only as a formatter.
 import "std/string";
 import "std/i32";
 import "std/io";
@@ -24,7 +15,6 @@ function report(path: string, diags: diag.Diag[]): void {
 }
 
 function main(): i32 {
-  // args()[0] is the program name, as in C.
   let argv: string[] = args();
   if (argv.len() < 2) {
     eprint("usage: vclfmt FILE.vcl");

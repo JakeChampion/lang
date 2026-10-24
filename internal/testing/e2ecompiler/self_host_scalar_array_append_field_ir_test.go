@@ -7,18 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostIRScalarArrayAppendFieldX86_64 guards the struct-literal field
-// value `S { xs: xs.append(v) }` / `S { xs: xs.with(i, v) }` where `xs` is a
-// bare-ident SCALAR-array local or param (i32[]/u32[]/f64[]/i64[]/sub-word) —
-// the parser.dl_collect_stmt shape `DeferAcc { flags: flags.append(d.on_error) }`
-// over an `i32[]` — alongside the FIELD-READ receiver (`s.flags.append(v)`).
-//
-// `.append`/`.with` clone the receiver into a fresh sole-owned array, so the
-// struct owns the result with NO alias-inc (the receiver is borrowed for the
-// copy), exactly like the field-read and `[…]`-literal cases.
-//
-// Each case asserts the oracle-pinned exit code, so an rc/heap-accounting
-// miscompile is caught.
 func TestSelfHostIRScalarArrayAppendFieldX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -36,7 +24,6 @@ func TestSelfHostIRScalarArrayAppendFieldX86_64(t *testing.T) {
 		src  string
 		want int
 	}{
-		// Bare-ident scalar-array LOCAL receiver as a struct field value.
 		{"append-local-i32-arr-field", `struct Acc { flags: i32[] }
 function build(n: i32): Acc {
 	let flags: i32[] = [];
@@ -49,22 +36,16 @@ function main(): i32 {
 	let sum: i32 = 0; let j: i32 = 0;
 	while (j < a.flags.len()) { sum = sum + a.flags[j]; j = j + 1; }
 	return a.flags.len() + sum;
-}`, 5 + (0 + 1 + 2 + 3 + 99)}, // len 5 + sum 105 -> 110
+}`, 5 + (0 + 1 + 2 + 3 + 99)},
 
-		// Bare-ident scalar-array PARAM receiver, via `.with`.
 		{"with-param-i32-arr-field", `struct Acc { flags: i32[] }
 function rebuild(flags: i32[], v: i32): Acc { return Acc { flags: flags.with(0, v) }; }
 function main(): i32 {
 	let base: i32[] = [10, 20, 30];
 	let a: Acc = rebuild(base, 7);
 	return a.flags.len() + a.flags[0] + a.flags[1] + a.flags[2];
-}`, 3 + 7 + 20 + 30}, // len 3 + 7+20+30=57 -> 60
+}`, 3 + 7 + 20 + 30},
 
-		// The faithful dl_collect_stmt shape: a union `Stm`, a result struct
-		// with an enum-array field (`actions`, append of a union field-access),
-		// an enum-array literal local (`stmts`), AND the bare-ident scalar-array
-		// append (`flags.append(d.on_error)`) that was the frontier — all in one
-		// struct literal, recursing through a list walker.
 		{"dl-collect-stmt-shape", `struct SVar { x: i32 }
 struct SDefer { action: Stm, on_error: i32 }
 type Stm = SVar | SDefer;
@@ -97,7 +78,7 @@ function main(): i32 {
 	prog = prog.append(SDefer { action: SVar { x: 3 }, on_error: 0 });
 	let r: Acc = collect_list(prog, [], []);
 	return r.actions.len() * 10 + r.flags.len();
-}`, 2*10 + 2}, // two SDefers -> actions len 2, flags len 2 -> 22
+}`, 2*10 + 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))

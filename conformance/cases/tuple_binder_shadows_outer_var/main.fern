@@ -1,9 +1,9 @@
-// A match arm's pattern binder that shadows an OUTER local of the same
-// function. The IR keys a function's locals by name, so the shadow renamer
-// must give the binder a fresh name; a binder it does not rename shares the
-// outer variable's slot, and the arm's value is what the outer name reads
-// after the match (#8607: 61 where 21 was expected). Each shape contributes
-// one bit: 1 + 2 + 4 + 8 + 16 = 31.
+
+
+
+
+
+
 
 enum Box { Wrap(i32), Empty }
 enum Holder { Has(Option[i32]), Nothing }
@@ -16,7 +16,7 @@ function tag(b: Box): i32 {
     return 0;
 }
 
-// A tuple element binder shadows an i32.
+
 function flat_tuple(): i32 {
     let x: i32 = 1;
     let t: (i32, i32) = (5, 6);
@@ -27,7 +27,7 @@ function flat_tuple(): i32 {
     return x * 10 + inner;
 }
 
-// A tuple element binder shadows a string, whose slot holds a pointer.
+
 function string_elem(): i32 {
     let s: string = "ab";
     let t: (i32, string) = (5, "xyz");
@@ -38,7 +38,7 @@ function string_elem(): i32 {
     return n + s.len();
 }
 
-// A binder one level down in a nested tuple pattern.
+
 function nested_tuple(): i32 {
     let x: i32 = 1;
     let t: (i32, (i32, i32)) = (2, (5, 6));
@@ -49,7 +49,7 @@ function nested_tuple(): i32 {
     return x * 100 + inner;
 }
 
-// A payload sub-pattern's binder.
+
 function payload_subpattern(): i32 {
     let x: i32 = 1;
     let h: Holder = Has(Some(5));
@@ -61,8 +61,8 @@ function payload_subpattern(): i32 {
     return x * 10 + inner;
 }
 
-// The `@` whole-value binder, same type as the outer local so only the
-// slot sharing can tell them apart.
+
+
 function at_binding(): i32 {
     let n: Box = Empty;
     let b: Box = Wrap(5);

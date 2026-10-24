@@ -6,9 +6,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/ast"
 )
 
-// Error is a folding diagnostic with a position, a file and a stable code,
-// so the driver renders it with the same `file:line:col: error[Ennn]` header
-// and caret as a checker error.
 type Error struct {
 	Pos     ast.Position
 	Msg     string

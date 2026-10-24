@@ -5,21 +5,9 @@ import (
 	"testing"
 )
 
-// A tuple whose string element is a CALL to a fresh-string producer (#7374):
-// `let v: (i32, string) = (1, w("p"))` frees the string box AND the tuple box
-// at scope exit. Left unreleased, that was 600/0, 72 B/round unbounded.
-//
-// An aliased producer (`id(s) { return s; }` and every param/field return) must
-// never be released under its alias — the row below asserts that.
-//
-// Each case re-runs under FERN_SANITIZE=1 (identical exit, no over-release /
-// use-after-free).
-
 func tupleStrCallElemCases() []tupleAliasParamCase {
 	return []tupleAliasParamCase{
 		{
-			// The issue's repro verbatim: 200 rounds, balanced (allocs=600
-			// frees=0 live=14400 when the tuple was not released).
 			name: "inline_call_string_elem",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 { let v: (i32, string) = (1, w("p")); return v.1.len(); }
@@ -32,9 +20,6 @@ function main(): i32 {
 			want: 68,
 		},
 		{
-			// Freed-block-reuse net: same-size string churn between sweeps and
-			// a kept string read back by CONTENT at the end — a sweep that
-			// freed the wrong buffer surfaces here or in the sanitize leg.
 			name: "churn_read_back",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
@@ -54,9 +39,6 @@ function main(): i32 {
 			want: 17,
 		},
 		{
-			// The rebind flavour: every assignment rebuilds the same shape, so
-			// each assignment releases the tuple and string it supersedes and the
-			// scope exit releases the last.
 			name: "rebind_call_string_elem",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
@@ -74,9 +56,6 @@ function main(): i32 {
 			want: 11,
 		},
 		{
-			// A producer that returns its parameter: `id(q)` at the element
-			// aliases the live local `q`, so a release of the tuple under
-			// it would free q's box. The sanitize leg must stay silent.
 			name: "aliased_producer_refused",
 			src: `@noinline function id(s: string): string { return s; }
 function w(a: string): string { return a + "!"; }

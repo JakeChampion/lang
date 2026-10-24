@@ -10,12 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// `-emit command-module` is native's name for a WASI preview-1 command: the
-// core module plus a `_start` that runs main and exits with its value. The
-// self-host's core module is already that shape, so the spelling produces the
-// same bytes as `-emit core-module`, `wasmtime run` exits with main's value,
-// and the form is refused for the other wasm target, as native refuses it
-// (#11408). TestSelfHostCLIRefusesWasmBinaryOnStdout covers it without -o.
 func TestSelfHostEmitCommandModule(t *testing.T) {
 	cli := newStrictCLI(t)
 	wasmtime := e2eharness.Wasmtime(t)

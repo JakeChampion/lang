@@ -1,9 +1,9 @@
-// A value-position `match` whose arms are an enum PAYLOAD binding and a CALL.
-// The desugared IIFE's return-type tag is picked from the arms' syntax alone,
-// and neither shape names a width there, so the tag fell to i32 while the body
-// yielded i64 — and being non-empty it also stopped the return-type inference
-// revisiting the lambda. The binding's annotation is what supplies the width
-// (#6468).
+
+
+
+
+
+
 function widen(v: i64): i64 { return v; }
 
 function main(): i32 {

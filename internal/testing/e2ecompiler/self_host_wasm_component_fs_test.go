@@ -10,20 +10,6 @@ import (
 	"testing"
 )
 
-// The filesystem builtins past read_file / write_file build as wasm components
-// with the self-host CLI (#11110). Each program runs under wasmtime and prints
-// every answer, the error paths included, so an Err has to be the IoError
-// variant every other target gives, and each family's ok path has to land in
-// the files the program then reads back.
-//
-// The expected outputs are native's preview-2 component's, except where native
-// is wrong: it traps reading or writing a closed Reader or Writer, and its
-// remove_dir_all on a plain file leaves the file in place; x86-64 and the
-// interpreter answer as these cases do.
-
-// fsComponentPrelude names each IoError variant, prints a Result[void, _] as
-// `label ok` / `label <variant>`, and a line read as `label [line]`,
-// `label <at-eof>` or `label <variant>`.
 const fsComponentPrelude = `import "std/i64";
 import "std/i32";
 import "std/io";
@@ -55,8 +41,7 @@ function line(label: string, at_eof: string, r: Result[Option[string], IoError])
 
 var fsComponentCases = []struct {
 	name, src, want string
-	// noPreopen runs the component with no directory granted.
-	noPreopen bool
+	noPreopen       bool
 }{
 	{name: "readers and writers", src: `function main(): i32 {
     match (open_writer("f.txt")) {
@@ -370,8 +355,6 @@ write in temp ok
 remove temp ok
 temp_dir slash Other(Invalid argument)
 `},
-	// Twenty open Writers outgrow the handle table's first eight slots, and a
-	// closed fd is free for the next open.
 	{name: "many open handles", src: `function main(): i32 {
     let ws: Writer[] = [];
     let i: i32 = 0;
@@ -405,9 +388,6 @@ temp_dir slash Other(Invalid argument)
 reopened [file 3
 ]
 `},
-	// A host that preopens nothing leaves every path with nothing to resolve
-	// against: NotFound, except remove_dir_all, for which a missing path is
-	// already removed.
 	{name: "no preopen", noPreopen: true, src: `function main(): i32 {
     match (open_reader("f")) { Ok(_) => { print("open_reader ok"); }, Err(e) => { print("open_reader " + kind(e)); } }
     match (open_writer("f")) { Ok(_) => { print("open_writer ok"); }, Err(e) => { print("open_writer " + kind(e)); } }
@@ -453,10 +433,6 @@ truncate NotFound
 set_file_times NotFound
 temp_dir NotFound
 `},
-	// get-directories mints a fresh handle on every call, so asking it once per
-	// operation filled the host's resource table: the read_file loop below
-	// died with "resource table has no free keys" before the preopen was
-	// cached.
 	{name: "preopen fetched once", src: `function main(): i32 {
     unit("write", write_file("x.txt", "hello"));
     let i: i32 = 0;

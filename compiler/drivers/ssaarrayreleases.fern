@@ -27,7 +27,6 @@ function array_change(s: string, from: string, to: string): string {
 }
 
 function paths(s: string): void {
-  // Count-one success alone cannot rescue corrupted guard/shared/zero paths.
   for from in ["jb .Larrdec_ret", "subl $1, %ecx", "incl __fern_rc_underflow(%rip)"] {
     let broken = array_change(s, from, "");
     require(small.check(broken) && large.check(broken), "count-one remains valid: " + from);

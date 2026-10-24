@@ -1,3 +1,4 @@
+// CI-DARK: FERN_CONTAINER_SINK_DUMP — This flag regenerates the reference data.
 package e2ecompiler
 
 import (
@@ -11,39 +12,15 @@ import (
 	"github.com/jakechampion/lang/internal/envflag"
 )
 
-// --- The container-sink matrix -----------------------------------------------
-//
-// The other half of the construction-retain map. That one enumerates struct
-// LITERAL FIELD kinds; this one enumerates the CONTAINER positions a whole
-// struct BOX can be stored into — an array-literal element, an `append` or
-// `with` argument, a tuple element, a variant payload, an Option payload — x
-// what the source local does afterwards.
-//
-// The axis that matters is the second one. A store at the source's LAST USE is
-// a MOVE: the container takes the one reference and the source's release is
-// elided, which every position has always handled. A source that stays LIVE (or
-// is REBOUND) makes the store a counted SHARE, and that is what needs the
-// store's retain and an rc-gated release on both owners. A position whose
-// release protocol is unfinished must leak rather than dangle, and the pinned
-// cell says so.
-//
-// Exit codes must match between the compilers on every cell and the underflow
-// guard fails hard on either side: an over-release is a bug in any cell, listed
-// or not. x86-64 only — the comparison is between compilers, not targets.
-
 type csmCell struct {
 	name string
 	src  string
 }
 
-// csmDecls is shared by every cell: a struct with an rc-tracked array field (so
-// the release is a real field walk, not just a box dec) and an enum wrapping it.
 const csmDecls = `struct P { xs: i32[], k: i32 }
 enum E { A(P), B }
 `
 
-// csmMain: 100 rounds, checksum, underflow guard — the construction matrix's
-// driver, so a cell's exit code is comparable across both maps.
 const csmMain = `
 function main(): i32 {
     let t: i32 = 0;
@@ -54,8 +31,6 @@ function main(): i32 {
 }
 `
 
-// csmPosition is one container position: the statements that store `p` into it,
-// and an i32 expression that reads the container back.
 type csmPosition struct {
 	name  string
 	store string
@@ -70,28 +45,16 @@ var csmPositions = []csmPosition{
     out = out.with(0, p);`, `out.len() + out[0].k`},
 	{"tuple", `let tp: (i32, P) = (i, p);`, `tp.0 + tp.1.k`},
 	{"variant", `let e: E = E.A(p);`, `(match (e) { E.A(q) => q.k, E.B => 0 })`},
-	// The UNQUALIFIED ctor spelling, pinned separately: `A(p)` and `E.A(p)`
-	// must count the stored box the same way.
 	{"variant_unqual", `let e: E = A(p);`, `(match (e) { E.A(q) => q.k, E.B => 0 })`},
 	{"option", `let o: Option[P] = Some(p);`, `(match (o) { Some(q) => q.k, None => 0 })`},
-	// The SAME store read back through a match STATEMENT rather than a match
-	// EXPRESSION. The spelling is not cosmetic here: the Option credit is granted
-	// by a consuming-match analysis that scans for a StmtMatch, and a match inside
-	// a `return` is a StmtReturn, so the two cells above measure "no credit at
-	// all" and can never show whether the payload STORE is counted. These cells
-	// isolate that axis; the pair above stays pinned as the separate, wider gap.
 	{"option_stmt", `let o: Option[P] = Some(p);
     let n: i32 = 0;
     match (o) { Some(q) => { n = q.k; }, None => { n = 0; } }`, `n`},
-	// `Ok` is the same construction under the Result spelling. Pinned separately
-	// for the reason variant_unqual is: two spellings of one shape drifted apart
-	// unnoticed once already, and only a cell per spelling catches that.
 	{"result_stmt", `let o: Result[P, i32] = Ok(p);
     let n: i32 = 0;
     match (o) { Ok(q) => { n = q.k; }, Err(e) => { n = 0; } }`, `n`},
 }
 
-// csmRound wraps a body + read expression in the shared round/main driver.
 func csmRound(body, read string) string {
 	return csmDecls + "\nfunction round(i: i32): i32 {\n" + body +
 		"    return " + read + ";\n}\n" + csmMain
@@ -101,14 +64,9 @@ func containerSinkCells() []csmCell {
 	var cells []csmCell
 	for _, pos := range csmPositions {
 		body := "    let p: P = P { xs: [i, i + 1], k: i };\n    " + pos.store + "\n"
-		// moved: the store is p's last mention, so it TRANSFERS the reference.
 		cells = append(cells, csmCell{pos.name + "__moved", csmRound(body, pos.read)})
-		// live: p's own field is read afterwards, so the store is a counted SHARE
-		// and both owners must release under the rc gate.
 		cells = append(cells, csmCell{pos.name + "__live", csmRound(body, pos.read+" + p.xs[0]")})
 	}
-	// rebound: the source is superseded between two stores, so the first store
-	// is a share whose release the rebind owes and the second is a move.
 	cells = append(cells, csmCell{"arrlit__rebound", csmRound(
 		`    let p: P = P { xs: [i, i + 1], k: i };
     let a: P[] = [p];
@@ -122,8 +80,6 @@ func containerSinkCells() []csmCell {
     p = P { xs: [i + 2, i + 3], k: i + 1 };
     out = out.append(p);
 `, "out.len() + out[0].k + out[1].xs[0]")})
-	// blockscoped: retire_locals renames the source at block exit, which is the
-	// axis deciding which credit predicate the retain must read.
 	cells = append(cells, csmCell{"append__blockscoped", csmRound(
 		`    let out: P[] = [];
     let j: i32 = 0;
@@ -164,9 +120,6 @@ func loadContainerSinkMatrix(t *testing.T) map[string][2]leakVerdict {
 }
 
 func TestSelfHostContainerSinkMatrixX86_64(t *testing.T) {
-	// CI-DARK: FERN_CONTAINER_SINK_DUMP — a regeneration tool, not coverage: it
-	// prints measured matrix-file lines INSTEAD of comparing, so a lane setting
-	// it would disable this gate. The compare path below is the CI behaviour.
 	dump := envflag.On("FERN_CONTAINER_SINK_DUMP")
 	var known map[string][2]leakVerdict
 	if !dump {

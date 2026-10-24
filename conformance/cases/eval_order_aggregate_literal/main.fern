@@ -1,26 +1,26 @@
 // spec: AL-06
-//
-// When an aggregate literal's box is bought. Every aggregate in Fern is an
-// implicit heap allocation, and `__heap_alloc_count()` makes the moment it
-// happens observable from inside the literal itself: a field expression that
-// reads the counter reports one more allocation if the box was already bought
-// and the same number if it was not.
-//
-// Fern buys the box LAST — a value's parts exist before the value does, which
-// is the order every other allocating expression here already follows. Native
-// used to buy it first and the self-host last, so the two compilers printed
-// different numbers for the same source (#9614).
-//
-// The case prints the ORDER, never a count: how many allocator calls a
-// construct costs is a legitimate per-backend difference and only the order is
-// portable. See docs/ALLOCATION-OBSERVABLE.md.
-//
-// `order_of` reports "no box" rather than an order when the literal did not
-// allocate at all, so a backend that stops boxing fails here instead of
-// passing for a reason the case is not about. That is why only the struct and
-// the array appear: a small tuple or single-payload variant is returned in
-// registers in some contexts and has no box to time. The struct is read through a call, since one only ever read field by field is
-// taken apart rather than boxed.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import "std/i64";
 import "std/string";
 

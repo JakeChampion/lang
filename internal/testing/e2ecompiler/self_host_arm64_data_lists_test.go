@@ -2,11 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// A data directive reserves or lays down EVERY value it lists, whatever its
-// width and section. TestSelfHostArm64BssValueList pins .bss `.quad`,
-// `.word` and `.4byte` lists (#11377); this pins the other widths in .bss,
-// where `.long` and `.double` reserved nothing, and value lists in data,
-// where only the first value was laid down.
 const arm64DataListsProgram = `
 function main(): i32 {
     let bss = arm64_gas_program(".bss\nls: .long 0, 0, 0\nds: .double 0, 0\nbs: .byte 0, 0\nend: .skip 1\n");

@@ -9,9 +9,6 @@ import (
 	"testing"
 )
 
-// The parsing rules behind `args()`: one leading `--` is the driver/program
-// separator and disappears, later `--` are data, and a flag written past FILE
-// is refused instead of silently becoming a program argument (#8465).
 func TestProgramArgs(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -56,9 +53,6 @@ func TestProgramArgs(t *testing.T) {
 	}
 }
 
-// A flag after FILE must not look like a successful run: `fern FILE -o out`
-// used to print assembly to stdout and exit 0, producing no file and no
-// complaint (#8465).
 func TestFlagAfterFileExitsNonZero(t *testing.T) {
 	bin := buildFernForStdoutTest(t)
 	dir := t.TempDir()
@@ -97,8 +91,6 @@ func TestFlagAfterFileExitsNonZero(t *testing.T) {
 	}
 }
 
-// -tangle, -weave and -doctest read one document; a flag after it would be
-// dropped unparsed, so it is named in the refusal instead.
 func TestDocumentArgsError(t *testing.T) {
 	got := documentArgsError([]string{"prog.fern.md", "-o", "out.fern"})
 	for _, want := range []string{"-o comes after the document", "before prog.fern.md"} {

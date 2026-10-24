@@ -4,8 +4,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostOptAarrReclaimIRArm64 runs the shared Option-array reclaim
-// cases on ARM64, exercising the typed release pipeline.
 func TestSelfHostOptAarrReclaimIRArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range optAarrReclaimCases {

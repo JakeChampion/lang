@@ -8,14 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostMvsRules exercises the self-host's Minimum Version Selection
-// (compiler/mvs.fern, #6640) — the port of native's internal/pkg/mvs,
-// and the first slice of the package-manager surface.
-//
-// The driver restates each internal/pkg/mvs test: the same index, the same
-// demands, the same expected selection or the same error text. Exit 0 means
-// every assertion held; a non-zero code identifies the case, so a regression
-// names itself without a stdout diff.
 func TestSelfHostMvsRules(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -38,11 +30,6 @@ func TestSelfHostMvsRules(t *testing.T) {
 	}
 }
 
-// writeResolveProject lays out a project for `-resolve`: a root manifest, the
-// version index it names, and one directory per indexed package version
-// carrying that version's own manifest. Every path in the index is relative
-// to the index file, so the tree is relocatable and the two compilers are
-// compared on trees that differ only in their root.
 func writeResolveProject(t *testing.T, dir string, files map[string]string) {
 	t.Helper()
 	for rel, src := range files {
@@ -56,16 +43,6 @@ func writeResolveProject(t *testing.T, dir string, files map[string]string) {
 	}
 }
 
-// TestSelfHostResolveDifferentialX86_64 is the parity gate for `-resolve`:
-// for the same project, native and the self-host must pin the same versions
-// from the same sources, or refuse it for the same reason.
-//
-// This is the divergence shape that blocks "the self-host is the only
-// compiler" — the lock file is what every later build reads, so two compilers
-// resolving differently is two different programs from one source tree. The
-// lock bytes are compared exactly, with the project root normalised away
-// (each compiler runs over its own copy, and the lock records absolute
-// directories).
 func TestSelfHostResolveDifferentialX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -99,22 +76,11 @@ func TestSelfHostResolveDifferentialX86_64(t *testing.T) {
 		manifest string
 		wantOK   bool
 	}{
-		// MVS keeps the max of the minimums: foo@1.1.0 requires bar>=2.0.0,
-		// so the root's bar>=1.0.0 is raised. The `.`/`..` segments in the
-		// index paths are resolved the same way by both, which is what the
-		// lock comparison pins.
 		{"max-of-mins", "[package]\nname = \"app\"\nindex = \"index.toml\"\n\n[dependencies]\nfoo = \"1.1.0\"\nbar = \"1.0.0\"\n", true},
-		// A top-level exclude rounds the demand up to the next higher
-		// non-excluded indexed version.
 		{"exclude-rounds-up", "[package]\nname = \"app\"\nindex = \"index.toml\"\n\n[dependencies]\nbar = \"1.0.0\"\n\n[exclude]\nbar = [\"1.0.0\", \"1.9.0\"]\n", true},
-		// A demanded version absent from the index is a precise refusal,
-		// never a silent round-up.
 		{"absent-version", "[package]\nname = \"app\"\nindex = \"index.toml\"\n\n[dependencies]\nfoo = \"1.2.0\"\n", false},
-		// Excluding every version at or above the demand is a refusal too.
 		{"exclude-exhausted", "[package]\nname = \"app\"\nindex = \"index.toml\"\n\n[dependencies]\nfoo = \"1.1.0\"\n\n[exclude]\nfoo = [\"1.1.0\"]\n", false},
-		// Versioned dependencies with no index to resolve them against.
 		{"no-index", "[package]\nname = \"app\"\n\n[dependencies]\nfoo = \"1.0.0\"\n", false},
-		// Nothing to resolve is a refusal, not an empty lock.
 		{"no-version-deps", "[package]\nname = \"app\"\nindex = \"index.toml\"\n", false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -141,9 +107,6 @@ func TestSelfHostResolveDifferentialX86_64(t *testing.T) {
 				t.Fatalf("native resolved = %v, self-host resolved = %v\n--- native ---\n%s\n--- self-host ---\n%s",
 					nativeOK, shOK, nativeOut, shOut)
 			}
-			// The message is compared for the refusals too: which dependency
-			// is at fault, and why, is the whole content of a failed
-			// resolution, and both compilers claim to say the same thing.
 			if want, got := strings.ReplaceAll(string(nativeOut), nativeDir, "<ROOT>"),
 				strings.ReplaceAll(string(shOut), selfDir, "<ROOT>"); want != got {
 				t.Errorf("resolve output differs:\n--- native ---\n%s\n--- self-host ---\n%s", want, got)

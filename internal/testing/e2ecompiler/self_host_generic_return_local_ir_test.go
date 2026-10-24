@@ -2,13 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// genericReturnLocalCases match a generic enum value that came back through a
-// generic function whose return type names its type parameters. The enum pass
-// has to bind those parameters from the call's arguments to type the match,
-// whether the call is the scrutinee itself, the initialiser of a local, a
-// for-loop iterable, nested, or reached through a tuple element (#10330). Each
-// exit code is the native interpreter's. A regression is reported first by the
-// typed lowering (`unknown variant`).
 var genericReturnLocalCases = []struct {
 	name     string
 	src      string

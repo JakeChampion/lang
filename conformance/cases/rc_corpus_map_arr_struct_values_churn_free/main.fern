@@ -1,12 +1,12 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Map with ARRAY-OF-STRUCT values (Map[K, Item[]]). The value
-// array's buffer was freed (kind 3 drop_arr_ptr), but its Item
-// boxes + their xs buffers leaked. The value now deep-drops via
-// __drop_map_via___drop_arr_struct_Item → __drop_arr_struct_Item →
-// __drop_struct_Item per element. Churned 200x. vs[0].xs[1] =
-// seed+1; sum_{0..199}(k+1) = 20100.
+
+
+
+
+
+
+
+
+
 import "core/int";
 import "core/map";
 struct Item { xs: i32[] }

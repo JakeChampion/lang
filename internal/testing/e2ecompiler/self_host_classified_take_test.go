@@ -5,12 +5,6 @@ import (
 	"testing"
 )
 
-// soleReleaseSrc's `depth` takes both children of a node it does not rebuild,
-// so the donor dies by its release. On the arm its one uniqueness test read as
-// unique the release is the free alone (`__fn___fern_arr_dec.u`): the count
-// read at the first take still holds there, so the death reads no count
-// (#11944). main runs it on a tree a snapshot shares, on the snapshot at its
-// last use, and on a fresh tree.
 const soleReleaseSrc = `enum Tree { Leaf, Node(Tree, i32, Tree) }
 
 @noinline
@@ -74,10 +68,6 @@ function main(): i32 {
   return bad;
 }`
 
-// soleReleaseShape checks depth's emitted text: the donor is classified once,
-// its sole death is the helper's free entry, and no release ladder reads its
-// count (`_rcdecd<N>` is the ladder's decrement label on both register
-// backends).
 func soleReleaseShape(t *testing.T, body, call string) {
 	t.Helper()
 	if got := rcIsUniqueSites(body); got != 1 {
@@ -127,11 +117,6 @@ func TestSelfHostSoleReleaseWasm(t *testing.T) {
 	}
 }
 
-// classifiedShapeSrc's `ins` takes both children of a node it rebuilds in a
-// later block, and `bump` rebuilds the node's own variant in the block that
-// takes them. Each reads its donor's uniqueness once: before, every take
-// tested the donor again and its death a third time. main runs both on a
-// unique tree and on one a snapshot holds.
 const classifiedShapeSrc = `enum Tree { Leaf, Node(Tree, i32, Tree) }
 
 @noinline
@@ -211,8 +196,6 @@ function main(): i32 {
   return bad;
 }`
 
-// fnText is the emitted text of function `name`, both entries, up to the
-// next function's label.
 func fnText(t *testing.T, asm, name string) string {
 	t.Helper()
 	start := strings.Index(asm, "\n__fn_"+name+":")

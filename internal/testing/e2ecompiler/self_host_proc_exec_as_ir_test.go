@@ -6,19 +6,6 @@ import (
 	"testing"
 )
 
-// procExecAsPrograms pin `proc_exec_as(path, argv, envp)` on the self-host IR
-// path (#9090). Each row carries its expected exit code rather than asking the
-// interpreter: its exec answers -ENOSYS, so it cannot judge a real execve.
-//
-//   - argv0-and-envp: `sh -c SCRIPT` with no command_name operand takes $0 from
-//     the shell's own argv[0], so the script reads back slot 0 exactly as the
-//     caller wrote it. FERNX is in no parent environment and HOME is in every
-//     one, so the pair proves the caller's envp REPLACED the process's rather
-//     than adding to it. (PATH is not asserted on: `sh` invents a default for
-//     that one when handed an environment without it.)
-//   - failure-and-empty-envp: a failing execve RETURNS, as -errno, and an empty
-//     envp is a well-formed vector — the NULL terminator alone — not a missing
-//     one.
 var procExecAsPrograms = []struct {
 	name string
 	src  string
@@ -55,10 +42,6 @@ var procExecAsPrograms = []struct {
 	},
 }
 
-// The x86-64 leg. The program has to route through the IR path rather than
-// bail, and the emitted asm has to carry the Fern runtime helper — a call to a
-// symbol nothing defines assembles and links against nothing, which is what a
-// missing `need` looks like.
 func TestSelfHostProcExecAsIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -91,9 +74,6 @@ func TestSelfHostProcExecAsIRX86_64(t *testing.T) {
 	}
 }
 
-// The arm64 half. The helper is Fern (#2649), so the stack-ABI prefix is what
-// distinguishes it: the syscall number arrives as a pushed operand popped into
-// x8, hence `mov x0, #221` rather than `mov x8, #221`.
 func TestSelfHostProcExecAsIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -122,11 +102,6 @@ func TestSelfHostProcExecAsIRArm64(t *testing.T) {
 	}
 }
 
-// The wasm half is a refusal. A component is one instance with no process image
-// to replace, so this is an error ENDPOINT like proc_exec's rather than a
-// deferral — deferring it emits a call against nothing and surfaces as an
-// opaque `unknown func` from the loader instead of a diagnostic naming the
-// feature.
 func TestSelfHostProcExecAsWasmRejected(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

@@ -10,20 +10,6 @@ import (
 	"testing"
 )
 
-// `fern -lsp`'s references, rename (compiler/lsprefs.fern), semantic tokens
-// (compiler/lsptokens.fern) and code actions (lsp.fern's code_actions, from
-// the fixes the checker attaches to its diagnostics), with the answers written
-// out as data: a declaration is placed on its name, and a request on a
-// declaration's name answers as one on a use; a local is the binding a name
-// reads, not every like-named local of the function, and a parameter's
-// declaration is one of its places; includeDeclaration is honoured; a rename
-// to a name that is not an identifier, or of something with no declaration or
-// declared in the stdlib, is refused; semantic tokens classify declarations
-// and leave out what they cannot classify; and a code action names its
-// diagnostic as the client sent it.
-
-// refPlace is a place a references or rename answer names: a file of the
-// tree, relative to it, and a range in it.
 type refPlace struct {
 	file string
 	at   lspRange
@@ -48,7 +34,6 @@ func sortedPlaces(ps []refPlace) []refPlace {
 	return out
 }
 
-// relFile is the file a URI names, relative to dir.
 func relFile(t *testing.T, dir, uri string) string {
 	t.Helper()
 	prefix := fileURI(dir) + "/"
@@ -58,8 +43,6 @@ func relFile(t *testing.T, dir, uri string) string {
 	return strings.TrimPrefix(uri, prefix)
 }
 
-// refsProbe asks for the references to the name at line, char of doc and
-// wants `want`, in any order.
 func refsProbe(dir, name, doc string, line, char int, withDecl bool, want ...refPlace) lspProbe {
 	params := at(line, char)
 	params["context"] = lspMsg{"includeDeclaration": withDecl}
@@ -79,8 +62,6 @@ func refsProbe(dir, name, doc string, line, char int, withDecl bool, want ...ref
 	}}
 }
 
-// renameProbe renames the name at line, char of doc to newName and wants an
-// edit replacing each of `want` with it, or, with none, null.
 func renameProbe(dir, name, doc string, line, char int, newName string, want ...refPlace) lspProbe {
 	params := at(line, char)
 	params["newName"] = newName
@@ -110,55 +91,41 @@ func renameProbe(dir, name, doc string, line, char int, newName string, want ...
 	}}
 }
 
-// TestSelfHostLSPReferencesX86_64 holds references and rename on locals,
-// functions, methods, fields and variants, a blank spot, a declaration's own
-// name, includeDeclaration, a parameter, shadowing, a local
-// shadowing a function, a built-in variant, non-ASCII before a name, a
-// literate document, and the renames that are refused.
 func TestSelfHostLSPReferencesX86_64(t *testing.T) {
 	s := buildLSPServers(t)
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{
-		"local.fern":   "function main(): i32 {\n  let x = 1;\n  return x + x;\n}\n",
-		"top.fern":     "function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(1, add(2, 3)); }\n",
-		"blank.fern":   "function main(): i32 { return 0; }\n",
-		"plus.fern":    "function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(1, 2); }\n",
-		"method.fern":  "struct Point { x: i32, y: i32 }\nfunction (p: Point) sum(): i32 { return p.x + p.y; }\nfunction main(): i32 {\n  let p: Point = Point { x: 1, y: 2 };\n  return p.sum();\n}\n",
-		"field.fern":   "struct Point { x: i32, y: i32 }\nfunction main(): i32 {\n  let p: Point = Point { x: 3, y: 4 };\n  return p.x;\n}\n",
-		"variant.fern": "enum Color { Red, Green, Blue }\nfunction main(): i32 {\n  let c: Color = Red;\n  match (c) { Red => { return 1; }, _ => { return 0; } }\n}\n",
-		"shadow.fern":  "function main(): i32 {\n  let x: i32 = 1;\n  if (x > 0) {\n    let x: i32 = 2;\n    return x;\n  }\n  return x;\n}\n",
-		"global.fern":  "function f(): i32 { return 1; }\nfunction main(): i32 {\n  let f: i32 = 2;\n  return f;\n}\nfunction g(): i32 { return f(); }\n",
-		"opt.fern":     "function main(): i32 {\n  let o: Option[i32] = Some(1);\n  match (o) { Some(n) => { return n; }, None => { return 0; } }\n}\n",
-		"std.fern":     "import \"std/string\";\nfunction main(): i32 {\n  let r: string = string.repeat_char(1 as char, 2);\n  return r.len();\n}\n",
-		"utf.fern":     "function main(): i32 {\n  let s: string = \"é😀\"; let count: i32 = 1;\n  return count + 1;\n}\n",
-		// A variant at every depth of a pattern: a nested match arm, a match
-		// expression, a nested `if let` and `let … else`, and constructions.
-		"nest.fern": "enum Shape { Circle(i32), Square(i32) }\nstruct Box { s: Shape }\nfunction area(o: Option[Shape]): i32 {\n  match (o) {\n    Some(Circle(r)) => { return r; },\n    Some(Square(w)) => { return w * w; },\n    None => { return 0; }\n  }\n}\nfunction pair(a: Shape, b: Shape): i32 {\n  let n: i32 = match (a) { Circle(r) => r, _ => 0 };\n  if let Some(Circle(q)) = Some(b) {\n    return q + n;\n  }\n  let Some(Square(z)) = Some(a) else { return 1; };\n  return z;\n}\nfunction main(): i32 {\n  return area(Some(Circle(2))) + pair(Shape.Circle(1), Square(2));\n}\n",
-		// A chunk referenced two columns in, so its columns move.
+		"local.fern":     "function main(): i32 {\n  let x = 1;\n  return x + x;\n}\n",
+		"top.fern":       "function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(1, add(2, 3)); }\n",
+		"blank.fern":     "function main(): i32 { return 0; }\n",
+		"plus.fern":      "function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(1, 2); }\n",
+		"method.fern":    "struct Point { x: i32, y: i32 }\nfunction (p: Point) sum(): i32 { return p.x + p.y; }\nfunction main(): i32 {\n  let p: Point = Point { x: 1, y: 2 };\n  return p.sum();\n}\n",
+		"field.fern":     "struct Point { x: i32, y: i32 }\nfunction main(): i32 {\n  let p: Point = Point { x: 3, y: 4 };\n  return p.x;\n}\n",
+		"variant.fern":   "enum Color { Red, Green, Blue }\nfunction main(): i32 {\n  let c: Color = Red;\n  match (c) { Red => { return 1; }, _ => { return 0; } }\n}\n",
+		"shadow.fern":    "function main(): i32 {\n  let x: i32 = 1;\n  if (x > 0) {\n    let x: i32 = 2;\n    return x;\n  }\n  return x;\n}\n",
+		"global.fern":    "function f(): i32 { return 1; }\nfunction main(): i32 {\n  let f: i32 = 2;\n  return f;\n}\nfunction g(): i32 { return f(); }\n",
+		"opt.fern":       "function main(): i32 {\n  let o: Option[i32] = Some(1);\n  match (o) { Some(n) => { return n; }, None => { return 0; } }\n}\n",
+		"std.fern":       "import \"std/string\";\nfunction main(): i32 {\n  let r: string = string.repeat_char(1 as char, 2);\n  return r.len();\n}\n",
+		"utf.fern":       "function main(): i32 {\n  let s: string = \"é😀\"; let count: i32 = 1;\n  return count + 1;\n}\n",
+		"nest.fern":      "enum Shape { Circle(i32), Square(i32) }\nstruct Box { s: Shape }\nfunction area(o: Option[Shape]): i32 {\n  match (o) {\n    Some(Circle(r)) => { return r; },\n    Some(Square(w)) => { return w * w; },\n    None => { return 0; }\n  }\n}\nfunction pair(a: Shape, b: Shape): i32 {\n  let n: i32 = match (a) { Circle(r) => r, _ => 0 };\n  if let Some(Circle(q)) = Some(b) {\n    return q + n;\n  }\n  let Some(Square(z)) = Some(a) else { return 1; };\n  return z;\n}\nfunction main(): i32 {\n  return area(Some(Circle(2))) + pair(Shape.Circle(1), Square(2));\n}\n",
 		"chunks.fern.md": "# Doc\n\n```fern\n<<*>>=\nfunction helper(n: i32): i32 { return n + 1; }\nfunction main(): i32 {\n  <<body>>\n}\n```\n\nThe body.\n\n```fern\n<<body>>=\nlet v: i32 = helper(41);\nreturn v;\n```\n",
 	})
 	open := []string{"local.fern", "top.fern", "blank.fern", "plus.fern", "method.fern", "field.fern", "variant.fern", "shadow.fern", "global.fern", "opt.fern", "std.fern", "utf.fern", "nest.fern", "chunks.fern.md"}
 	probeLSP(t, s, dir, open, []lspProbe{
-		// A local: the declaration and both uses.
 		refsProbe(dir, "local-var", "local.fern", 2, 9, true, place("local.fern", 1, 6, 7), place("local.fern", 2, 9, 10), place("local.fern", 2, 13, 14)),
-		// A function: the declaration, at its name, and both calls.
 		refsProbe(dir, "top-level-function", "top.fern", 1, 31, true, place("top.fern", 0, 9, 12), place("top.fern", 1, 30, 33), place("top.fern", 1, 37, 40)),
-		// Nothing on a literal or a keyword.
 		refsProbe(dir, "none-on-a-literal", "blank.fern", 0, 30, true),
 		refsProbe(dir, "none-on-a-keyword", "blank.fern", 0, 25, true),
 		refsProbe(dir, "from-the-declaration", "top.fern", 0, 10, true, place("top.fern", 0, 9, 12), place("top.fern", 1, 30, 33), place("top.fern", 1, 37, 40)),
 		refsProbe(dir, "without-the-declaration", "top.fern", 1, 31, false, place("top.fern", 1, 30, 33), place("top.fern", 1, 37, 40)),
 		refsProbe(dir, "parameter", "top.fern", 0, 13, true, place("top.fern", 0, 13, 14), place("top.fern", 0, 43, 44)),
-		// Each binding of a shadowed name has only its own places.
 		refsProbe(dir, "outer-binding", "shadow.fern", 6, 9, true, place("shadow.fern", 1, 6, 7), place("shadow.fern", 2, 6, 7), place("shadow.fern", 6, 9, 10)),
 		refsProbe(dir, "inner-binding", "shadow.fern", 4, 11, true, place("shadow.fern", 3, 8, 9), place("shadow.fern", 4, 11, 12)),
 		refsProbe(dir, "function-not-the-local-shadowing-it", "global.fern", 0, 9, true, place("global.fern", 0, 9, 10), place("global.fern", 5, 27, 28)),
-		// Option's variants have no declaration to place.
 		refsProbe(dir, "built-in-variant", "opt.fern", 1, 24, true, place("opt.fern", 1, 23, 27), place("opt.fern", 2, 14, 18)),
 		refsProbe(dir, "arm-binding", "opt.fern", 2, 19, true, place("opt.fern", 2, 19, 20), place("opt.fern", 2, 34, 35)),
 		refsProbe(dir, "non-ascii-before", "utf.fern", 2, 10, true, place("utf.fern", 1, 29, 34), place("utf.fern", 2, 9, 14)),
 		refsProbe(dir, "literate", "chunks.fern.md", 14, 14, true, place("chunks.fern.md", 4, 9, 15), place("chunks.fern.md", 14, 13, 19)),
-		// A variant wherever a pattern names it, nested ones included.
 		refsProbe(dir, "variant-in-nested-patterns", "nest.fern", 0, 14, true,
 			place("nest.fern", 0, 13, 19), place("nest.fern", 4, 9, 15), place("nest.fern", 10, 27, 33), place("nest.fern", 11, 14, 20), place("nest.fern", 18, 19, 25), place("nest.fern", 18, 44, 50)),
 		refsProbe(dir, "from-a-nested-pattern", "nest.fern", 4, 10, true,
@@ -167,19 +134,14 @@ func TestSelfHostLSPReferencesX86_64(t *testing.T) {
 		refsProbe(dir, "binding-in-a-nested-if-let", "nest.fern", 11, 21, true, place("nest.fern", 11, 21, 22), place("nest.fern", 12, 11, 12)),
 		renameProbe(dir, "local-var", "local.fern", 2, 9, "renamed", place("local.fern", 1, 6, 7), place("local.fern", 2, 9, 10), place("local.fern", 2, 13, 14)),
 		renameProbe(dir, "top-level-function", "plus.fern", 1, 31, "plus", place("plus.fern", 0, 9, 12), place("plus.fern", 1, 30, 33)),
-		// A method: the declaration and the call.
 		renameProbe(dir, "method-call", "method.fern", 4, 13, "total", place("method.fern", 1, 20, 23), place("method.fern", 4, 11, 14)),
-		// A field: the declaration, the literal's field and the access.
 		renameProbe(dir, "struct-field", "field.fern", 3, 11, "horiz", place("field.fern", 0, 15, 16), place("field.fern", 2, 25, 26), place("field.fern", 3, 11, 12)),
-		// A variant: the declaration, the literal and the arm.
 		renameProbe(dir, "enum-variant", "variant.fern", 2, 17, "Crimson", place("variant.fern", 0, 13, 16), place("variant.fern", 2, 17, 20), place("variant.fern", 3, 14, 17)),
 		renameProbe(dir, "struct-from-its-declaration", "method.fern", 0, 8, "Pt", place("method.fern", 0, 7, 12), place("method.fern", 1, 13, 18), place("method.fern", 3, 9, 14), place("method.fern", 3, 17, 22)),
 		renameProbe(dir, "literate", "chunks.fern.md", 15, 7, "w", place("chunks.fern.md", 14, 4, 5), place("chunks.fern.md", 15, 7, 8)),
 		renameProbe(dir, "non-ascii-before", "utf.fern", 1, 30, "total", place("utf.fern", 1, 29, 34), place("utf.fern", 2, 9, 14)),
 		renameProbe(dir, "variant-in-nested-patterns", "nest.fern", 11, 15, "Round",
 			place("nest.fern", 0, 13, 19), place("nest.fern", 4, 9, 15), place("nest.fern", 10, 27, 33), place("nest.fern", 11, 14, 20), place("nest.fern", 18, 19, 25), place("nest.fern", 18, 44, 50)),
-		// Refused: a keyword, a name that is not an identifier, no name, a
-		// variant with no declaration, and a function the stdlib declares.
 		renameProbe(dir, "to-a-keyword", "local.fern", 2, 9, "let"),
 		renameProbe(dir, "to-a-non-identifier", "local.fern", 2, 9, "9x"),
 		renameProbe(dir, "to-nothing", "local.fern", 2, 9, ""),
@@ -188,11 +150,6 @@ func TestSelfHostLSPReferencesX86_64(t *testing.T) {
 	})
 }
 
-// TestSelfHostLSPReferencesWorkspaceX86_64 is references across modules: a
-// variant's stay in its enum, a position is searched for only in the document
-// the request names, and every kind of name referred to from
-// another module — a type, a field, a function, a method, and a variant
-// written in a match arm, an `if let` and a construction.
 func TestSelfHostLSPReferencesWorkspaceX86_64(t *testing.T) {
 	s := buildLSPServers(t)
 	dir := t.TempDir()
@@ -222,11 +179,8 @@ func TestSelfHostLSPReferencesWorkspaceX86_64(t *testing.T) {
 			"}\n",
 	})
 	probeLSP(t, s, dir, []string{"main.fern", "a.fern", "b.fern", "use.fern"}, []lspProbe{
-		// Each file's `Text` is its own module's variant: its declaration
-		// and its use, in that file.
 		refsProbe(dir, "a-variant", "a.fern", 1, 33, true, place("a.fern", 0, 16, 20), place("a.fern", 1, 33, 37)),
 		refsProbe(dir, "b-variant", "b.fern", 1, 33, true, place("b.fern", 0, 16, 20), place("b.fern", 1, 33, 37)),
-		// main.fern's import line is shorter than a's `return Text;` line.
 		refsProbe(dir, "no-search-in-siblings", "main.fern", 1, 33, true),
 		refsProbe(dir, "imported-enum", "main.fern", 2, 33, true, place("a.fern", 0, 9, 13), place("a.fern", 1, 19, 23), place("main.fern", 2, 32, 36)),
 		refsProbe(dir, "imported-type", "use.fern", 10, 16, true,
@@ -248,7 +202,6 @@ func TestSelfHostLSPReferencesWorkspaceX86_64(t *testing.T) {
 	})
 }
 
-// semToken is a decoded semantic token: its position, length and type.
 type semToken struct {
 	line, char, len int
 	kind            string
@@ -260,11 +213,8 @@ func (s semToken) String() string {
 
 func tok(line, char, n int, kind string) semToken { return semToken{line, char, n, kind} }
 
-// semTypes is the legend the server advertises, in order.
 var semTypes = []string{"function", "method", "struct", "enum", "enumMember", "parameter", "variable", "property", "type", "keyword", "namespace"}
 
-// decodeSemantic undoes LSP's encoding: each token's line relative to the
-// one before, and its start relative to the one before on the same line.
 func decodeSemantic(t *testing.T, data []int) []semToken {
 	t.Helper()
 	if len(data)%5 != 0 {
@@ -301,11 +251,6 @@ func tokensProbe(name, doc string, want ...semToken) lspProbe {
 	}}
 }
 
-// TestSelfHostLSPSemanticTokensX86_64 holds semantic tokens, every token
-// written out: the legend, a simple program and its encoding, every token type
-// there is, a workspace's entry and only it, non-ASCII before a name, and a
-// literate document. Each declared name, parameter and binding is classified,
-// and what cannot be classified is left out.
 func TestSelfHostLSPSemanticTokensX86_64(t *testing.T) {
 	s := buildLSPServers(t)
 
@@ -355,8 +300,6 @@ func TestSelfHostLSPSemanticTokensX86_64(t *testing.T) {
 		"chunks.fern.md": "# Doc\n\n```fern\n<<*>>=\nfunction helper(n: i32): i32 { return n + 1; }\nfunction main(): i32 {\n  <<body>>\n}\n```\n\nThe body.\n\n```fern\n<<body>>=\nlet v: i32 = helper(41);\nreturn v;\n```\n",
 	})
 	probeLSP(t, s, dir, []string{"simple.fern", "kinds.fern", "main.fern", "utf.fern", "nest.fern", "chunks.fern.md"}, []lspProbe{
-		// Every token after the first on its line is relative to the one
-		// before.
 		{name: "tokens/delta-encoded", method: "textDocument/semanticTokens/full", doc: "simple.fern", params: lspMsg{}, check: func(t *testing.T, result json.RawMessage) {
 			var r struct {
 				Data []int `json:"data"`
@@ -376,14 +319,9 @@ func TestSelfHostLSPSemanticTokensX86_64(t *testing.T) {
 			tok(6, 6, 1, "variable"), tok(6, 9, 5, "struct"), tok(6, 17, 5, "struct"), tok(6, 25, 1, "property"),
 			tok(7, 6, 1, "variable"), tok(7, 9, 5, "enum"), tok(7, 17, 5, "enum"), tok(7, 23, 3, "enumMember"),
 			tok(8, 9, 1, "variable"), tok(8, 14, 3, "enumMember"), tok(8, 30, 1, "variable"), tok(8, 32, 3, "method"), tok(8, 40, 5, "function"), tok(8, 69, 3, "namespace"), tok(8, 73, 3, "function")),
-		// SemanticTokensCoverOnlyTheRequestedFile: a and b, which main.fern
-		// imports, carry names on lines 1 and 2 that must not be emitted.
 		tokensProbe("only-the-requested-file", "main.fern",
 			tok(2, 9, 4, "function"), tok(2, 27, 1, "variable"), tok(2, 30, 1, "namespace"), tok(2, 32, 4, "enum"), tok(2, 39, 1, "namespace"), tok(2, 41, 2, "function"),
 			tok(2, 51, 1, "variable"), tok(2, 54, 1, "namespace"), tok(2, 56, 4, "enum"), tok(2, 63, 1, "namespace"), tok(2, 65, 2, "function")),
-		// é is one UTF-16 unit and 😀 two, so `count` starts at 29, not at its
-		// byte offset 32.
-		// A variant inside a nested pattern is a variant too.
 		tokensProbe("nested-pattern", "nest.fern",
 			tok(0, 5, 5, "enum"), tok(0, 13, 6, "enumMember"), tok(0, 26, 6, "enumMember"),
 			tok(1, 9, 1, "function"), tok(1, 11, 1, "parameter"), tok(1, 14, 6, "enum"), tok(1, 21, 5, "enum"),
@@ -395,15 +333,12 @@ func TestSelfHostLSPSemanticTokensX86_64(t *testing.T) {
 	})
 }
 
-// lspFix is a diagnostic's data: the fix a code action applies.
 type lspFix struct {
 	Range   lspRange `json:"range"`
 	NewText string   `json:"newText"`
 	Title   string   `json:"title"`
 }
 
-// fixedDiags opens each of files in dir in one server and returns what it
-// published for each, every diagnostic as the raw JSON a client echoes.
 func fixedDiags(t *testing.T, s lspServers, dir string, files []string) map[string][]json.RawMessage {
 	t.Helper()
 	var msgs []lspMsg
@@ -431,7 +366,6 @@ func fixedDiags(t *testing.T, s lspServers, dir string, files []string) map[stri
 	return out
 }
 
-// fixOf is the fix diagnostic `d` carries, if any.
 func fixOf(t *testing.T, d json.RawMessage) (lspFix, bool) {
 	t.Helper()
 	var v struct {
@@ -446,15 +380,6 @@ func fixOf(t *testing.T, d json.RawMessage) (lspFix, bool) {
 	return *v.Data, true
 }
 
-// TestSelfHostLSPCodeActionX86_64 holds code actions: a fix a diagnostic
-// carries in its data comes back as a quick fix whose edit corrects the
-// program, and a diagnostic with none gives none. It covers each
-// diagnostic the checker attaches a fix to — a misspelt name read, called or
-// assigned, a retired name, a misspelt field of a literal, and a misspelt
-// field or method of an access — and the fix's span in UTF-16 units and in a
-// literate document. A field the front end keeps no position of — a struct
-// pattern's or a destructuring `let`'s — is fixed where that statement writes
-// it; a line that writes no such name gets no fix.
 func TestSelfHostLSPCodeActionX86_64(t *testing.T) {
 	s := buildLSPServers(t)
 	dir := t.TempDir()
@@ -474,8 +399,7 @@ func TestSelfHostLSPCodeActionX86_64(t *testing.T) {
 		"retired-method.fern": "function main(): i32 { let xs = [1]; xs.push(2); return 0; }\n",
 		"unknown-method.fern": "function main(): i32 { let xs = [1]; xs.frobnicate(); return 0; }\n",
 		"type.fern":           "function main(): i32 {\n  let x: i32 = \"s\";\n  return x;\n}\n",
-		// The misspelt read is the chunk's, referenced two columns in.
-		"chunks.fern.md": "# Doc\n\n```fern\n<<*>>=\nfunction main(): i32 {\n  <<body>>\n}\n```\n\n```fern\n<<body>>=\nlet count: i32 = 1;\nreturn kount;\n```\n",
+		"chunks.fern.md":      "# Doc\n\n```fern\n<<*>>=\nfunction main(): i32 {\n  <<body>>\n}\n```\n\n```fern\n<<body>>=\nlet count: i32 = 1;\nreturn kount;\n```\n",
 	}
 	writeTree(t, dir, files)
 	var names []string
@@ -488,7 +412,7 @@ func TestSelfHostLSPCodeActionX86_64(t *testing.T) {
 	type want struct {
 		file  string
 		fix   lspFix
-		fixed string // the edited line holds this
+		fixed string
 	}
 	fix := func(line, c0, c1 int, text, title string) lspFix {
 		return lspFix{rng(line, c0, c1), text, title}
@@ -523,7 +447,6 @@ func TestSelfHostLSPCodeActionX86_64(t *testing.T) {
 			if diag == nil {
 				t.Fatalf("no diagnostic of %s carries a fix at %+v: %s", w.file, w.fix.Range, published[w.file])
 			}
-			// Echo the diagnostic as a client does, and apply the action's edit.
 			uri := fileURI(filepath.Join(dir, w.file))
 			req := lspMsg{"id": 2, "method": "textDocument/codeAction", "params": lspMsg{
 				"textDocument": lspMsg{"uri": uri},
@@ -586,7 +509,6 @@ func TestSelfHostLSPCodeActionX86_64(t *testing.T) {
 				}
 			}
 		}
-		// TestCodeActionNoFixData: a diagnostic without fix data is no action.
 		req := lspMsg{"id": 2, "method": "textDocument/codeAction", "params": lspMsg{
 			"textDocument": lspMsg{"uri": "file:///t"},
 			"range":        rng(0, 0, 1),
@@ -599,7 +521,6 @@ func TestSelfHostLSPCodeActionX86_64(t *testing.T) {
 	})
 }
 
-// utf16Prefix is how many runes of `line` its first `units` UTF-16 units hold.
 func utf16Prefix(line []rune, units int) int {
 	n := 0
 	for i, r := range line {

@@ -2,18 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// concatKernelProgram concatenates arrays of every scalar element width, a
-// packed u8[] (one long enough to cross the copy's word loop), i32, i64, f64
-// and boolean, with an empty operand on either side, and a string[], whose
-// counted elements keep std/array's body. allocs counts what 100 byte concats
-// onto a receiver the frame keeps allocate: one box each, where building the
-// result an element at a time grew it seven times. chain and field concat
-// onto a receiver the frame holds the only count of — a local reassigned, and
-// a record's field rebuilt around the join — 200 times each, and report
-// whether that cost fewer than 20 boxes: the receiver's block grows in place
-// and doubles, as a chain of appends does. shared keeps a receiver another
-// binding still reads. constant joins onto a literal, whose block is immortal
-// rather than sole, and counts the copies: two, on every backend alike.
 const concatKernelProgram = `import "std/array";
 
 struct S { buf: u8[], n: i32 }

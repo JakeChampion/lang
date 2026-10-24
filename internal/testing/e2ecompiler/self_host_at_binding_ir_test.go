@@ -2,12 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// `@` bindings through the self-hosted CLI: `match (b) { n @ Full(v) => … }`,
-// `w @ Point { x, y }` and `w @ (a, b)` bind the whole matched value alongside
-// the payload, field or element binds, and a guard may read the whole-value
-// name. `k @ 1..10` binds a scalar scrutinee in front of a literal or range,
-// in a match, an `if let` and a `let … else`. Every answer comes from the
-// interpreter.
 var selfHostAtBindingCases = []struct {
 	name string
 	src  string
@@ -36,8 +30,6 @@ function f(b: Box): i32 {
   };
 }
 function main(): i32 { return f(Full(3)); }`},
-	// The guard reads `n` inside a struct literal, an immediately invoked
-	// capturing lambda, and a slice.
 	{"guard_at_in_struct_literal", `enum Box { Full(i32), Empty }
 struct H { b: Box }
 function unwrap(h: H): i32 { match (h.b) { Full(v) => { return v; }, Empty => { return 0; } } return 0; }

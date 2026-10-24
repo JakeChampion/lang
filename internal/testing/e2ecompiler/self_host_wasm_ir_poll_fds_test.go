@@ -10,27 +10,6 @@ import (
 	"time"
 )
 
-// TestSelfHostWasmIRPollFds pins the POSIX-shaped `poll(fds, timeout_ms)` on
-// the self-host wasm-IR path — the follow-up #4316 did not actually cover.
-//
-// #4316 closed on `wasm_poll`, the wasm-native primitive that blocks on a set
-// of pollables with no timeout. `poll` is the op its issue text named, and it
-// is a different contract (checker.go): "Waits up to `timeout_ms` (negative =
-// block indefinitely, 0 = non-blocking) for any fd in `fds` to become
-// readable; returns the index of the first ready fd, or -1 on timeout."
-//
-// On wasm the elements are wasi:io/poll pollable handles — wasm has no file
-// descriptors, so a pollable IS the fd analog. The timeout is expressed the
-// only way wasi:io/poll can express one: subscribe a monotonic-clock timer for
-// `timeout_ms` and append it to the polled set. If the winning index is that
-// trailing entry the wait timed out and the result is -1; otherwise the winner
-// is a caller pollable whose index is already correct, since the timer was
-// appended after them.
-//
-// All three arms of the contract are asserted, and the ELAPSED TIME is checked
-// alongside the value: a helper that returned the right number without actually
-// waiting (the failure mode seen in #4316 during development) would pass a
-// value-only test.
 func TestSelfHostWasmIRPollFds(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -103,8 +82,6 @@ func TestSelfHostWasmIRPollFds(t *testing.T) {
 		return strings.TrimSpace(string(out)), elapsed
 	}
 
-	// A 50ms pollable inside a 5s budget: the pollable wins, so the answer is
-	// its index, and the wait is short.
 	t.Run("ready_before_timeout_returns_index", func(t *testing.T) {
 		out, elapsed := run(t, "poll_ready", `function main(): i32 {
     let d: i64 = 50000000i64;
@@ -121,8 +98,6 @@ func TestSelfHostWasmIRPollFds(t *testing.T) {
 		}
 	})
 
-	// A 3s pollable against a 200ms budget: the appended timer wins, so the
-	// answer is -1 and the wait is bounded by the budget, not the pollable.
 	t.Run("timeout_returns_negative_one", func(t *testing.T) {
 		out, elapsed := run(t, "poll_timeout", `function main(): i32 {
     let d: i64 = 3000000000i64;
@@ -139,8 +114,6 @@ func TestSelfHostWasmIRPollFds(t *testing.T) {
 		}
 	})
 
-	// Negative timeout = block indefinitely, which delegates to
-	// $__fern_wasm_poll. The 400ms pollable must actually be waited for.
 	t.Run("negative_timeout_blocks_indefinitely", func(t *testing.T) {
 		out, elapsed := run(t, "poll_block", `function main(): i32 {
     let d: i64 = 400000000i64;

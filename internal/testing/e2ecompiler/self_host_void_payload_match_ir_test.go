@@ -6,29 +6,12 @@ import (
 	"testing"
 )
 
-// TestSelfHostVoidPayloadMatchIR pins a `match` whose arm binds a VOID payload
-// by name — `Ok(u)` on a `Result[void, IoError]` — on the self-host IR path.
-//
-// Every fallible filesystem builtin that returns no value has this shape
-// (write_file, remove_file, create_dir_all, remove_dir_all), so the arm is
-// ordinary source. It bailed the whole module, because the
-// arm's payload-type gate accepted every payload spelling except the one that
-// carries nothing: `void` fell through to `s.fail()`. A `_` binder took a
-// different path and lowered, which is why the existing filesystem IR tests —
-// written with `Ok(_)` throughout — never saw it.
-//
-// The driver runs under FERN_STRICT_IR=1: a bail is then a hard error naming
-// the function rather than a silent fall-through, so a regression says which
-// arm left the subset.
 func TestSelfHostVoidPayloadMatchIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	// Each arm names its unit binder, and the exit code identifies the step
-	// that failed. The last pair mixes a named binder with a `_` one, so the
-	// two payload paths are exercised against the same builtin.
 	const src = `function main(): i32 {
     match (temp_dir("fern-voidpayload-ir")) {
         Ok(d) => {

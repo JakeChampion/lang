@@ -5,25 +5,6 @@ import (
 	"testing"
 )
 
-// --- Reaching a field THROUGH a field is a borrow (#6127) --------------------
-//
-// An Option's struct payload is deep-dropped unless an rc FIELD is moved out of
-// the arm binding (#6308), and a chain — `p.inner.ys.len()`, where the
-// payload's rc content sits one struct further down — moves nothing: reaching
-// `ys` through `inner` retains only ys's box, so `inner` is borrowed. Read as
-// a move of `inner`, the deep drop was refused and the whole nested level
-// leaked.
-//
-// Which block leaked, by growing one dimension at a time over 100 rounds:
-//
-//	base                          400 / 200   8000
-//	ys 2 -> 10 elements           400 / 200  14400   <- +64/round, the array
-//	Inner 1 -> 5 fields           400 / 200  11200   <- +32/round, the Inner box
-//	P 2 -> 6 fields               400 / 200   8000   <- unchanged
-//
-// so both the Inner box and its array leaked while the P box and the option box
-// were freed.
-
 func TestSelfHostOptStructBorrowChainX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -36,7 +17,6 @@ func TestSelfHostOptStructBorrowChainX86_64(t *testing.T) {
 		want int
 	}{
 		{
-			// The minimal chain: `.len()` two levels down.
 			name: "nested_field_len",
 			src: `struct Inner { ys: i32[] }
 struct P { inner: Inner, n: i32 }
@@ -55,7 +35,6 @@ function main(): i32 {
 			want: 4,
 		},
 		{
-			// An indexed read two levels down — the other borrow shape.
 			name: "nested_field_indexed",
 			src: `struct Inner { ys: i32[] }
 struct P { inner: Inner, n: i32 }
@@ -74,8 +53,6 @@ function main(): i32 {
 			want: 40,
 		},
 		{
-			// A 10-element nested array — the dimension that identified the array as
-			// one of the two leaked blocks.
 			name: "nested_field_bigger_array",
 			src: `struct Inner { ys: i32[] }
 struct P { inner: Inner, n: i32 }
@@ -94,8 +71,6 @@ function main(): i32 {
 			want: 57,
 		},
 		{
-			// A wider Inner — the dimension that identified the Inner BOX as the
-			// other leaked block, distinct from its array.
 			name: "nested_field_wider_inner",
 			src: `struct Inner { ys: i32[], a: i32, b: i32, c: i32, d: i32 }
 struct P { inner: Inner, n: i32 }
@@ -114,8 +89,6 @@ function main(): i32 {
 			want: 4,
 		},
 		{
-			// A string field beside the nested array, read through the same chain;
-			// its release is reached two levels down.
 			name: "nested_string_field",
 			src: `struct Inner { ys: i32[], tag: string }
 struct P { inner: Inner, n: i32 }
@@ -168,12 +141,6 @@ function main(): i32 {
 	}
 }
 
-// TestSelfHostOptStructBorrowChainHazardsX86_64 — a chain READ is a borrow; a
-// chain whose leaf is EXTRACTED is not, at any depth. Free counts are exact; on
-// the typed lowering every row reclaims what it allocates, and an over-release
-// shows up as a count above that even where the program still exits correctly.
-//
-// Every `want` is from `fern -interp`.
 func TestSelfHostOptStructBorrowChainHazardsX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
@@ -188,10 +155,6 @@ func TestSelfHostOptStructBorrowChainHazardsX86_64(t *testing.T) {
 		wantFrees int64
 	}{
 		{
-			// The INTERMEDIATE struct extracted whole — a borrow only while it is
-			// read through, and this reads it out. `held` starts from an array
-			// passed through `id`, which hides the constant from the static-box plan, so it
-			// is a heap box rather than a static one.
 			name: "intermediate_struct_extracted",
 			src: `struct Inner { ys: i32[] }
 struct P { inner: Inner, n: i32 }
@@ -213,7 +176,6 @@ function main(): i32 {
 			wantFrees: 500,
 		},
 		{
-			// The LEAF array extracted through the chain.
 			name: "leaf_array_extracted",
 			src: `struct Inner { ys: i32[] }
 struct P { inner: Inner, n: i32 }
@@ -234,7 +196,6 @@ function main(): i32 {
 			wantFrees: 400,
 		},
 		{
-			// The leaf moved into a container that outlives the match.
 			name: "leaf_array_into_a_container",
 			src: `struct Inner { ys: i32[] }
 struct P { inner: Inner, n: i32 }
@@ -255,7 +216,6 @@ function main(): i32 {
 			wantFrees: 500,
 		},
 		{
-			// The leaf passed to a callee that keeps it.
 			name: "leaf_array_to_a_callee_that_keeps_it",
 			src: `struct Inner { ys: i32[] }
 struct P { inner: Inner, n: i32 }
@@ -309,10 +269,6 @@ function main(): i32 {
 	}
 }
 
-// TestSelfHostOptStructBorrowChainNoUnderflowX86_64 — the deep drop now recurses
-// a level further, so it releases a nested box and its array and string. A
-// string LITERAL is the sharp case: its data lives in .rodata and the heap guard
-// skips it, so a double release registers only in this counter.
 func TestSelfHostOptStructBorrowChainNoUnderflowX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

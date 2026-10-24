@@ -1,17 +1,17 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// #7732. A call-bound Option is reboxed
-// (emitRepackPairAsHeapBox), which materialises a REAL rc=1 box
-// for whatever tag the callee returned — but the variant drop
-// plan assumed "payloadless => static sentinel" and gave None no
-// tag arm, so a unique None box fell through the tag switch
-// with nothing freeing it: 32 B per None-returning call,
-// unbounded (measured 300/200, 3200 B live at 200 rounds; the
-// always-Some control was 400/400 clean, which is how the leak
-// hid behind it). Both spellings exit the same, so only the
-// leak gate's zero pin carries the signal — this case exists to
-// put the shape under that pin on all three backends.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 @noinline
 function mk(i: i32): Option[i32[]] { if (i % 2 == 0) { return None; } return Some([i, i + 1]); }
 

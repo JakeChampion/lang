@@ -7,20 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostEnumStructFieldIRX86_64 verifies that a struct with a nominal-enum
-// field (`s: Shape`) is admitted to the IR path and that `match (t.s)` reads the
-// enum box back through the field and discriminates its variants. use_tagged
-// builds Tagged{s: Rect(7), n: 5} and returns the matched payload + t.n = 7 + 5 =
-// 12. Enums are leak-only on the IR path (the exit sweep never frees an enum
-// box), so an enum-typed field leaks with the struct like a string / Option /
-// tuple field — no RC, no aliasing bail. Without enum-field support Tagged is not
-// leaf-safe and the driver refuses the module; the exit code proves the variant
-// discrimination.
-//
-// The construction uses the BARE variant forms (`Rect(7)`, `Circle`), which lower
-// correctly. The qualified form (`Shape.Rect(7)`) is deliberately avoided: it is
-// a separate, pre-existing limitation of the self-host enum lowering (it bails to
-// AST in field position rather than miscompiling), orthogonal to field admission.
 func TestSelfHostEnumStructFieldIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

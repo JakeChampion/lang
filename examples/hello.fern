@@ -1,5 +1,3 @@
-// `print` is a built-in, so this program needs no stdlib
-// imports at all — nothing from std/.
 function main(): i32 {
   print("Hello, world!");
   return 0;

@@ -5,13 +5,6 @@ import (
 	"testing"
 )
 
-// A red-black tree's balance functions end in an exhaustive match, whose
-// fall-through is an unreachable block. The inliner would not splice a body
-// with one, so balance_left and balance_right stayed calls: the node `ins`
-// took apart died before the call and could not serve the rotation the
-// callee built, and every insert that rebalanced allocated. Spliced into
-// `ins`, the rotations build in the boxes that die there, and an insert
-// allocates only the new leaf.
 func spliceExhaustiveSrc(n int) string {
 	return fmt.Sprintf(`enum Color { Red, Black }
 
@@ -158,11 +151,6 @@ function main(): i32 {
 }`, n, (n+9)/10, n*(n-1)/2)
 }
 
-// The same tree as the Koka benchmark's checkpointed variant writes it:
-// `ins` matches Leaf first, so the node it takes apart is dropped above the
-// rebalancing arms and its token is carried into them, where the rotation's
-// own dying boxes are held beside it. A carry used to clear the held donors,
-// and each rotation built only in the carried token.
 func spliceCarriedSrc(n int) string {
 	return fmt.Sprintf(`enum Color { Red, Black }
 

@@ -135,8 +135,6 @@ function main(): i32 {
 	}
 }
 
-// Reservation uses only local memory, so both default component framings
-// must admit it without requiring an extra WASI import.
 func TestSelfHostArrayFusionScanComponents(t *testing.T) {
 	for _, output := range []bool{false, true} {
 		name, src, want := "pure", arrayFusionScanAllocationSrc, ""

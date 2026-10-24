@@ -12,19 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExternRecordResultDeepNestedCustomProvider is the deeper-nesting (two
-// level) record *result* gate (docs/WIT-BRING-YOUR-OWN.md): an `@import` extern
-// returns a record whose field is a record whose field is itself a record,
-// lifted into a Fern struct tree (pointers to pointers to inner structs). The
-// canonical ABI inlines every nested record's leaves into the return area at
-// each level's alignment; externResultLayoutRec recurses to arbitrary depth,
-// and the wrapper materializes one inner struct per node (one scratch local per
-// nesting level), wiring child pointers into their parents bottom-up.
-//
-// Shape: `record outer { l: mid, r: mid }`, `record mid { p: point, n: s32 }`,
-// `record point { x: s32, y: s32 }` — three levels (outer→mid→point). The
-// provider's `make-outer` fills eight s32 leaves; the Fern side reads them back
-// through `o.l.p.x` … `o.r.n` and forms a checkable weighted sum.
 func TestExternRecordResultDeepNestedCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -51,9 +38,6 @@ func TestExternRecordResultDeepNestedCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export src; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// make-outer returns the nested record indirectly: a 24-byte area, the eight
-	// s32 leaves inlined in declaration order (l.p.x@0, l.p.y@4, l.n@8, r.p.x@12,
-	// r.p.y@16, r.n@20) via cabi_realloc, returning its pointer.
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)
   (global $h (mut i32) (i32.const 1024))

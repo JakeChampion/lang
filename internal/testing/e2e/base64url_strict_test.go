@@ -2,12 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/base64.decode_url across
-// backends: round-trips of encode_url output (unpadded), padded
-// url input, the empty string, url-safe -/_ acceptance, and the None
-// rejections — the non-url-safe +/ characters, junk, misaligned
-// padding, and an impossible n%4==1 run. Returns 42 iff every check
-// holds. Each leg skips itself when its toolchain is absent.
 const base64urlStrictProg = `
 import "std/base64" as b64;
 import "std/codec";

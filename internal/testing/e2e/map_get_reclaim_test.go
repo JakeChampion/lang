@@ -1,38 +1,7 @@
 package e2e
 
-// `match (m.get(k))` releases the reference the lookup retained (#7144).
-//
-// `m.get(k)` hands the caller a COUNTED reference to the map's value —
-// __map_retain_val for the array / deep-droppable kinds, a string retain
-// emitMapGetRebox emits itself. The match-scrutinee reclaim freed only the
-// rebuilt Option box and left that count outstanding, so the map's own column
-// drop took the value from 2 to 1 and its storage was stranded: one value per
-// lookup, unbounded in a loop. Measured per round over a 1000/2000-round churn
-// (__heap_bump_bytes() delta / rounds), as x86-64 | arm64 | wasm:
-//
-//	Map[i32, i32[]], statement match   32 | 32 | 32
-//	Map[i32, i32[]], expression match  32 | 32 | 32
-//	Map[i32, Q]                        64 | 64 | 48
-//	Map[i32, Option[i32]]              16 | 16 | 16
-//	Map[i32, (i32, i32)]               16 | 16 | 16
-//	Map[string, i32[]]                 32 | 32 | 32
-//	Map[i32, Q[]]                      96 | 96 | 80
-//
-// All seven are flat afterwards on all three backends. The same churn WITHOUT
-// the lookup was already 0, which is what identifies the lookup rather than the
-// map (#7143 made the map itself flat).
-//
-// A string VALUE column has a residual of its own on x86-64 — kind 1 is not
-// reclaimed by the map's drop at all, 64 B/round with or without a lookup — so
-// the claim the string row can make is parity with the no-lookup churn rather
-// than zero. That is what mapGetStrValueParityProg gates; arm64 and wasm
-// cell-box the column and read 0 either way.
-
 import "testing"
 
-// Per-round bytes must be zero for every counted-value lookup shape. Each gate
-// measures the 2n delta, so a fixed startup cost divides away and only a
-// per-round leak survives. The exit code names the shape that leaked.
 const mapGetReclaimBytesProg = `
 import "core/map";
 
@@ -242,11 +211,6 @@ func TestMapGetReclaimBytesWasm(t *testing.T) {
 	}
 }
 
-// A string VALUE column is the one shape with a backend residual of its own:
-// x86-64 leaves kind-1 values unreclaimed by the map's drop, 64 B/round whether
-// or not anything looks the value up. The claim the fix makes there is parity —
-// the lookup costs no more per round than the same churn without it. Pre-fix the
-// lookup form reads 64 | 64 | 64 against the no-lookup form's 64 | 0 | 0.
 const mapGetStrValueParityProg = `
 import "core/map";
 import "std/string";
@@ -317,15 +281,6 @@ func TestMapGetStrValueParityWasm(t *testing.T) {
 	}
 }
 
-// The aliasing side: what the reclaim must NOT free. The whole risk of paying
-// back the lookup's retain is over-release, so every case here reads its value
-// AFTER the map that owned it has died, with a burst of churn in between so a
-// block that had been freed would already have been handed out again.
-//
-// The escaping-binding rows are the ones the fix is judged on: `keep = g` moves
-// the binding out of the arm, so the reclaim runs while a live name still points
-// at the value. It stays readable because the reclaim releases the LOOKUP's
-// count, not the map's — the shape is one count over, never one short.
 const mapGetAliasProg = `
 import "core/map";
 import "std/array";

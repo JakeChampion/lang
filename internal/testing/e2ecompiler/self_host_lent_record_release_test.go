@@ -8,11 +8,6 @@ import (
 	"testing"
 )
 
-// A record lent to a callee that hands back its string[] field, and fresh enum
-// results passed straight into a helper, are released (#9187). The forwarding
-// return retains the field, so the record keeps its deep drop; a fresh enum
-// argument and a scalar enum result are released by the caller; and a
-// parameter whose match returns a scalar binding does not escape.
 const lentRecordSrc = `import "std/i32";
 struct Rec { n: i32, xs: string[] }
 function keep_field(r: Rec): string[] { return r.xs; }
@@ -48,7 +43,6 @@ function main(): i32 {
 }
 `
 
-// Interpreter-confirmed.
 const lentRecordWant = 44
 
 func writeLentRecordSrc(t *testing.T) string {

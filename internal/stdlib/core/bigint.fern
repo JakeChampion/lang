@@ -1,63 +1,10 @@
-// Arbitrary-precision integers.
-//
-// This module imports NOTHING, deliberately. `std/string` needs a bignum for
-// parse_float's exact fallback and cannot import anything that reaches back to
-// it (`std/f64` -> `std/i32` -> `std/string` is the cycle that forced the
-// private copy this module replaces). Sitting at the bottom of the graph with
-// no imports is what lets both `std/string` and `std/f64` use it. That is
-// also why there are no `impl Display for BigInt` / `impl Ord for BigInt`
-// blocks here: those traits live in `core/cmp`, which imports `std/string`, so
-// implementing them here would reintroduce the cycle. They belong in a
-// higher-level wrapper if they are ever wanted.
-//
-// REPRESENTATION: sign-magnitude. The magnitude is little-endian base 2^32,
-// one limb per `u64` slot with the upper 32 bits of each slot always zero.
-//
-// The slot type is u64 and NOT i64, and the margin is exactly zero — this is
-// the whole reason base 2^32 works. In the schoolbook inner loop the widest
-// intermediate is one partial product plus the running limb plus the carry:
-//
-//     (2^32 - 1)^2 + (2^32 - 1) + (2^32 - 1)  ==  2^64 - 1
-//
-// which is u64 MAX precisely. In an i64 slot the same expression overflows at
-// the first full-width product — (2^32-1)^2 is 1.8e19 against an i64 ceiling
-// of 9.2e18 — so `4294967295 * 4294967295` comes back as 1. That is not a
-// hypothetical: this module was first written with i64 limbs and a comment
-// asserting the product fit, and the differential against math/big caught it
-// on the first run.
-//
-// Base 2^32 rather than full u64 limbs is the other half of the choice. A
-// 32x32 partial product is a single native multiply on every backend including
-// wasm32; u64 limbs would need a 64x64 -> 128 widening multiply per pair,
-// assembled from four 32x32 products (see `_db_mul64` in std/f64.fern) —
-// roughly four times the work per pair for twice the bits per limb.
-//
-// The trade is stated rather than hidden: on 64-bit natives, u64 limbs with a
-// hardware mulhi would win on large multiplies. Revisit that only alongside a
-// Karatsuba threshold, and only with measurements. The asymptotic ladder
-// (schoolbook -> Karatsuba -> Toom-Cook -> NTT) is deliberately NOT built out
-// here: Fern has no bigint workload yet, and speccing four multiplication
-// regimes before one of them has a caller is exactly the "measure before
-// optimizing" failure docs/ATLAS-PLATFORM-PLAN.md flags.
-//
-// VALUES ARE IMMUTABLE. Every operation returns a fresh BigInt, matching the
-// pure-collection convention (`m = m.insert(k, v)`). Perceus constructor reuse
-// is what keeps that affordable: when the receiver's refcount is 1 its limb
-// array can be reused in place rather than copied.
-//
-// INVARIANTS, maintained by every constructor and operation:
-//   - `mag` has no leading zero limbs, except that zero is exactly `[0]`.
-//   - every limb is in [0, 2^32).
-//   - zero is never negative (`neg` is false whenever the magnitude is zero),
-//     so `cmp` never has to special-case a negative zero.
+// This module provides arbitrary-precision integers.
 
 pub struct BigInt {
   neg: boolean,
   mag: u64[],
 }
 
-// 2^32 - 1, 2^32, and the limb shift. Functions rather than constants because
-// a module-level `let` is not the idiom here.
 function __bi_mask(): u64 {
   return 4294967295 as u64;
 }
@@ -70,9 +17,6 @@ function __bi_sh32(): u64 {
   return 32 as u64;
 }
 
-// __bi_trim drops leading zero limbs, leaving at least one limb so that zero
-// is `[0]` rather than the empty array. Every magnitude-producing helper ends
-// with this, which is what lets `__bi_cmp_mag` compare lengths first.
 function __bi_trim(a: u64[]): u64[] {
   let n: i32 = a.len();
   while (n > 1 && a[n - 1] == 0 as u64) {
@@ -94,7 +38,6 @@ function __bi_is_zero_mag(a: u64[]): boolean {
   return a.len() == 1 && a[0] == 0 as u64;
 }
 
-// __bi_make applies the zero-is-never-negative invariant.
 function __bi_make(neg: boolean, mag: u64[]): BigInt {
   let m: u64[] = __bi_trim(mag);
   if (__bi_is_zero_mag(m)) {
@@ -103,10 +46,6 @@ function __bi_make(neg: boolean, mag: u64[]): BigInt {
   return BigInt { neg: neg, mag: m };
 }
 
-// --- magnitude primitives (unsigned, operate on trimmed limb arrays) ---
-
-// __bi_cmp_mag returns -1 / 0 / 1. Both inputs must be trimmed, which is why
-// comparing lengths first is sound.
 function __bi_cmp_mag(a: u64[], b: u64[]): i32 {
   if (a.len() < b.len()) {
     return 0 - 1;
@@ -157,13 +96,6 @@ function __bi_add_mag(a: u64[], b: u64[]): u64[] {
   return __bi_trim(out);
 }
 
-// __bi_sub_mag computes a - b and REQUIRES a >= b. Callers establish that with
-// __bi_cmp_mag and swap operands (flipping the result sign) when they must.
-//
-// The borrow is decided by comparison rather than by letting the subtraction
-// go negative: limbs are u64, so a wrapped difference is a huge positive
-// number, not a detectable negative one. `b[i] + borrow` is at most 2^32 and
-// cannot overflow the slot.
 function __bi_sub_mag(a: u64[], b: u64[]): u64[] {
   let base: u64 = __bi_base();
   let la: i32 = a.len();
@@ -188,8 +120,6 @@ function __bi_sub_mag(a: u64[], b: u64[]): u64[] {
   return __bi_trim(out);
 }
 
-// Schoolbook multiply, O(la*lb). See the header for why every intermediate
-// fits a u64 slot with exactly zero margin.
 function __bi_mul_mag(a: u64[], b: u64[]): u64[] {
   let mask: u64 = __bi_mask();
   let sh: u64 = __bi_sh32();
@@ -228,10 +158,6 @@ function __bi_mul_mag(a: u64[], b: u64[]): u64[] {
   return __bi_trim(out);
 }
 
-// __bi_mul_small requires k < 2^32 so that a[i]*k + carry stays inside the
-// slot. Callers pass powers of ten at or below 10^9, and of five at or below
-// 5^13. The product overwrites a copy of `a` limb by limb — one allocation
-// of the right size — and only a final carry appends.
 function __bi_mul_small(a: u64[], k: u64): u64[] {
   let mask: u64 = __bi_mask();
   let sh: u64 = __bi_sh32();
@@ -269,10 +195,6 @@ function __bi_add_small(a: u64[], k: u64): u64[] {
   return __bi_trim(out);
 }
 
-// __bi_divmod_small divides a magnitude by a small positive divisor, returning
-// (quotient limbs, remainder). Long division from the top limb down;
-// `rem * 2^32 + limb` must fit the slot, which holds for any divisor below
-// 2^32 — to_string only ever passes 10^9.
 function __bi_divmod_small(a: u64[], d: u64): (u64[], u64) {
   let mask: u64 = __bi_mask();
   let sh: u64 = __bi_sh32();
@@ -294,8 +216,6 @@ function __bi_divmod_small(a: u64[], d: u64): (u64[], u64) {
   return (__bi_trim(q), rem);
 }
 
-// --- construction ---
-
 pub function zero(): BigInt {
   let z: u64[] = [];
   return BigInt { neg: false, mag: z.append(0 as u64) };
@@ -305,8 +225,6 @@ pub function from_i64(v: i64): BigInt {
   let mask: u64 = __bi_mask();
   let sh: u64 = __bi_sh32();
   let neg: boolean = v < 0;
-  // Negate through u64 so i64 MIN, whose magnitude has no i64
-  // representation, does not wrap back to itself.
   let u: u64 = v as u64;
   if (neg) {
     u = 0 as u64 - u;
@@ -317,13 +235,6 @@ pub function from_i64(v: i64): BigInt {
   return __bi_make(neg, m);
 }
 
-// parse reads an optional sign followed by one or more decimal digits. `None`
-// on an empty string, a lone sign, or any non-digit byte — no whitespace
-// trimming and no underscore separators, matching parse_int.
-//
-// Digits are folded nine at a time: 10^9 is the largest power of ten below
-// 2^32, so `__bi_mul_small` by it keeps every partial product inside the slot.
-// That is ~9x fewer limb passes than folding one digit at a time.
 pub function parse(s: string): Option[BigInt] {
   let n: i32 = s.len();
   if (n == 0) {
@@ -364,8 +275,6 @@ pub function parse(s: string): Option[BigInt] {
   return Some(__bi_make(neg, mag));
 }
 
-// --- queries ---
-
 pub function (a: BigInt) is_zero(): boolean {
   return __bi_is_zero_mag(a.mag);
 }
@@ -374,7 +283,6 @@ pub function (a: BigInt) is_negative(): boolean {
   return a.neg;
 }
 
-// bit_length is the number of bits in the magnitude — 0 for zero.
 pub function (a: BigInt) bit_length(): i32 {
   if (__bi_is_zero_mag(a.mag)) {
     return 0;
@@ -407,18 +315,6 @@ pub function (a: BigInt) eq(b: BigInt): boolean {
   return a.cmp(b) == 0;
 }
 
-// hash folds the sign and every limb with the `h * 31 + field` shape the
-// `Hash` trait documents, so a BigInt composes with derived hashes the same
-// way a struct's fields do.
-//
-// The `a == b => a.hash() == b.hash()` law holds here BECAUSE the
-// representation is canonical: trimmed magnitudes mean equal values always
-// have identical limb arrays, and zero-is-never-negative means the two
-// spellings of zero cannot exist to hash differently. Both invariants are
-// essential for this function, not just tidiness.
-//
-// i32 arithmetic wraps rather than trapping (docs/INTEGER-SEMANTICS.md), which
-// is what makes the accumulate loop well-defined.
 pub function (a: BigInt) hash(): i32 {
   let h: i32 = 17;
   if (a.neg) {
@@ -432,8 +328,6 @@ pub function (a: BigInt) hash(): i32 {
   return h;
 }
 
-// --- arithmetic ---
-
 pub function (a: BigInt) negate(): BigInt {
   return __bi_make(!a.neg, a.mag);
 }
@@ -446,7 +340,6 @@ pub function (a: BigInt) add(b: BigInt): BigInt {
   if (a.neg == b.neg) {
     return __bi_make(a.neg, __bi_add_mag(a.mag, b.mag));
   }
-  // Opposite signs: the larger magnitude decides the result sign.
   let c: i32 = __bi_cmp_mag(a.mag, b.mag);
   if (c == 0) {
     return zero();
@@ -466,9 +359,6 @@ pub function (a: BigInt) mul(b: BigInt): BigInt {
   return __bi_make(neg, __bi_mul_mag(a.mag, b.mag));
 }
 
-// mul_pow10 multiplies by 10^k, chunked by 10^9 for the same headroom reason
-// as `parse`. A negative k is a no-op rather than a division: dividing would
-// not be exact, and silently truncating is worse than doing nothing visible.
 pub function (a: BigInt) mul_pow10(k: i32): BigInt {
   if (k <= 0) {
     return a;
@@ -492,10 +382,6 @@ pub function (a: BigInt) mul_pow10(k: i32): BigInt {
   return __bi_make(a.neg, mag);
 }
 
-// mul_pow5 multiplies by 5^k, chunked by 5^13 — the largest power of five
-// below 2^32 — the way `mul_pow10` chunks by 10^9. It is what an exact
-// decimal expansion of a binary fraction needs: m × 2^-k is m × 5^k with
-// the point moved k places.
 pub function (a: BigInt) mul_pow5(k: i32): BigInt {
   if (k <= 0) {
     return a;
@@ -519,7 +405,6 @@ pub function (a: BigInt) mul_pow5(k: i32): BigInt {
   return __bi_make(a.neg, mag);
 }
 
-// shl multiplies by 2^k.
 pub function (a: BigInt) shl(k: i32): BigInt {
   if (k <= 0 || __bi_is_zero_mag(a.mag)) {
     return a;
@@ -548,8 +433,6 @@ pub function (a: BigInt) shl(k: i32): BigInt {
   return __bi_make(a.neg, out);
 }
 
-// from_u64 builds a BigInt from an unsigned 64-bit value, which `from_i64`
-// cannot express above i64 MAX.
 pub function from_u64(v: u64): BigInt {
   let m: u64[] = [];
   m = m.append(v & __bi_mask());
@@ -557,14 +440,10 @@ pub function from_u64(v: u64): BigInt {
   return __bi_make(false, m);
 }
 
-// low_u64 is the low 64 bits of the magnitude — the whole value when
-// `bit_length()` is at most 64.
 pub function (a: BigInt) low_u64(): u64 {
   return a.word64(0);
 }
 
-// word64 is 64-bit word `i` of the magnitude, counting from the low end;
-// words past the top are zero.
 pub function (a: BigInt) word64(i: i32): u64 {
   let lo: i32 = 2 * i;
   let v: u64 = 0 as u64;
@@ -577,8 +456,6 @@ pub function (a: BigInt) word64(i: i32): u64 {
   return v;
 }
 
-// has_low_bits reports whether any of the low `k` bits of the magnitude
-// is set — whether `shr(k)` would drop anything.
 pub function (a: BigInt) has_low_bits(k: i32): boolean {
   let limbs: i32 = k / 32;
   let i: i32 = 0;
@@ -595,7 +472,6 @@ pub function (a: BigInt) has_low_bits(k: i32): boolean {
   return (a.mag[limbs] & mask) != 0 as u64;
 }
 
-// bit reads bit `i` of the magnitude; bits past the top are zero.
 pub function (a: BigInt) bit(i: i32): boolean {
   if (i < 0) {
     return false;
@@ -607,8 +483,6 @@ pub function (a: BigInt) bit(i: i32): boolean {
   return (a.mag[limb] >> (i % 32) as u64 & 1 as u64) == 1 as u64;
 }
 
-// shr divides the magnitude by 2^k, discarding the low bits — the sign is
-// kept, so it truncates toward zero rather than flooring a negative value.
 pub function (a: BigInt) shr(k: i32): BigInt {
   if (k <= 0) {
     return a;
@@ -633,7 +507,6 @@ pub function (a: BigInt) shr(k: i32): BigInt {
   return __bi_make(a.neg, out);
 }
 
-// pow raises to a non-negative integer power by square-and-multiply.
 pub function (a: BigInt) pow(n: i32): BigInt {
   let result: BigInt = from_i64(1 as i64);
   let base: BigInt = a;
@@ -650,11 +523,6 @@ pub function (a: BigInt) pow(n: i32): BigInt {
   return result;
 }
 
-// divmod is truncated division: the quotient rounds toward zero and the
-// remainder takes the dividend's sign, the same contract as `/` and `%` on
-// the machine integers (docs/INTEGER-SEMANTICS.md) and Go's QuoRem. That
-// contract is total, so a zero divisor answers `(0, a)` here as well
-// rather than aborting.
 pub function (a: BigInt) divmod(b: BigInt): (BigInt, BigInt) {
   if (__bi_is_zero_mag(b.mag)) {
     return (zero(), a);
@@ -663,9 +531,6 @@ pub function (a: BigInt) divmod(b: BigInt): (BigInt, BigInt) {
   return (__bi_make(a.neg != b.neg, qr.0), __bi_make(a.neg, qr.1));
 }
 
-// Knuth's Algorithm D over base-2^32 limbs. Both magnitudes are trimmed;
-// the divisor is normalised so its top limb has its high bit set, which is
-// what bounds the trial quotient digit to at most two corrections.
 function __bi_divmod_mag(a: u64[], b: u64[]): (u64[], u64[]) {
   let mask: u64 = __bi_mask();
   let base: u64 = __bi_base();
@@ -707,7 +572,6 @@ function __bi_divmod_mag(a: u64[], b: u64[]): (u64[], u64[]) {
         break;
       }
     }
-    // u[j .. j+n] -= qhat * v, tracking the borrow by comparison.
     let carry: u64 = 0 as u64;
     let borrow: u64 = 0 as u64;
     let i: i32 = 0;
@@ -729,7 +593,6 @@ function __bi_divmod_mag(a: u64[], b: u64[]): (u64[], u64[]) {
       u = u.with(j + n, u[j + n] - subTop);
       q = q.with(j, qhat);
     } else {
-      // qhat was one too large: add v back and drop the borrow.
       q = q.with(j, qhat - 1 as u64);
       let c2: u64 = 0 as u64;
       i = 0;
@@ -752,9 +615,6 @@ function __bi_divmod_mag(a: u64[], b: u64[]): (u64[], u64[]) {
   return (__bi_trim(q), __bi_shr_limbs(__bi_trim(rem), s));
 }
 
-// __bi_shl_limbs shifts a magnitude left by s < 32 bits; `extend` always
-// appends the carry limb (even a zero one), which Algorithm D needs so the
-// dividend has one more limb than the divisor's length demands.
 function __bi_shl_limbs(a: u64[], s: i32, extend: boolean): u64[] {
   let mask: u64 = __bi_mask();
   let sh: u64 = __bi_sh32();
@@ -793,14 +653,6 @@ function __bi_shr_limbs(a: u64[], s: i32): u64[] {
   return __bi_trim(out);
 }
 
-// --- rendering ---
-
-// to_string emits base-10 by repeatedly dividing by 10^9 and emitting nine
-// digits per step, ~9x fewer division passes than one digit at a time. The
-// division runs in place on one copy of the limbs, the base-10^9 chunks are
-// kept least significant first, and the digits are written once, from the
-// end of a buffer sized to the exact count: nine per chunk, the leading one
-// as wide as it is.
 pub function (a: BigInt) to_string(): string {
   if (__bi_is_zero_mag(a.mag)) {
     return "0";

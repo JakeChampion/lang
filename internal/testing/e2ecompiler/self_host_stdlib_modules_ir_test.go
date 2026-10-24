@@ -8,21 +8,10 @@ import (
 	"testing"
 )
 
-// Real stdlib MODULES on the self-host IR path. Several self-host tests
-// historically INLINED stdlib aggregate types (HeaderMap → "Headers",
-// BytesWriter → "BW", Stream → "Buf") because the importless single-program
-// driver could not `import "std/…"`. With stdlib loading + the (default-on)
-// treeshake prune, the self-hosted compiler now compiles programs that import
-// those REAL modules and use their public API, routing IR and matching the
-// native interpreter. Drives the self-hosted x86-64 loader (asm_load_run) with
-// the repo's real stdlib as the root — proof the inlining workarounds are no
-// longer required.
 var stdlibModuleCases = []struct {
 	name string
 	src  string
 }{
-	// std/headers HeaderMap: case-insensitive multimap (two parallel string[]
-	// fields), functional struct-spread `append`, `get` → Option[string], `len`.
 	{"headers", `import "std/headers";
 function main(): i32 {
     let h = headers.header_map_new();
@@ -33,8 +22,6 @@ function main(): i32 {
         None => { return 0; }
     }
 }`},
-	// std/io_buffered BytesWriter: u8[]-backed builder, functional write_string,
-	// len. "hello" + "!" = 6 bytes * 7 = 42.
 	{"bytes-writer", `import "std/io_buffered";
 function main(): i32 {
     let w = io_buffered.bytes_writer_new();
@@ -42,18 +29,11 @@ function main(): i32 {
     w = w.write_string("!");
     return w.len() * 7;
 }`},
-	// std/stream Stream: u8[] + cursor reader. len("hello world") = 11 * 3 = 33.
 	{"stream", `import "std/stream";
 function main(): i32 {
     let s = stream.stream_from_string("hello world");
     return s.len() * 3;
 }`},
-	// core/cmp's Eq-driven generic verbs (`contains` / `index_of` / `distinct`,
-	// bound `[T: Eq]`) on the REAL stdlib via the self-host loader: the bound
-	// makes them monomorphise per element type, so the i32 instances keep the
-	// scalar `==` while the string instances dispatch byte equality — proof the
-	// shipped bodies (not an inlined copy) lower through the IR path for both
-	// element types. #2689 / #5348 (the verbs' single home is core/cmp).
 	{"cmp-eq-verbs", `import "core/cmp" as cmp;
 function main(): i32 {
     let a: i32[] = [10, 20, 30, 20];
@@ -71,9 +51,6 @@ function main(): i32 {
     }
     return r; // 127
 }`},
-	// std/array's `xs.index_of(target)` → Option[i32] (#4387) runs the stdlib
-	// generic, as native does, on a local, a struct FIELD (the #6784 shape) and a
-	// string[] receiver; `.contains` on the same receivers.
 	{"array-index-of", `import "std/array";
 struct H { xs: i32[] }
 function main(): i32 {
@@ -97,9 +74,6 @@ function main(): i32 {
     if (!h.xs.contains(8)) { return 17; }
     return 42;
 }`},
-	// A one-letter struct name is a type, not a type variable: the monomorphiser
-	// read `P` as one, left `p.ss`'s type unknown, and never folded the
-	// string[] method call on it (#10256).
 	{"one-letter-struct-field-method", `import "std/array";
 struct P { ss: string[] }
 function main(): i32 {
@@ -109,9 +83,6 @@ function main(): i32 {
     if (!ps[0].ss.contains("b")) { return 3; }
     return 42;
 }`},
-	// A map's keys() / values() snapshot is an array, so an array method
-	// chained onto it folds like one on a local (the snapshot's type was
-	// unknown to the monomorphiser).
 	{"map-snapshot-array-methods", `import "core/map";
 import "std/array";
 function main(): i32 {
@@ -120,8 +91,6 @@ function main(): i32 {
     match (m.values().max()) { Some(v) => { if (v != 20) { return 2; } }, None => { return 3; } }
     return m.values().sum();
 }`},
-	// std/array's methods on an untyped literal: the element type is inferred,
-	// so the i32 instance is chosen, and min/max answer Some or None.
 	{"untyped-literal-array-methods", `import "std/array";
 function main(): i32 {
     let a = [5, 3, 8, 1];
@@ -132,9 +101,6 @@ function main(): i32 {
     match (e.max()) { Some(_) => { return 3; }, None => {} }
     return t; // 17 + 120 + 1 + 8
 }`},
-	// std/i32's methods run their own bodies. The self-host used to call a
-	// runtime helper of its own for pow / gcd / lcm, and its pow answered 1 for a
-	// negative exponent where the stdlib answers 0 (#10244).
 	{"i32-methods", `import "std/i32";
 function main(): i32 {
     let n: i32 = 2;
@@ -143,14 +109,6 @@ function main(): i32 {
     r = r + g.gcd(18) + n.lcm(0 - 3);
     return r; // 0 + 32 + 6 + 6
 }`},
-	// The persistent collections (#6794) through the self-host loader: generic
-	// enums / structs with receiver methods whose bodies call bounded free
-	// generics on the struct's own type vars (`node_insert(m, k, v)` under
-	// `OrdMap[K, V]`). Those calls are instantiated per STRUCT clone, with the
-	// receiver typed in the env — pre-fix the method body was rewritten once
-	// with `k: K`, keying an erased clone (`node_insert__K__V`) whose own
-	// generic calls then dangled. Each row inserts, snapshots, removes and reads
-	// both the live value and the snapshot.
 	{"ordmap", `import "std/ordmap";
 function main(): i32 {
     let m: ordmap.OrdMap[i32, string] = ordmap.ordmap_new();
@@ -165,11 +123,6 @@ function main(): i32 {
     if (m.get_or(100, "") != "w" || snap.get_or(3, "") != "v") { return 4; }
     return 42;
 }`},
-	// std/ndarray (#9734): a generic struct holding a `T[]` and two `i32[]`,
-	// whose receiver methods rebuild it with the storage shared. Each row is
-	// a metadata operation read back against the flat construction, a
-	// copy through `to_flat`, then the elementwise and axis combinators, a
-	// broadcast, and the two products.
 	{"ndarray", `import "std/ndarray";
 function main(): i32 {
     let xs: i32[] = [];
@@ -209,9 +162,6 @@ function main(): i32 {
     if (m.get_or("d", 0) != 4 || snap.get_or("a", 0) != 1) { return 4; }
     return 42;
 }`},
-	// pvec's `get_or` descends the trie in a loop that returns the leaf's
-	// array straight out of a match binding — the borrowed-payload return that
-	// must retain, or the snapshot's leaf is freed under it.
 	{"pvec", `import "std/pvec";
 function main(): i32 {
     let v: pvec.PVec[i32] = pvec.pvec_new();

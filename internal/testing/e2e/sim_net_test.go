@@ -7,20 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// SimNet (docs/DST-PLATFORM-BRIEF.md slice 2) is std/sim's scripted
-// request/response layer — the sim sibling of fetch.fetch_future:
-// endpoints registered on a sim.Net with per-endpoint body, first-byte
-// latency, and a chunking schedule, fetched through futures that honour
-// the real fetch contract (body on success, "" for a dead upstream,
-// one re-suspension per chunk). These gates pin that handler fan-out
-// logic is testable against scripted upstreams with EXACT virtual-time
-// assertions, on every backend including the interpreter.
-
-// `tests/stdlib/sim_net_test.fern` is the TAP suite: input-order
-// gather over three latencies, race picking the fast endpoint,
-// with_deadline dropping only the slow one, chunk accumulation +
-// per-chunk re-suspension, the dead-upstream "" contract, and the
-// per-endpoint hits counter / wildcard path. Passing → exit 0.
 func TestRunnerSimNetExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "tests/stdlib/sim_net_test.fern")

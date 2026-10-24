@@ -22,10 +22,8 @@ func runFipHttp(t *testing.T, fern, dir, variant string, runner []string) e2ehar
 	return e2eharness.ParseFipHttpReport(t, variant, out)
 }
 
-// The fip HTTP codec experiment (#9853), built by the Go compiler: see
-// e2eharness.CheckFipHttpReports for what it pins.
 func TestFipHttpCodecAgreesAndDoesNotAllocate(t *testing.T) {
-	runner := x86NativeRunner(t) // SKIPs if neither native amd64 nor qemu-x86_64
+	runner := x86NativeRunner(t)
 	fern := buildFernCLI(t)
 	dir := t.TempDir()
 	e2eharness.CheckFipHttpReports(t, runFipHttp(t, fern, dir, "baseline", runner), runFipHttp(t, fern, dir, "fip", runner))

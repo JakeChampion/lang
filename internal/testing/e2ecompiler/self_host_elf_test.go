@@ -7,20 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostELF exercises the self-hosted static ELF-64 executable
-// writer (compiler/elf.fern) — the first slice of the native
-// binary backend (the container half that aims to remove the external
-// gcc/ld link step).
-//
-// elf.fern is intentionally import-free, so this test reads it from disk
-// and concatenates it with a self-test main() that builds ELF images and
-// asserts the fixed-layout header + program-header bytes (magic,
-// class/data, e_type, e_machine, e_entry, the single PT_LOAD, p_flags,
-// sizes, and the body placement / 8-byte data alignment), then runs the
-// combined program through the existing self-host wasm pipeline
-// (wasm_run -> WAT -> wasmtime). The program returns 0 when every check
-// passes, or the (1-based) number of the failing check — surfaced in the
-// error message so a regression points straight at the bad field.
 func TestSelfHostELF(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host elf e2e")
@@ -52,12 +38,6 @@ func TestSelfHostELF(t *testing.T) {
 	}
 }
 
-// elfSelfTestMain asserts the fixed-layout fields of the produced ELF-64
-// header + program header — the same fields the Go reference's
-// TestStaticExecutableHeader checks, plus the x86-64 data variant
-// (e_machine, R+W+X flags, 8-byte data alignment). Each `return N` is a
-// distinct failing-check id (0 = all pass). 0x400078 = base(0x400000) +
-// 64 + 56 = 4194424; LE bytes 0x78,0,0x40,0 = 120,0,64,0.
 const elfSelfTestMain = `
 function main(): i32 {
     // arm64 R+X executable from one instruction (movz x0,#0: 00 00 80 d2).

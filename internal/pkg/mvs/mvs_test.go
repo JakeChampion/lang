@@ -27,9 +27,6 @@ func TestVersionCompare(t *testing.T) {
 	if _, err := ParseVersion("1.2"); err == nil {
 		t.Error("two-part version should error")
 	}
-	// A part must be plain digits. strconv.Atoi accepts these; a version
-	// whose String() spells it differently can never be looked up in the
-	// index it keys, and manifest.IsVersion rejects them already.
 	for _, s := range []string{"1.+2.3", "1.-0.3", "1..3", "1.2.x"} {
 		if _, err := ParseVersion(s); err == nil {
 			t.Errorf("ParseVersion(%q) should error", s)
@@ -57,9 +54,6 @@ func TestParseIndex(t *testing.T) {
 	}
 }
 
-// MVS keeps the max of the minimums, expanding each selected version's
-// own requirements to a fixpoint. Here root wants foo>=1.0.0 and
-// bar>=1.0.0; foo@1.1.0 requires bar>=2.0.0, so bar is raised to 2.0.0.
 func TestResolveMaxOfMins(t *testing.T) {
 	ix, _ := ParseIndex(`[foo]
 "1.0.0" = { path = "foo1" }
@@ -88,8 +82,6 @@ func TestResolveMaxOfMins(t *testing.T) {
 	}
 }
 
-// A diamond: two deps demand different minimums of a shared dep; MVS
-// takes the higher.
 func TestResolveDiamond(t *testing.T) {
 	ix, _ := ParseIndex(`[a]
 "1.0.0" = { path = "a" }
@@ -118,8 +110,6 @@ func TestResolveDiamond(t *testing.T) {
 	}
 }
 
-// A demanded version absent from the index is a precise error, never a
-// silent round-up.
 func TestResolveMissingVersionErrors(t *testing.T) {
 	ix, _ := ParseIndex("[foo]\n\"1.0.0\" = { path = \"foo\" }\n")
 	depsOf := func(string, Version, Source) (map[string]string, error) { return nil, nil }
@@ -129,9 +119,6 @@ func TestResolveMissingVersionErrors(t *testing.T) {
 	}
 }
 
-// A top-level exclude on the demanded version rounds up to the next
-// higher non-excluded indexed version ("1.9 is broken"), whether the
-// demand comes from the root or a transitive dep.
 func TestResolveExcludeRoundsUp(t *testing.T) {
 	ix, _ := ParseIndex(`[foo]
 "1.0.0" = { path = "foo1" }
@@ -160,7 +147,6 @@ func TestResolveExcludeRoundsUp(t *testing.T) {
 	}
 }
 
-// Excluding every version at or above the demand is a precise error.
 func TestResolveExcludeNoHigherErrors(t *testing.T) {
 	ix, _ := ParseIndex("[foo]\n\"1.0.0\" = { path = \"foo\" }\n")
 	depsOf := func(string, Version, Source) (map[string]string, error) { return nil, nil }
@@ -170,8 +156,6 @@ func TestResolveExcludeNoHigherErrors(t *testing.T) {
 	}
 }
 
-// An exclude on a version nothing demands is a no-op — the max-of-mins
-// outcome is unchanged.
 func TestResolveExcludeUnrelatedNoOp(t *testing.T) {
 	ix, _ := ParseIndex(`[foo]
 "1.0.0" = { path = "foo1" }
@@ -208,8 +192,6 @@ func TestLockRoundTrip(t *testing.T) {
 	}
 }
 
-// A comment after a value is TOML, in a lock written by hand as in one
-// written by WriteLock.
 func TestReadLockTrailingComments(t *testing.T) {
 	dir := t.TempDir()
 	src := "[[package]]  # the first\nname = \"foo\"\nversion = \"1.2.0\"  # pinned\npath = \"/pkgs/foo\"\n"

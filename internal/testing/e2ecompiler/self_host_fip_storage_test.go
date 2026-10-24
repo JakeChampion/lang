@@ -81,7 +81,6 @@ func (m *storageModel) dispatch(slot int) {
 			m.finish(slot, 12, 0)
 			return
 		}
-		// Sort eligible victims by unused first, then age and stable frame id.
 		var candidates []int
 		for f, value := range m.frames {
 			if value.pin == 0 && !value.dirty {
@@ -287,8 +286,6 @@ func TestSelfHostFipStorage(t *testing.T) {
 			var actions []storageAction
 			states := [][]int64{m.state()}
 			add := func(a storageAction) { actions = append(actions, a); m.apply(a); states = append(states, m.state()) }
-			// Independent sequential workload exercises every operation and fault
-			// before queued competition. Poll only after a bounded drain period.
 			for _, kind := range []int{0, 1, 3, 2, 2, 3, 0, 1, 2, 3} {
 				fault := 0
 				if kind == 2 && m.serial%2 == 0 {
@@ -309,7 +306,6 @@ func TestSelfHostFipStorage(t *testing.T) {
 			for i := 0; i < tc.capacity*3+4; i++ {
 				add(storageAction{op: 1})
 			}
-			// Completed but unpolled slots still enforce the outstanding bound.
 			add(storageAction{op: 0, kind: 0, page: 0})
 			for i := range m.requests {
 				add(storageAction{op: 2, slot: i, ticket: m.requests[i].ticket})

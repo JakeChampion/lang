@@ -1,22 +1,3 @@
-// examples/fip/event_loop_baseline.fern — the idiomatic allocating variant of
-// the bounded event loop (#9583).
-//
-// Same workload, same capacities and the same answers as the `fip` and `fbip`
-// variants. What differs is that this one is written the way the feature would
-// be written by someone not thinking about allocation at all: events are an
-// enum with payloads, the queue is an array that grows and shrinks, responses
-// are appended as they are produced, and nothing is annotated or owned.
-//
-// It is the control. Without it the other two variants report a number with
-// nothing to compare against, and "zero allocations" reads as a fact about the
-// language rather than as the difference between two ways of writing the same
-// program.
-//
-// Nothing here is a straw man: every construct is the one the language makes
-// easiest. The queue really is the obvious spelling of a queue, an `Event`
-// really is what an event wants to be, and a response list really is how a
-// batch of responses is collected. That is the point — this is what the cost
-// of the obvious spelling actually is.
 import "core/cmp";
 import "std/bench";
 import "std/i32";
@@ -30,9 +11,6 @@ function queue_cap(): i32 {
   return 64;
 }
 
-// An event with its payload, which is what a reader wants and what a `fip`
-// data plane cannot have: constructing one is an allocation, so the strict
-// variant encodes the same information as three integers in parallel arrays.
 enum Event {
   Create(i64, i64),
   Update(i64, i64),
@@ -47,8 +25,6 @@ enum Response {
   Value(i64),
 }
 
-// An entry as a record rather than as three parallel regions — again the
-// shape a reader wants and the packed variants cannot use.
 struct Entry { key: i64, value: i64 }
 
 struct State {
@@ -125,9 +101,6 @@ function apply_read(s: State, id: i64): State {
   return respond(State { ...s, m_ok: s.m_ok + 1 as i64 }, Response.Value(e.value));
 }
 
-// Deleting from a dense array is the rebuild it looks like: every surviving
-// entry is appended to a fresh array. The packed variants mark a slot unused
-// and touch one word.
 function apply_delete(s: State, id: i64): State {
   let at: i32 = find_slot(s.entries, id);
   if (at < 0) {
@@ -144,8 +117,6 @@ function apply_delete(s: State, id: i64): State {
   return respond(State { ...s, entries: kept, m_ok: s.m_ok + 1 as i64 }, Response.Ok);
 }
 
-// Dequeue is a slice: the head is taken and the tail becomes the new queue,
-// which is the idiomatic spelling and a fresh array every time.
 function iteration(s: State): State {
   if (s.queue.len() == 0) {
     return s;
@@ -182,11 +153,6 @@ function drain_output(s: State): State {
 function reset_metrics(s: State): State {
   return State { ...s, m_ok: 0 as i64, m_miss: 0 as i64, m_full: 0 as i64, m_dropped: 0 as i64 };
 }
-
-// ===================== THE WORKLOAD =====================
-//
-// Identical to the other two variants', so the three differ in how state is
-// held and in nothing else.
 
 function event_id(n: i64): i64 {
   let x: i64 = n * (2654435761 as i64);
@@ -245,8 +211,6 @@ function main(): i32 {
   s = round(s, 1 as i64, queue_cap());
   s = reset_metrics(s);
   let rounds: i32 = 20000;
-  // Built before the mark: the sample buffer is part of the instrument, not
-  // of the steady state being measured.
   let samples: i64[] = [];
   let p: i32 = 0;
   while (p < rounds) {
@@ -260,9 +224,6 @@ function main(): i32 {
   while (r < rounds) {
     let t0: i64 = monotonic_ns();
     s = round(s, r as i64 * (7 as i64) + 1 as i64, queue_cap());
-    // `.with` on a uniquely-owned array writes in place, so recording a
-    // sample costs the measured region no allocation. The harness pins
-    // that property (internal/testing/e2e/bench_module_test.go).
     samples = samples.with(r, monotonic_ns() - t0);
     r = r + 1;
   }
@@ -270,10 +231,6 @@ function main(): i32 {
   let allocs: i64 = bench.allocs_after(at_allocs);
   let fresh: i64 = bench.fresh_bytes_after(at_fresh);
   let events: i64 = rounds as i64 * (queue_cap() as i64);
-  // The per-round samples become a bench.Report, so the percentile and
-  // throughput arithmetic is the harness's and identical across the three
-  // variants. Sorting allocates, which is why it happens down here — after
-  // the allocation figures have already been read.
   let rep: bench.Report = bench.Report {
     name: "baseline",
     iterations: rounds,

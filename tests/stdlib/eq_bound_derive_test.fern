@@ -3,15 +3,6 @@ import "std/array";
 import "std/set";
 import "std/test";
 
-// tests/stdlib/eq_bound_derive_test.fern — the Eq-driven std/array and
-// std/set verbs over a `@derive(Eq)` STRUCT element, the element type that only
-// satisfies the `T: cmp.Eq` bound through the derive. Each verb compares
-// through the bound's `eq` method; a body that used the `==` operator instead
-// rejected this element type with "cannot compare values of type Point",
-// reported as a monomorph compiler bug at a stdlib line (#6846). The i32 /
-// string coverage for the same verbs lives in the per-verb suites
-// (array_all_equal_test.fern, array_dedup_test.fern, …).
-
 @derive(cmp.Eq, cmp.Display)
 struct Point { x: i32, y: i32 }
 
@@ -35,8 +26,6 @@ function test_distinct(): test.TestOutcome {
   return test.assert_eq_array(cmp.distinct(runs), [p(3, 4), p(1, 2)]);
 }
 
-// `.distinct()` is std/array's method form of the same verb, delegating to
-// core/cmp — so it has to accept the derived element type too.
 function test_distinct_method(): test.TestOutcome {
   let runs: Point[] = [p(3, 4), p(1, 2), p(3, 4)];
   return test.assert_eq_array(runs.distinct(), [p(3, 4), p(1, 2)]);

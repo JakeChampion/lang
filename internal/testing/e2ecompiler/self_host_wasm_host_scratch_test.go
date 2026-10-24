@@ -6,14 +6,6 @@ import (
 	"testing"
 )
 
-// The preview-1 helpers behind args(), environ() and env(name) read the host's
-// vector into two $__fern_alloc scratch buffers (the pointer table and the
-// string bytes) and copy out of them. None freed either buffer, so every call
-// left two blocks live. environ() also had no instruction selection at all:
-// kind 249 was missing from the host-op predicate, so the backend refused it.
-//
-// Each program is run with an empty environment and with two variables set,
-// because an empty one makes both scratch requests zero bytes.
 func TestSelfHostWasmHostScratchFreed(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm host scratch census")
@@ -21,8 +13,7 @@ func TestSelfHostWasmHostScratchFreed(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 
 	cases := []struct {
-		name, src string
-		// exit with no environment, then with A=bc and BB=d.
+		name, src     string
 		bare, withEnv int
 	}{
 		{"args", `function main(): i32 {

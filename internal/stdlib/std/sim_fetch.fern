@@ -1,48 +1,4 @@
-// std/sim_fetch — a scripted network for std/fetch's client, in virtual
-// time.
-//
-// A `Net` is a `fetch.Transport`: `fetch.send_on(n, req, policy)` runs the
-// whole client (lookup, the block list, connect and read bounds, retrying
-// a reset, redirects, decoding) against names, listeners and answers a
-// test scripts, on the clock of a `sim.Sim`. Nothing waits: a read that
-// would block moves the clock to the moment the scripted bytes arrive, or
-// by the whole wait when nothing does, so a bound that passes passes at
-// its exact virtual time. Under `sim.run_tasks` each move is a park
-// (`Sim.advance_to`), so the client's task interleaves with the others,
-// and a task cancelled while it waits reads `Abandoned`: the client's
-// `Cancelled`.
-//
-//   let d: sim.Sim = sim.new(1);
-//   let n: sim_fetch.Net = sim_fetch.net(d)
-//       .host("example.test", ["93.184.216.34"])
-//       .listen("93.184.216.34", 80, 5)
-//       .route("93.184.216.34", 80, "/", [sim_fetch.reply(200, "hi").after(20)]);
-//   let got = fetch.send_on(n, fetch.get("http://example.test/"), policy);
-//   // d.now_ns() is 25 ms: 5 to connect, 20 to the first byte.
-//
-// A name resolves to the addresses `host` gives it, or to itself when it
-// is an IP literal; any other name is `NoSuchName`. The addresses are
-// raced as `dns.connect_race` races them: each attempt starts the
-// fallback delay after the one before, or at once when that one was
-// refused, an address with no `listen`er on the port refusing at once;
-// the first to finish its connect time wins, and none finishing within
-// the client's bound is a timeout at the bound. A bound of zero has
-// passed before any attempt starts, so it times out even where every
-// address refuses. The request
-// written on a connection picks its route by address, port and request
-// target (`*` matches any target), and the n-th request a route takes is
-// answered with its n-th `Answer`, the last repeating; a request no route
-// takes is answered 404, unless a handler `serve`s the address and port:
-// then the request is parsed and answered in memory, the way a serve loop
-// answers it. A connection answers one request unless its
-// answer is `kept()`, or the served request keeps the connection, when it
-// stays open for the next one; the `Net`'s `Idle` pool is where the client
-// keeps it in between.
-//
-// The module is std/sim's sibling rather than part of it so that std/sim,
-// which reaches nothing but the clock and randomness, does not import the
-// client and everything it reaches.
-
+// This module provides a scripted HTTP network with virtual time.
 import "std/sim";
 import "std/fetch";
 import "std/http";
@@ -56,67 +12,47 @@ import "std/url";
 import "std/json";
 import "std/headers";
 
-// `Answer` — one scripted response: `bytes` on the wire, the first of
-// them `first_ms` after the request was written, then `chunk` bytes at a
-// time (all at once when 0) every `chunk_ms`; once all are read the
-// connection closes, or stays open and silent when `close` is false.
 pub struct Answer { bytes: u8[], first_ms: i64, chunk_ms: i64, chunk: i32, close: boolean }
 
-// `reply(status, body)` — a response with `status`, a `Content-Length`
-// and `body`, written at once and followed by a close it announces with
-// `Connection: close`.
 pub function reply(status: i32, body: string): Answer {
   return raw("HTTP/1.1 " + int.int_to_string(status) + " Status\r\nContent-Length: " + int.int_to_string(body.len()) + CLOSING + body);
 }
 
-// `redirect(status, location)` — a 3xx sending the client to `location`,
-// followed by a close it announces.
 pub function redirect(status: i32, location: string): Answer {
   return raw("HTTP/1.1 " + int.int_to_string(status) + " Status\r\nLocation: " + location + "\r\nContent-Length: 0" + CLOSING);
 }
 
-// The end of the header block of an answer that closes after it.
 const CLOSING: string = "\r\nConnection: close\r\n\r\n";
 
-// `raw(text)` — `text` on the wire as written, then a close.
 pub function raw(text: string): Answer {
   return raw_bytes(text.bytes());
 }
 
-// `raw_bytes(bytes)` — `bytes` on the wire as given, then a close.
 pub function raw_bytes(bytes: u8[]): Answer {
   return Answer { bytes: bytes, first_ms: 0, chunk_ms: 0, chunk: 0, close: true };
 }
 
-// `reset()` — the connection closed before any byte of an answer.
 pub function reset(): Answer {
   let none: u8[] = [];
   return raw_bytes(none);
 }
 
-// `silent()` — no byte, and no close: the client's bounds end the wait.
 pub function silent(): Answer {
   return Answer { ...reset(), close: false };
 }
 
-// `a.after(ms)` — `a` with its first byte `ms` after the request.
 pub function (a: Answer) after(ms: i64): Answer {
   return Answer { ...a, first_ms: ms };
 }
 
-// `a.in_chunks(size, every_ms)` — `a` delivered `size` bytes at a time,
-// one chunk every `every_ms` after the first.
 pub function (a: Answer) in_chunks(size: i32, every_ms: i64): Answer {
   return Answer { ...a, chunk: size, chunk_ms: every_ms };
 }
 
-// `a.held()` — `a` with the connection left open after its last byte.
 pub function (a: Answer) held(): Answer {
   return Answer { ...a, close: false };
 }
 
-// `a.kept()` — `a` on a persistent connection: its `Connection: close`
-// dropped and the connection left open for the next request.
 pub function (a: Answer) kept(): Answer {
   let at: i32 = __find_bytes(a.bytes, CLOSING.as_bytes());
   let end: i32 = __find_bytes(a.bytes, "\r\n\r\n".as_bytes());
@@ -132,29 +68,16 @@ pub function (a: Answer) kept(): Answer {
   return Answer { ...a, bytes: bytes, close: false };
 }
 
-// `Name` — a host name and the addresses it resolves to, in order.
 pub struct Name { host: string, addrs: string[] }
 
-// `Listener` — an address and port that accepts after `connect_ms`.
 pub struct Listener { addr: string, port: i32, connect_ms: i64 }
 
-// `Route` — the answers an address and port give a request target, in
-// the order requests reach it.
 pub struct Route { addr: string, port: i32, path: string, answers: Answer[] }
 
-// `Server` — a handler answering in memory every request `addr:port`
-// takes that no route answers; `n.serve` adds one.
 pub struct Server { addr: string, port: i32, handler: (HttpRequest) => HttpResponse }
 
-// `Net` — the scripted network, on `drv`'s clock. The builders return a
-// new `Net` sharing the same state cells, so a value built once and
-// handed to the client records what the client did: the connections
-// table, how many requests each route took, every request written, and
-// every response a server made.
 pub struct Net { drv: sim.Sim, names: Name[], listeners: Listener[], routes: Route[], servers: Server[], conns: Cell[string], hits: Cell[string], sent: Cell[string], made: Cell[string], next: Cell[i32], pool: fetch.Idle }
 
-// `net(drv)` — an empty network on `drv`'s clock: every name unknown and
-// every address refusing.
 pub function net(drv: sim.Sim): Net {
   let names: Name[] = [];
   let listeners: Listener[] = [];
@@ -163,50 +86,31 @@ pub function net(drv: sim.Sim): Net {
   return Net { drv: drv, names: names, listeners: listeners, routes: routes, servers: servers, conns: cell_new(""), hits: cell_new(""), sent: cell_new(""), made: cell_new(""), next: cell_new(1), pool: fetch.idle() };
 }
 
-// `n.pooling(pool)` — `n` keeping the client's idle connections in `pool`
-// rather than the default `fetch.idle()`.
 pub function (n: Net) pooling(pool: fetch.Idle): Net {
   return Net { ...n, pool: pool };
 }
 
-// `n.host(name, addrs)` — `name` resolving to `addrs`.
 pub function (n: Net) host(name: string, addrs: string[]): Net {
   return Net { ...n, names: n.names.append(Name { host: name, addrs: addrs }) };
 }
 
-// `n.listen(addr, port, connect_ms)` — `addr:port` accepting after
-// `connect_ms`.
 pub function (n: Net) listen(addr: string, port: i32, connect_ms: i64): Net {
   return Net { ...n, listeners: n.listeners.append(Listener { addr: __canon(addr), port: port, connect_ms: connect_ms }) };
 }
 
-// `n.route(addr, port, path, answers)` — the answers `addr:port` gives
-// requests for `path` (`*` for any).
 pub function (n: Net) route(addr: string, port: i32, path: string, answers: Answer[]): Net {
   return Net { ...n, routes: n.routes.append(Route { addr: __canon(addr), port: port, path: path, answers: answers }) };
 }
 
-// `n.serve(addr, port, handler)` — `addr:port` accepting at once and
-// answering each request it takes with `handler`, the way a serve loop
-// answers it: the request parsed out of the bytes the client wrote, the
-// response framed for the request's method, and the connection kept when
-// the request keeps it; bytes that are not one whole request are
-// answered 400 and the connection closed. A route on the same address
-// and port is consulted first. A test runs its routes and middleware
-// under the client with no socket:
-//
-//   n.serve(ORIGIN, 80, (req: HttpRequest): HttpResponse => r.handle(req, plat))
 pub function (n: Net) serve(addr: string, port: i32, handler: (HttpRequest) => HttpResponse): Net {
   let listening: Net = n.listen(addr, port, 0);
   return Net { ...listening, servers: listening.servers.append(Server { addr: __canon(addr), port: port, handler: handler }) };
 }
 
-// `n.connects()` — how many connections the client opened.
 pub function (n: Net) connects(): i32 {
   return n.next.get() - 1;
 }
 
-// `n.open()` — how many of them the client has not closed.
 pub function (n: Net) open(): i32 {
   let count: i32 = 0;
   for row in __rows(n.conns.get()) {
@@ -217,13 +121,10 @@ pub function (n: Net) open(): i32 {
   return count;
 }
 
-// `n.sent_count()` — how many requests the client wrote.
 pub function (n: Net) sent_count(): i32 {
   return __sent_all(n).len();
 }
 
-// `n.sent(i)` - the bytes of the i-th write, including any binary body.
-// Text callers validate explicitly with utf8.from_bytes.
 pub function (n: Net) sent(i: i32): u8[] {
   let all: string[] = __sent_all(n);
   if (i < 0 || i >= all.len()) {
@@ -293,8 +194,6 @@ impl fetch.Transport for Net {
     if (row.len() == 0 || row[7] != "1") {
       return 0 - 9;
     }
-    // Cell admits strings but not arrays. Encode the shared journal as
-    // ASCII instead of keeping arbitrary request bytes in a string.
     let encoded: string = hex.encode(bytes);
     self.sent.set(self.sent.get() + int.int_to_string(encoded.len()) + ":" + encoded);
     if (__busy(self, row)) {
@@ -379,22 +278,6 @@ impl fetch.Transport for Net {
   }
 }
 
-// === a cassette: recording and replay ====================================
-//
-// A cassette holds the exchanges a client made, one per line, as a JSON
-// object: the request's method and URL, the response's status, its
-// headers as [name, value] pairs, and its body as text (`body`), or as
-// hex (`body_hex`) when it is not UTF-8. The response is the one the
-// client returned, decoded, so `Content-Encoding`, `Content-Length`,
-// `Transfer-Encoding` and `Connection` are the wire's and are not kept.
-//
-//   {"method":"GET","url":"http://api.test/users/7","status":200,"headers":[["content-type","application/json"]],"body":"{\"id\":7}"}
-//
-// A run against the real upstream records one with `send_taped`; a test
-// replays it with `n.replay(cassette)`, which answers each recorded
-// request target in recorded order.
-
-// `taped(req, resp)` — the cassette line for one exchange, newline included.
 pub function taped(req: fetch.Request, resp: HttpResponse): string {
   let pairs: json.JsonValue[] = [];
   let i: i32 = 0;
@@ -421,14 +304,10 @@ pub function taped(req: fetch.Request, resp: HttpResponse): string {
   return json.json_encode(json.JObject(json.object_of(keys, values))) + "\n";
 }
 
-// `__wire_only(name)` — a response field that frames the wire rather than
-// describing the resource, which a replay frames afresh.
 function __wire_only(name: string): boolean {
   return name == "content-length" || name == "content-encoding" || name == "transfer-encoding" || name == "connection";
 }
 
-// `send_taped(tr, tape, req, policy)` — `fetch.send_on`, appending the
-// exchange to `tape` when it answers with a response.
 pub function send_taped[T: fetch.Transport](tr: T, tape: Cell[string], req: fetch.Request, policy: fetch.Policy): Result[HttpResponse, fetch.FetchError] {
   match (fetch.send_on(tr, req, policy)) {
     Ok(resp) => {
@@ -441,15 +320,6 @@ pub function send_taped[T: fetch.Transport](tr: T, tape: Cell[string], req: fetc
   }
 }
 
-// `n.replay(cassette)` — `n` answering the exchanges `cassette` holds: each
-// URL's host resolves to an address of the replay's own (an IP literal to
-// itself, any other host to the first of `93.184.216.34` upward that no
-// name has), listening at once on the URL's port, and the route for each
-// request target answers in recorded order, the last answer repeating.
-// The simulated network carries no TLS, so an `https` exchange replays as
-// plain `http` on port 80: a program replaying one fetches `http://` for
-// the same host. A line that is not an exchange is the error, with the
-// line's number from 1.
 pub function (n: Net) replay(cassette: string): Result[Net, string] {
   let out: Net = n;
   let line_no: i32 = 0;
@@ -469,8 +339,6 @@ pub function (n: Net) replay(cassette: string): Result[Net, string] {
   return Ok(out);
 }
 
-// `__Exchange` — one cassette line parsed: where the request went, and
-// the answer the replay gives it.
 struct __Exchange { host: string, port: i32, target: string, answer: Answer }
 
 function __exchange(line: string): Option[__Exchange] {
@@ -519,8 +387,6 @@ function __exchange_of(o: json.JsonObject): Option[__Exchange] {
   return Some(__Exchange { host: u.host, port: port, target: target, answer: raw_bytes(http.http_serialize_response_to_bytes(method, "HTTP/1.1", resp, false)) });
 }
 
-// `__string_member(o, key)` — `o`'s `key` as text: a string's text, a
-// number's digits, "" for anything else.
 function __string_member(o: json.JsonObject, key: string): string {
   match (o.get(key)) {
     Some(v) => {
@@ -594,8 +460,6 @@ function __body_member(o: json.JsonObject): Option[u8[]] {
   return Some(__string_member(o, "body").bytes());
 }
 
-// `__replayed(n, e)` — `n` with `e`'s answer appended to the route its
-// target takes, the host named and the port listening when they are not.
 function __replayed(n: Net, e: __Exchange): Net {
   let out: Net = n;
   let addr: string = __replay_addr(out, e.host);
@@ -616,9 +480,6 @@ function __replayed(n: Net, e: __Exchange): Net {
   return out.route(addr, e.port, e.target, [e.answer]);
 }
 
-// `__replay_addr(n, host)` — the address `host` has on `n`: itself when a
-// literal, the first it is named to, else the first of `93.184.216.34`
-// upward that no name on `n` has.
 function __replay_addr(n: Net, host: string): string {
   let known: net.IpAddr[] = __addrs_of(n, host);
   if (known.len() > 0) {
@@ -646,9 +507,6 @@ function __addr_named(n: Net, addr: string): boolean {
   return false;
 }
 
-// `__busy(n, row)` — whether the connection `row` is still answering a
-// request, so a write on it takes no new one: it took one, and has not
-// delivered all of a `kept()` answer.
 function __busy(n: Net, row: string[]): boolean {
   let route: i32 = __field(row, 3);
   if (route == 0 - 1) {
@@ -658,8 +516,6 @@ function __busy(n: Net, row: string[]): boolean {
   return a.close || __field(row, 5) < a.bytes.len();
 }
 
-// `__canon(addr)` — `addr` in the one spelling `IpAddr.to_string` gives
-// it, so a listener written `::1` matches the address the client dials.
 function __canon(addr: string): string {
   match (net.ip_parse(addr)) {
     Some(a) => {
@@ -672,8 +528,6 @@ function __canon(addr: string): string {
   return addr;
 }
 
-// `__connect_ms(n, addr, port)` — the connect time of the listener on
-// `addr:port`, or -1 when none listens there.
 function __connect_ms(n: Net, addr: string, port: i32): i64 {
   for l in n.listeners {
     if (l.addr == addr && l.port == port) {
@@ -683,8 +537,6 @@ function __connect_ms(n: Net, addr: string, port: i32): i64 {
   return 0 - 1;
 }
 
-// `__addrs_of(n, host)` — `host` itself when it is an IP literal, else the
-// addresses `n` names it.
 function __addrs_of(n: Net, host: string): net.IpAddr[] {
   let out: net.IpAddr[] = [];
   match (net.ip_parse(host)) {
@@ -708,8 +560,6 @@ function __addrs_of(n: Net, host: string): net.IpAddr[] {
   return out;
 }
 
-// `__elapsed(n, to_ns)` — a wait passed with nothing at `to_ns`, or
-// `Abandoned` when the task waiting was cancelled first.
 function __elapsed(n: Net, to_ns: i64): net.Recv {
   if (!n.drv.advance_to(to_ns)) {
     return net.Abandoned;
@@ -717,7 +567,6 @@ function __elapsed(n: Net, to_ns: i64): net.Recv {
   return net.Elapsed;
 }
 
-// Search the fixed ASCII delimiters without interpreting payload as text.
 function __find_bytes(data: [u8], needle: [u8]): i32 {
   let at: i32 = 0;
   while (at <= data.len() - needle.len()) {
@@ -733,8 +582,6 @@ function __find_bytes(data: [u8], needle: [u8]): i32 {
   return 0 - 1;
 }
 
-// `__target(data)` - the request target of the request line `data` starts
-// with.
 function __target(data: u8[]): string {
   let end: i32 = __find_bytes(data, "\r\n".as_bytes());
   if (end < 0) {
@@ -768,8 +615,6 @@ function __target(data: u8[]): string {
   }
 }
 
-// `__took(n, route)` — the count of requests `route` had taken before this
-// one, counting this one.
 function __took(n: Net, route: i32): i32 {
   let counts: string[] = n.hits.get().split(",");
   let out: string = "";
@@ -791,9 +636,6 @@ function __took(n: Net, route: i32): i32 {
   return before;
 }
 
-// `__served(n, addr, port, bytes)` — the request in `bytes` answered by
-// the server on `addr:port`, its response journaled in `made` and named
-// by the route -3 - k; -2 when no server listens there.
 function __served(n: Net, addr: string, port: i32, bytes: u8[]): i32 {
   for s in n.servers {
     if (s.addr == addr && s.port == port) {
@@ -806,9 +648,6 @@ function __served(n: Net, addr: string, port: i32, bytes: u8[]): i32 {
   return 0 - 2;
 }
 
-// `__response_entry(s, bytes)` — what `s` writes for the request in
-// `bytes`, as ASCII hex behind one byte saying whether the connection
-// stays open (`k`) or closes with the response (`c`).
 function __response_entry(s: Server, bytes: u8[]): string {
   match (http.http_parse_request_framed(bytes)) {
     http.Framed(f) => {
@@ -837,9 +676,6 @@ function __refused_entry(): string {
   return "c" + hex.encode(http.http_serialize_response_conn_bytes(http.text(400, "bad request"), false));
 }
 
-// `__answer(n, route, i)` — the answer to `route`'s `i`-th request, the
-// last repeating; a server's response when a server made one (a route
-// of -3 - k); a 404 when nothing took the request.
 function __answer(n: Net, route: i32, i: i32): Answer {
   if (route <= 0 - 3) {
     let entry: string = __journal_all(n.made.get())[0 - 3 - route];
@@ -858,10 +694,6 @@ function __answer(n: Net, route: i32, i: i32): Answer {
   return answers[i];
 }
 
-// The connections table: one `;`-ended row per connection, its fields
-// split on `|` (an IPv6 address holds `:`): id, address, port, route
-// (-1 before a request, -2 when none took it), answer, bytes read, when
-// the next bytes are ready (ns), open.
 function __row(id: i32, addr: string, port: i32, route: i32, answer: i32, offset: i32, ready_ns: i64, open: i32): string {
   return int.int_to_string(id) + "|" + addr + "|" + int.int_to_string(port) + "|" + int.int_to_string(route) + "|" + int.int_to_string(answer) + "|" + int.int_to_string(offset) + "|" + ready_ns.to_string() + "|" + int.int_to_string(open) + ";";
 }
@@ -921,7 +753,6 @@ function __int(s: string): i32 {
   return 0;
 }
 
-// `__field64(row, i)` — a non-negative decimal field as an i64.
 function __field64(row: string[], i: i32): i64 {
   let v: i64 = 0;
   if (i >= row.len()) {
@@ -933,13 +764,10 @@ function __field64(row: string[], i: i32): i64 {
   return v;
 }
 
-// Every write encoded as ASCII hex. The journal frames the encoded text
-// with its length and ':', so empty writes remain distinct entries.
 function __sent_all(n: Net): string[] {
   return __journal_all(n.sent.get());
 }
 
-// `__journal_all(log)` — the entries of a journal of `len:text` frames.
 function __journal_all(log: string): string[] {
   let bs: u8[] = log.bytes();
   let out: string[] = [];
@@ -957,7 +785,7 @@ function __journal_all(log: string): string[] {
   return out;
 }
 
-// Journal entries contain only hex produced by this module.
+// Journal entries contain only hexadecimal data from this module.
 function __journal_bytes(encoded: string): u8[] {
   match (hex.decode(encoded)) {
     Ok(bytes) => {

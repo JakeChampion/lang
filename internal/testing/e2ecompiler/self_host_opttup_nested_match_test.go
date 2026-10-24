@@ -5,11 +5,6 @@ import (
 	"testing"
 )
 
-// An `Option[<tuple-with-array>]` consumed by a match one block deeper (#6319's
-// tuple arm, the last of the four payload classes) releases the tuple and its
-// array, at function and block scope alike. The flat match at each scope is the
-// control.
-
 const otNestedFnSrc = `function round(i: i32): i32 {
     let acc: i32 = 0;
     let o: Option[(i32, i32[])] = Some((i, [i, i + 1]));
@@ -76,8 +71,6 @@ function main(): i32 {
 }
 `
 
-// The escape hazard: the arm binds the tuple's ARRAY element out to an outer
-// local, so the buffer is live where a deep drop would walk it.
 const otPayloadEscapesSrc = `import "core/int";
 function main(): i32 {
     let held: i32[] = [0, 0];
@@ -108,9 +101,6 @@ func TestSelfHostOptTupNestedMatchX86_64(t *testing.T) {
 
 	counts := func(t *testing.T, name, src string) (int64, int64, int64) {
 		t.Helper()
-		// These return a value, so `fern -interp` IS the oracle: a tuple deep-drop
-		// over a live element buffer shows up as a wrong answer, which matters
-		// more than the byte counts.
 		want := interpExit(t, interpBin, src)
 		asm := hevCompile(t, runner, driverBin, src, []string{"FERN_LEAKCHECK=1"})
 		progBin := buildBin(t, gcc, dir, name, asm)
@@ -143,8 +133,6 @@ func TestSelfHostOptTupNestedMatchX86_64(t *testing.T) {
 		{"fn_scoped_flat_control", otFlatFnSrc},
 		{"block_scoped_nested", otNestedBlockSrc},
 		{"block_scoped_flat_control", otFlatBlockSrc},
-		// The arm binds the tuple's array element out to an outer local; the
-		// exit agreement inside counts() is what says it was not freed under it.
 		{"tuple_element_escapes_the_arm", otPayloadEscapesSrc},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

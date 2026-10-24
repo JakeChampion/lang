@@ -1,32 +1,5 @@
 package e2e
 
-// A free function named `Ok` / `Err` / `Some` wins over the built-in variant
-// constructor, on every executor (#7162).
-//
-// The rule is the checker's and predates this test: checker.go decides
-// `isVar := vrOk && !c.isUserFuncOrLocal(id.Name, s)`, and isUserFuncOrLocal's
-// comment states the intent — "a user-defined `Red` should win over
-// `Color.Red`". `-interp` and all three self-host backends implemented it.
-// Native re-decided by SPELLING in two places and so answered differently:
-//
-//	                       call site      pair-form return
-//	-interp                4              4
-//	native x86-64          104            104
-//	native wasm            104            104
-//	self-host (all three)  4              4
-//
-// 104 is the built-in-constructor answer, 4 the user function's. Native's two
-// sites were `callBody`'s dispatch — which honoured a shadowing LOCAL but not
-// a shadowing FUNCTION — and `pairFormVariantsFor`, whose variant-name set fed
-// a return-position check that had no shadowing test at all. The issue reported
-// only the first; the second is why a `return Ok(v)` still constructed after
-// the first was fixed.
-//
-// Both directions are gated. shadowed_* must take the user function, and the
-// unshadowed controls must still construct the built-in variant — a fix that
-// simply stopped treating `Ok` as a constructor would pass the first half and
-// break every ordinary Option/Result program, which the controls catch.
-
 import "testing"
 
 const variantNameShadowedProg = `
@@ -86,10 +59,6 @@ function main(): i32 {
 }
 `
 
-// A program with no shadowing at all: every built-in constructor must behave
-// exactly as before. This is the regression half — pruning a shadowed name
-// from the pair-form variant set must not disturb the unshadowed set, which is
-// the shared package-level map every ordinary program uses.
 const variantNameUnshadowedProg = `
 function mk_ok(v: i32): Result[i32, i32] { return Ok(v); }
 function mk_err(v: i32): Result[i32, i32] { return Err(v); }
@@ -107,16 +76,6 @@ function main(): i32 {
 }
 `
 
-// A shadowed NULLARY constructor name, in a program of its own. Pruning it
-// leaves a ONE-element variant set — a distinct branch of pruneShadowedVariants
-// from the payload-carrying cases, where the pair-form path must decline for
-// the whole type rather than half-apply it.
-//
-// It is deliberately not folded into the program above. Declaring `None` as a
-// function while another arm still matches the PATTERN `None` changes the
-// answer on -interp too, so that interaction is a pre-existing language
-// question about patterns rather than anything this change touches, and mixing
-// it in would stop the program above from testing what it is for.
 const variantNullaryShadowedProg = `
 function None(v: i32): Option[i32] { return Some(v); }
 

@@ -5,12 +5,6 @@ import (
 	"testing"
 )
 
-// untypedLiteralFoldCases are arithmetic on unsuffixed literals whose type is
-// the context's: a const's declared type, or a binding's. The AST folder runs
-// before the checker, so it must not fold at i32 what runs at another width
-// (#10758). Each const case compares the folded form with the same expression
-// computed at run time, as TestConstFoldMatchesRuntimeAtDeclaredWidth does in
-// internal/testing/e2e; each program exits 0 when they agree.
 var untypedLiteralFoldCases = []struct {
 	name, ty, expr, seed string
 }{
@@ -34,8 +28,6 @@ func untypedLiteralFoldSource(ty, expr, seed string) string {
 		"    return 7;\n}\n"
 }
 
-// A binding's declared type is the same context without a const: 256 / 2 at
-// u8 is 0, and at i32 it is 128.
 const untypedLiteralBindingSrc = `function main(): i32 {
     let r: u8 = (255 + 1) / 2;
     let w: u32 = 0 - 1;

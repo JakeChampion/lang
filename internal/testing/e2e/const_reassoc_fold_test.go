@@ -8,14 +8,6 @@ import (
 	"testing"
 )
 
-// The Fold pass reassociates a constant chain across a non-constant
-// operand — `x + 1 + 2` becomes `x + 3`, `(m & 12) & 10` becomes
-// `m & 8`, etc. — for the associative ops (add / mul / and / or / xor).
-// The two constants are separated by the first op, so the plain
-// two-adjacent-constant fold can't reach them; only reassociation does.
-// The folded constants must compute the same result on every backend.
-//
-// f(10)=13, h(15)=8, o(0)=5, m(2)=30, chain(0)=6 → 13+8+5+30+6 = 62.
 const constReassocFoldSrc = `function f(x: i32): i32 { return x + 1 + 2; }
 function h(x: i32): i32 { return (x & 12) & 10; }
 function o(x: i32): i32 { return x | 1 | 4; }
@@ -63,8 +55,6 @@ func TestWASMConstReassocFold(t *testing.T) {
 	}
 }
 
-// i64 chains reassociate too, keeping the wide width: big(5)=35,
-// mask(255)=15 → 50.
 const constReassocFoldI64Src = `function big(x: i64): i64 { return x + 10i64 + 20i64; }
 function mask(x: i64): i64 { return (x & 255i64) & 15i64; }
 function main(): i32 {

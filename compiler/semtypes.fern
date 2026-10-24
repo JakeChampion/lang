@@ -1,4 +1,3 @@
-// Exact semantic identity, distinct from frontend assignability or spelling.
 import "./typeinfo";
 
 pub function equal(a: typeinfo.Type, b: typeinfo.Type): boolean {
@@ -20,8 +19,6 @@ pub function equal(a: typeinfo.Type, b: typeinfo.Type): boolean {
   return named_equal(a, b) || numeric_equal(a, b) || atomic_equal(a, b);
 }
 
-// Lending an owned array changes its semantic type without changing its
-// elements. Keep this conversion distinct from exact type identity.
 pub function lends_array(from: typeinfo.Type, to: typeinfo.Type): boolean {
   if let typeinfo.TypeArray(a) = from {
     if let typeinfo.TypeArray(b) = to {
@@ -83,10 +80,6 @@ function named_args_equal(a: string, aa: typeinfo.Type[], b: string, ba: typeinf
   return a == b && equal_list(aa, ba);
 }
 
-// A type VARIABLE of a template: what a generic declaration's contract spells
-// where an instantiation will bind a concrete type. It stands in a template's
-// contract and nowhere else — a produced body is an instance, whose every
-// type is concrete (docs/SEMANTIC-GENERICS.md).
 pub function erased(t: typeinfo.Type): boolean {
   if let typeinfo.TypeErased(_) = t {
     return true;
@@ -94,9 +87,6 @@ pub function erased(t: typeinfo.Type): boolean {
   return false;
 }
 
-// A template's type: `concrete`, with a variable admitted wherever a type may
-// stand, since the instance binds it before anything reads a width or a drop
-// off it.
 pub function shaped(t: typeinfo.Type, allow_void: boolean): boolean {
   return erased(t) || shaped_container(t) || shaped_named(t) || concrete(t, allow_void);
 }
@@ -136,8 +126,6 @@ function shaped_list(ts: typeinfo.Type[]): boolean {
   return true;
 }
 
-// A union's argument is a PAYLOAD, and `void` is one: `Result[void, IoError]`
-// is the outcome of a write, whose Ok arm carries nothing.
 function shaped_payloads(ts: typeinfo.Type[]): boolean {
   for t in ts {
     if (!shaped(t, true)) {
@@ -147,9 +135,6 @@ function shaped_payloads(ts: typeinfo.Type[]): boolean {
   return true;
 }
 
-// The CONSUMING slots are part of a callable's identity: a function value that
-// releases its argument and one that borrows it promise opposite things of the
-// same call, so neither may stand in for the other.
 function own_masks_equal(a: typeinfo.TypeFunc, b: typeinfo.TypeFunc): boolean {
   let i: i32 = 0;
   while (i < a.param_types.len()) {
@@ -214,8 +199,6 @@ function equal_list(a: typeinfo.Type[], b: typeinfo.Type[]): boolean {
   return true;
 }
 
-// Each helper admits a closed representation family. Unknown types match none.
-// Nominal identities remain opaque until a declaration schema is supplied.
 pub function concrete(t: typeinfo.Type, allow_void: boolean): boolean {
   return concrete_numeric(t) || concrete_leaf(t, allow_void) || concrete_container(t) || concrete_named(t);
 }
@@ -262,9 +245,6 @@ function concrete_leaf(t: typeinfo.Type, allow_void: boolean): boolean {
   return false;
 }
 
-// An array's elements and a tuple's slots stand where a union's payloads do,
-// so a never one (a `T[]` payload of a generic enum named without arguments)
-// is one no value holds, as it is there. A never map column uses scalar storage.
 function concrete_container(t: typeinfo.Type): boolean {
   if let typeinfo.TypeArray(a) = t {
     return is_never(a.elem) || concrete(a.elem, false);
@@ -278,14 +258,6 @@ function concrete_container(t: typeinfo.Type): boolean {
   return false;
 }
 
-// A closure body's ENVIRONMENT: the box the lambda lift builds, the body's
-// address in slot 0 and the captures after it. It is typed as a record of
-// its own — `__env$<body>` with the capture types as its arguments — because
-// a record's fields occupy the slots an array's elements do: a shape word where
-// the array keeps its length, then one word per field. So a capture is read
-// as a field projection and a box's captures are walked by the record's own
-// drop helper, while the box itself stays the word array every call through
-// it expects.
 pub function env_prefix(): string {
   return "__env$";
 }
@@ -304,7 +276,6 @@ pub function env_captures(t: typeinfo.Type): typeinfo.Type[] {
   return [];
 }
 
-// The body whose address the box's slot 0 holds.
 pub function env_body(t: typeinfo.Type): string {
   if let typeinfo.TypeStruct(s) = t {
     return slice_unchecked(s.name, env_prefix().len(), s.name.len()) + "";
@@ -327,9 +298,6 @@ function prefixed(name: string, prefix: string): boolean {
   return true;
 }
 
-// Cell[T] is the language's one mutable slot (docs/CELL-TYPE-PLAN.md): a
-// reserved name over a one-element box rather than a declared record, so its
-// element is read from the instantiation and an argless `Cell` names no layout.
 pub function is_cell(t: typeinfo.Type): boolean {
   if let typeinfo.TypeStruct(s) = t {
     return s.name == "Cell";
@@ -346,14 +314,6 @@ pub function cell_elem(t: typeinfo.Type): typeinfo.Type {
   return typeinfo.unchecked();
 }
 
-// A HANDLE is REPRESENTED by its bare descriptor, an i32: it holds no box,
-// anchors nothing, and carries no unit to release. A descriptor handle — the
-// `Reader` / `Writer` / `Dir` the front end injects, never declared by a
-// module — is the value the resource ops take directly, the same one
-// `stdin()` answers, and wears a record's nominal only in the type system. A
-// WIT resource handle (`own R` / `borrow R`) is the i32 the host names the
-// resource by; dropping an owned one is a call to its `[resource-drop]`
-// import, which the front end inserts, not a release.
 pub function is_handle(t: typeinfo.Type): boolean {
   return is_resource_handle(t) || is_fd_handle(t);
 }
@@ -372,10 +332,6 @@ pub function is_fd_handle(t: typeinfo.Type): boolean {
   return false;
 }
 
-// `MapIter[K, V]` — the map cursor. It wears a record's nominal like a handle
-// does, but it holds an ADDRESS rather than a descriptor: a counted block over
-// the map's own storage. Every read through it reads the map, so it must not
-// outlive the map.
 pub function is_map_iter(t: typeinfo.Type): boolean {
   if let typeinfo.TypeStruct(s) = t {
     return s.name == "MapIter" && s.args.len() == 2;
@@ -383,7 +339,6 @@ pub function is_map_iter(t: typeinfo.Type): boolean {
   return false;
 }
 
-// The key and value a cursor answers, read off the nominal's arguments.
 pub function map_iter_key(t: typeinfo.Type): typeinfo.Type {
   if let typeinfo.TypeStruct(s) = t {
     if (s.args.len() == 2) {
@@ -393,7 +348,6 @@ pub function map_iter_key(t: typeinfo.Type): typeinfo.Type {
   return typeinfo.unchecked();
 }
 
-// The map a cursor of type `t` holds a unit of.
 pub function map_iter_map(t: typeinfo.Type): typeinfo.Type {
   return typeinfo.TypeMap { key: map_iter_key(t), value: map_iter_value(t) };
 }
@@ -427,9 +381,6 @@ function concrete_named(t: typeinfo.Type): boolean {
   return false;
 }
 
-// The checker types a constructor call by its family alone — `Some(1)` is
-// `Option`, not `Option[i32]` — so a builtin generic missing its payloads
-// names a family, not a type.
 function concrete_union(u: typeinfo.TypeUnion): boolean {
   if (u.name.len() == 0) {
     return false;
@@ -461,12 +412,7 @@ function concrete_payloads(ts: typeinfo.Type[]): boolean {
   return true;
 }
 
-// This is a conservative lifetime classification, not an RC layout or a claim
-// that a value carries a counted unit. Views and opaque nominal values retain
-// their anchors too. Their eventual unit/layout contracts must be verified.
 pub function needs_anchor(t: typeinfo.Type): boolean {
-  // A template's variable anchors: its declared mode is a reference's until
-  // an instance binds it to a scalar.
   if let typeinfo.TypeI32(_) = t {
     return false;
   }

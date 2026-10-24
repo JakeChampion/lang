@@ -6,8 +6,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// Peeling must guard the first read, seed from the mapped first element, keep
-// captured callbacks alive on both paths, and preserve scalar floating order.
 func TestSelfHostArrayFusionSeededReductionBits(t *testing.T) {
 	const src = `import "std/array";
 function fused(xs: f64[], k: f64): Option[f64] {

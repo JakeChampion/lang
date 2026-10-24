@@ -2,15 +2,6 @@ package e2e
 
 import "testing"
 
-// TestWASMModuleBuildersMinimal builds the same "function returns
-// 42" core module as TestWASMModuleMinimal, but constructs the
-// Module through the immutable builder methods
-// (module_new().with_types(...).with_functions(...)...) instead of
-// in-place field assignment. The byte-level assertions are identical
-// to TestWASMModuleMinimal, so this proves the builder chain produces
-// byte-for-byte the same module as the field-set form it replaces —
-// the contract that lets the wasm test suite migrate off field
-// mutation (immutable-data-structures migration).
 func TestWASMModuleBuildersMinimal(t *testing.T) {
 	src := `import "std/wasm/module";
 import "std/wasm/inst";
@@ -66,11 +57,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMModuleBuildersSingletonFlags pins that the flag-folding
-// builders (with_memory / with_table / with_start) set their
-// `*_present` / `has_start` gate, so build() actually emits the
-// section. Builds a module with a memory and a start function and
-// checks both sections appear.
 func TestWASMModuleBuildersSingletonFlags(t *testing.T) {
 	src := `import "std/wasm/module";
 import "std/wasm/inst";

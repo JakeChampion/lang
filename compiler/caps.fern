@@ -1,58 +1,14 @@
-// compiler/caps.fern — the PACKAGE capability boundary, mirroring
-// native's internal/pkg/caps (#6634).
-//
-// This is the second, independent capability system. platforms.fern gates what
-// a TARGET provides — the OS boundary, E066. This one gates what a PACKAGE may
-// reach: a dependency's declared functions are walked for their transitive
-// reach into the tagged-builtin table, and a package reaching past the
-// `capabilities` grant in the manifest that declares it is E070
-// (docs/PACKAGE-CAPABILITIES-BRIEF.md, #5361). The two are deliberately
-// separate — a new builtin needs classifying in BOTH — and the way that goes
-// wrong is one side being updated and the other not, so each carries its own
-// completeness gate: caps_run.fern holds this table against
-// parser.builtin_function_names(), and internal/pkg/caps/selfhost_parity_test.go
-// holds it against native's maps entry-for-entry. A rename or reformat of the
-// tables below has to keep them extractable by that test — it fails loudly
-// rather than vacuously when its patterns stop matching.
-//
-// Reachability, not syntax, is what makes this different from the target
-// boundary: `helper` reaches `net` when anything it declares can call
-// tcp_connect_with, however many stdlib frames sit in between. So the analysis is a
-// call-graph walk (analyze), and the report and enforcement are two readings of
-// its one result — the report is all usage, enforcement is usage minus grants.
-
 import "./parser";
 import "./astwalk";
 import "./util";
 import "./capvocab";
 
-// ---- vocabulary + classification ---------------------------------------
-
-// capabilities is the v1 vocabulary, sorted. Deliberately coarse (see the
-// brief): path- or host-level filtering is out of scope for v1. The sort is
-// required — analyze emits a row's uses in this order rather than sorting
-// them afterwards.
 pub function capabilities(): string[] {
   return capvocab.capabilities();
 }
 
-// BuiltinCap pairs a capability-relevant runtime builtin with the capability
-// reaching it grants.
 pub struct BuiltinCap { builtin: string, capability: string }
 
-// builtin_caps is the tagged half of the classification. Boundary cases, all
-// shared with native's table:
-//
-//   - `poll` is NOT tagged: it waits on pollables from both sockets and
-//     timers, so the capability lives on the pollable CONSTRUCTORS — the tcp
-//     family under `net`, the timer family under `time` — not on the wait.
-//     Same for the generic wasm_block / wasm_poll / wasm_pollable_drop
-//     readiness helpers.
-//   - `time` covers observing clocks and creating time-driven wakeups: the
-//     surface a "package is sim-pure" property would need to gate.
-//   - stdio and argv are ungated below — they are host-mediated channels the
-//     invoker already handed the process, not ambient authority a dependency
-//     escalates through.
 pub function builtin_caps(): BuiltinCap[] {
   return [
     BuiltinCap { builtin: "tcp_listen", capability: "net" },
@@ -121,35 +77,18 @@ pub function builtin_caps(): BuiltinCap[] {
     BuiltinCap { builtin: "truncate", capability: "fs" },
     BuiltinCap { builtin: "mknod", capability: "fs" },
     BuiltinCap { builtin: "sync", capability: "fs" },
-    // Setting an entry's owner or group rewrites who may reach it. For
-    // the package question that is filesystem reach like any other, so
-    // it sits beside `chmod` rather than getting a split of its own.
     BuiltinCap { builtin: "chown_at", capability: "fs" },
-    // The process file-mode creation mask. Reading it reaches nothing,
-    // but SETTING it changes the mode of every file and directory
-    // anything creates afterwards, so it sits with the rest of the
-    // filesystem surface rather than in ungated().
     BuiltinCap { builtin: "umask", capability: "fs" },
     BuiltinCap { builtin: "statfs", capability: "fs" },
     BuiltinCap { builtin: "mounts", capability: "fs" },
     BuiltinCap { builtin: "temp_dir", capability: "fs" },
     BuiltinCap { builtin: "getcwd", capability: "fs" },
     BuiltinCap { builtin: "env", capability: "env" },
-    // Deploy-time configuration reads what the deployment put in the
-    // environment, or its proxy-world equivalent: the same reach.
     BuiltinCap { builtin: "config_get", capability: "env" },
-    // The whole list is the same capability as one lookup: a caller
-    // that can ask for a name can ask for every name it can guess.
     BuiltinCap { builtin: "environ", capability: "env" },
-    // The machine's name is ambient information about where the
-    // process runs, like its environment.
     BuiltinCap { builtin: "hostname", capability: "env" },
-    // The kernel's utsname record and the machine's usable processor
-    // count are the same kind of ambient fact.
     BuiltinCap { builtin: "uname_field", capability: "env" },
     BuiltinCap { builtin: "cpu_count", capability: "env" },
-    // The kernel's own variables (load averages, boot time) are the same
-    // kind of ambient fact.
     BuiltinCap { builtin: "sysctl", capability: "env" },
     BuiltinCap { builtin: "subprocess", capability: "subprocess" },
     BuiltinCap { builtin: "proc_fork", capability: "subprocess" },
@@ -170,8 +109,6 @@ pub function builtin_caps(): BuiltinCap[] {
     BuiltinCap { builtin: "now_ns", capability: "time" },
     BuiltinCap { builtin: "monotonic_ns", capability: "time" },
     BuiltinCap { builtin: "clock_resolution", capability: "time" },
-    // Setting the wall clock moves every reading taken after it: the
-    // same resource as the reads, with more reach.
     BuiltinCap { builtin: "clock_set", capability: "time" },
     BuiltinCap { builtin: "sleep_ms", capability: "time" },
     BuiltinCap { builtin: "sleep_ns", capability: "time" },
@@ -182,23 +119,6 @@ pub function builtin_caps(): BuiltinCap[] {
   ];
 }
 
-// ungated lists the user-callable builtins known to require NO capability:
-// stdio (including `isatty`, which reads one bit about a stream the invoker
-// already handed the process), argv, process exit, the compile target's
-// name (`target_os` / `target_arch`, literals once compiled), pure math /
-// bit casts,
-// the in-heap constructors, and the readiness helpers whose authority lives on
-// the pollable constructors instead. The id builtins join them: reading the
-// process's own ids reaches nothing, since the identity was chosen by whoever
-// exec'd the program. (platforms.fern DOES gate them — there the question is
-// whether the target can answer at all, not whether a dependency may ask.)
-// `signal_ignore` / `signal_default` join them for the same reason `exit` is
-// here: a disposition reconfigures how THIS process reacts, reaching nothing
-// outside it and conferring no authority a dependency could escalate through.
-// `priority` / `set_priority` are the same shape one step further out: the
-// consequence of renicing yourself is timing, and no v1 capability names
-// timing.
-// Mirrors native's Ungated exactly.
 pub function ungated(): string[] {
   return [
     "__outer_mul_f64",
@@ -206,25 +126,15 @@ pub function ungated(): string[] {
     "putchar", "print", "write", "eprint",
     "stdin", "stdout", "stderr", "isatty", "window_size", "set_window_size", "termios_get", "termios_set", "set_extproc", "pipe", "target_os", "target_arch", "args", "set_args", "exit",
     "signal_ignore", "signal_default",
-    // Catching is a disposition too: the handler only sets a flag this
-    // process later reads.
     "signal_catch", "signal_taken", "signal_catch_interrupting",
-    // Raising one at this process reaches no further than exit does.
     "signal_raise",
-    // Reading a disposition or the blocked mask reaches even less far
-    // than setting one does; signal_mask writes to the same
-    // process-wide state the two setters already reach.
     "signal_mask", "signal_disposition",
     "priority", "set_priority",
     "geteuid", "getegid", "getuid", "getgid", "getgroups",
-    // An entry of the account database (#9815).
     "__account_entry",
     "rlimit_nofile", "disable_core_dumps",
-    // The constant-time marks only tell valgrind which bytes are secret.
     "__ct_secret", "__ct_public",
-    // A byte view copied into a fresh array reaches nothing.
     "__bytes_owned", "__bytes_range", "__bytes_into",
-    // The AES-GCM and SHA-256 kernels compute over bytes in memory and reach nothing.
     "__aes_expand_key", "__aes_ctr32", "__ghash", "__aes_gcm_seal", "__aes_gcm_open", "__sha256_hw", "__sha256_hw_blocks", "__sha1_hw", "__sha1_hw_blocks",
     "buf_new", "buf_push", "buf_push_range", "buf_push_bytes_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_bytes_mapped", "buf_push_bytes_filtered", "buf_push_bytes_expanded", "buf_push_byte", "buf_push_u64",
     "buf_len", "buf_take", "buf_take_bytes", "buf_clear", "buf_free",
@@ -237,20 +147,10 @@ pub function ungated(): string[] {
   ];
 }
 
-// frontend_ungated is the self-host's own extension to that list: names in
-// parser.builtin_function_names() that native's checker does not register as
-// builtins at all, so its table has nothing to say about them. They are kept
-// apart from ungated() rather than merged into it so the parity test can hold
-// the shared half to an exact match and still see these named.
-//
-// Every one is a channel or a pure computation, by the same rules as the list
-// above: __map_new_i32 allocates.
 pub function frontend_ungated(): string[] {
   return ["__map_new_i32"];
 }
 
-// capability_of returns the capability a builtin reaches, or "" when the name
-// is not tagged (ungated, or not a builtin at all).
 pub function capability_of(name: string): string {
   let bs: BuiltinCap[] = builtin_caps();
   let i: i32 = 0;
@@ -263,12 +163,8 @@ pub function capability_of(name: string): string {
   return "";
 }
 
-// classified reports whether `name` is accounted for by this table — tagged,
-// ungated, or a compiler-internal `__` name. caps_run.fern asserts it over the
-// whole builtin registry, so an I/O-shaped addition cannot silently dodge the
-// classification.
 pub function classified(name: string): boolean {
-  if (name.len() >= 2 && name[0] == b'_' && name[1] == b'_') {  // internal
+  if (name.len() >= 2 && name[0] == b'_' && name[1] == b'_') {
     return true;
   }
   if (capability_of(name).len() > 0) {
@@ -280,24 +176,6 @@ pub function classified(name: string): boolean {
   return util.has_str(frontend_ungated(), name);
 }
 
-// ---- packages ----------------------------------------------------------
-
-// Pkg is one bundle module's package identity, assembled by the caller (the
-// driver) from resolved module and manifest directories:
-//
-//   - `module` is the bundle prefix flatten mangles that module's functions
-//     with — "" for the entry module, whose own names stay bare.
-//   - `dir` is the authority identity; `name` is only a report label.
-//   - `root` marks the root package (the entry's own module and every local
-//     sibling), which is never enforced or warned: the program's author is
-//     trusting themselves, and grants restrict DEPENDENCIES.
-//   - `governed` is true when the dependency entry declaring this package
-//     carries a `capabilities` key; reaching outside `grants` is then E070.
-//     A dependency with no key is warn-and-allow, the migration default.
-//
-// A module with no Pkg entry folds through: its functions are traversal nodes,
-// never roots, so a stdlib module's tcp_connect_with shows up on the row of
-// whichever package calls into it.
 pub struct Pkg {
   module: string,
   dir: string,
@@ -307,8 +185,6 @@ pub struct Pkg {
   grants: string[],
 }
 
-// pkg_of identifies the package owning a bundle module prefix, or "" for a
-// fold-through module.
 pub function pkg_of(pkgs: Pkg[], module: string): string {
   let i: i32 = 0;
   while (i < pkgs.len()) {
@@ -320,7 +196,6 @@ pub function pkg_of(pkgs: Pkg[], module: string): string {
   return "";
 }
 
-// pkg_index finds a package by resolved directory, independently of its name.
 function pkg_index(pkgs: Pkg[], dir: string): i32 {
   let i: i32 = 0;
   while (i < pkgs.len()) {
@@ -332,10 +207,6 @@ function pkg_index(pkgs: Pkg[], dir: string): i32 {
   return 0 - 1;
 }
 
-// enforceable reports whether any function in the bundle belongs to a
-// non-root package. When nothing does, the whole reachability walk can be
-// skipped: there is no dependency to enforce or warn about, which is the
-// common single-package compile.
 pub function enforceable(mod: parser.Module, pkgs: Pkg[]): boolean {
   let non_root: boolean = false;
   for p in pkgs {
@@ -360,15 +231,8 @@ pub function enforceable(mod: parser.Module, pkgs: Pkg[]): boolean {
   return false;
 }
 
-// ---- report ------------------------------------------------------------
-
-// Use is one capability a package can reach, with an example call chain from
-// one of the package's own functions down to the tagged builtin. Chain
-// elements are function names as they appear in the bundle (module-mangled);
-// the last element is the builtin.
 pub struct Use { capability: string, chain: string[] }
 
-// Row is one package's report line: its uses, in capability order.
 pub struct Row { key: string, pkg: string, uses: Use[] }
 
 function has_i32(xs: i32[], v: i32): boolean {
@@ -382,10 +246,6 @@ function has_i32(xs: i32[], v: i32): boolean {
   return false;
 }
 
-// func_index finds a top-level function by bundle name, or -1. A method's
-// name is its simple name, which several types can share — those are found by
-// method_edges instead, which is why this returns the first match rather than
-// pretending the name is unique.
 pub function func_index(mod: parser.Module, name: string): i32 {
   let i: i32 = 0;
   while (i < mod.funcs.len()) {
@@ -397,11 +257,6 @@ pub function func_index(mod: parser.Module, name: string): i32 {
   return 0 - 1;
 }
 
-// analysis_want is the callee-name filter astwalk collects against: every
-// tagged builtin, plus the simple name of every method in the bundle. The
-// method half is what lets a `.save()` be followed — the self-host resolves
-// method dispatch during emit rather than rewriting the call to its hoisted
-// name in the AST, so the walk has to do the resolution itself.
 function analysis_want(mod: parser.Module): string[] {
   let want: string[] = [];
   let bs: BuiltinCap[] = builtin_caps();
@@ -423,8 +278,6 @@ function analysis_want(mod: parser.Module): string[] {
   return want;
 }
 
-// chain_of renders the call chain reaching `builtin` at BFS position `at`:
-// the path back to the package function the walk started from, in call order.
 function chain_of(mod: parser.Module, order: i32[], parent: i32[], at: i32, builtin: string): string[] {
   let rev: string[] = [];
   let p: i32 = at;
@@ -441,19 +294,6 @@ function chain_of(mod: parser.Module, order: i32[], parent: i32[], at: i32, buil
   return out.append(builtin);
 }
 
-// walk BFSes from a package's declared functions and returns the capabilities
-// reached, each with the first chain the walk discovers.
-//
-// Nodes are function INDICES, not names: two types' methods share a simple
-// name, and keying the visited set by name would let the first one visited
-// stand in for the other. `order` is the queue and the visited set at once —
-// BFS appends, never removes — with `parent[i]` the position in `order` that
-// discovered `order[i]`, or -1 for a root.
-//
-// Membership is a linear scan of `order`, which makes the walk quadratic in
-// the functions REACHED. That is affordable because it runs on a program with
-// dependency packages (enforceable() is the gate) or on an explicit
-// -capabilities request, never on the ordinary single-package compile.
 function walk(mod: parser.Module, roots: i32[], want: util.NameIndex): Use[] {
   let order: i32[] = [];
   let parent: i32[] = [];
@@ -474,10 +314,6 @@ function walk(mod: parser.Module, roots: i32[], want: util.NameIndex): Use[] {
   while (qi < order.len()) {
     let fd: parser.FuncDecl = mod.funcs[order[qi]];
 
-    // Calls: a tagged builtin is a direct use, a method call is an edge to
-    // every method of that simple name. Builtins count only in call
-    // position (they are free functions and cannot be taken as values), so
-    // a local shadowing a builtin name never misreports a capability.
     let calls: astwalk.CallSite[] = [];
     let bi: i32 = 0;
     while (bi < fd.body.len()) {
@@ -508,11 +344,6 @@ function walk(mod: parser.Module, roots: i32[], want: util.NameIndex): Use[] {
       ci = ci + 1;
     }
 
-    // Identifiers: every bare name that resolves to a top-level function
-    // is an edge, which covers both ordinary calls and function VALUES
-    // passed to higher-order code. A lambda's body is walked as part of
-    // the enclosing function, so a callback package A hands to package B
-    // stays A's usage even though B invokes it.
     let ids: string[] = [];
     let si: i32 = 0;
     while (si < fd.body.len()) {
@@ -531,9 +362,6 @@ function walk(mod: parser.Module, roots: i32[], want: util.NameIndex): Use[] {
     qi = qi + 1;
   }
 
-  // Emit in vocabulary order — which is sorted, so the row is deterministic
-  // without a comparator, and a capability outside the vocabulary would
-  // simply never render (caps_run.fern pins the two tables together).
   let uses: Use[] = [];
   let vocab: string[] = capabilities();
   let vi: i32 = 0;
@@ -547,8 +375,6 @@ function walk(mod: parser.Module, roots: i32[], want: util.NameIndex): Use[] {
   return uses;
 }
 
-// sort_rows orders rows by package name (selection sort — one row per package
-// in the program, so the list is short).
 function sort_rows(rows: Row[]): Row[] {
   let taken: i32[] = __alloc_i32(rows.len());
   let out: Row[] = [];
@@ -571,14 +397,6 @@ function sort_rows(rows: Row[]): Row[] {
   return out;
 }
 
-// analyze computes per-package capability usage for a bundled program by
-// call-graph reachability. Each package's roots are ALL the functions it
-// declares — declared reachability: an uncalled-but-declared function still
-// counts, because the report says what the package's code could do, not what
-// this program's live paths do — and the walk follows callees wherever they
-// live, through the stdlib and through deeper packages.
-//
-// Rows come back sorted by package name, uses by capability.
 pub function analyze(mod: parser.Module, pkgs: Pkg[]): Row[] {
   let want: util.NameIndex = util.name_index(analysis_want(mod));
   let names: string[] = [];
@@ -620,7 +438,6 @@ pub function analyze(mod: parser.Module, pkgs: Pkg[]): Row[] {
   return sort_rows(rows);
 }
 
-// join renders a chain as `a → b → c`.
 function join_chain(chain: string[]): string {
   let out: string = "";
   let i: i32 = 0;
@@ -634,12 +451,6 @@ function join_chain(chain: string[]): string {
   return out;
 }
 
-// format_rows renders the report: one line per package —
-//
-//     app  fs,net  (example: main → lib__save → write_file)
-//
-// with the example chain belonging to the row's first (alphabetical)
-// capability, and `-` for a package that reaches none.
 pub function format_rows(rows: Row[]): string {
   let out: string = "";
   let i: i32 = 0;
@@ -663,11 +474,6 @@ pub function format_rows(rows: Row[]): string {
   return out;
 }
 
-// ---- enforcement -------------------------------------------------------
-
-// Violation is one package reaching a capability outside its grant.
-// `governed` selects the severity: true is a checker-grade error (E070),
-// false a warn-and-allow diagnostic.
 pub struct Violation {
   pkg: string,
   capability: string,
@@ -675,11 +481,6 @@ pub struct Violation {
   governed: boolean,
 }
 
-// enforce filters analyze's rows against the per-package grants — the same
-// traversal serves both modes: the report is all usage, enforcement is usage
-// minus grants. At most one violation per package+capability, in analyze's
-// order (package, then capability); the caller splits them by `governed`,
-// which is the severity.
 pub function enforce(rows: Row[], pkgs: Pkg[]): Violation[] {
   let out: Violation[] = [];
   let ri: i32 = 0;
@@ -711,9 +512,6 @@ pub function enforce(rows: Row[], pkgs: Pkg[]): Violation[] {
   return out;
 }
 
-// source_chain spells `chain` with each function's name as its module declares
-// it, without the bundle prefix flatten mangled it with; the builtin at the end
-// has none.
 pub function source_chain(mod: parser.Module, chain: string[]): string[] {
   let out: string[] = [];
   for name in chain {
@@ -730,8 +528,6 @@ pub function source_chain(mod: parser.Module, chain: string[]): string[] {
   return out;
 }
 
-// violation_message renders the diagnostic's text, without the
-// `error[E070]:` / `warning:` label — the caller owns severity rendering.
 pub function violation_message(v: Violation): string {
   let builtin: string = "";
   if (v.chain.len() > 0) {

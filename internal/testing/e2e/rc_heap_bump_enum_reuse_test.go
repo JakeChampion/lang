@@ -4,31 +4,6 @@ import (
 	"testing"
 )
 
-// Enum reuse-path payload reclamation (RC-Perceus, the enum analog of 5f).
-// A self-overwrite `e = Variant(...)` of an owned, uniquely-held enum reuses
-// the old box in place (Phase 5e constructor reuse). When the old box holds
-// a droppable (rc-tracked) payload, `tryEnumReuseOverwrite` must free that
-// payload as well as keeping the box — the normal overwrite-dec that would
-// free it is bypassed — or `e = Wrap([..])` in a loop leaks the prior
-// payload every iteration (probe: wasm 1616 -> 160016 B, unbounded).
-//
-// The fix frees the OLD payload on the reuse branch (uniform droppable
-// offsets, via emitFieldDropOnStack), mirroring tryStructReuseOverwrite
-// step 4. Sound for the same reason the normal enum overwrite-free is: the
-// reuse path requires freeEligible[e], a whole-function property that (via
-// rhsTainted propagation through variant-constructor args) is false whenever
-// any value e holds has a payload aliasing a live local — so the old payload
-// here is never a live alias, and the freeing drop (each is_unique-gated)
-// reclaims the genuine last reference. Enums with string / non-uniform-
-// droppable payloads decline reuse and fall to the normal overwrite path
-// (which frees soundly + bounded); scalar-only enums have nothing to free.
-//
-// wasm is the over-release arbiter (its bump cursor measures the leak
-// directly; natives' segregated freelist arena is insensitive to small-block
-// reclaim, so they read a flat low high-water either way).
-
-// enumReusePayloadBumpSrc: a uniform pointer-payload enum self-overwritten
-// with a fresh array payload each iteration — the old payload must reclaim.
 func enumReusePayloadBumpSrc(n string) string {
 	return `enum E { Wrap(i32[]), Empty }
 function main(): i32 {
@@ -43,8 +18,6 @@ function main(): i32 {
 }`
 }
 
-// enumReuseCrossVariantSrc: cross-variant reuse (Keep/Swap, both i32[]) with
-// a match read each iteration — value-correctness + 0 over-release.
 const enumReuseCrossVariantSrc = `enum Bag { Keep(i32[]), Swap(i32[]) }
 function main(): i32 {
     let b: Bag = Keep([0, 0, 0]);
@@ -61,12 +34,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// enumReuseAliasedPayloadSrc: the payload `a` is aliased into the enum and
-// READ after, with a forced interleaved allocation (junk) that would corrupt
-// a wrongly-freed buffer. The freeEligible gate must keep this sound (either
-// by declining reuse for the tainted enum, or — when reuse fires — by the
-// payload not being a live alias). Returns 0 iff value-correct AND no
-// over-release.
 const enumReuseAliasedPayloadSrc = `enum Bag { Keep(i32[]), Swap(i32[]) }
 function main(): i32 {
     let i: i32 = 0;

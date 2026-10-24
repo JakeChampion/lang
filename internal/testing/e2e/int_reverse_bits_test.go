@@ -2,16 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for the integer reverse_bits helpers — std/i32,
-// std/i64, std/u32, std/u64 — the one member the bit-ops family (count_ones /
-// leading_zeros / trailing_zeros / byte_swap / rotate_left / rotate_right) was
-// missing. reverse_bits reverses the ORDER of the width's bits (bit i -> bit
-// width-1-i), operating on the raw two's-complement pattern via the unsigned
-// twin so signed shifts don't sign-extend. Checks the low-bit -> top-bit
-// mapping (reverse_bits(1) == the type's MIN / 2^(w-1)), the all-ones fixpoint,
-// a known nibble reversal (0x0000000F <-> 0xF0000000), and the round-trip
-// involution. Returns 42 iff every check holds across interp / x86-64 / wasm /
-// arm64; each leg skips itself when its toolchain is absent.
 const intReverseBitsProg = `
 import "std/i32";
 import "std/i64" as i64m;

@@ -8,7 +8,6 @@ import (
 	"testing"
 )
 
-// writeTree materialises a name -> contents map under a fresh temp dir.
 func writeTree(t *testing.T, files map[string]string) string {
 	t.Helper()
 	root := t.TempDir()
@@ -43,9 +42,6 @@ func TestLoadKeysAreSlashRelative(t *testing.T) {
 	}
 }
 
-// Binary assets are the whole point of carrying an explicit byte length
-// rather than relying on the .asciz terminator: a NUL mid-file must not
-// truncate, and bytes >= 0x80 must survive byte-for-byte.
 func TestLoadPreservesBinaryBytes(t *testing.T) {
 	blob := string([]byte{0x00, 0x01, 0x7f, 0x80, 0xff, 0x00, 'e', 'n', 'd'})
 	root := writeTree(t, map[string]string{"blob.bin": blob})
@@ -85,8 +81,6 @@ func TestLoadRejectsNonDirectory(t *testing.T) {
 	}
 }
 
-// An asset's name reaches the program as a string, so a file name that is
-// not UTF-8 is refused rather than embedded.
 func TestLoadRejectsNonUTF8Name(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "bad\xff.txt"), []byte("x"), 0o644); err != nil {
@@ -98,8 +92,6 @@ func TestLoadRejectsNonUTF8Name(t *testing.T) {
 	}
 }
 
-// A symlink is skipped rather than followed, so an asset tree can never
-// reach outside its root or wedge the walk on a cycle.
 func TestLoadSkipsSymlinks(t *testing.T) {
 	root := writeTree(t, map[string]string{"real.txt": "real"})
 	outside := filepath.Join(t.TempDir(), "secret.txt")
@@ -121,15 +113,6 @@ func TestLoadSkipsSymlinks(t *testing.T) {
 	}
 }
 
-// The ROOT is followed, because it is the path the user typed on the command
-// line and `-embed ./link-to-assets` obviously means the directory behind it.
-//
-// os.Stat has always followed it to decide the argument is a directory at all,
-// but filepath.WalkDir lstats its own root — so before the walk resolved it,
-// this combination passed the directory check and then yielded the link as one
-// non-regular entry, which the skip above dropped. The result was an empty
-// bundle from a directory full of files, and nothing said so: the failure only
-// showed up later as `no embedded asset "x" (no assets were embedded)`.
 func TestLoadFollowsASymlinkedRoot(t *testing.T) {
 	real := writeTree(t, map[string]string{"a.txt": "A", "sub/b.txt": "BB"})
 	link := filepath.Join(t.TempDir(), "link")
@@ -143,8 +126,6 @@ func TestLoadFollowsASymlinkedRoot(t *testing.T) {
 	if got := set.Names(); !reflect.DeepEqual(got, []string{"a.txt", "sub/b.txt"}) {
 		t.Fatalf("Names() = %v, want the linked directory's contents", got)
 	}
-	// Diagnostics echo the path as typed, not the resolved one: the user has to
-	// recognise what they wrote.
 	if set.Root() != link {
 		t.Errorf("Root() = %q, want the path as passed (%q)", set.Root(), link)
 	}
@@ -163,9 +144,9 @@ func TestSuggest(t *testing.T) {
 		want string
 		typo string
 	}{
-		{"html/index.html", "html/index.htm"}, // truncated tail
-		{"html/index.html", "html/indx.html"}, // mistyped middle
-		{"", "totally-unrelated-xyzzy"},       // nothing close: stay quiet
+		{"html/index.html", "html/index.htm"},
+		{"html/index.html", "html/indx.html"},
+		{"", "totally-unrelated-xyzzy"},
 	}
 	for _, tc := range tests {
 		if got := set.Suggest(tc.typo); got != tc.want {
@@ -174,8 +155,6 @@ func TestSuggest(t *testing.T) {
 	}
 }
 
-// The nil Set is the "no -embed passed" state and is threaded through the
-// whole compiler, so every accessor has to tolerate it.
 func TestNilSetIsUsable(t *testing.T) {
 	var s *Set
 	if _, ok := s.Lookup("x"); ok {

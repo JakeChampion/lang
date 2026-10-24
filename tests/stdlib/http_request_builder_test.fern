@@ -5,13 +5,6 @@ import "std/platform";
 import "std/option";
 import "std/string";
 
-// tests/stdlib/http_request_builder_test.fern — testing a handler without
-// a socket (#9854): `http.request(method, path)` builds the request, a
-// `mock_platform.MockPlatform`'s bag stands in for the host, and `std/test`'s HTTP
-// assertions read the response back.
-
-// The handler under test: echoes a JSON body back as created, names the
-// caller from a header, and turns anything else away.
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
   if (req.method == "POST" && req.path == "/items") {
     match (req.headers.get("content-type")) {
@@ -120,9 +113,6 @@ function test_bare_request_has_nothing(): test.TestOutcome {
   return test.assert_status(handle(req, m), 401);
 }
 
-// The query a request-target carries is read by name, decoded as a form
-// field is; an escaped `&` or `=` stays inside its value, and the path
-// before the `?` takes no part.
 function test_query_reads_by_name(): test.TestOutcome {
   let req: HttpRequest = http.request("GET", "/search?q=a%26b%3Dc&tag=x&page=2&tag=y+z&flag");
   let got: string = req.query("q").unwrap_or("-") + "|" + req.query("page").unwrap_or("-") + "|" + req.query("flag").unwrap_or("-") + "|" + req.query("missing").unwrap_or("-") + "|" + req.query_all("tag").join(",") + "|" + req.query_all("missing").len().to_string();

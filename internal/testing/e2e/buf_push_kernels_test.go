@@ -7,13 +7,6 @@ import (
 	"testing"
 )
 
-// buf_push_mapped(b, s, table) appends table[c] for each byte c of s, or c
-// itself when it is at or past the table's end; buf_push_filtered(b, s, drop)
-// appends each byte c whose drop[c] is zero, or that is past the table's end.
-// One corpus drives both: lengths across the unrolled loop's boundaries, a
-// full table, a short one, an empty one, NUL and high bytes, and pushes that
-// land after bytes already held and that outgrow the builder.
-
 func bufPushMappedRef(held string, s string, table []byte) string {
 	out := []byte(held)
 	for i := 0; i < len(s); i++ {
@@ -57,8 +50,6 @@ func bufMapCases() []bufMapCase {
 		digits[c] = byte('a' + c - '0')
 	}
 	short := []byte{'x', 'y', 'z', 0xff}
-	// Every other entry zero: half the bytes are kept by the filter, and the
-	// mapping sends odd bytes to 1.
 	alternate := make([]byte, 256)
 	for i := range alternate {
 		alternate[i] = byte(i % 2)
@@ -106,10 +97,6 @@ func bufMapCases() []bufMapCase {
 	return out
 }
 
-// runBufPushMappedCorpus pushes every case through a builder that starts at
-// four bytes of capacity, so most pushes grow it, and prints each result as
-// its byte values. `builtin` names the kernel, buf_push_mapped or
-// buf_push_filtered.
 func runBufPushMappedCorpus(t *testing.T, builtin string, run func(t *testing.T, src string) string) {
 	t.Helper()
 	cases := bufMapCases()
@@ -262,9 +249,6 @@ func TestWASMBufPushFiltered(t *testing.T) {
 	})
 }
 
-// buf_push_expanded(b, s, table) appends each byte c of s as the record at
-// table[c*8]: a length byte (above 7 counts as 7), then the bytes. A byte
-// whose record is not wholly inside the table is appended unchanged.
 func bufPushExpandedRef(held string, s string, table []byte) string {
 	out := []byte(held)
 	for i := 0; i < len(s); i++ {
@@ -282,8 +266,6 @@ func bufPushExpandedRef(held string, s string, table []byte) string {
 	return string(out)
 }
 
-// expandTable builds a table of records from a spelling per byte; a byte
-// with no spelling maps to itself.
 func expandTable(spell func(c int) string, records int) []byte {
 	t := make([]byte, records*8)
 	for c := 0; c < records; c++ {
@@ -301,8 +283,6 @@ type bufExpandCase struct {
 }
 
 func bufExpandCases() []bufExpandCase {
-	// cat -A's spelling: ^X for a control, M- for a high byte, $ before a
-	// newline, and M-^? as the four-byte case.
 	catA := expandTable(func(c int) string {
 		if c == '\n' {
 			return "$\n"
@@ -320,13 +300,10 @@ func bufExpandCases() []bufExpandCase {
 		}
 		return out + string(rune(c))
 	}, 256)
-	// Lengths past seven count as seven: the record's own eight bytes.
 	long := expandTable(func(c int) string { return "abcdefg" }, 256)
 	for c := 0; c < 256; c += 3 {
 		long[c*8] = byte(8 + c%200)
 	}
-	// Three whole records and a partial fourth: bytes 0..2 expand, the rest
-	// pass through.
 	short := append(expandTable(func(c int) string { return strings.Repeat("<", c+1) }, 3), 5, 'x', 'y')
 	var all strings.Builder
 	for c := 0; c < 256; c++ {

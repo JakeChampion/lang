@@ -9,19 +9,12 @@ import (
 	"testing"
 )
 
-// TestFloatShortestF32RoundTrip is the f32 sibling of
-// TestFloatShortestRoundTrip: whatever `(v: f32).to_string()` produces must
-// parse back (as f32) to the exact same f32, and use no more significant
-// digits than Go's shortest f32 form. f32 `.to_string()` shares the shortest-
-// digit search with f64 (only the IEEE field widths differ), capped at 9
-// digits (the max shortest length of an f32). Notation-agnostic — the
-// invariant is round-trip + minimality, not a byte-identical string.
 func TestFloatShortestF32RoundTrip(t *testing.T) {
 	edge := []float32{
 		0.1, 1.0 / 3.0, 3.14, 42.0, 1.5, 0.5, 2.5, 123456.79,
-		1e20, 1e-20, 1e-45, 1.4e-45, // smallest subnormal region
-		3.4028235e38,  // max finite f32
-		1.1754944e-38, // smallest normal f32
+		1e20, 1e-20, 1e-45, 1.4e-45,
+		3.4028235e38,
+		1.1754944e-38,
 		0.000125, 9999999.0,
 	}
 	vals := append([]float32{}, edge...)

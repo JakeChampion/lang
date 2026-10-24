@@ -9,23 +9,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostDebugSymsFlag covers `fern-selfhost -target x86-64-linux -g` end to
-// end (#6637): a binary the self-host built, whose function names `nm` can
-// resolve. Before this, every self-host-built binary was anonymous — which
-// cost the project itself most, since the self-hosted compiler is the
-// largest program it builds with itself and the one whose segfaults most
-// need a readable backtrace.
-//
-// Three things are checked, and the second and third matter as much as the
-// first:
-//
-//   - `nm` resolves the emitted function names, with non-zero sizes. A size
-//     of 0 resolves an exact entry point and nothing else, so a backtrace
-//     could not attribute an address that fell inside a function.
-//   - the -g binary still RUNS. Appending a section-header table must not
-//     change what the loader maps.
-//   - WITHOUT -g the image is unchanged: no section headers at all. That is
-//     what keeps the flag from being a tax on every ordinary build.
 func TestSelfHostDebugSymsFlag(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -63,7 +46,6 @@ func TestSelfHostDebugSymsFlag(t *testing.T) {
 	plain := build(filepath.Join(dir, "plain.bin"))
 	withG := build(filepath.Join(dir, "withg.bin"), "-g")
 
-	// Both run, and to the same answer: -g changes the file, not the program.
 	for _, bin := range []string{plain, withG} {
 		if err := os.Chmod(bin, 0o755); err != nil {
 			t.Fatalf("chmod %s: %v", bin, err)
@@ -78,7 +60,6 @@ func TestSelfHostDebugSymsFlag(t *testing.T) {
 		}
 	}
 
-	// nm resolves the user's functions in the -g build.
 	out, err := exec.Command("nm", withG).Output()
 	if err != nil {
 		t.Fatalf("nm: %v", err)
@@ -88,26 +69,15 @@ func TestSelfHostDebugSymsFlag(t *testing.T) {
 			t.Errorf("nm output missing %q\n--- got ---\n%s", want, out)
 		}
 	}
-	// Every symbol is typed as a function ("T" is .text/global in nm's
-	// output); a table of untyped symbols would still contain the names.
 	if n := strings.Count(string(out), " T "); n < 3 {
 		t.Errorf("expected at least 3 text symbols, got %d\n%s", n, out)
 	}
 
-	// And nm on the plain build resolves nothing, because there is no
-	// symbol table to read.
 	plainOut, _ := exec.Command("nm", plain).CombinedOutput()
 	if strings.Contains(string(plainOut), "__fn_main") {
 		t.Errorf("the non-g build carries symbols; -g should be opt-in\n%s", plainOut)
 	}
 
-	// arm64 reaches the ELF layer through a different writer — the W^X
-	// two-segment image, where .text sits past TWO program headers rather
-	// than one. That is the case an x86-only test cannot cover, and the
-	// reason the symtab layer takes the offset and vaddr from its caller.
-	//
-	// nm reads a foreign architecture, so the symbols are checked
-	// without needing qemu; execution stays x86-only above.
 	a64 := build(filepath.Join(dir, "a64.bin"), "-target", "arm64-linux", "-g")
 	a64Out, err := exec.Command("nm", a64).Output()
 	if err != nil {
@@ -120,11 +90,6 @@ func TestSelfHostDebugSymsFlag(t *testing.T) {
 	}
 }
 
-// A `-g` build carries a line mark ahead of every statement. The marks emit no
-// code, so they must not keep a leaf from being spliced into its callers:
-// `is_space` is a leaf called from two places, and neither build may name it.
-// `mix` is a leaf only while its marks stay out of the instruction budget: its
-// statements are under max_leaf_insts, its statements and marks over it.
 func TestSelfHostDebugSymsKeepSplices(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

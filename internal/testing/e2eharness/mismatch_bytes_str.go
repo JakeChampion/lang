@@ -2,9 +2,6 @@ package e2eharness
 
 import "strings"
 
-// MismatchBytesStrSource is MismatchBytesSource for __mismatch_bytes_str: a
-// byte array against a string, every mismatch position around vector widths,
-// bounds clamping, retained aliases and allocation-free borrowed calls.
 func MismatchBytesStrSource(allocations bool) string {
 	probe := ""
 	if allocations {

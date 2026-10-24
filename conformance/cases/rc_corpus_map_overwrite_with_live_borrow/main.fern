@@ -1,10 +1,10 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Overwrite-dec is rc-aware: an outstanding get-borrow of the
-// old value (inc-on-get → rc 2) must NOT be freed by the
-// overwrite (rc 2→1, no free). The borrow stays readable; the
-// counter stays 0.
+
+
+
+
+
+
+
 import "core/int";
 import "core/map";
 function main(): i32 {

@@ -5,11 +5,6 @@ import (
 	"testing"
 )
 
-// Both the Result box and the fresh words array belong to the caller.
-// Repeated reads must reuse their allocations after a warm-up, and keeping
-// the payload alive through termios_set must not release it prematurely.
-// Use successful calls for heap balance: IoError payloads are immortal and
-// their allocations cannot be reclaimed by releasing the owned Result box.
 const termiosOwnershipSource = `function round(): i32 {
     match (termios_get(0)) {
         Ok(words) => {

@@ -1,13 +1,13 @@
 ---
 title: std/shapes
-description: "Every declaration shape a reference page renders."
+description: "This module demonstrates every declaration that a reference page can show."
 ---
 
 # `std/shapes`
 
-std/shapes — every declaration shape a reference page renders.
+std/shapes — This module demonstrates every declaration that a reference page can show.
 
-The intro's second paragraph.
+The module introduction has a second paragraph.
 
 ## `struct Point`
 
@@ -15,7 +15,7 @@ The intro's second paragraph.
 pub struct Point { x: i32, y: i32 }
 ```
 
-A point on the plane.
+Point identifies a position on a plane.
 
 ## `enum Turn`
 
@@ -26,7 +26,7 @@ pub enum Turn {
 }
 ```
 
-Which way a turn goes.
+Turn identifies the direction of a turn.
 
 ## `trait Sized`
 
@@ -36,7 +36,7 @@ pub trait Sized {
 }
 ```
 
-Something that can be measured.
+Sized defines a size method.
 
 ## `trait Area`
 
@@ -46,7 +46,7 @@ pub trait Area[T]: Sized {
 }
 ```
 
-Something with an area of type T.
+Area defines an area method with result type T.
 
 ## `const LIMIT`
 
@@ -54,7 +54,7 @@ Something with an area of type T.
 pub const LIMIT: i32
 ```
 
-The largest coordinate.
+LIMIT is the largest coordinate.
 
 ## `dist`
 
@@ -62,7 +62,7 @@ The largest coordinate.
 pub function dist(a: Point, b: Point): i32
 ```
 
-dist is the Manhattan distance between two points.
+dist returns the sum of the coordinate differences.
 
 ## `first`
 
@@ -70,7 +70,7 @@ dist is the Manhattan distance between two points.
 pub function first[T](xs: T[]): Option[T]
 ```
 
-first returns the first element, if there is one.
+first returns the first element, or None for an empty array.
 
 ## Implementations
 

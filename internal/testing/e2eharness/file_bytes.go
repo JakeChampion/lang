@@ -30,7 +30,6 @@ function main(): i32 {
 }
 `
 
-// CheckFileBytes uses host reads as the oracle, independent of Fern's readers.
 func CheckFileBytes(t *testing.T, cmd *exec.Cmd) string {
 	t.Helper()
 	dir := t.TempDir()

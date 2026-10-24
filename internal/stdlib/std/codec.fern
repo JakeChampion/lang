@@ -1,4 +1,5 @@
-// std/codec defines shared errors for byte encodings.
+// This module defines shared errors for byte encodings.
+
 import "core/cmp";
 import "std/error";
 import "std/i32";
@@ -45,7 +46,7 @@ pub function error(encoding: string, offset: i32, kind: DecodeErrorKind): Decode
   return DecodeError { encoding: encoding, offset: offset, kind: kind };
 }
 
-// A missing error means that the padding is valid.
+// A missing error means that the pad bytes are valid.
 pub(package) function padding_error(input: string, data_end: i32, max_pad: i32, group: i32, encoding: string): Option[DecodeError] {
   let i: i32 = data_end;
   while (i < input.len()) {

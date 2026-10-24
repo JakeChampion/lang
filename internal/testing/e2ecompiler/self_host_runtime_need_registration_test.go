@@ -6,8 +6,6 @@ import (
 	"testing"
 )
 
-// Registering a root must make its dependencies visible to gates immediately,
-// including when no emit-site wrapper or final closure pass runs.
 func TestSelfHostRuntimeNeedRegistration(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

@@ -6,10 +6,6 @@ import (
 	"testing"
 )
 
-// genericEnumCallsSrc has a generic enum's methods call generic functions
-// (#12091): a method calling an unbounded and a bounded generic, and the
-// derived FromJson decoder, whose payload reads call `from_json_elem[L]` and
-// whose `from_json` calls `decode[Self]`. Each is reached at two instances.
 const genericEnumCallsSrc = `import "core/cmp";
 import "std/i32";
 import "std/json";

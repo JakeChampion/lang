@@ -10,14 +10,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostPerModuleSubdirCacheX86_64 guards subdir-aware source hashing in
-// the per-module incremental cache (#3451 step 6 / #3458): module_src_hash reads
-// a module's source through its identity, the file it resolved to, so a module
-// in a sub-directory gets a real content hash rather than "?" (always rebuild).
-//
-// Tree: main → mid → sub/leaf. leaf lives in a sub-directory; the test asserts
-// it gets a non-"?" src_hash, is served from cache on an unchanged rebuild, and
-// is correctly re-emitted (and only it) when its body changes.
 func TestSelfHostPerModuleSubdirCacheX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	shDir := writeSelfHostModloadProject(t)
@@ -65,7 +57,6 @@ func TestSelfHostPerModuleSubdirCacheX86_64(t *testing.T) {
 		return string(out), errb.String()
 	}
 
-	// leafSrcHash returns the src_hash column for the "leaf" module from the manifest.
 	leafSrcHash := func() string {
 		for _, ln := range strings.Split(mustStdout(drive("-per-module-manifest")), "\n") {
 			f := strings.Split(strings.TrimSpace(ln), "|")
@@ -77,7 +68,6 @@ func TestSelfHostPerModuleSubdirCacheX86_64(t *testing.T) {
 		return ""
 	}
 
-	// The subdir module must resolve to a real content hash, not "?".
 	h0 := leafSrcHash()
 	if h0 == "?" || h0 == "" {
 		t.Fatalf("subdir module leaf got src_hash %q, want a real content hash (resolver did not find sub/leaf.fern)", h0)
@@ -127,8 +117,6 @@ func TestSelfHostPerModuleSubdirCacheX86_64(t *testing.T) {
 		return true
 	}
 
-	// Cold: all miss. Warm: all hit — crucially INCLUDING the subdir module leaf
-	// (which the flat-only src_hash could never cache).
 	if _, misses := build(); !eq(misses, nsOrder...) {
 		t.Fatalf("cold: misses=%v, want all", misses)
 	}
@@ -137,7 +125,6 @@ func TestSelfHostPerModuleSubdirCacheX86_64(t *testing.T) {
 		t.Fatalf("warm: hits=%v misses=%v, want all-hit (subdir leaf must be cacheable)", hits, misses)
 	}
 
-	// Editing the subdir module's body must change its hash and re-emit only it.
 	writeLeaf("@noinline pub function leaf_val(): i32 { return 41; }\n")
 	if leafSrcHash() == h0 {
 		t.Fatal("subdir leaf body edit did not change its src_hash")

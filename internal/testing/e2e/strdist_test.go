@@ -2,10 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/strdist across backends: Levenshtein
-// reference distances, code-point awareness (é vs e = 1), and the
-// similarity ratio bounds. Returns 42 iff every check holds. Each leg
-// skips itself when its toolchain is absent.
 const strdistProg = `
 import "std/strdist" as strdist;
 function main(): i32 {

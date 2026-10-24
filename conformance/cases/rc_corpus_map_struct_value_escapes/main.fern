@@ -1,10 +1,10 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Struct map value that ESCAPES: a value read out via get_or is
-// retained (inc) so it survives the map's deep-drop at the
-// helper's exit. The returned Item must stay valid + uncorrupted
-// across 200 churn iterations. it.xs[1] = c+1; sum = 20100.
+
+
+
+
+
+
+
 import "core/int";
 import "core/map";
 struct Item { xs: i32[] }

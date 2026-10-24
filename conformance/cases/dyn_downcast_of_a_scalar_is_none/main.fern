@@ -1,5 +1,5 @@
-// A downcast of a `dyn` value holding a scalar to a struct or enum type is
-// None, whatever the scalar's type.
+
+
 trait Named {
   function name(self: Self): string;
 }

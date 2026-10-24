@@ -1,8 +1,8 @@
-// usize is the target's pointer width, and its arithmetic wraps there
-// (docs/INTEGER-SEMANTICS.md). On wasm32 that is 32 bits: u32::MAX is the
-// largest literal, a carry out of 32 bits is lost, a borrow below zero wraps
-// to u32::MAX, and a shift count masks to 31. usize_wraps_at_64_bits is the
-// same operations on the 64-bit targets.
+
+
+
+
+
 import "core/int";
 import "std/u64";
 

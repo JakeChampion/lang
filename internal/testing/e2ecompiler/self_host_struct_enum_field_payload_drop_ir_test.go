@@ -8,15 +8,7 @@ import (
 	"testing"
 )
 
-// The shapes all three legs below compile. Kept in one place so the x86-64,
-// arm64 and wasm legs assert the SAME programs — the gap #6696 closed was a
-// backend-independent lowering decision, so a leg drifting to its own program
-// would stop being a parity check.
 const (
-	// churnEnumFieldFresh: a struct whose direct enum field is a FRESH variant
-	// ctor with an array payload, built and dropped once per CALL (not per loop
-	// rebind — the rebind chain is a different emitter and was already exact).
-	// The payload array is the value that leaked once per construction.
 	churnEnumFieldFresh = `enum V { A(i32[]), B }
 struct S { v: V, n: i32 }
 function mk(i: i32): i32 {
@@ -32,10 +24,6 @@ function drive(n: i32): i32 {
 }
 `
 
-	// churnEnumFieldAliasedBox: the enum field is bound from a LIVE enum local,
-	// so construction alias-inc'd the box and this struct is not its sole owner.
-	// The __fern_rc_is_unique gate must decline the payload release here — `e`
-	// still reads its payload after `s` is swept, and `e`'s own drop releases it.
 	churnEnumFieldAliasedBox = `enum V { A(i32[]), B }
 struct S { v: V, n: i32 }
 function mk(i: i32): i32 {
@@ -53,10 +41,6 @@ function drive(n: i32): i32 {
 }
 `
 
-	// churnEnumFieldAliasedPayload: the payload ARRAY aliases a live local. This
-	// one DOES release (the box is sole-owned), and stays balanced because a
-	// bare-ident array payload gets the variant-construction alias-inc — the
-	// reason the admission needs no per-construction freshness proof for arrays.
 	churnEnumFieldAliasedPayload = `enum V { A(i32[]), B }
 struct S { v: V, n: i32 }
 function mk(i: i32): i32 {
@@ -74,10 +58,6 @@ function drive(n: i32): i32 {
 }
 `
 
-	// churnEnumFieldBaseCopy: `S { ...t1, n: 2 }` copies the enum field from the
-	// base, so t2.v ALIASES t1.v under a base-copy retain. Both sweeps must
-	// decline the payload release; releasing on either side frees a payload the
-	// other still reads.
 	churnEnumFieldBaseCopy = `enum V { A(i32[]), B }
 struct S { v: V, n: i32 }
 function mk(i: i32): i32 {
@@ -96,13 +76,6 @@ function drive(n: i32): i32 {
 `
 )
 
-// heapFlatMain drives `drive` at a small and a large count and compares the heap
-// bump across the two, so the assertion is on GROWTH rather than on an absolute
-// figure: a fixed one-time cost (freelist warm-up) cancels, and only a per-call
-// residual moves the number. Exit 0 = flat, 1 = grew (leaked), 90/91 = the
-// program's own result went wrong, 99 = an over-release ticked the RC underflow
-// detector. Cast as a differential the same way __heap_bump_bytes is used
-// elsewhere in this package.
 func heapFlatMain(iters string) string {
 	return `function main(): i32 {
     if (drive(50) != 0) { return 90; }
@@ -116,19 +89,6 @@ func heapFlatMain(iters string) string {
 }`
 }
 
-// TestSelfHostStructEnumFieldPayloadDropIRX86_64 pins #6696: the VARIANT PAYLOAD
-// of a struct's direct enum field is released when the struct is swept.
-//
-// The sweep runs the same variant dispatch over the field's box that an enum
-// LOCAL gets; a box-only dec leaves the payload array outliving the struct — 48
-// bytes per construction, unbounded in the call count.
-//
-// The four shapes are the corners: a fresh sole-owned field (must reclaim), an
-// aliased BOX and a base-copied field (the __fern_rc_is_unique gate must
-// decline — releasing there frees a payload another owner still reads), and an
-// aliased PAYLOAD (must reclaim AND stay balanced, since a bare-ident array
-// payload is retained at variant construction). All four must be flat; exit 99
-// would catch the over-release the aliased shapes risk.
 func TestSelfHostStructEnumFieldPayloadDropIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -167,10 +127,6 @@ func TestSelfHostStructEnumFieldPayloadDropIRX86_64(t *testing.T) {
 	run(t, churnEnumFieldBaseCopy+flat, "enum-field-base-copy-balanced")
 }
 
-// TestSelfHostStructEnumFieldPayloadDropIRArm64 is the arm64 leg of #6696. The
-// reclaim decision is the shared lowering's sweep, so arm64 gets it from the same
-// change — this proves the emitted arm64 asm actually carries it. The iteration
-// count is cut for qemu; the leak was per CALL, so it is still visible.
 func TestSelfHostStructEnumFieldPayloadDropIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -199,10 +155,6 @@ func TestSelfHostStructEnumFieldPayloadDropIRArm64(t *testing.T) {
 	run(t, churnEnumFieldBaseCopy+flat, "enum-field-base-copy-balanced")
 }
 
-// TestSelfHostStructEnumFieldPayloadDropWasm is the wasm leg of #6696: a
-// struct's direct enum field must release both the enum box and its payload
-// when the struct dies, so the churn stays flat. The struct's sweep is
-// $__sem_drop_S, which the WAT assertion pins.
 func TestSelfHostStructEnumFieldPayloadDropWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm enum-field payload-drop e2e")
@@ -233,8 +185,6 @@ func TestSelfHostStructEnumFieldPayloadDropWasm(t *testing.T) {
 	}
 
 	flat := heapFlatMain("200000")
-	// Without $__sem_drop_S the struct is not swept at all and the growth check
-	// proves nothing.
 	run(t, churnEnumFieldFresh+flat, "enum-field-fresh-payload-reclaimed", "$__sem_drop_S")
 	run(t, churnEnumFieldAliasedPayload+flat, "enum-field-aliased-payload-balanced", "")
 	run(t, churnEnumFieldAliasedBox+flat, "enum-field-aliased-box-balanced", "")

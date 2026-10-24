@@ -12,17 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExternTupleResultCustomProvider is the P4c tuple-*result* gate
-// (docs/WIT-BRING-YOUR-OWN.md): an `@import` extern returns a `tuple`, lifted
-// into a Fern tuple. A multi-element tuple flattens to > 1 core value, so (like
-// a record) the canonical ABI returns it indirectly through a return-area
-// pointer; the wasm result wrapper allocs that area, calls the import, then
-// materializes a Fern tuple (rc header + per-element stores at the layout
-// offsets precomputed during IR lowering, ir.ExternFunc.ResultRecord) and
-// returns its pointer.
-//
-// The provider exports `make-pair: func(a: s32, b: s32) -> tuple<s32, s32>`,
-// returning (a, b). The Fern side reads p.0 + p.1 and expects 42.
 func TestExternTupleResultCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -40,7 +29,6 @@ func TestExternTupleResultCustomProvider(t *testing.T) {
 		}
 	}
 
-	// --- Provider component exporting local:test/src@0.1.0 make-point. ---
 	provWit := filepath.Join(dir, "provwit")
 	if err := os.MkdirAll(provWit, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -50,9 +38,6 @@ func TestExternTupleResultCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export src; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// make-point returns the record indirectly: it allocates an 8-byte area
-	// (x@0, y@4) via cabi_realloc and returns its pointer (the canonical
-	// record-result convention for an export).
 	provCoreWat := filepath.Join(dir, "prov_core.wat")
 	if err := os.WriteFile(provCoreWat, []byte(`(module
   (memory (export "memory") 1)
@@ -77,7 +62,6 @@ func TestExternTupleResultCustomProvider(t *testing.T) {
 	run(wasmtools, "component", "embed", provWit, "-w", "provider", provCore, "-o", provEmbed)
 	run(wasmtools, "component", "new", provEmbed, "-o", provider)
 
-	// --- User world: custom src iface + wasi stdout. ---
 	userWit := filepath.Join(dir, "userwit")
 	if out, err := exec.Command("cp", "-r", "../../../cmd/fern/wit/deps", filepath.Join(userWit, "deps")).CombinedOutput(); err != nil {
 		_ = os.MkdirAll(userWit, 0o755)
@@ -112,7 +96,6 @@ func TestExternTupleResultCustomProvider(t *testing.T) {
 		t.Fatalf("DecodeWorldBytes: %v", err)
 	}
 
-	// --- User program: make_point(10, 32) -> Point; check x + y == 42. ---
 	const want = "mkp-ok"
 	src := `@import("local:test/src@0.1.0", "make-pair")
 function make_pair(a: i32, b: i32): (i32, i32);

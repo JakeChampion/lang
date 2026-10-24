@@ -1,15 +1,15 @@
-// A `return <lambda>` inside a MATCH ARM must be lifted the same way one inside
-// an if-branch is. `lift_stmt` walked StmtReturn / StmtVar / StmtExpr /
-// StmtAssign / StmtIf / StmtWhile / StmtFor and fell through the `_` arm for
-// StmtMatch, so a match's arm bodies were never walked at all.
-//
-// The consequence was not a wrong answer but a REFUSAL: no lift claimed the arm
-// lambdas, so they reached lower_expr's ExprLambda arm, which refuses a lambda
-// no lift claims, and the whole MODULE bailed off the IR path. #6256.
-//
-// The if-expression sibling always worked, precisely because StmtIf was in that
-// list — so the two rows below are the same program written two ways, and they
-// must stay in step.
+
+
+
+
+
+
+
+
+
+
+
+
 enum Status { Active, Inactive, Pending }
 
 function via_match(s: Status): (i32) => i32 {
@@ -21,12 +21,12 @@ function via_match(s: Status): (i32) => i32 {
 }
 
 function via_if(c: boolean): (i32) => i32 {
-    // The control: this route was never broken.
+
     return (if (c) { ((x: i32) => x) } else { ((y: i32) => 72i32) });
 }
 
 function named_arms(s: Status): i32 {
-    // Named-function arms took a different path and also always worked.
+
     return (match (s) { Active => 1i32, Inactive => 2i32, Pending => 3i32 });
 }
 

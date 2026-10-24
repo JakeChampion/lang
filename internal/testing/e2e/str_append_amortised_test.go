@@ -2,18 +2,6 @@ package e2e
 
 import "testing"
 
-// `out = out + piece` over a uniquely held accumulator allocates once per
-// allocator class step, not once per append (#8404): __fern_str_append
-// grows in place while the grown length keeps the block's class capacity
-// — 16-byte exact fit below 2 KiB, three significant bits above — so 4096
-// pieces of 44 bytes (180 KiB) cost ~75 allocations, where the old 16-byte
-// in-place test cost one `__fern_strcat` per append, 4096 of them, and a
-// whole re-copy of the prefix each time.
-//
-// The COUNT is the observable, not bump bytes: the large tier recycles each
-// superseded copy into the next same-class request, so __heap_bump_bytes
-// read linear under the old runtime too. The bound is n/8, sixty-odd times
-// the fixed figure and eight times under the old one.
 const strAppendAmortisedSrc = `function churn(n: i32): i32 {
     let piece: string = "abcdefghijklmnopqrstuvwxyz0123456789abcdefgh";
     let out: string = "";

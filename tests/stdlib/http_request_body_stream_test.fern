@@ -3,25 +3,6 @@ import "std/http";
 import "std/stream";
 import "std/utf8" as utf8;
 
-// tests/stdlib/http_request_body_stream_test.fern —
-// `HttpRequest.body` is a `Stream` (docs/PLATFORM-RESEARCH.md
-// Rec §4, the issue-#4414 item).
-//
-// The point of the migration is that a handler no longer has to
-// materialise a whole upload to look at it: it takes
-// `req.body_stream()` and drives std/stream's cursor readers,
-// rebinding the Stream each step. These pin that path against
-// bodies that came off the wire through http_parse_request.
-//
-// They also pin the property the whole-body readers claim: each
-// reads the backing buffer, not the cursor, so `body_string()`
-// answers the same thing however far a separate walk has
-// advanced. A reader that quietly consumed the stream would make
-// the second call in a handler return "" — the failure this
-// distinction exists to prevent.
-
-// `wire(body)` — a POST whose Content-Length frames `body`.
-// `body_text(req)` — the body as text, or what `body_string` refused.
 function body_text(req: HttpRequest): string {
   match (req.body_string()) {
     Ok(text) => {
@@ -54,8 +35,6 @@ function req_headers_placeholder(): HeaderMap {
   return HeaderMap { names: [], values: [] };
 }
 
-// `scripted(chunks)` — a source answering `chunks` one at a time, then
-// None: a streamed body as std/serve's pull hands it over.
 function scripted(chunks: string[]): BodySource {
   let at: Cell[i32] = cell_new(0);
   return BodySource {
@@ -72,8 +51,6 @@ function scripted(chunks: string[]): BodySource {
   };
 }
 
-// `faulting(chunks, status)` — `scripted`, ending in a fault after the
-// last chunk, as a body past its cap or stalled does.
 function faulting(chunks: string[], status: i32): BodySource {
   let at: Cell[i32] = cell_new(0);
   let fault: Cell[i32] = cell_new(0);
@@ -114,8 +91,6 @@ function test_empty_body_is_an_empty_stream(): test.TestOutcome {
   return test.assert_eq(s.len(), 0);
 }
 
-// The upload shape the migration is for: read one line at a time
-// rather than the whole body.
 function test_read_line_walks_the_body(): test.TestOutcome {
   let s: Stream = parsed("alpha\nbeta\ngamma").body_stream();
   let seen: string = "";
@@ -147,7 +122,6 @@ function test_read_n_leaves_the_remainder(): test.TestOutcome {
   return test.assert_is_some_eq_string(tail, " world");
 }
 
-// The whole-body readers answer for the buffer, not the cursor.
 function test_body_string_ignores_a_partial_walk(): test.TestOutcome {
   let req: HttpRequest = parsed("hello world");
   let (head, rest) = req.body_stream().read_n(5);
@@ -165,7 +139,6 @@ function test_body_bytes_matches_body_len(): test.TestOutcome {
   return test.assert_eq(req.body_bytes().len(), req.body_len());
 }
 
-// A request with no body at all still answers every reader.
 function test_bodyless_request_reads_empty(): test.TestOutcome {
   match (http.http_parse_request("GET / HTTP/1.0\r\n\r\n")) {
     Some(req) => {
@@ -178,9 +151,6 @@ function test_bodyless_request_reads_empty(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
-// The text readers over a stream of bytes that are not UTF-8: the line
-// reads with U+FFFD in place of the bad byte (`read_line` has no arm to
-// refuse into), and `body_string` refuses.
 function test_ill_formed_bytes_read_as_replacement(): test.TestOutcome {
   let fffd: string = utf8.utf8_encode(65533 as char);
   let raw: string = string_from_bytes_unchecked([97 as u8, 255 as u8, 10 as u8, 98 as u8]);
@@ -249,7 +219,6 @@ function test_sourced_read_n_spans_chunks(): test.TestOutcome {
   return test.assert_eq(string_from_bytes_unchecked(head) + "|" + option_text(tail), "abc|de");
 }
 
-// `counted(chunks, pulls)` — `scripted`, counting the pulls in `pulls`.
 function counted(chunks: string[], pulls: Cell[i32]): BodySource {
   let inner: BodySource = scripted(chunks);
   let next: () => Option[u8[]] = inner.next;
@@ -263,9 +232,6 @@ function counted(chunks: string[], pulls: Cell[i32]): BodySource {
   };
 }
 
-// A read satisfied by the chunk in hand asks the source for nothing
-// more: a pull waits for the peer, and a frame read whole off a
-// connection must not wait for the next one (std/http/websocket).
 function test_sourced_read_n_pulls_only_what_it_owes(): test.TestOutcome {
   let pulls: Cell[i32] = cell_new(0);
   let (head, rest) = stream.stream_from_source(counted(["ab", "cd"], pulls)).read_n(2);
@@ -351,8 +317,6 @@ function test_in_memory_stream_has_no_fault(): test.TestOutcome {
   return test.assert_eq(rest.fault(), 0);
 }
 
-// `read_some` hands back what the source yields, one chunk at a time, and
-// nothing at the end, where `read_n` would wait for its count.
 function test_read_some_answers_each_chunk(): test.TestOutcome {
   let served: Cell[i32] = cell_new(0);
   let src: BodySource = BodySource {

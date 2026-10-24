@@ -2,16 +2,6 @@ package e2e
 
 import "testing"
 
-// A fresh temp passed to a function that may hand its string parameter back
-// unchanged is released by the caller (#11479).
-//
-// `same` returns its borrowed parameter, which takes the return-transfer inc,
-// so whatever `add` keeps of `name` holds a count of its own. The counted-
-// retain summary nonetheless refused a bare `return p`, the refusal reached
-// `add` through the argument-position rule, and with the position uncredited
-// neither side released `fresh(base)`: one string per call. std/headers'
-// `append(name.to_lower())` is this shape once `to_lower` returns an
-// already-lowercase input as is.
 func TestPassThroughParamLeavesTheCallersTempReclaimable(t *testing.T) {
 	checkCensusOnEveryTarget(t, []struct{ name, src string }{
 		{"forwarded_through_a_pass_through", `

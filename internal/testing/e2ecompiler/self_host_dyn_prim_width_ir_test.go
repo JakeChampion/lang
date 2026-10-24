@@ -6,12 +6,6 @@ import (
 	"testing"
 )
 
-// Primitive values of every width as `dyn` method arguments and as boxed `dyn`
-// receivers (#11122). The dispatch chain used to take every method of the
-// called name, so a `dyn Adder` call to `add` also got arms for the operator
-// `Add` impls of i64 / f64 / BigInt, and wasm rejected the i32 argument handed
-// to `i64.add`. A boxed u8 named a type-id global wasm never defined.
-
 const dynPrimArgSrc = `import "std/i32";
 trait Adder {
     function add(self: Self, n: i32): i32;
@@ -38,8 +32,6 @@ function main(): i32 {
 }
 `
 
-// Every width as an argument, on a primitive and a struct receiver. `add`
-// collides with the operator impls, as in dynPrimArgSrc.
 const dynWidthArgsSrc = `import "std/i32";
 import "std/i64";
 import "std/u32";
@@ -108,9 +100,6 @@ function main(): i32 {
 }
 `
 
-// Every primitive receiver boxed into a dyn of the program's own trait and of
-// core/cmp's Display. Each box must dispatch to its own type's impl and read
-// its value back at its own width.
 const dynWidthBoxSrc = `import "core/cmp";
 import "std/i32";
 import "std/i64";
@@ -151,8 +140,6 @@ function main(): i32 {
 }
 `
 
-// The interpreter dispatches every boxed integer to the i32 impl (#10194), so
-// dynWidthBoxSrc's expected output is written out rather than taken from it.
 const dynWidthBoxWant = "i32:-3;i64:6000000001;u32:4000000001;u64:9000000001;u8:66;f32:0.1;f64:2.5;bool:T;char:98;str:hi;\n" +
 	"-4;6000000000;4000000000;9000000000;65;0.1;2.5;true;hi;\n"
 

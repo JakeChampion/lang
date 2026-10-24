@@ -9,13 +9,6 @@ import (
 	"testing"
 )
 
-// The directory readers take a name's length from the record: from d_namlen
-// on Darwin, and on Linux by finding the NUL a word at a time inside the
-// record's padding. Every length from 1 to 255 bytes, ASCII and ending in a
-// two-byte UTF-8 rune, puts the NUL at every offset of a word and the name's
-// end at every distance from the record's. `read_dir` and `read_dir_ino` must
-// name each one, and `remove_dir_all` must remove a tree of them, which it
-// walks by the same lengths.
 const readDirNameLengthsProg = `function main(): i32 {
     match (read_dir(args()[1])) {
         Ok(names) => {

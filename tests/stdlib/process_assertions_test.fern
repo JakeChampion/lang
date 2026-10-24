@@ -1,18 +1,5 @@
 import "std/test";
 
-// tests/stdlib/process_assertions_test.fern — end-to-end
-// spawn + assert flow using `exec`, `temp_dir`, and the
-// std/test process assertion helpers. This is the shape the
-// e2e suite migration will land in: the runner spawns the
-// compiler binary, redirects stdin, captures stdout / stderr
-// / exit code, and asserts.
-//
-// To keep the example deterministic this file spawns ordinary
-// POSIX commands (`echo`, `cat`, `sh`) rather than `fern`
-// itself. The migration's compiler-binary tests follow the
-// same pattern with `subprocess("/path/to/fern", ["-interp", ...],
-// "")`.
-
 function test_echo_stdout_eq(): test.TestOutcome {
   let r: ProcessResult = subprocess("echo", ["hello"], "");
   return test.assert_stdout_eq(r, "hello\n");
@@ -40,8 +27,6 @@ function test_sh_stderr_contains(): test.TestOutcome {
 
 function test_spawn_missing_binary(): test.TestOutcome {
   let r: ProcessResult = subprocess("this-binary-definitely-does-not-exist-7349", [], "");
-  // Spawn failure → exit_code = 127 per POSIX convention,
-  // with the OS error message in stderr.
   return test.assert_exit(r, 127);
 }
 
@@ -55,7 +40,6 @@ function test_temp_dir_writes_and_reads(): test.TestOutcome {
           return test.fail("write_file failed under " + dir);
         }
       }
-      // Confirm `cat` reads what we just wrote.
       let r: ProcessResult = subprocess("cat", [path], "");
       return test.assert_process(r, 0, "hello tempdir");
     },
@@ -69,11 +53,6 @@ function test_temp_dir_writes_and_reads(): test.TestOutcome {
 function main(): i32 {
   let r: test.TestRunner = test.test_new("process assertions");
 
-  // Gate the whole suite on having a POSIX shell — every
-  // case here spawns `echo` / `cat` / `sh`. On hosts where
-  // those aren't on $PATH (rare for Fern's actual targets,
-  // but possible in stripped CI images) the suite skips
-  // cleanly instead of cascading false failures.
   let probe: ProcessResult = subprocess("sh", ["-c", "exit 0"], "");
   if (probe.exit_code == 127) {
     r = r.skip("posix tools probe", "sh / echo / cat not on $PATH");

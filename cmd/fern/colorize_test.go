@@ -7,10 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/tools/tty"
 )
 
-// `--color=auto` (the default) decides from stderr. It used to decide with
-// `os.ModeCharDevice`, which calls /dev/null a terminal — so `fern -check
-// 2>/dev/null` painted SGR escapes at a sink. It now asks the same question
-// the language's `isatty` builtin does.
 func TestShouldColorizeAuto(t *testing.T) {
 	devnull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
 	if err != nil {
@@ -52,7 +48,6 @@ func TestShouldColorizeAuto(t *testing.T) {
 	}
 }
 
-// The explicit modes and NO_COLOR do not consult the stream at all.
 func TestShouldColorizeOverridesIgnoreTheStream(t *testing.T) {
 	if !shouldColorize("always") {
 		t.Error(`shouldColorize("always") = false`)

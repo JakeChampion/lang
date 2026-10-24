@@ -53,7 +53,6 @@ func perceusDriverAnswer(name string, n int) string {
 		constant, _ := perceusFoldOracle(n, 1)
 		return fmt.Sprintf("%d\n%d\n", constant, constant)
 	case "deriv":
-		// Independently pinned by the arbitrary-precision expression audit.
 		counts := []int{6, 22, 90, 420, 2202, 12886}
 		var out strings.Builder
 		for i := 0; i < n; i++ {
@@ -118,8 +117,6 @@ func TestSelfHostPerceusDrivers(t *testing.T) {
 	}
 }
 
-// perf-bench records instructions even for nonzero checksum exits. Pin the
-// actual answers here so the error sentinel cannot pass as a fast benchmark.
 func TestSelfHostPerceusPerformanceChecksums(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	constant, _ := perceusFoldOracle(8, 1)

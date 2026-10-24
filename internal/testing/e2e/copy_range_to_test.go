@@ -1,14 +1,3 @@
-// `r.copy_range_to(w, max)` end to end: copy_file_range(2) between two files
-// on Linux, and `Unsupported` wherever the kernel cannot copy that pair, which
-// promises nothing moved so a read_chunk / write fallback carries on. The
-// probe checks three shapes:
-//
-//   - file to file, which the kernel copies on the Linux backends; the copy
-//     is read back through Go's own read.
-//   - a writer opened for APPEND, which copy_file_range(2) refuses (EBADF):
-//     Unsupported, and the next read_chunk still sees the first byte.
-//   - file to stdout, a pipe in these runners, which it also refuses, so the
-//     fallback carries every byte.
 package e2e
 
 import (
@@ -121,7 +110,6 @@ func TestArm64CopyRangeTo(t *testing.T) {
 	spliceToCheckStdout(t, out)
 }
 
-// The interpreter refuses every call and the fallback carries the bytes.
 func TestInterpCopyRangeToUnsupported(t *testing.T) {
 	dir := t.TempDir()
 	if code := runInterpExit(t, copyRangeToSource(dir, false)); code != 0 {
@@ -139,7 +127,6 @@ func TestWASMPreview1CopyRangeToUnsupported(t *testing.T) {
 	spliceToCheckTree(t, dir)
 }
 
-// Preview 2's fallback reads and writes through streams, a separate body.
 func TestWASMCopyRangeToUnsupported(t *testing.T) {
 	dir := t.TempDir()
 	out := runResultStdout(t, copyRangeToSource("", false), runOpts{workDir: dir})
@@ -150,8 +137,6 @@ func TestWASMCopyRangeToUnsupported(t *testing.T) {
 	spliceToCheckStdout(t, out)
 }
 
-// XNU has no copy_file_range: every call is refused and the fallback carries
-// the bytes. Built everywhere, run on Apple Silicon.
 func TestArm64DarwinCopyRangeToUnsupported(t *testing.T) {
 	dir := t.TempDir()
 	if !buildAndRunDarwin(t, dir, copyRangeToSource(dir, false)) {

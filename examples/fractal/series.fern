@@ -1,4 +1,3 @@
-// A bounded Taylor prefix extends linear skips through small reference orbits.
 import "std/f64";
 
 const ORDER: i32 = 16;
@@ -17,8 +16,6 @@ function norm(real: f64, imaginary: f64): f64 {
   return (real * real + imaginary * imaginary).sqrt();
 }
 
-// Coefficients use t = delta/radius, so |t| <= 1 and coefficients stay finite.
-// The bound includes discarded products and accumulated arithmetic error.
 pub function build(zr: f64[], zi: f64[], radius: f64, tolerance: f64): Model {
   let cr: f64[] = [];
   let ci: f64[] = [];
@@ -87,7 +84,6 @@ pub function build(zr: f64[], zi: f64[], radius: f64, tolerance: f64): Model {
 
 pub struct Value { real: f64, imaginary: f64 }
 
-// Horner evaluation has fixed cost, independent of the skipped iteration count.
 pub function evaluate(model: Model, real: f64, imaginary: f64): Value {
   let tr: f64 = real / model.radius;
   let ti: f64 = imaginary / model.radius;

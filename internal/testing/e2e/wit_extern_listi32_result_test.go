@@ -12,16 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExternListI32ResultCustomProvider is the P4c composite-result gate for a
-// non-u8 integer array (docs/WIT-BRING-YOUR-OWN.md): an `@import` extern returns
-// a canonical `list<s32>`, lifted into a Fern `i32[]`. It generalises the u8[]
-// result: the result wrapper allocates the length-prefixed array and copies the
-// host bytes at native stride (count*4 for i32, vs count*1 for u8). This pins
-// that the materialized Fern i32[] layout (4-byte stride) round-trips a
-// canonical list<s32>.
-//
-// The provider exports `iota: func(n: u32) -> list<s32>` returning [0,1,…,n-1];
-// the Fern side requests 4 and checks element [3] == 3 and the length.
 func TestExternListI32ResultCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -39,7 +29,6 @@ func TestExternListI32ResultCustomProvider(t *testing.T) {
 		}
 	}
 
-	// --- Provider component exporting local:test/src@0.1.0 iota. ---
 	provWit := filepath.Join(dir, "provwit")
 	if err := os.MkdirAll(provWit, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -48,10 +37,6 @@ func TestExternListI32ResultCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\ninterface src { iota: func(n: u32) -> list<s32>; }\nworld provider { export src; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// iota(n) allocates n*4 bytes via cabi_realloc, writes 0..n-1 as i32s, then
-	// allocates an 8-byte return area holding (ptr, len) and returns its
-	// pointer — the canonical `list<s32>` indirect-result convention for an
-	// export (`[I32] -> [I32]`: takes n, returns the return-area pointer).
 	provCoreWat := filepath.Join(dir, "prov_core.wat")
 	if err := os.WriteFile(provCoreWat, []byte(`(module
   (memory (export "memory") 1)
@@ -82,7 +67,6 @@ func TestExternListI32ResultCustomProvider(t *testing.T) {
 	run(wasmtools, "component", "embed", provWit, "-w", "provider", provCore, "-o", provEmbed)
 	run(wasmtools, "component", "new", provEmbed, "-o", provider)
 
-	// --- User world: custom src iface + wasi stdout. ---
 	userWit := filepath.Join(dir, "userwit")
 	if out, err := exec.Command("cp", "-r", "../../../cmd/fern/wit/deps", filepath.Join(userWit, "deps")).CombinedOutput(); err != nil {
 		_ = os.MkdirAll(userWit, 0o755)
@@ -117,7 +101,6 @@ func TestExternListI32ResultCustomProvider(t *testing.T) {
 		t.Fatalf("DecodeWorldBytes: %v", err)
 	}
 
-	// --- User program: iota(4) -> [0,1,2,3]; check len + element [3]. ---
 	const want = "iota-ok"
 	src := `@import("local:test/src@0.1.0", "iota")
 function iota(n: u32): i32[];

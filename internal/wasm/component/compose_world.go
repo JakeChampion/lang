@@ -6,20 +6,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// compose_world.go is P2's result (docs/WIT-BRING-YOUR-OWN.md): build a real
-// component whose import surface is declared from the full decoded WIT world —
-// every interface, emitted by componenttype.EmitWorldImports — instead of the
-// hand-written minimized type bodies. It reuses the existing
-// gComposer.lower/finish suffix wiring unchanged; the only difference is that
-// the composer is *seeded* with the world prefix and the world's component
-// index layout rather than building a minimal prefix via the ensure* methods.
-// The native Compose path is untouched.
-
-// ComposeFromWorld wraps `core` into a component whose top-level imports are
-// the full decoded `w` world, lifting `coreExportName` as wasi:cli/run.
-// `imports` are the preview-2 imports the core actually uses (the rest of the
-// world is imported but unused). `w` may be an embedded world (DecodeWorld) or
-// a user-supplied one (DecodeWorldBytes) — the path is identical.
 func ComposeFromWorld(core []byte, w *componenttype.World, coreExportName string, imports []gImport) ([]byte, error) {
 	prefix, err := w.EmitWorldImports()
 	if err != nil {
@@ -35,20 +21,11 @@ func ComposeFromWorld(core []byte, w *componenttype.World, coreExportName string
 		surfaced: map[string]uint32{},
 		inst:     map[string]uint32{},
 	}
-	// Seed the imported-instance map from the world's prefix layout so the
-	// suffix aliases each interface's functions from the right instance.
 	for _, iface := range w.Interfaces() {
 		if idx := w.ImportInstanceIndex(iface.Name); idx >= 0 {
 			g.inst[iface.Name] = uint32(idx)
 		}
 	}
-	// Surface each dropped resource as a component-level type (an alias export
-	// from its imported instance) and thread the index into the gDrop lowering
-	// — the canon resource.drop needs a component type index for the resource,
-	// which the world import prefix doesn't surface at the top level (P5,
-	// docs/WIT-BRING-YOUR-OWN.md). Purely additive: a program with no
-	// `[resource-drop]` imports emits no alias sections, so its bytes are
-	// unchanged. Each resource is surfaced once and shared across its drops.
 	for i := range imports {
 		if imports[i].kind != gDrop {
 			continue
@@ -69,24 +46,17 @@ func ComposeFromWorld(core []byte, w *componenttype.World, coreExportName string
 	return g.finish(core, coreExportName, ""), nil
 }
 
-// coreFuncImport is one function import of a core module: its (module, name)
-// and the param valtypes of its type (the trampoline signature a memory
-// lowering mirrors).
 type coreFuncImport struct {
 	module, name string
 	params       []byte
 	results      []byte
 }
 
-// coreFuncImports parses a core module's type + import sections and returns
-// each function import with its param valtypes. Non-function imports are
-// skipped. Bails out (nil) on malformed input.
 func coreFuncImports(bin []byte) []coreFuncImport {
 	const preambleLen = 8
 	if len(bin) < preambleLen {
 		return nil
 	}
-	// pass 1: functype params + results from the type section (id 1).
 	var typeParams [][]byte
 	var typeResults [][]byte
 	for off := preambleLen; off < len(bin); {
@@ -131,7 +101,6 @@ func coreFuncImports(bin []byte) []coreFuncImport {
 		}
 		break
 	}
-	// pass 2: import section (id 2) → func imports with their type's params.
 	for off := preambleLen; off < len(bin); {
 		id := bin[off]
 		off++
@@ -160,7 +129,7 @@ func coreFuncImports(bin []byte) []coreFuncImport {
 			kind := b3[0]
 			b3 = b3[1:]
 			switch kind {
-			case 0: // func: typeidx
+			case 0:
 				ti, ks := readULEB(b3)
 				b3 = b3[ks:]
 				var params, results []byte
@@ -169,13 +138,13 @@ func coreFuncImports(bin []byte) []coreFuncImport {
 					results = typeResults[ti]
 				}
 				out = append(out, coreFuncImport{module: mod, name: fld, params: params, results: results})
-			case 1: // table: reftype + limits
+			case 1:
 				if len(b3) >= 2 {
 					b3 = b3[2:]
 					_, ks := readULEB(b3)
 					b3 = b3[ks:]
 				}
-			case 2: // memory: limits
+			case 2:
 				if len(b3) >= 1 {
 					flag := b3[0]
 					b3 = b3[1:]
@@ -186,7 +155,7 @@ func coreFuncImports(bin []byte) []coreFuncImport {
 						b3 = b3[ks2:]
 					}
 				}
-			case 3: // global: valtype + mut
+			case 3:
 				if len(b3) >= 2 {
 					b3 = b3[2:]
 				}
@@ -198,18 +167,6 @@ func coreFuncImports(bin []byte) []coreFuncImport {
 	return nil
 }
 
-// ComposeFromWorldAuto wraps `core` into a wasi:cli/run component, deriving the
-// imports it wires from the core module's own function imports: each import's
-// lowering kind is classified against `world` (componenttype.Classify) and its
-// trampoline params come from the core import's type. No hardcoded import
-// list. Every imported interface must be declared by the world, and
-// resource-drop imports are not handled yet (they appear in socket/http shapes,
-// not CLI/fs ones).
-// ComposeFromWorldAuto wraps `core` into a wasi:cli/run component, deriving the
-// imports it wires from the core module's own function imports classified
-// against the decoded world `w` (embedded or user-supplied). No hardcoded
-// import list. Every imported interface must be declared by the world;
-// resource-drop imports are not handled yet.
 func ComposeFromWorldAuto(core []byte, w *componenttype.World) ([]byte, error) {
 	byIface := map[string]componenttype.WorldInterface{}
 	for _, wi := range w.Interfaces() {
@@ -222,11 +179,6 @@ func ComposeFromWorldAuto(core []byte, w *componenttype.World) ([]byte, error) {
 			return nil, fmt.Errorf("component: core imports interface %q not declared by the world", imp.module)
 		}
 		if hasResourceDropPrefix(imp.name) {
-			// `[resource-drop]<res>` — drop an owned handle (P5,
-			// docs/WIT-BRING-YOUR-OWN.md). The resource is surfaced as a
-			// component-level type and threaded into the canon resource.drop by
-			// ComposeFromWorld; here we just validate the world declares it and
-			// record the gDrop lowering (resourceT filled in once `g` exists).
 			res := imp.name[len("[resource-drop]"):]
 			if !ifaceHasResource(wi, res) {
 				return nil, fmt.Errorf("component: world interface %q has no resource %q to drop", imp.module, res)
@@ -239,22 +191,16 @@ func ComposeFromWorldAuto(core []byte, w *componenttype.World) ([]byte, error) {
 			return nil, fmt.Errorf("component: interface %q has no function %q", imp.module, imp.name)
 		}
 		imports = append(imports, gImport{
-			iface:  imp.module,
-			name:   imp.name,
-			kind:   gKindFor(wi.Classify(f)),
-			params: imp.params,
-			// The core import already carries the flat-lowered result (e.g. a
-			// memory-param `func(string) -> u32` imports as (i32,i32)->i32); a
-			// memory trampoline must mirror it. Empty for the WASI imports
-			// (results go through a retptr → void), so this is a no-op there.
+			iface:   imp.module,
+			name:    imp.name,
+			kind:    gKindFor(wi.Classify(f)),
+			params:  imp.params,
 			results: imp.results,
 		})
 	}
 	return ComposeFromWorld(core, w, "_lang_run", imports)
 }
 
-// ifaceHasResource reports whether the world interface declares a resource of
-// the given (WIT) name — the set a `[resource-drop]<name>` import may target.
 func ifaceHasResource(wi componenttype.WorldInterface, name string) bool {
 	for _, r := range wi.Resources {
 		if r == name {
@@ -264,15 +210,6 @@ func ifaceHasResource(wi componenttype.WorldInterface, name string) bool {
 	return false
 }
 
-// ComposeExportsFromWorld wraps a reactor `core` — a library that provides one
-// or more `@export` functions and no cli/run entry — into a component that
-// EXPORTS each world export the core implements, lifting it with the WIT
-// canonical ABI (P6 — docs/WIT-BRING-YOUR-OWN.md). It generalises the fixed
-// `_lang_run` / `incoming-handler` lifts: the wasm backend surfaced a core
-// export `iface#wit-name` per `@export` function, and this lifts each one whose
-// (iface, wit-name) the world declares as an export. Scalar signatures only
-// (this slice); composite params/results follow. Any core imports the reactor
-// uses are wired from the world exactly as for a command.
 func ComposeExportsFromWorld(core []byte, w *componenttype.World) ([]byte, error) {
 	byIface := map[string]componenttype.WorldInterface{}
 	for _, wi := range w.Interfaces() {
@@ -285,10 +222,6 @@ func ComposeExportsFromWorld(core []byte, w *componenttype.World) ([]byte, error
 			return nil, fmt.Errorf("component: core imports interface %q not declared by the world", imp.module)
 		}
 		if hasResourceDropPrefix(imp.name) {
-			// `[resource-drop]<res>` — the handler consumed an owned handle and the
-			// auto-drop pass emitted the drop import. Wire it as a gDrop (the
-			// resource is surfaced + resourceT filled once `g` exists, below),
-			// mirroring ComposeFromWorldAuto.
 			res := imp.name[len("[resource-drop]"):]
 			if !ifaceHasResource(wi, res) {
 				return nil, fmt.Errorf("component: world interface %q has no resource %q to drop", imp.module, res)
@@ -328,10 +261,6 @@ func ComposeExportsFromWorld(core []byte, w *componenttype.World) ([]byte, error
 			g.inst[iface.Name] = uint32(idx)
 		}
 	}
-	// Surface each dropped resource as a component-level type and thread its
-	// index into the gDrop lowering (the canon resource.drop needs it) — the same
-	// additive surfacing ComposeFromWorld does, shared with the export lifts via
-	// g.surfaced (P5/P6, docs/WIT-BRING-YOUR-OWN.md).
 	for i := range imports {
 		if imports[i].kind != gDrop {
 			continue
@@ -352,10 +281,6 @@ func ComposeExportsFromWorld(core []byte, w *componenttype.World) ([]byte, error
 	userInst := g.lower(core)
 
 	coreExports := coreFuncExportNames(core)
-	// A string/list export needs the core memory aliased for the lift. If the
-	// import lowering already aliased it (a mem trampoline), reuse core-memory
-	// index 0; otherwise alias it now. (Mixing mem-imports with composite
-	// exports beyond this is a later refinement.)
 	lowerAliasedMem := false
 	for i := range imports {
 		if imports[i].kind == gMem || imports[i].kind == gMemRealloc {
@@ -381,17 +306,13 @@ func ComposeExportsFromWorld(core []byte, w *componenttype.World) ([]byte, error
 	if needMem && !lowerAliasedMem {
 		g.c.aliasMemory(userInst)
 	}
-	var memIdx uint32 // the first (only) aliased core memory
+	var memIdx uint32
 	var reallocIdx uint32
 	if needRealloc {
-		// A string/list PARAMETER lift uses cabi_realloc to materialise the
-		// incoming bytes in the core's memory; the core exports it.
 		reallocIdx = g.c.aliasReallocFunc(userInst)
 	}
 
 	emitted := 0
-	// resourceInst maps each imported resource name to its instance index, so a
-	// handle-typed export param can surface the right imported resource (P6).
 	resourceInst := map[string]uint32{}
 	for _, wi := range w.Interfaces() {
 		if idx, ok := g.inst[wi.Name]; ok {
@@ -418,14 +339,8 @@ func ComposeExportsFromWorld(core []byte, w *componenttype.World) ([]byte, error
 	return g.c.buf, nil
 }
 
-// cValtypeString is the component-model primitive byte for `string` (it equals
-// componenttype.primString — a primitive Valtype's Prim byte is the CValtype).
 const cValtypeString = 0x73
 
-// exportNeedsMemory reports whether lifting `sig` needs the core memory aliased
-// — true when any parameter or the result is a string/list (which the lift
-// reads from / writes to linear memory). Scalars need no memory. A `list<T>`
-// result resolves through `wi` (its element-type index).
 func exportNeedsMemory(wi componenttype.WorldInterface, sig *componenttype.FuncType) bool {
 	if sig == nil {
 		return false
@@ -441,8 +356,6 @@ func exportNeedsMemory(wi componenttype.WorldInterface, sig *componenttype.FuncT
 	if isStringOrList(wi, sig.Result) {
 		return true
 	}
-	// An option/result/tuple result flattens to > 1 core value, so it returns
-	// indirectly through the core memory — the lift reads it.
 	if _, ok := wi.OptionElemPrim(sig.Result); ok {
 		return true
 	}
@@ -453,9 +366,6 @@ func exportNeedsMemory(wi componenttype.WorldInterface, sig *componenttype.FuncT
 	return isTuple
 }
 
-// exportNeedsRealloc reports whether lifting `sig` needs cabi_realloc — true
-// when any parameter is a string/list, which the canonical ABI materialises in
-// the core's memory before the call.
 func exportNeedsRealloc(wi componenttype.WorldInterface, sig *componenttype.FuncType) bool {
 	if sig == nil {
 		return false
@@ -468,9 +378,6 @@ func exportNeedsRealloc(wi componenttype.WorldInterface, sig *componenttype.Func
 	return false
 }
 
-// isStringOrList reports whether `v` is a `string` or a `list<T>` — the value
-// types that carry linear-memory data across the canonical ABI (and so drive
-// the memory/realloc lift options for an export).
 func isStringOrList(wi componenttype.WorldInterface, v componenttype.Valtype) bool {
 	if v.IsPrim {
 		return v.Prim == cValtypeString
@@ -479,13 +386,6 @@ func isStringOrList(wi componenttype.WorldInterface, v componenttype.Valtype) bo
 	return isList
 }
 
-// liftExport lifts one world export: alias the surfaced core func, build its
-// component functype from the WIT signature, canon-lift it, and export it as
-// `wi.Name` exposing `witName`. A scalar result uses the no-opts lift; a string
-// or `list<T>` result uses the memory lift (the core returns a pointer to the
-// (ptr,len) return area, which the lift reads from `memIdx`). A `list<T>` result
-// emits the `list<elem>` defined type first and references it from the functype.
-// String/list PARAMETERS beyond `string` are not handled yet.
 func (g *gComposer) liftExport(userInst uint32, wi componenttype.WorldInterface, witName, coreName string, sig *componenttype.FuncType, memIdx, reallocIdx uint32, resourceInst map[string]uint32) error {
 	iface := wi.Name
 	if sig == nil {
@@ -494,11 +394,6 @@ func (g *gComposer) liftExport(userInst uint32, wi componenttype.WorldInterface,
 	c := g.c
 	coreF := c.aliasCoreFunc(userInst, coreName)
 
-	// Surface any imported resource a handle param/result references *before*
-	// capturing `nextIdx`: aliasType emits an alias section immediately and bumps
-	// c.nType, so it must happen before the defined-type index mirror is taken.
-	// (A handle is an i32 at the canonical ABI; the own/borrow defined type just
-	// names the resource.) P6 — docs/WIT-BRING-YOUR-OWN.md.
 	surfaceHandle := func(v componenttype.Valtype) error {
 		rname, _, ok := wi.HandleResource(v)
 		if !ok {
@@ -525,19 +420,8 @@ func (g *gComposer) liftExport(userInst uint32, wi componenttype.WorldInterface,
 		}
 	}
 
-	// Each defined type a param/result references (a `list<T>` or a handle's
-	// own/borrow) must be emitted before the functype so its index resolves.
-	// Collect the type sections to emit, then the per-slot valtype encodings (a
-	// primitive's single byte, or the sleb-encoded index of a list/handle type).
-	// `nextIdx` mirrors c.nType as those types are appended.
-	var defs [][]byte // defined-type bodies, in emit order
+	var defs [][]byte
 	nextIdx := c.nType
-	// encodeSlot encodes one param/result valtype, emitting any referenced
-	// defined type into `defs`. The bool result reports whether the slot carries
-	// linear-memory data (string / list / sum-type), which drives the memory /
-	// realloc lift option. `allowSum` enables option/result encoding (results
-	// only this slice — a sum-type *param* would need a param wrapper the wasm
-	// backend doesn't build yet).
 	encodeSlot := func(v componenttype.Valtype, what string, allowSum bool) ([]byte, bool, error) {
 		if v.IsPrim {
 			return []byte{v.Prim}, v.Prim == cValtypeString, nil
@@ -549,9 +433,6 @@ func (g *gComposer) liftExport(userInst uint32, wi componenttype.WorldInterface,
 			return leb128SlebBytes(idx), true, nil
 		}
 		if rname, owned, ok := wi.HandleResource(v); ok {
-			// own<R> / borrow<R>: a handle is an i32 at the canonical ABI (no
-			// memory). The resource type was surfaced in the pre-pass; reference it
-			// from the own/borrow defined type.
 			rt, surfaced := g.surfaced[rname]
 			if !surfaced {
 				return nil, false, fmt.Errorf("component: export %s#%s: resource %q not surfaced", iface, witName, rname)
@@ -567,26 +448,18 @@ func (g *gComposer) liftExport(userInst uint32, wi componenttype.WorldInterface,
 		}
 		if allowSum {
 			if elems, ok := wi.TupleElemPrims(v); ok {
-				// tuple<...> flattens to its elements (> 1 for a multi-element
-				// tuple) → indirect result, memory lift. Each prim's CValtype byte
-				// is < 64, so InnerTypeTuple's single-byte elements are correct.
 				idx := nextIdx
 				nextIdx++
 				defs = append(defs, InnerTypeTuple(elems))
 				return leb128SlebBytes(idx), true, nil
 			}
 			if e, ok := wi.OptionElemPrim(v); ok {
-				// option<prim> flattens to (disc, payload) > 1 → indirect result,
-				// memory lift. A prim's CValtype byte is < 64, so InnerTypeOption's
-				// single inner byte is correct.
 				idx := nextIdx
 				nextIdx++
 				defs = append(defs, InnerTypeOption(e))
 				return leb128SlebBytes(idx), true, nil
 			}
 			if okB, errB, ok := wi.ResultArmPrims(v); ok {
-				// result<okPrim, errPrim>: each arm's CValtype byte is < 128, so the
-				// uleb InnerTypeResultOkErr writes equals the prim valtype byte.
 				idx := nextIdx
 				nextIdx++
 				defs = append(defs, InnerTypeResultOkErr(uint32(okB), uint32(errB)))
@@ -615,9 +488,6 @@ func (g *gComposer) liftExport(userInst uint32, wi componenttype.WorldInterface,
 		pnames = append(pnames, name)
 		pvals = append(pvals, enc)
 	}
-	// A void function is encoded as a named-results list of length zero (the WIT
-	// `func(...)` shape — e.g. incoming-handler#handle). A non-empty named-results
-	// list (multi result) is still unsupported.
 	isVoid := sig.NamedResults && len(sig.Results) == 0
 	if sig.NamedResults && !isVoid {
 		return fmt.Errorf("component: export %s#%s: multi result (unsupported in this slice)", iface, witName)
@@ -632,7 +502,6 @@ func (g *gComposer) liftExport(userInst uint32, wi componenttype.WorldInterface,
 		}
 	}
 
-	// Emit the referenced defined types (in index order), then the functype.
 	for _, d := range defs {
 		c.buf = PutTypeSectionOneDefined(c.buf, d)
 		c.nType++
@@ -647,16 +516,8 @@ func (g *gComposer) liftExport(userInst uint32, wi componenttype.WorldInterface,
 
 	switch {
 	case hasMemParam:
-		// A string / list<T> parameter: the canonical ABI materialises the
-		// incoming bytes in the core's memory via cabi_realloc, then passes
-		// (ptr,len) to the core func. The realloc lift carries both memory +
-		// realloc (it also covers a string/list result, whose return-area read
-		// needs memory).
 		c.buf = PutCanonSectionLiftWithMemoryRealloc(c.buf, coreF, funcType, memIdx, reallocIdx)
 	case hasMemResult:
-		// A string / list<T> result flattens to (ptr,len) — more than one core
-		// value, so the core func returns a pointer to the [ptr,len] return
-		// area, which the memory lift reads from the core's linear memory.
 		c.buf = PutCanonSectionLiftWithMemory(c.buf, coreF, funcType, memIdx)
 	default:
 		c.buf = PutCanonSectionLiftNoOpts(c.buf, coreF, funcType)
@@ -670,9 +531,6 @@ func (g *gComposer) liftExport(userInst uint32, wi componenttype.WorldInterface,
 	return nil
 }
 
-// coreFuncExportNames returns the set of function-export names of a core
-// module (export section, id 7, kind 0x00 = func). Used to find the
-// `iface#wit-name` exports the wasm backend surfaced for `@export` functions.
 func coreFuncExportNames(bin []byte) map[string]bool {
 	out := map[string]bool{}
 	const preambleLen = 8
@@ -689,7 +547,7 @@ func coreFuncExportNames(bin []byte) map[string]bool {
 		off += n
 		body := bin[off : off+int(size)]
 		off += int(size)
-		if id != 7 { // export section
+		if id != 7 {
 			continue
 		}
 		count, m := readULEB(body)
@@ -706,7 +564,7 @@ func coreFuncExportNames(bin []byte) map[string]bool {
 			rest = rest[1:]
 			_, ks := readULEB(rest)
 			rest = rest[ks:]
-			if kind == 0x00 { // func
+			if kind == 0x00 {
 				out[name] = true
 			}
 			body = rest

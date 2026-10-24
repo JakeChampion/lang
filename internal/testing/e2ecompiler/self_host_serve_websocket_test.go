@@ -8,11 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The WebSocket gate (docs/NET-P5-FRAMEWORK-PLAN.md slice 4,
-// std/http/websocket): the self-host server runs an echo session on an
-// upgraded connection, parked between frames so the worker answers
-// another connection meanwhile, and the sequential checks over the
-// protocol's frames.
 func TestSelfHostServeWebSocket(t *testing.T) {
 	bin, runner := selfHostServer(t, e2eharness.WebSocketServerSource())
 	cmd := binCmd(runner, bin)

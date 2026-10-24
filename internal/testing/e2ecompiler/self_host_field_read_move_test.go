@@ -10,11 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// fieldReadMoveCases pin #10482: a local bound from a field read of an `own`
-// parameter (`let fr = st.fr`) holds no count of its own, so storing it into a
-// struct or tuple literal at its last use is not a move. The construction has
-// to retain it, because the parameter's exit drop releases the field. Every
-// row's census must read zero.
 var fieldReadMoveCases = []struct {
 	name string
 	src  string
@@ -73,9 +68,6 @@ function main(): i32 {
     }
     return acc.m + acc.fr.key.len() + acc.fr.n;
 }`},
-	// A view replaced by a fresh value at the top level owns that value when
-	// it moves, so the literal takes it without a retain (#10482's guard
-	// retained every moved local no sweep releases, and leaked here).
 	{"view-rebound-fresh", `struct Frame { key: string, n: i32 }
 struct Acc { fr: Frame, m: i32 }
 @noinline
@@ -92,7 +84,6 @@ function main(): i32 {
     while (i < 5) { acc = step(i, acc); i = i + 1; }
     return acc.m + acc.fr.key.len() + acc.fr.n;
 }`},
-	// Replaced on one branch only: the other still holds the view.
 	{"view-rebound-in-branch", `struct Frame { key: string, n: i32 }
 struct Acc { fr: Frame, m: i32 }
 @noinline
@@ -108,8 +99,6 @@ function main(): i32 {
     while (i < 5) { acc = step(i, acc); i = i + 1; }
     return acc.m + acc.fr.key.len() + acc.fr.n;
 }`},
-	// The view is introduced inside the branch, so the even path's literal
-	// takes the field from st and must retain it (#10542).
 	{"view-introduced-in-branch", `struct Frame { key: string, n: i32 }
 struct Acc { fr: Frame, m: i32 }
 function step(n: i32, own st: Acc): Acc {
@@ -123,7 +112,6 @@ function main(): i32 {
     while (i < 5) { acc = step(i, acc); i = i + 1; }
     return acc.m + acc.fr.key.len() + acc.fr.n;
 }`},
-	// A string element of an array field, bound and moved into a literal (#10540).
 	{"string-elem-from-own-param-array-field", `struct Bag { keys: string[], n: i32 }
 struct Acc { key: string, m: i32 }
 function step(n: i32, own bag: Bag): Acc {
@@ -142,11 +130,6 @@ function main(): i32 {
 }`},
 }
 
-// TestSelfHostFieldReadMove compiles each row with the emit drivers the
-// compiler's own build goes through (asm_ir_run for x86-64 and arm64,
-// wasm_ir_run for wasm) with the leak census on, and checks the answer
-// against the interpreter. x86-64 runs again under FERN_SANITIZE, which must
-// report no use-after-free or over-release.
 func TestSelfHostFieldReadMove(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
 	arm64gcc, qemu := arm64Tooling(t)

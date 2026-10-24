@@ -1,16 +1,16 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// The same `.with` self-reassign reached through a LOCAL ALIAS of the
-// borrowed param rather than the param itself, threaded recursively —
-// the shape the self-host checker's e060_collect_dyn_locals is built
-// from, and where #6057 was first caught in practice (52 over-releases
-// compiling parser.fern, 92 compiling checker.fern, while emitting
-// byte-identical output).
-//
-// It needs its own case because the alias is NOT a consumed-threaded
-// param, so it takes a different arm of the fix: no overwrite dec at
-// all, where the param arm decs under its ownership bit.
+
+
+
+
+
+
+
+
+
+
+
+
+
 function collect(depth: i32, acc: string[]): string[] {
     let a: string[] = acc;
     let i: i32 = 0;

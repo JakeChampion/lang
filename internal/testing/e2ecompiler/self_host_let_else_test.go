@@ -5,15 +5,6 @@ import (
 	"testing"
 )
 
-// letElseCases cover `let PAT = EXPR else { divergent };`, which the
-// parser desugars by folding the rest of the enclosing block into the
-// success arm of a statement-match:
-//
-//	match (EXPR) { PAT => { <rest of block> }, _ => { divergent } }
-//
-// Covers the matched arm, the else (diverging) arm, a built-in Option
-// scrutinee both ways, and a multi-statement success body that uses the
-// binding. Exit codes cross-checked vs the Go backend.
 var letElseCases = []struct {
 	name string
 	src  string
@@ -26,8 +17,6 @@ var letElseCases = []struct {
 	{"rest-multi", "import \"core/map\"; function main(): i32 { let m: Map[string,i32] = map_new(4); m = m.insert(\"k\", 40); let Some(v) = m.get(\"k\") else { return 1; }; let w: i32 = v + 2; return w; }", 42},
 }
 
-// TestSelfHostLetElseX86_64 — `let else` desugar with the self-hosted
-// x86-64 compiler.
 func TestSelfHostLetElseX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	l := newStdlibLoader(t)
@@ -54,7 +43,6 @@ func TestSelfHostLetElseX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostLetElseArm64 — CI-gated arm64 counterpart.
 func TestSelfHostLetElseArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range letElseCases {

@@ -19,9 +19,6 @@ var kindOf = map[string]int{
 	"drop": kDrop, "call_direct": 149, "return": 160,
 }
 
-// dumpLine spells one op of a list like "load_local 0 ; const_i32 8 ; mul@64"
-// the way ir.fern's tv_ops does. An `@64` suffix is the width; the argument is
-// the i32 immediate for the integer-carrying ops and the string otherwise.
 func dumpLine(t *testing.T, spec string) string {
 	t.Helper()
 	name, arg, _ := strings.Cut(strings.TrimSpace(spec), " ")
@@ -64,8 +61,6 @@ func ops(t *testing.T, list string) []Op {
 	return out
 }
 
-// verdict encodes and proves one pair: "unsat", "sat", "unknown", or the
-// mismatch's reason.
 func verdict(t *testing.T, z3, before, after string) string {
 	t.Helper()
 	q, err := Encode(Pair{Before: ops(t, before), After: ops(t, after)})
@@ -83,8 +78,6 @@ func verdict(t *testing.T, z3, before, after string) string {
 	return got[0]
 }
 
-// Every rewrite ir.fern's strength_rewrite makes, and the semantic edges the
-// model has to get right for those proofs to mean anything.
 func TestProvesSoundRewrites(t *testing.T) {
 	z3 := Z3(t)
 	for _, c := range []struct{ before, after string }{
@@ -107,12 +100,10 @@ func TestProvesSoundRewrites(t *testing.T) {
 		{"const_i32 1 ; rem_s", "drop ; const_i32 0"},
 		{"const_i32 1 ; rem_u", "drop ; const_i32 0"},
 		{"const_i32 8 ; rem_u", "const_i32 7 ; and"},
-		// Division is total: x / 0 is 0, x % 0 is x, MIN / -1 wraps.
 		{"const_i32 0 ; div_s", "drop ; const_i32 0"},
 		{"const_i32 0 ; rem_u", ""},
 		{"const_i32 -2147483648 ; const_i32 -1 ; div_s", "const_i32 -2147483648"},
 		{"const_i32 -2147483648 ; const_i32 -1 ; rem_s", "const_i32 0"},
-		// A shift count is masked to the width.
 		{"const_i32 33 ; shl", "const_i32 1 ; shl"},
 		{"const_i64 65 ; shr_s@64", "const_i64 1 ; shr_s@64"},
 		{"const_i64 0 ; add@64", ""},
@@ -128,14 +119,10 @@ func TestProvesSoundRewrites(t *testing.T) {
 	}
 }
 
-// The rewrites the pass must NOT make — strength_rewrite's comment says why
-// for each — and the model's edges read the wrong way, each refuted.
 func TestRefutesUnsoundRewrites(t *testing.T) {
 	z3 := Z3(t)
 	for _, c := range []struct{ before, after string }{
-		// div_s rounds toward zero, shr_s toward negative infinity.
 		{"const_i32 2 ; div_s", "const_i32 1 ; shr_s"},
-		// rem_s keeps the dividend's sign; the mask does not.
 		{"const_i32 4 ; rem_s", "const_i32 3 ; and"},
 		{"const_i32 -8 ; mul", "const_i32 3 ; shl"},
 		{"const_i32 16 ; div_u", "const_i32 3 ; shr_u"},
@@ -165,8 +152,6 @@ func TestCounterexampleNamesTheInput(t *testing.T) {
 	}
 }
 
-// A pair that changes the stack's shape or a value's width is wrong before
-// any solving.
 func TestMismatches(t *testing.T) {
 	for _, c := range []struct{ before, after, want string }{
 		{"const_i32 0 ; mul", "const_i32 0", "the stack grows by 0 before and by 1 after"},
@@ -234,8 +219,6 @@ func TestSplitPairsRunsBetweenBarriers(t *testing.T) {
 	}
 }
 
-// The whole pipeline over one rewrite with a call between two sites: each run
-// is proved on its own, with the call's result an input of the second.
 func TestValidatesARewriteAcrossBarriers(t *testing.T) {
 	z3 := Z3(t)
 	rws, err := Parse(dump(t, "strength",

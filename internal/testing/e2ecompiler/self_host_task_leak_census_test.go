@@ -10,8 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// taskPoolProgram holds 100 tasks live at once, past the task table's first
-// 64 slots, frees them all, and runs one more on a reused record.
 const taskPoolProgram = `import "std/async";
 
 function work(n: i32): i32 {
@@ -49,10 +47,6 @@ function main(): i32 {
 }
 `
 
-// callSchedulerProgram is the scheduler program as a call of two parts
-// (async.call_start): the same two parks driven by hand through call_of and
-// call_resume, a second call cancelled at its first park, and a call that
-// returns at once, which builds no closure and no record.
 const callSchedulerProgram = `import "std/async";
 import "std/i32";
 
@@ -137,12 +131,6 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostTaskProgramsBalanceTheLeakCensus: a program that runs tasks
-// ends with its leak census balanced on both native targets. The task
-// runtime's own blocks are runtime state the census leaves out (#11386), so
-// what this pins is that nothing else a task touches leaks. The scheduler
-// program parks, so its record takes a wait set and a save area that outgrows
-// its first 64 words; the pool program outgrows the first record table.
 func TestSelfHostTaskProgramsBalanceTheLeakCensus(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	programs := []struct{ name, src, want string }{
@@ -181,13 +169,6 @@ func TestSelfHostTaskProgramsBalanceTheLeakCensus(t *testing.T) {
 	}
 }
 
-// TestSelfHostTaskRuntimeKeepsOnlyItsPoolX86_64: the blocks a task program
-// ends with unfreed are exactly the task runtime's pool, which the leak census
-// leaves out: the record table, a record per task live at once, and the save
-// area and wait set of each record that parked. A block that a growth of the
-// table, a save area or a wait set replaces is freed (#11391); the heap
-// trace sees it where the census cannot. The parked task's save area outgrows
-// its first 64 words, and the 100 live tasks outgrow the first table.
 func TestSelfHostTaskRuntimeKeepsOnlyItsPoolX86_64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, p := range []struct {

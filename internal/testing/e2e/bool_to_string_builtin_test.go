@@ -9,10 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// A boolean renders through its builtin `to_string` with no import: an
-// f-string interpolant, an explicit call, and the Display spine's `print(b)`
-// (#12657). The self-host checker accepted the first two, and lowering then
-// refused `boolean.to_string` as an unsupported call target.
 const boolToStringProg = `
 function flag(n: i32): boolean {
     return n > 2;
@@ -31,8 +27,6 @@ function main(): i32 {
 
 const boolToStringWant = "<true>\nfalse|true\nfalse\ntrue\n"
 
-// A declared boolean `to_string` takes over from the builtin everywhere the
-// builtin would have answered.
 const boolToStringDeclaredProg = `
 function (b: boolean) to_string(): string {
     if (b) {
@@ -99,8 +93,6 @@ func TestBoolToStringArm64(t *testing.T) {
 	}
 }
 
-// The wasm leg compiles even where wasmtime is absent, so the lowering is
-// held on that target without a runtime; the run follows when one is there.
 func TestBoolToStringWasm(t *testing.T) {
 	for _, tc := range boolToStringCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -114,8 +106,6 @@ func TestBoolToStringWasm(t *testing.T) {
 	}
 }
 
-// runSelfHostInterp runs src under the self-host compiler's `-interp`, the
-// second interpreter beside the Go oracle's, and returns its stdout and exit.
 func runSelfHostInterp(t *testing.T, src string) (string, int) {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "main.fern")

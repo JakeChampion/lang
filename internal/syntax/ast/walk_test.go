@@ -5,9 +5,6 @@ import (
 	"testing"
 )
 
-// collectKinds records the dynamic type name of each visited node
-// in the order Walk reports them. Useful for asserting traversal
-// shape without depending on exact field values.
 func collectKinds(root Node) []string {
 	var got []string
 	Walk(root, func(n Node) bool {
@@ -34,8 +31,6 @@ func TestWalk_NilRootIsNoOp(t *testing.T) {
 }
 
 func TestWalk_StopDescent(t *testing.T) {
-	// Binary(1, 2) — if fn returns false on the Binary node, the
-	// two NumberLit children must NOT be visited.
 	root := &Binary{
 		P:     Position{1, 1},
 		Op:    "+",
@@ -45,7 +40,7 @@ func TestWalk_StopDescent(t *testing.T) {
 	var visited []string
 	Walk(root, func(n Node) bool {
 		visited = append(visited, reflect.TypeOf(n).String())
-		return false // refuse to descend
+		return false
 	})
 	if !reflect.DeepEqual(visited, []string{"*ast.Binary"}) {
 		t.Fatalf("stop-descent: got %v", visited)
@@ -195,9 +190,9 @@ func TestWalk_MatchArmGuardIsVisitedBeforeBody(t *testing.T) {
 	got := collectKinds(root)
 	want := []string{
 		"*ast.MatchExpr",
-		"*ast.Ident",                                  // tag
-		"*ast.Binary", "*ast.Ident", "*ast.NumberLit", // guard
-		"*ast.Ident", // body
+		"*ast.Ident",
+		"*ast.Binary", "*ast.Ident", "*ast.NumberLit",
+		"*ast.Ident",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("match-expr walk: got %v want %v", got, want)
@@ -205,8 +200,6 @@ func TestWalk_MatchArmGuardIsVisitedBeforeBody(t *testing.T) {
 }
 
 func TestWalk_ForOptionalSlots(t *testing.T) {
-	// Cover the nil-init / nil-step paths so the walker doesn't
-	// panic on while-style for loops.
 	root := &For{
 		P:    Position{1, 1},
 		Cond: &BoolLit{P: Position{1, 8}, Value: true},
@@ -262,12 +255,7 @@ func TestWalkProgram_NilIsNoOp(t *testing.T) {
 	}
 }
 
-// PositionedSearch is a typical LSP query: "find the deepest node
-// whose start position is <= (line, col)". The test asserts Walk
-// can drive that search without missing nodes inside a Call's args.
 func TestWalk_DeepestNodeAtPosition(t *testing.T) {
-	// foo(bar(1), 2)  on line 5.
-	// Positions are illustrative.
 	inner := &Call{
 		P:      Position{5, 5},
 		Callee: &Ident{P: Position{5, 5}, Name: "bar"},
@@ -301,10 +289,6 @@ func TestWalk_DeepestNodeAtPosition(t *testing.T) {
 }
 
 func TestWalk_LoopBody(t *testing.T) {
-	// `loop { … }` is a statement kind of its own, not sugar the parser
-	// rewrites into a While, so a walk that forgets it sees an empty
-	// subtree where a whole loop body is. Every capability, treeshake and
-	// rc analysis in the tree reaches its statements through here.
 	root := &Loop{
 		P: Position{1, 1},
 		Body: &Block{Stmts: []Stmt{
@@ -322,9 +306,6 @@ func TestWalk_LoopBody(t *testing.T) {
 }
 
 func TestWalk_LambdaBody(t *testing.T) {
-	// A Lambda's body is part of the enclosing tree: the Call inside
-	// must be visited (capability reporting attributes closure bodies
-	// to their definition site through this descent).
 	root := &Lambda{
 		P: Position{1, 1},
 		Body: &Block{Stmts: []Stmt{

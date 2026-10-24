@@ -9,25 +9,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostIRPerModuleDriver exercises the per-module emit + link driver path
-// (#3451 step 4 / #3456) end to end. asm_load_run loads a real multi-module
-// program (entry importing a local module) and drives per-module compilation —
-// flatten.bundle_per_module mangles but keeps the modules SEPARATE, the whole-
-// program signature view + runtime-need union span all modules, and each module
-// is emitted as its own translation unit (entry → `_start` + the single shared
-// runtime; the import → a library unit exposing its `.globl __fn_*`).
-//
-// The native runtime's global string buffer holds only ONE emit per process, so
-// — like a real build system — the build is driven across separate invocations:
-// `-per-module-count`, `-per-module-needs`, then `-per-module-emit N` per
-// module (the entry folds the need union via `-extra-need`). The test assembles
-// + links every unit with gcc and runs the binary — exactly #3456's acceptance
-// ("compiles a multi-module program by emitting per-module + linking, producing
-// a working binary").
-//
-// The entry calls greet.greeting_len() (length of "hello" = 5) and adds 1 →
-// exit 6. The import allocates its string box via __fern_alloc, an extern
-// resolved against the entry's single runtime (the heap need aggregated).
 func TestSelfHostIRPerModuleDriver(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -44,7 +25,6 @@ func TestSelfHostIRPerModuleDriver(t *testing.T) {
 		t.Fatalf("write prog_main.fern: %v", err)
 	}
 
-	// drive runs the driver over the entry with the given trailing args.
 	drive := func(t *testing.T, args ...string) string {
 		t.Helper()
 		full := append([]string{entryPath}, args...)
@@ -61,13 +41,11 @@ func TestSelfHostIRPerModuleDriver(t *testing.T) {
 		return string(out)
 	}
 
-	// 1. Module count.
 	n, err := strconv.Atoi(strings.TrimSpace(drive(t, "-per-module-count")))
 	if err != nil || n < 2 {
 		t.Fatalf("-per-module-count = %q (n=%d err=%v), want >=2", drive(t, "-per-module-count"), n, err)
 	}
 
-	// 2. Whole-program runtime-need union.
 	var needArgs []string
 	for _, ln := range strings.Split(strings.TrimSpace(drive(t, "-per-module-needs")), "\n") {
 		if s := strings.TrimSpace(ln); s != "" {
@@ -78,7 +56,6 @@ func TestSelfHostIRPerModuleDriver(t *testing.T) {
 		t.Fatalf("need union missing heap: %v", needArgs)
 	}
 
-	// 3. Emit each module as its own unit (the entry folds in -extra-need).
 	var objs []string
 	var sawEntry, sawLib bool
 	for i := 0; i < n; i++ {
@@ -117,16 +94,6 @@ func TestSelfHostIRPerModuleDriver(t *testing.T) {
 	}
 }
 
-// TestSelfHostIRPerModuleCrossStruct pins that a per-module unit lowers each
-// function against the WHOLE-PROGRAM struct view (all_structs), not the module's
-// own structs (#3451), so a module that touches a SIBLING module's struct
-// LAYOUT still lowers.
-//
-// The program is the minimal trigger: `point` defines a struct + constructor,
-// the entry imports it and reads an imported-struct FIELD (`p.x + p.y`). Lowering
-// the entry's `main` needs point.Point's field layout, which lives in the point
-// module — present only in the whole-program struct view. Every unit must
-// lower, the units link, and the binary exits 3 + 4 = 7.
 func TestSelfHostIRPerModuleCrossStruct(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -201,21 +168,6 @@ func TestSelfHostIRPerModuleCrossStruct(t *testing.T) {
 	}
 }
 
-// TestSelfHostIRPerModuleCrossEnum guards the per-module SHAPE-symbol fix (#3451):
-// enum/struct values are discriminated by a shape POINTER (the interned
-// variant-name string), compared by pointer equality. Per-module, each unit
-// interns its strings in its own .rodata, so the SAME shape referenced in two
-// units lands at two different addresses — a value CONSTRUCTED in module A and
-// MATCHED in module B compares mismatched pointers and the match silently falls
-// through. shape_ref emits shapes as `.weak` global symbols (shape_sym) the linker
-// merges to one address, so cross-module discrimination holds.
-//
-// The program is the minimal trigger: `col` defines an enum + a constructor
-// returning `Blue(7)`; the entry imports it and `match`es the value across the
-// module boundary. Pre-fix the Blue arm never matches (shape mismatch) and the
-// binary falls through to exit 0; post-fix it matches and exits 7. This is the
-// exact pattern the self-hosted parser hits (matching the lexer's token variants),
-// the root cause of the per-module self-build miscompile.
 func TestSelfHostIRPerModuleCrossEnum(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

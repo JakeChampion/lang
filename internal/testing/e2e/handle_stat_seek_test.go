@@ -10,17 +10,6 @@ import (
 	"testing"
 )
 
-// handleStatSeekSource drives the Reader / Writer methods that ask the
-// handle rather than move bytes: `stat()` (fstat) and `seek(offset,
-// whence)` (lseek) on both. Every failure returns its own exit code.
-//
-// The file holds "hello". The seeks cover all three whence values and
-// read back through the moved position, so a body that reported an
-// offset without moving the stream — the preview-2 trap, where the
-// stream has to be reopened at the target — fails at the read, not
-// only at the offset check. stdin and stdout are pipes here (the
-// harness wires both), so `seek` on stdin has to answer ESPIPE and
-// `stat` on either has to describe something that is not a file.
 func handleStatSeekSource(path, out, app string) string {
 	return fmt.Sprintf(`function main(): i32 {
     match (open_reader(%[1]q)) {
@@ -229,9 +218,6 @@ func handleStatSeekSource(path, out, app string) string {
 `, path, out, app)
 }
 
-// handleProbeTree is the three paths the source above works over: the
-// five-byte file the Reader reads, the name the Writer creates, and a
-// five-byte file the appender opens.
 func handleProbeTree(t *testing.T) (path, out, app string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -246,11 +232,6 @@ func handleProbeTree(t *testing.T) (path, out, app string) {
 	return path, filepath.Join(dir, "out.txt"), app
 }
 
-// runWithPipes runs cmd with stdin and stdout both pipes — the shape a
-// utility meets in a pipeline, and the one under which a seek on stdin
-// must fail. The test process's own stdin would otherwise be inherited,
-// and under `go test` that is /dev/null, which lseek accepts. A stdin the
-// caller already set is kept.
 func runWithPipes(t *testing.T, cmd *exec.Cmd) (string, int) {
 	t.Helper()
 	if cmd.Stdin == nil {
@@ -283,9 +264,6 @@ func TestArm64HandleStatSeek(t *testing.T) {
 	}
 }
 
-// The interpreter answers `stat` and `seek` from the *os.File behind the
-// handle, and its stdio streams are the process's own here, so it meets
-// the same pipes the compiled backends do.
 func TestInterpHandleStatSeek(t *testing.T) {
 	src := handleStatSeekSource(handleProbeTree(t))
 	p := filepath.Join(t.TempDir(), "prog.fern")
@@ -298,17 +276,6 @@ func TestInterpHandleStatSeek(t *testing.T) {
 	}
 }
 
-// handleStatSeekWasmSource is the WASI half, which preview 1 answers with
-// fd_filestat_get and fd_seek on the handle's fd. On preview 2 a handle is a
-// stream plus the descriptor it was opened on: `stat` asks the
-// descriptor, `seek` reopens the stream at the target and records the
-// position, which is what makes SEEK_CUR answerable at all — on the
-// Writer too, where every write moves the recorded offset and an append
-// Writer's stream is left alone so its writes keep landing at the end
-// (wasi_writer_seek.go). stdin and stdout are streams with no
-// descriptor, so `seek` on either is ESPIPE exactly as on a kernel, and
-// `stat` on either is the all-zero record a preview-1 host reports for
-// the same stream: not a file, not a directory, no size.
 func handleStatSeekWasmSource() string {
 	return `function main(): i32 {
     match (open_reader("hello.txt")) {
@@ -513,17 +480,6 @@ func handleStatSeekWasmSource() string {
 `
 }
 
-// handleFlagsPreview1Source asks the two STDIO handles for their flags,
-// which is all a preview-1 core module can do here — the runner mounts no
-// directory — and is exactly what exercises the preview-1 body: one
-// `fd_fdstat_get` into the static landing area, the two rights and the
-// APPEND fdflag read back out of the record. The component test above
-// takes the preview-2 path, which asks the host nothing.
-//
-// The bits are tested by MASK rather than by equality: a host is entitled
-// to report more rights than these two on an inherited stream, and
-// wasmtime's own stdout does not carry the append bit the process was
-// handed.
 const handleFlagsPreview1Source = `function main(): i32 {
     match (stdout().flags()) {
         Err(_) => { return 1; },
@@ -540,11 +496,6 @@ const handleFlagsPreview1Source = `function main(): i32 {
 }
 `
 
-// handleIsattyPreview1Source is the same question on preview 1, where it
-// IS asked of the host: `fd_fdstat_get` on the handle, whose filetype
-// says character_device for a terminal. wasmtime hands the module a piped
-// stdout and stdin here, so both answers are no — the yes needs a pty,
-// which no wasm runner in this suite provides.
 const handleIsattyPreview1Source = `function main(): i32 {
     if (stdout().isatty()) { return 1; }
     if (stdin().isatty()) { return 2; }

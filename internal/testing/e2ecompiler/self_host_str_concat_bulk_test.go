@@ -8,23 +8,6 @@ import (
 	"testing"
 )
 
-// strConcatBulkProgram sweeps `a + b` over every length pair in 0..40 and folds a
-// POSITION-WEIGHTED checksum of each result, so a copy that lands the right byte
-// count in the wrong order — or repeats one operand — is caught as well as a
-// short one. The two operands are cut from disjoint alphabets for the same
-// reason: with a shared source literal, copying the left operand twice would
-// still checksum correctly whenever the two lengths matched.
-//
-// The sweep is the point. `__fern_str_concat` bulk-copies each operand with
-// `__memcpy`, whose backend lowerings dispatch on length, so the boundaries
-// between those size classes (and the 0-length no-op at each end) are where a
-// wrong answer lives. 0..40 straddles every one of them on both operands.
-//
-// Both operands are slices of a longer literal, so the copy source is a view
-// into a larger buffer rather than a fresh box. That is both the shape the
-// helper usually sees and the cheap one: cutting the lengths costs nothing, so
-// the sweep is 1681 concatenations rather than the quadratic rebuild a `mk(n)`
-// helper would cost — it has to run under qemu.
 const strConcatBulkProgram = `function csum(s: string): i32 {
     let t: i32 = 0;
     let i: i32 = 0;
@@ -54,8 +37,6 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostStrConcatBulkX86_64 pins the x86-64 IR lowering of the bulk copy
-// against the interpreter.
 func TestSelfHostStrConcatBulkX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
@@ -83,9 +64,6 @@ func TestSelfHostStrConcatBulkX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrConcatBulkArm64 is the arm64 counterpart. Both register
-// backends share `asmcore.rt_src_str_concat`, but each selects `__memcpy`
-// independently, so the boundaries have to be walked on both.
 func TestSelfHostStrConcatBulkArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -109,10 +87,6 @@ func TestSelfHostStrConcatBulkArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrConcatBulkWasm walks the same sweep on wasm. That backend
-// lowers `str_concat` itself rather than through `rt_src_str_concat`, so this
-// leg is a cross-backend agreement check: the three targets must fold the same
-// checksum.
 func TestSelfHostStrConcatBulkWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host str-concat wasm IR e2e")

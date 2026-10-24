@@ -2,10 +2,6 @@ package e2e
 
 import "testing"
 
-// An inclusive range whose HIGH is its type's maximum ends after HIGH instead
-// of wrapping to the minimum and running forever (#10359), at every width the
-// native front end types a range variable at. The i32 cases are the
-// inclusive_range_type_max fixture, which the self-host legs run too.
 func TestInclusiveRangeAtTypeMaxEnds(t *testing.T) {
 	assertExitsZeroEverywhere(t, `function main(): i32 {
     let n: i32 = 0;

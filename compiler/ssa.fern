@@ -1,20 +1,3 @@
-// compiler/ssa.fern — the static-single-assignment form the
-// self-host SSA backend (`-backend ssa`, docs/SELFHOST-SSA-BACKEND.md) works
-// on: the data model, the kind and terminator registries, the optimiser
-// passes and the register allocator. `ssa_lift.fern` builds an SFunc from a
-// lowered function's stack IR; `asm_arm64_ir.fern` and `asm_ir.fern` emit
-// it.
-//
-// Representation (pointer-free — values
-// and blocks are referenced by integer id / array index, matching the
-// self-host's value-semantics style):
-//   - an SSA Value is an i32 id; an instruction (SInst) DEFINES the value
-//     whose id is its `result`, and references operands by their ids in
-//     `args`;
-//   - a block (SBlock) is a list of instructions ending in a terminator;
-//   - a function (SFunc) is a list of blocks with an entry index.
-//
-
 import "./ast";
 import "./parser";
 import "./astwalk";
@@ -22,49 +5,12 @@ import "./util";
 import "./ssafixed";
 import "./ir";
 
-// digits_to_i32 parses a decimal literal's text (non-negative; unary minus
-// is a separate ExprUnary). Mirrors the private helper in the emitters.
-// digits_to_i32 now lives in util.fern (imported as `util`). See SH-020.
-
-// is_all_digits reports whether every byte of s is an ASCII digit (and s is
-// non-empty) — used to tell a tuple index `t.0` from a struct field `t.x`.
-// is_all_digits now lives in util.fern (imported as `util`). See SH-020.
-
-// ---- IR ----------------------------------------------------------------
-
-// SInst is integer-tagged: `kind_tag` holds a kind_id (the registry below;
-// `kind_name` renders one). `args` are value ids, `str` carries a name or
-// operator for the kinds that need text.
-//
-// `imm` IS OVERLOADED — one i32 field carrying four unrelated meanings,
-// discriminated only by kind_tag, which the checker cannot police (SH-049):
-//
-//   const_int    the constant value          const_bool  0 / 1
-//   param        the parameter index         alloc       the slot COUNT
-//   load_elem / store_elem                   the operand WIDTH, 32 or 64
-//
-// So a kind_tag/imm mismatch type-checks and surfaces as a wrong-width load or
-// a wrong-size allocation. Until the tagged union in SH-049 lands, this table
-// is the only thing standing between the two.
-//
-// The kinds carrying no imm leave it 0: binary / unary (op in `str`, operands
-// in `args`), call (callee in `str`), copy (result aliases args[0], a var
-// read), and phi (args parallel to the block's preds — operand i flows in when
-// control arrives from preds[i]).
 pub struct SInst { kind_tag: i32, result: i32, args: i32[], imm: i32, str: string }
 
-// STerm kinds: "ret" (value), "br" (target), "brif" (cond, t, f).
 pub struct STerm { kind_tag: i32, cond: i32, target: i32, t: i32, f: i32, value: i32 }
 
 pub struct SBlock { id: i32, insts: SInst[], term: STerm, preds: i32[] }
 
-// SFunc: nparams params occupy value ids 0..nparams-1; nvals is the next
-// fresh value id; blocks[entry] is the entry block.
-// takes_env is true when the function's last param is the closure `__env`
-// (a capturing lambda lifted by collect_lambdas). The wasm backend uses it
-// to decide whether a function-table entry can be called with the closure
-// convention directly or needs an env-dropping wrapper; the native backends
-// ignore it (their indirect calls tolerate an unused trailing arg).
 pub struct SFunc { name: string, nparams: i32, nvals: i32, blocks: SBlock[], entry: i32, takes_env: boolean }
 
 function t_ret(value: i32): STerm {
@@ -105,19 +51,12 @@ pub function kind_name(id: i32): string {
   if (id < 0) {
     return semantic_kind_name(id);
   }
-  // line: the source-position marker (#11410), imm the merged module's line
-  // and str its column, no operands and a value nothing reads.
   if (id == 35) {
     return "line";
   }
-  // select: args [cond, a, b], a when cond is non-zero and b otherwise
-  // (select_branches).
   if (id == 36) {
     return "select";
   }
-  // carry: args [x, y] or [x, y, c], the carry out of x + y (+ c) when imm is
-  // 0 and the borrow out of x - y (- c) when it is 1, as 0 or 1; c is 0 or 1
-  // (fuse_carries).
   if (id == 37) {
     return "carry";
   }
@@ -202,25 +141,11 @@ pub function kind_name(id: i32): string {
   return "invalid";
 }
 
-// The semantic operations whose str names something: a call names its callee,
-// a variant operation names its variant, and a closure names the body whose
-// address its box holds. `length` names nothing, so the set is listed rather
-// than taken as a range over the tags below call's.
 function semantic_names_symbol(id: i32): boolean {
   return id == 0 - 7 || id == 0 - 8 || id == 0 - 9 || id == 0 - 10
     || id == 0 - 11 || id == 0 - 12 || id == 0 - 20;
 }
 
-// What an instruction prints after its kind. A constant too wide for the
-// immediate carries the literal's TEXT instead, so that is what is printed for
-// it rather than the zero its immediate holds; the other kinds print the
-// immediate, the operator, or the symbol they name.
-// The emitted-RC certifier's marks on a lifted instruction (ssa_lift): a
-// load's `rc` in `str` when it reads a counted reference, a call's 1 (its
-// result is a counted reference), 2 (a shell release) or 3 (a lent result)
-// in `imm`; a call's 4 (the emitters' alignment proof) and 5 (a sole
-// release) stay. A pass that reads an instruction's shape rather than its
-// ownership reads it through these.
 pub function plain_str(ins: SInst): string {
   if ((ins.kind_tag == 40 || ins.kind_tag == 42) && ins.str.len() >= 2 && slice_unchecked(ins.str, ins.str.len() - 2, ins.str.len()) == "rc") {
     return slice_unchecked(ins.str, 0, ins.str.len() - 2) + "";
@@ -243,9 +168,6 @@ function carries_str(kind: i32): boolean {
   return kind == 9 || kind == 10 || kind == 11 || semantic_names_symbol(kind);
 }
 
-// A variant projection carries BOTH: the field index and the variant name.
-// A memory or call-like instruction (40..60) prints the offset and mark it
-// carries: `ld_at 8 rc`.
 function shows_imm(ins: SInst): boolean {
   return carries_imm(ins.kind_tag) || ins.kind_tag >= 40 && ins.kind_tag <= 43 && ins.imm != 0;
 }
@@ -302,32 +224,6 @@ pub function print_func(f: SFunc): string {
   return out + "}\n";
 }
 
-// Kinds 40..48 are the production lift's memory vocabulary
-// (ssa_lift.lift_from_ir_prod, docs/SELFHOST-SSA-BACKEND.md): the flat
-// backends' box layouts spelled as loads, stores, checked element reads, a
-// box allocation and label addresses, so every record, array, string and
-// variant op lifts to a few of these and each emitter selects them with the
-// flat backend's own instructions.
-//
-//   40 ld_at      args [base]           imm = byte offset; 8-byte load
-//   41 st_at      args [base, val]      imm = byte offset; 8-byte store, no result read
-//   42 arr_at     args [base, idx]      element idx of a length-prefixed box, bounds-checked (imm 1: unchecked; imm 2: the check alone, no load or result)
-//   43 arr_st     args [base, idx, val] the checked store
-//   44 str_at     args [box, idx]       byte idx of a string box, bounds-checked (imm as on arr_at)
-//   45 fn_addr    str = function name   the address of __fn_<name>
-//   46 shape_addr str = shape name      the address of the interned shape
-//   47 str_lit    str = literal         the address of the literal's static box
-//   48 arr_box    imm = cap             __fern_arr_box(cap): a fresh rc-headered box (a call)
-//   49 str_call   str = IR op name      a Fern-compiled runtime helper on the stack ABI (str_concat, arr_slice, ...)
-//   50 rt_call    str = IR op name      a runtime routine on the register ABI (arr_push, alloc, ...)
-//   51 str_view   args [src, lo, hi]    a string slice: the {rc -1, data, len} view box, in the frame (imm 1) or on the heap (imm 0);
-//                 args [data, len]      imm 2: the same frame box over bytes already addressed (raw_string's frame form)
-//   52 ld_idx     args [base, idx]      8-byte load at base + idx*8, unchecked (the raw memory floor)
-//   53 st_idx     args [base, idx, val] 8-byte store at base + idx*8
-//   54 ld_byte    args [base, idx]      byte load at base + idx, zero-extended
-//   55 st_byte    args [base, idx, val] byte store at base + idx
-//   56 call_ind   args [target, a0..]   a call through a function value, on the stack ABI
-//   57 agg_lit    str = packed constant a static record or variant box (ir.const_struct_*), by address
 function prod_kind_name(id: i32): string {
   let names: string[] = [
     "ld_at", "st_at", "arr_at", "arr_st", "str_at", "fn_addr", "shape_addr", "str_lit", "arr_box", "str_call", "rt_call", "str_view",
@@ -336,10 +232,6 @@ function prod_kind_name(id: i32): string {
   return names[id - 40];
 }
 
-// Negative ids are the typed semantic phase's operations (ssasem.fern owns
-// them); physical consumers never see them, the printer only names them. They
-// run from -1 downward without gaps, so the table is indexed by -id - 1; an id
-// outside it names nothing, exactly as an unknown id always did.
 function semantic_kind_name(id: i32): string {
   let names: string[] = [
     "array_new", "tuple_new", "array_get", "tuple_get",
@@ -359,29 +251,10 @@ function semantic_kind_name(id: i32): string {
   return names[at];
 }
 
-// ---- integer kind registry (#4394 lever 2 / #5351, foundation slice) ----
-// The SSA analogue of ir.fern's op-kind registry (kind_id / kind_name):
-// a stable 1-based id per SInst kind and per STerm kind, with 0 as the
-// invalid / none sentinel in both spaces. The conversion this registry was
-// staged for is DONE: SInst and STerm carry `kind_tag: i32` and no string
-// kind, and the backend dispatch ladders switch on the id. What the names
-// are still for is printing and the golden below.
-// The ssa_kind_run driver + TestSelfHostSSAKindRegistry pin the id<->name
-// bijection and both sentinels, so a kind added to one direction (or a
-// duplicated id) fails the golden instead of silently misdispatching a
-// backend later (the SH-003/SH-005 class).
-//
-// NOTE: this vocabulary is the SSA layer's own — it deliberately does NOT
-// reuse ir.kind_id (SSA's "const_int"/"binary"/"phi"/... don't exist in
-// the stack-IR registry and vice versa).
-
-// kind_count is the number of registered SInst kinds (ids 1..kind_count()).
 pub function kind_count(): i32 {
   return 37;
 }
 
-// kind_retired is an id in 1..kind_count() whose kind is gone: 23..25 (the
-// strbuf singleton). The number is not reused.
 pub function kind_retired(id: i32): boolean {
   return id >= 23 && id <= 25;
 }
@@ -474,16 +347,6 @@ pub function kind_id(name: string): i32 {
   return 0;
 }
 
-// The capacity-carrying string builder's block (#8773), split out so the seven
-// names cost kind_id / kind_name one test apiece. `binary` is the only other
-// kind starting with 'b' and it is six bytes, so the length guard separates
-// them without a second compare.
-//
-// `buf_push_u64` is deliberately absent. This backend stores a string as one
-// byte per EIGHT-byte word, so the single store the op exists for (#9221)
-// would be eight stores here and the op would lose its whole reason to be one.
-// An unknown callee bails calls_all_known, so a module using it takes the IR
-// path — the same answer wasm's SSA lowering gives the family entire.
 function buf_kind_id(name: string): i32 {
   if (name == "buf_new") {
     return 28;
@@ -509,10 +372,6 @@ function buf_kind_id(name: string): i32 {
   return 0;
 }
 
-// term_count is the number of registered STerm kinds (ids 1..term_count()).
-// Id 0 is the "no terminator" sentinel (t_none's empty-string kind today):
-// term_id("") == 0 and term_name(0) == "" by construction, so the eventual
-// `terminated()` check becomes `term.kind_tag != 0`.
 pub function term_count(): i32 {
   return 3;
 }
@@ -543,7 +402,6 @@ pub function term_name(id: i32): string {
   return "";
 }
 
-// zeros returns an n-long i32 array of 0s (scratch flag/value tables).
 function rewrite_args(ins: SInst, resolved: i32[]): SInst {
   let na: i32[] = [];
   let i: i32 = 0;
@@ -564,21 +422,6 @@ function rewrite_term(t: STerm, resolved: i32[]): STerm {
   return t;
 }
 
-// ---- register allocation ------------------------------------------------
-// regalloc assigns each SSA value either a physical register index
-// (0..nregs-1) or -1 (spilled — the backend keeps it in its [sp,#8*v] /
-// rbp-slot). It's a linear-scan allocator over a conservative live
-// interval per value: the value is numbered live from the lowest to the
-// highest instruction position among its definition and all its uses. For
-// our structured CFGs that range covers the true live range (a loop-
-// carried value used by a header phi gets a use position BELOW its body
-// def, which widens the interval to span the loop — exactly where it's
-// live). A value whose interval strictly contains a `call` takes a
-// callee-saved register or a slot, never a caller-saved register.
-
-// inst_is_call names the instructions that clobber the caller-saved registers:
-// the calls proper, the toy runtime's string / output / file / buffer
-// helpers, and the production lift's box allocation.
 function inst_is_call(k: i32): boolean {
   if (k == 11 || k == 12 || k == 17 || k == 18 || k == 48 || k == 49 || k == 50 || k == 51 || k == 56 || k == 59 || k == 60) {
     return true;
@@ -586,26 +429,18 @@ function inst_is_call(k: i32): boolean {
   return k >= 19 && k <= 27;
 }
 
-// cold_call reports an op that calls only on its slow path: an array push,
-// whose fast path stores in place and whose call grows the array.
 pub function cold_call(ins: SInst): boolean {
   return ins.kind_tag == 50 && ins.result >= 0 && util.str_has_prefix(ins.str, "arr_push");
 }
 
-// The kinds `cold_positions` gives a position.
 pub const COLD_NONE: i32 = 0;
 
-// An op that calls only on its slow path (`cold_call`).
 pub const COLD_SLOW: i32 = 1;
 
-// A call in a block that some iterations of its loop skip (`cold_blocks`).
 pub const COLD_BRANCH: i32 = 2;
 
-// A primitive the emitter inlines outside size mode. It has no call cost.
 pub const COLD_INLINE: i32 = 3;
 
-// cold_positions classifies each instruction position, numbered as the
-// allocator numbers them (each block's instructions, then its terminator).
 pub function cold_positions(f: SFunc, size: boolean): i32[] {
   let cold: boolean[] = cold_blocks(f);
   let out: i32[] = [];
@@ -630,10 +465,6 @@ pub function cold_positions(f: SFunc, size: boolean): i32[] {
   return out;
 }
 
-// cold_blocks says, for each block in layout order, whether it is inside a
-// loop and does not dominate that loop's latch, so some iterations pass it
-// by: the error branch, the slow case. A loop is a branch back to a block at
-// or before its own, the innermost the one that spans the fewest blocks.
 pub function cold_blocks(f: SFunc): boolean[] {
   let n: i32 = f.blocks.len();
   let at: i32[] = block_positions(f);
@@ -664,9 +495,6 @@ pub function cold_blocks(f: SFunc): boolean[] {
   return out;
 }
 
-// dominators gives each block's immediate dominator by layout position, the
-// entry its own and an unreachable block -1 (Cooper, Harvey and Kennedy's
-// iteration over reverse postorder).
 function dominators(f: SFunc, at: i32[]): i32[] {
   let n: i32 = f.blocks.len();
   let entry: i32 = position_of(at, f.entry);
@@ -704,7 +532,6 @@ function dominators(f: SFunc, at: i32[]): i32[] {
   return idom;
 }
 
-// meet_preds is where the dominators of b's processed predecessors meet.
 function meet_preds(f: SFunc, at: i32[], idom: i32[], po: i32[], b: i32): i32 {
   let pick: i32 = 0 - 1;
   for pid in f.blocks[b].preds {
@@ -732,8 +559,6 @@ function intersect(idom: i32[], po: i32[], a: i32, b: i32): i32 {
   return a;
 }
 
-// postorder lists the blocks reachable from `entry` by layout position, each
-// after every block it reaches first.
 function postorder(f: SFunc, at: i32[], entry: i32): i32[] {
   let seen: boolean[] = __alloc_bool(f.blocks.len());
   let out: i32[] = [];
@@ -761,7 +586,6 @@ function postorder(f: SFunc, at: i32[], entry: i32): i32[] {
   return out;
 }
 
-// dominates says block `a` dominates block `b`, both by layout position.
 function dominates(idom: i32[], a: i32, b: i32): boolean {
   if (idom[b] < 0) {
     return false;
@@ -776,17 +600,11 @@ function dominates(idom: i32[], a: i32, b: i32): boolean {
   return true;
 }
 
-// returns_call reports a call at `k` that ends `blk`, which returns its
-// result: nothing but that result is live past it, so no value needs a
-// register the call preserves. Whatever else holds a register over it lives
-// only on paths that do not run it.
 pub function returns_call(blk: SBlock, k: i32): boolean {
   let ins: SInst = blk.insts[k];
   return k == blk.insts.len() - 1 && blk.term.kind_tag == 1 && ins.result >= 0 && blk.term.value == ins.result;
 }
 
-// calls_out reports an instruction that is a call wherever it is emitted. An
-// inlined rc primitive is not one, though its slow path may still call.
 pub function calls_out(f: SFunc): boolean {
   for blk in f.blocks {
     for ins in blk.insts {
@@ -798,17 +616,10 @@ pub function calls_out(f: SFunc): boolean {
   return false;
 }
 
-// calls reports one instruction calls_out counts.
 pub function calls(ins: SInst): boolean {
   return inst_is_call(ins.kind_tag) && !rc_inlined(ins);
 }
 
-// rc_inlined identifies retain and uniqueness primitives that can inline.
-// Their bodies are guard chains over the count word.
-// The release primitive __fern_rc_dec calls the array release helper.
-//
-// The allocator uses COLD_INLINE only outside size mode.
-// A size build retains the call constraints for these primitives.
 pub function rc_inlined(ins: SInst): boolean {
   if (ins.kind_tag != 11 || ins.args.len() != 1) {
     return false;
@@ -816,10 +627,6 @@ pub function rc_inlined(ins: SInst): boolean {
   return ins.str == "__fern_rc_is_unique" || ins.str == "__fern_rc_inc";
 }
 
-// calls_before counts, for every position p, the calls at positions below
-// p; spans_call reads two entries. The scan over the call list it replaces
-// ran once per value, which on a function with thousands of calls and tens
-// of thousands of values was most of the allocator's time.
 function calls_before(calls: i32[], total_pos: i32): i32[] {
   let cum: i32[] = __alloc_i32(total_pos + 2);
   let ci: i32 = 0;
@@ -834,7 +641,6 @@ function calls_before(calls: i32[], total_pos: i32): i32[] {
   return cum;
 }
 
-// spans_call is true when some call position lies strictly inside (lo, hi).
 function spans_call(cum: i32[], lo: i32, hi: i32): boolean {
   if (hi <= lo + 1) {
     return false;
@@ -850,11 +656,6 @@ function spans_call(cum: i32[], lo: i32, hi: i32): boolean {
   return cum[b] - cum[a] > 0;
 }
 
-// hard_spans says, for each value, whether it must stay out of the caller
-// registers: it is live across a call, or across cold-branch calls whose saves
-// and loads would cost more than spilling it. Both sides count a position
-// by its block's loop weight: a save and a load at each cold-branch call
-// against the value's own weighted reads and writes.
 function hard_spans(f: SFunc, cum: i32[], cold: i32[], lo: i32[], hi: i32[], weight: i32[]): boolean[] {
   let out: boolean[] = __alloc_bool(f.nvals);
   if (cold.len() == 0) {
@@ -878,8 +679,6 @@ function hard_spans(f: SFunc, cum: i32[], cold: i32[], lo: i32[], hi: i32[], wei
   return out;
 }
 
-// cold_call_cost sums, for every position p, the loop weights of the
-// cold-branch calls below p.
 function cold_call_cost(f: SFunc, cold: i32[]): i32[] {
   let bw: i32[] = block_loop_weights(f);
   let out: i32[] = [0];
@@ -897,8 +696,6 @@ function cold_call_cost(f: SFunc, cold: i32[]): i32[] {
   return out;
 }
 
-// spans_hard reads `hard` for an integer value and the call positions for a
-// float one, which counts every call.
 function spans_hard(hard: boolean[], integer: boolean, cum: i32[], lo: i32, hi: i32, v: i32): boolean {
   if (integer) {
     return hard[v];
@@ -906,11 +703,6 @@ function spans_hard(hard: boolean[], integer: boolean, cum: i32[], lo: i32, hi: 
   return spans_call(cum, lo, hi);
 }
 
-// order_by_lo returns value ids 0..n-1 sorted ascending by lo, ids ascending
-// within one lo. A counting sort over the positions: the insertion sort this
-// replaces rebuilt the output array once per value, which on a function with
-// tens of thousands of values was a quadratic number of allocations the arena
-// never returns.
 function order_by_lo(n: i32, lo: i32[]): i32[] {
   let maxp: i32 = 0;
   let v: i32 = 0;
@@ -920,7 +712,6 @@ function order_by_lo(n: i32, lo: i32[]): i32[] {
     }
     v = v + 1;
   }
-  // Bucket maxp + 1 holds the values never referenced (lo left at the sentinel).
   let starts: i32[] = __alloc_i32(maxp + 3);
   v = 0;
   while (v < n) {
@@ -952,19 +743,6 @@ function order_bucket(lo: i32, maxp: i32): i32 {
 }
 
 function extend_loop_invariant_intervals(f: SFunc, def_pos: i32[], hi: i32[]): i32[] {
-  // Loop-invariant fix: a value defined BEFORE a loop header and used inside
-  // the loop is live across the whole loop (re-read every iteration), so its
-  // interval must reach the back-edge — otherwise the scan expires it at its
-  // textual last use and a loop-body temp reuses its register, corrupting it
-  // on the next iteration. (A loop-CARRIED value is covered by the phi's
-  // read on the back edge; this covers loop-INVARIANT ones.) Block start
-  // positions are recomputed with the same per-block stride (insts + one
-  // terminator slot); a terminator targeting a block at or before its own
-  // block is a back-edge, and the loop spans [header_start, terminator_pos].
-  //
-  // Each value's extension reads only the back edges, in block order, so the
-  // values are independent: one with no header in (def, hi] cannot extend,
-  // and a binary search over the sorted header starts rules most out.
   let top: i32 = 0 - 1;
   for b in f.blocks {
     if (b.id > top) {
@@ -1031,8 +809,6 @@ function extend_loop_invariant_intervals(f: SFunc, def_pos: i32[], hi: i32[]): i
   return hi;
 }
 
-// sorted_i32 is xs in ascending order (an insertion sort; the lists are a
-// function's back edges).
 function sorted_i32(xs: i32[]): i32[] {
   let out: i32[] = [];
   for x in xs {
@@ -1047,8 +823,6 @@ function sorted_i32(xs: i32[]): i32[] {
   return out;
 }
 
-// first_above is the index of the first element of ascending xs greater than
-// v, or xs.len() when there is none.
 function first_above(xs: i32[], v: i32): i32 {
   let lo: i32 = 0;
   let hi: i32 = xs.len();
@@ -1063,23 +837,10 @@ function first_above(xs: i32[], v: i32): i32 {
   return lo;
 }
 
-// An instruction can also fix a register without being a call: x86-64's idiv
-// takes its dividend in %rax and writes %rdx, so a division clobbers the ABI
-// result register while remaining an ordinary binary. A value may only be
-// homed there if its interval spans none of them. The op names are the IR
-// registry's (kind ids 24-27); arm64's sdiv/udiv take any registers, so its
-// emitter names none.
 pub function binary_fixes_abi(op: string): boolean {
   return op == "div_s" || op == "div_u" || op == "rem_s" || op == "rem_u" || op == "mulhi_u";
 }
 
-// `abi_reg` is the pool index of the register the target's ABI returns a
-// call's result in, or -1 where the emitter still uses that register as
-// scratch. A value a call defines is given it when it is free, so the store
-// after the call finds the value already home and emits nothing; every other
-// value takes it last, so it stays available for the next call result.
-// Returns -1 when no caller-saved register this value may use is free, so the
-// caller falls through to the callee-saved pool or to a spill.
 function pick_caller_reg(free: i32[], abi_reg: i32, want_abi: boolean, abi_ok: boolean): i32 {
   if (free.len() == 0) {
     return 0 - 1;
@@ -1133,9 +894,6 @@ function preferred_register_allowed(reg: i32, abi: i32, abi_ok: boolean, spans: 
   return reg >= 0 && !spans && (reg != abi || abi_ok) && ssafixed.allows(fixed, reg, lo, hi);
 }
 
-// candidate is the `k`-th value whose register `v` tries to take: its alt
-// mate, its phi mate, then -2 for `wish[v]`, which names a register rather
-// than a value, then the two operands of its definition.
 function candidate(mates: Mates, def_a: i32[], def_b: i32[], v: i32, k: i32): i32 {
   if (k == 0) {
     return mates.alt[v];
@@ -1172,11 +930,6 @@ function forbidden_abi(abi_reg: i32, allowed: boolean): i32 {
   return abi_reg;
 }
 
-// cheapest_active is the index of the active interval, among those holding a
-// register of the class this value needs, whose spill costs least per
-// position it covers (the latest ending on a tie), or -1. A spilled value pays
-// at every reference and frees its register for its whole interval, so what is
-// spilled should minimize weighted reference cost for its lifetime.
 function cheapest_active(act_val: i32[], act_reg: i32[], act_hi: i32[], shared_with: i32[], weight: i32[], lo: i32[], hi: i32[], now: i32, nregs: i32, need_saved: boolean, forbidden: i32, fixed: ssafixed.Table, until: i32): i32 {
   let best: i32 = 0 - 1;
   let best_w: i32 = 0;
@@ -1198,9 +951,6 @@ function cheapest_active(act_val: i32[], act_reg: i32[], act_hi: i32[], shared_w
   return best;
 }
 
-// Compare squared reference weight per position. Squaring protects values
-// expensive to spill without ignoring how long they occupy a register.
-// f64 products avoid overflowing when weights or intervals are large.
 function cmp_spill_cost(w1: i32, len1: i32, w2: i32, len2: i32): i32 {
   let a: f64 = w1 as f64 * (w1 as f64) * (len2 as f64);
   let b: f64 = w2 as f64 * (w2 as f64) * (len1 as f64);
@@ -1213,8 +963,6 @@ function cmp_spill_cost(w1: i32, len1: i32, w2: i32, len2: i32): i32 {
   return 0;
 }
 
-// chain_lo is where the first of the values sharing v's register that an
-// eviction at `now` spills begins (still_holds).
 function chain_lo(v: i32, shared_with: i32[], lo: i32[], hi: i32[], now: i32): i32 {
   let m: i32 = lo[v];
   let ev: i32 = shared_with[v];
@@ -1227,8 +975,6 @@ function chain_lo(v: i32, shared_with: i32[], lo: i32[], hi: i32[], now: i32): i
   return m;
 }
 
-// chain_weight sums the spill weights of a register's holder and of the
-// values before it that an eviction at `now` spills too.
 function chain_weight(v: i32, shared_with: i32[], weight: i32[], hi: i32[], now: i32): i32 {
   let w: i32 = weight[v];
   let ev: i32 = shared_with[v];
@@ -1241,7 +987,6 @@ function chain_weight(v: i32, shared_with: i32[], weight: i32[], hi: i32[], now:
   return w;
 }
 
-// any_below says some entry of xs is below x.
 function any_below(xs: i32[], x: i32): boolean {
   for e in xs {
     if (e < x) {
@@ -1251,18 +996,10 @@ function any_below(xs: i32[], x: i32): boolean {
   return false;
 }
 
-// still_holds says an eviction at `now` spills ev, an earlier holder of the
-// evicted value's register: one whose interval still reaches `now`, as a phi
-// does when its loop-carried operand took its register over. A holder whose
-// interval ended keeps the register; the edge to its successor moves instead.
-// Ends do not fall along a chain, so a live holder can follow an ended one.
 function still_holds(ev: i32, hi: i32[], now: i32): boolean {
   return hi[ev] >= now;
 }
 
-// block_loop_weights gives each block, by position, the weight of one
-// reference inside it: 8 per enclosing loop, up to three. A loop is the span
-// of block positions from a back edge's target to its source.
 function block_loop_weights(f: SFunc): i32[] {
   let at: i32[] = block_positions(f);
   let depth: i32[] = __alloc_i32(f.blocks.len());
@@ -1307,23 +1044,8 @@ function drop_active_at(a: i32[], k: i32): i32[] {
   return out;
 }
 
-// Alloc is regalloc_linear's assignment, `reg_of`, with the interval each home
-// holds its value over: from the end of position def_pos[v] to the end of
-// hi[v], numbered over the instructions and then the terminator of each block
-// in layout order, -1 for a value with no interval. A `-g` build describes a
-// variable's location from it (#11410).
 pub struct Alloc { reg_of: i32[], def_pos: i32[], lo: i32[], hi: i32[], cold: i32[] }
 
-// ---- lane values (docs/SIMD-GENERIC-KERNELS.md §6) ---------------------------
-//
-// A lane op (ir.lane_kind_names) lifts to kind 10, 9 or 61 by operand count,
-// a store to 62, with the op name in `str`, an extract or replace carrying its
-// lane index after a colon, and the element width in `imm`. Its 128-bit
-// result lives in the float register class (xmm / V), takes a 16-byte spill
-// pair, and never leaves the class: nothing but a lane op reads it.
-
-// lane_base is a lane op's name without its lane suffix: "vextract" of
-// "vextract:1".
 pub function lane_base(op: string): string {
   let k: i32 = 0;
   while (k < op.len()) {
@@ -1335,21 +1057,15 @@ pub function lane_base(op: string): string {
   return op;
 }
 
-// lane_op reports an instruction name that is a lane op.
 pub function lane_op(op: string): boolean {
   return op.len() > 1 && op[0] == b'v' && ir.is_lane_kind(ir.kind_id(lane_base(op)));
 }
 
-// lane_inst reports a lane instruction: one of the operator kinds or the
-// lane store naming a lane op (a string literal or a call may carry the same
-// text).
 pub function lane_inst(ins: SInst): boolean {
   let k: i32 = ins.kind_tag;
   return (k == 9 || k == 10 || k == 61 || k == 62) && lane_op(ins.str);
 }
 
-// lane_param reports parameter p of f a lane value (ssa_lift.lift_with_lanes
-// marks it).
 pub function lane_param(f: SFunc, p: i32): boolean {
   if (f.blocks.len() == 0) {
     return false;
@@ -1362,19 +1078,14 @@ pub function lane_param(f: SFunc, p: i32): boolean {
   return false;
 }
 
-// lane_param_mark is the `str` of a parameter (kind 6) that is a lane value.
 pub function lane_param_mark(): string {
   return "v128";
 }
 
-// lane_memory names the lane ops that read or write memory.
 pub function lane_memory(b: string): boolean {
   return util.has_str(["vload", "vstore", "vget", "vset"], b);
 }
 
-// lane_result reports an instruction whose result is a lane value: a lane op
-// other than vextract (an f64), vstore and vset (dead results), a lane parameter,
-// and a call marked as returning one (call mark 6, ir.lane_call).
 pub function lane_result(ins: SInst): boolean {
   if (ins.kind_tag == 6 && ins.str == lane_param_mark() || ins.kind_tag == 11 && ins.imm == 6) {
     return true;
@@ -1386,8 +1097,6 @@ pub function lane_result(ins: SInst): boolean {
   return b != "vextract" && b != "vbitmask" && b != "vstore" && b != "vset";
 }
 
-// lane_values marks the lane values: the lane ops' results, and the phis and
-// copies that carry them. Empty when the function has none.
 pub function lane_values(f: SFunc): boolean[] {
   let lanes: boolean[] = lane_results(f);
   if (lanes.len() == 0) {
@@ -1396,9 +1105,6 @@ pub function lane_values(f: SFunc): boolean[] {
   return lane_carriers(f, lanes);
 }
 
-// lane_results marks the lane ops' results, empty when there are none. The
-// kind, the call mark and the name's first byte rule out almost every
-// instruction before lane_result is asked.
 function lane_results(f: SFunc): boolean[] {
   let lanes: boolean[] = [];
   for blk in f.blocks {
@@ -1416,8 +1122,6 @@ function lane_results(f: SFunc): boolean[] {
   return lanes;
 }
 
-// lane_carriers adds to `lanes` every phi that joins a lane value and every
-// copy of one (an inlined leaf's result), until none is left to add.
 function lane_carriers(f: SFunc, lanes: boolean[]): boolean[] {
   let changed: boolean = true;
   while (changed) {
@@ -1443,27 +1147,13 @@ function phi_joins_lane(ins: SInst, lanes: boolean[]): boolean {
   return false;
 }
 
-// has_lanes reports a function with a lane value, whose frame rounds its
-// spill slots up to a whole number of 16-byte pairs.
 pub function has_lanes(f: SFunc): boolean {
   return lane_values(f).len() > 0;
 }
 
-// float_values marks the values that live in the float register class: an
-// f64 an f64 operation defines (or a parameter, phi, word load, or the result
-// of a call `fcalls` marks) that f64 operations (the reinterpret to
-// its bits among them), phis of the class and a return read, and, on an
-// emitter whose calls take a float home (`tolerant`), direct call arguments as
-// well. A parameter, phi or call result also needs one f64
-// operation or float phi among its readers, or nothing is gained by a float
-// home. Anything else that reads it — a store, say — keeps it in an integer
-// register, so that only the emitters' class-aware paths ever meet a float
-// home. Empty when no value qualifies.
 pub function float_values(f: SFunc, fcalls: boolean[], tolerant: boolean): boolean[] {
   let fl: boolean[] = __alloc_bool(f.nvals);
   let derived: boolean[] = __alloc_bool(f.nvals);
-  // A derived value stays only where an f64 operation reads it, so a function
-  // with no f64 operation and no value only an f64 can be keeps none.
   let seeded: boolean = false;
   for blk in f.blocks {
     for ins in blk.insts {
@@ -1480,8 +1170,6 @@ pub function float_values(f: SFunc, fcalls: boolean[], tolerant: boolean): boole
   if (!seeded) {
     return with_lanes(f, __alloc_bool(f.nvals));
   }
-  // A value leaves the class when anything outside it reads it, which can
-  // take a phi out and with it the values only that phi read.
   let changed: boolean = true;
   while (changed) {
     changed = false;
@@ -1514,8 +1202,6 @@ pub function float_values(f: SFunc, fcalls: boolean[], tolerant: boolean): boole
   return with_lanes(f, fl);
 }
 
-// with_lanes adds the lane values to the float class, whatever read them,
-// and is [] when the class is empty.
 function with_lanes(f: SFunc, fl: boolean[]): boolean[] {
   let lanes: boolean[] = lane_values(f);
   let v: i32 = 0;
@@ -1533,9 +1219,6 @@ function with_lanes(f: SFunc, fl: boolean[]): boolean[] {
   return [];
 }
 
-// float_strong marks the derived values (parameters, phis, call results) a
-// float home serves: one an f64 operation reads, or a phi joining one that is
-// an f64 operation's result or is itself served so.
 function float_strong(f: SFunc, fl: boolean[], derived: boolean[]): boolean[] {
   let strong: boolean[] = __alloc_bool(f.nvals);
   let changed: boolean = true;
@@ -1564,16 +1247,10 @@ function float_strong(f: SFunc, fl: boolean[], derived: boolean[]): boolean[] {
   return strong;
 }
 
-// float_tolerant names a reader that takes a float home through a scratch:
-// a direct call's argument.
 function float_tolerant(ins: SInst): boolean {
   return ins.kind_tag == 11 && !rc_inlined(ins);
 }
 
-// float_def names an instruction whose result is an f64 the float class can
-// hold: the literal, the arithmetic, the one-instruction math, the widening to
-// f64 and the reinterpret from its bits, a word load, a parameter and a phi.
-// The last three are only candidates (float_strong).
 function float_def(ins: SInst): boolean {
   let k: i32 = ins.kind_tag;
   if (k == 4 || k == 6 || k == 8 || float_load(ins)) {
@@ -1588,15 +1265,10 @@ function float_def(ins: SInst): boolean {
   return false;
 }
 
-// float_load names a word load, from a field or an array element, whose word
-// an f64 operation may be what reads.
 function float_load(ins: SInst): boolean {
   return ins.kind_tag == 40 || ins.kind_tag == 42 && ins.str != "u8";
 }
 
-// float_use names an instruction that reads its operands as f64s: the float
-// arithmetic and compares, the math, and the conversions and the reinterpret
-// out of f64.
 function float_use(ins: SInst): boolean {
   let k: i32 = ins.kind_tag;
   if (k == 9) {
@@ -1620,8 +1292,6 @@ pub function float_math(op: string): boolean {
   return op == "fsqrt" || op == "ffloor" || op == "fceil" || op == "ftrunc" || op == "fabs" || op == "fround" || op == "fneg";
 }
 
-// class_order is `order` with the float values moved after every other value,
-// each part still in its own order; the second result is where they start.
 function class_order(order: i32[], fl: boolean[]): i32[] {
   let out: i32[] = [];
   for v in order {
@@ -1647,33 +1317,10 @@ function count_false(fl: boolean[]): i32 {
   return n;
 }
 
-// regalloc_linear assigns each value a register index or a spill slot. The
-// indices below `nregs` are the caller-saved registers, the `nsaved` above
-// them the callee-saved ones: a value live across a call takes one of the
-// latter, or a slot when they are out; any other value takes a caller-saved
-// register first, a callee-saved one when those are out, a slot last. The
-// lowest indices go first, so an emitter that saves the callee-saved
-// registers a function uses saves a dense prefix of them.
-// The values `fl` marks (float_values) are the float class: they take the
-// `nf` caller-saved float registers numbered from nregs + nsaved and the `nfs`
-// callee-saved ones above those, by the same rules. The classes share no
-// register, so each is scanned on its own, the float values last.
-// `pref[v]`, when not -1, is the caller-saved register v would rather have:
-// the one a register-ABI parameter arrives in or a call argument leaves in. It
-// is taken when free and v does not live across a call; an empty `pref` asks
-// for nothing. A value a block returns that names no register asks for
-// `abi_reg`, where the return reads it (`return_prefs`).
 pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, abi_fixed_by_div: boolean, no_home: boolean[], pref: i32[], fl: boolean[], nf: i32, nfs: i32): Alloc {
   return regalloc_linear_fixed(f, nregs, nsaved, abi_reg, abi_fixed_by_div, no_home, pref, fl, nf, nfs, ssafixed.none(), []);
 }
 
-// With a non-empty `cold` classification, a position it names is not a call to the
-// integer class: a value live across it may sit in a caller-saved register,
-// which `fixed` keeps off the registers the call itself writes and the
-// emitter saves around it. A value live across a call in a cold block still
-// takes a free callee-saved register first, so only a loop short of them
-// pays for the saves. Float values still count every call. `Alloc.cold` is
-// the classification, by position.
 pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, abi_fixed_by_div: boolean, no_home: boolean[], pref: i32[], fl: boolean[], nf: i32, nfs: i32, fixed: ssafixed.Table, cold: i32[]): Alloc {
   let cold_calls: boolean = cold.len() > 0;
   let wish: i32[] = return_prefs(f, pref, abi_reg);
@@ -1691,7 +1338,6 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
   let soft_calls: i32[] = [];
   let abi_cl: i32[] = [];
 
-  // Number instructions and record each value's def/use positions.
   let def_pos: i32[] = __alloc_i32(f.nvals);
   let def_blk: i32[] = __alloc_i32(f.nvals);
   let call_def: i32[] = __alloc_i32(f.nvals);
@@ -1724,9 +1370,6 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
       if (ins.result >= 0 && ins.result < def_pos.len()) {
         def_pos = def_pos.with(ins.result, pos);
         def_blk = def_blk.with(ins.result, bi);
-        // A call reads its arguments before it writes its result, so
-        // the result may take a dying argument's register; a select may
-        // take either of the values it picks between.
         if (ins.kind_tag == 36) {
           reads_mate = reads_mate.with(ins.result, true);
           def_a = def_a.with(ins.result, ins.args[1]);
@@ -1792,10 +1435,6 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
     pos = pos + 1;
     bi = bi + 1;
   }
-  // A parameter has no defining instruction: it arrives at entry. Every
-  // referenced one is live from position 0, so two parameters whose first
-  // reads are apart still interfere, and the entry's moves cannot write one
-  // into a home another is still arriving in.
   i = 0;
   while (i < f.nparams && i < f.nvals) {
     if (hi[i] >= 0) {
@@ -1806,12 +1445,6 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
   let total_pos: i32 = pos;
   ssafixed.validate(fixed, nregs, total_pos);
   let at: i32[] = block_positions(f);
-  // A phi reads its operand on the edge from the predecessor, at that
-  // block's terminator, not at its own position inside the header. Read
-  // there, an operand arriving from before a loop ends before the loop
-  // rather than looking live through it, and a loop-carried operand lives
-  // from its definition to the back edge it is read on, and no further:
-  // what follows the loop, calls included, is not on its interval.
   bi = 0;
   while (bi < f.blocks.len()) {
     let pb: SBlock = f.blocks[bi];
@@ -1840,8 +1473,6 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
     }
     bi = bi + 1;
   }
-  // A value with no home has no interval: the phi reads above are dropped
-  // with the rest, and the loop extension below leaves a value with none.
   i = 0;
   while (i < no_home.len() && i < f.nvals) {
     if (no_home[i]) {
@@ -1863,7 +1494,6 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
   let hard: boolean[] = hard_spans(f, cum, cold, lo, hi, weight);
   let sole: i32[] = sole_readers(f);
 
-  // Built the first time an interference question is asked.
   let sites: ReadSites = ReadSites { start: [], blk: [], pos: [], succ_a: [], succ_b: [], phi_end: [] };
   let reg_of: i32[] = __alloc_i32(f.nvals);
   let shared_with: i32[] = __alloc_i32(f.nvals);
@@ -1874,7 +1504,6 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
     i = i + 1;
   }
 
-  // Linear scan in order of interval start.
   let order: i32[] = order_by_lo(f.nvals, lo);
   let split: i32 = order.len();
   if (fl.len() > 0) {
@@ -1897,8 +1526,6 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
     r = r - 1;
   }
 
-  // The integer class's bounds first: its pool starts at 0, its callee-saved
-  // registers at `sat`, and its call results arrive in `cabi`.
   let cbase: i32 = 0;
   let sat: i32 = nregs;
   let cabi: i32 = abi_reg;
@@ -1926,11 +1553,10 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
       }
     }
     let v: i32 = order[oi];
-    if (hi[v] < 0) {  // never referenced
+    if (hi[v] < 0) {
       oi = oi + 1;
       continue;
     }
-    // Expire active intervals that end before v begins.
     if (any_below(act_hi, lo[v])) {
       let nv: i32[] = [];
       let nh: i32[] = [];
@@ -1955,8 +1581,6 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
       act_reg = nr;
     }
 
-    // A value read only by its phi mate, already spilled, would be stored to
-    // the mate's slot on the edge whatever its home; it takes the slot.
     let mh: i32 = mates.hint[v];
     if (mh >= 0 && sole[v] == mh && lo[mh] <= lo[v] && hi[mh] >= 0 && reg_of[mh] == 0 - 1) {
       if (sites.start.len() == 0) {
@@ -1967,18 +1591,10 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
         continue;
       }
     }
-    // A phi whose fall-through operand is spilled stays spilled too, to
-    // share its slot (hinted_slot): loaded into a register, it would take
-    // one an operand of a later phi in the block is still hinted at. With
-    // `cold_calls`, a phi read far more than its operand (a loop's carried
-    // value, entered once) is placed instead, and loads it on the edge.
     if (mh >= 0 && mates.through[v] && reg_of[mh] == 0 - 1 && hi[mh] < lo[v] && !(cold_calls && weight[v] > 4 * weight[mh])) {
       oi = oi + 1;
       continue;
     }
-    // A phi whose outliving operand is spilled and dead where the phi is
-    // defined stays spilled too, to share that slot (path_slot) rather than
-    // load it into a register on every edge.
     let ma: i32 = mates.alt[v];
     if (ma >= 0 && reg_of[ma] == 0 - 1 && lo[ma] <= lo[v] && hi[ma] >= 0) {
       if (sites.start.len() == 0) {
@@ -1990,15 +1606,8 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
       }
     }
     let abi_ok: boolean = !spans_call(cum_abi, lo[v], hi[v]);
-    // A value live across a cold-branch call takes a free callee-saved
-    // register rather than a caller one it would save around the call.
     let soft: boolean = cold_calls && oi < split && spans_call(cum_soft, lo[v], hi[v]) && free_s.len() > 0;
     let keep_caller: boolean = spans_hard(hard, oi < split, cum, lo[v], hi[v], v) || soft;
-    // A value takes the register of its phi mate, or of an operand of
-    // its definition, when it can: the register is free, or its holder
-    // dies at this very definition and the emitter reads before it
-    // writes, or the holder is the phi this loop-carried value feeds and
-    // the two never live at once. First fit wins; the phi mate first.
     let placed: boolean = false;
     let ci: i32 = 0;
     while (ci < 5 && !placed) {
@@ -2024,7 +1633,6 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
           placed = true;
           continue;
         }
-        // Held: taken below if its holder dies at this definition.
         let held: i32 = index_of_reg(act_reg, pr);
         if (held < 0) {
           continue;
@@ -2035,8 +1643,6 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
         continue;
       }
       let hr: i32 = reg_of[h];
-      // A call's result arrives in abi_reg, so an argument's register
-      // saves a move only when it is that one.
       if (call_def[v] == 1 && h != mates.hint[v] && hr != abi_reg) {
         continue;
       }
@@ -2095,10 +1701,6 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
     let pick: i32 = pick_fixed_reg(free, cabi, call_def[v] == 1 && abi_ok, abi_ok, fixed, lo[v], hi[v]);
     let from_caller: boolean = !spans_hard(hard, oi < split, cum, lo[v], hi[v], v) && pick >= 0 && !soft;
     if (!from_caller && free_s.len() == 0) {
-      // Nothing free: take the register from the active interval whose
-      // spill costs least, if that is less than this one's, and spill it
-      // instead. `need_saved` keeps the two pools apart, since a value
-      // live across a call may only sit in a callee-saved register.
       let need_saved: boolean = spans_hard(hard, oi < split, cum, lo[v], hi[v], v);
       let fa: i32 = cheapest_active(act_val, act_reg, act_hi, shared_with, weight, lo, hi, lo[v], sat, need_saved, forbidden_abi(cabi, abi_ok), fixed, hi[v]);
       let cmp: i32 = 0;
@@ -2127,7 +1729,7 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
         act_hi = act_hi.append(hi[v]);
         act_reg = act_reg.append(taken);
       } else {
-        reg_of = reg_of.with(v, 0 - 1);  // spill
+        reg_of = reg_of.with(v, 0 - 1);
       }
     } else {
       let reg: i32 = 0;
@@ -2155,9 +1757,6 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
   return Alloc { reg_of: assign_spill_slots(f, shape, lo, hi, reg_of, slot_hints(f, sites, def_blk, def_pos, reg_of, mates), sites), def_pos: def_pos, lo: lo, hi: hi, cold: cold };
 }
 
-// lanes_off_saved spills each lane value given a callee-saved float register
-// (from `saved_from` on): a callee saves only the low 64 bits of one, as
-// AAPCS64 asks of v8-v15.
 function lanes_off_saved(f: SFunc, reg_of: i32[], saved_from: i32): i32[] {
   let lanes: boolean[] = lane_values(f);
   let v: i32 = 0;
@@ -2170,10 +1769,6 @@ function lanes_off_saved(f: SFunc, reg_of: i32[], saved_from: i32): i32[] {
   return reg_of;
 }
 
-// A spilled value keeps its phi mate's hint for a slot, a loop-carried one
-// only where the register rule would have let the two share. Where the mate
-// is dead from the value's definition on, `take_over` lets the value take the
-// slot over while the mate's interval still covers it.
 struct SlotHints { hint: i32[], take_over: boolean[] }
 
 function slot_hints(f: SFunc, sites: ReadSites, def_blk: i32[], def_pos: i32[], reg_of: i32[], mates: Mates): SlotHints {
@@ -2196,8 +1791,6 @@ function slot_hints(f: SFunc, sites: ReadSites, def_blk: i32[], def_pos: i32[], 
   return SlotHints { hint: hint, take_over: take_over };
 }
 
-// spilled_mates says some spilled value's phi mate is spilled too and has a
-// definition, which is when slot_hints asks whether the two interfere.
 function spilled_mates(reg_of: i32[], def_pos: i32[], hint: i32[]): boolean {
   let i: i32 = 0;
   while (i < reg_of.len()) {
@@ -2210,10 +1803,6 @@ function spilled_mates(reg_of: i32[], def_pos: i32[], hint: i32[]): boolean {
   return false;
 }
 
-// return_prefs is `pref`, filled out to every value, with `abi_reg` asked
-// for each value a block returns that asks for nothing else. A phi's ask
-// passes to its operands that ask for nothing, last block first, so the
-// values a returned merge gathers aim for the register it is returned from.
 function return_prefs(f: SFunc, pref: i32[], abi_reg: i32): i32[] {
   let out: i32[] = pref;
   while (out.len() < f.nvals) {
@@ -2241,9 +1830,6 @@ function return_prefs(f: SFunc, pref: i32[], abi_reg: i32): i32[] {
   return out;
 }
 
-// sole_readers gives each value the result of the one instruction that reads
-// it, -1 when nothing does and -2 when more than one instruction or a
-// terminator does.
 function sole_readers(f: SFunc): i32[] {
   let out: i32[] = util.minus_ones(f.nvals);
   for blk in f.blocks {
@@ -2272,9 +1858,6 @@ function sole_readers(f: SFunc): i32[] {
   return out;
 }
 
-// spill_weights counts, per value, its definition and every read, each at the
-// loop weight of the block it happens in; a phi operand is read at the end of
-// the predecessor it arrives from. A spilled value pays a load or store at each.
 function spill_weights(f: SFunc, at: i32[]): i32[] {
   let bw: i32[] = block_loop_weights(f);
   let w: i32[] = __alloc_i32(f.nvals);
@@ -2316,18 +1899,11 @@ function spill_weights(f: SFunc, at: i32[]): i32[] {
   return w;
 }
 
-// kept_for_mate says the slot `holder` last held is wanted by its phi mate,
-// which is not `v` and has no slot yet.
 function kept_for_mate(wanted_by: i32[], reg_of: i32[], holder: i32, v: i32): boolean {
   let w: i32 = wanted_by[holder];
   return w >= 0 && w != v && reg_of[w] == 0 - 1;
 }
 
-// A value's home after allocation is a register index, or `spill_code(slot)`
-// for a frame slot; -1 is a value nothing defines, which has no home. The
-// slots are numbered densely and shared, so an emitter sizes the
-// frame by `spill_count` rather than by the id space, which the lift's phi per
-// local per merge makes hundreds of times larger than what survives pruning.
 function drop_last_i(a: i32[]): i32[] {
   let out: i32[] = [];
   let i: i32 = 0;
@@ -2356,14 +1932,10 @@ pub function spill_count(reg_of: i32[]): i32 {
   return n;
 }
 
-// The two-operand integer ops whose result may take the register of an
-// operand that dies at them: both emitters read the operands before writing
-// the destination, or swap them when the right one lives there.
 function shares_operand_home(op: string): boolean {
   return int_binary(op);
 }
 
-// int_binary names the integer operators that cannot trap.
 function int_binary(op: string): boolean {
   let ops: string[] = ["add", "sub", "mul", "and", "and_not", "or", "xor", "eq", "ne", "lt_s", "le_s", "gt_s", "ge_s", "lt_u", "le_u", "gt_u", "ge_u", "shl", "shr_s", "shr_u"];
   for o in ops {
@@ -2374,25 +1946,11 @@ function int_binary(op: string): boolean {
   return false;
 }
 
-// Mates pairs each phi with its operands for register sharing: `hint[r]` for
-// a phi result r is the operand that arrives from before the phi (a
-// parameter, which nothing defines, counts as one), `hint[a]` for an operand
-// a defined at or after its phi is the phi, and `carried[a]` marks that
-// second kind, whose interference with the phi is a question of paths rather
-// than positions. An operand with no home pairs with nothing. When the first
-// operand from before the phi outlives it, as the loop header's phi does at
-// every merge of an else-if chain inside the loop, the hint is the first
-// operand that dies by the phi instead, and `alt[r]` is the outliving one. The
-// two overlap by position only, so the phi shares alt's home when no path has
-// both live at once (chain_dead_at_def). A phi already marked carried, as the
-// last merge's phis are by the loop header laid out before them, gets no alt:
-// the carried hint covers it.
 struct Mates { hint: i32[], carried: boolean[], alt: i32[], through: boolean[] }
 
 function phi_mates(f: SFunc, at: i32[], def_pos: i32[], hi: i32[], no_home: boolean[]): Mates {
   let hint: i32[] = util.minus_ones(f.nvals);
   let carried: boolean[] = __alloc_bool(f.nvals);
-  // Both start all -1, sharing one buffer: the first write to either copies it.
   let alt: i32[] = hint;
   let fell: boolean[] = carried;
   let pos: i32 = 0;
@@ -2402,8 +1960,6 @@ function phi_mates(f: SFunc, at: i32[], def_pos: i32[], hi: i32[], no_home: bool
       if (ins.kind_tag == 8 && ins.result >= 0 && ins.result < hint.len()) {
         let dying: i32 = 0 - 1;
         let outliving: i32 = 0 - 1;
-        // The dying operand arriving from the block laid out just before
-        // this one, which falls through into it.
         let through: i32 = 0 - 1;
         let ai: i32 = 0;
         while (ai < ins.args.len()) {
@@ -2434,10 +1990,6 @@ function phi_mates(f: SFunc, at: i32[], def_pos: i32[], hi: i32[], no_home: bool
         if (dying >= 0 && !carried[ins.result] && h >= 0 && hi[h] >= pos) {
           hint = hint.with(ins.result, dying);
         }
-        // An else-if chain is one merge per arm, each falling through to
-        // the next with the values the deeper arms wrote: a phi that takes
-        // the fall-through operand's home moves nothing on that path, and
-        // the arm's edge pays the one move when that arm runs.
         if (through >= 0 && !carried[ins.result]) {
           hint = hint.with(ins.result, through);
           fell = fell.with(ins.result, true);
@@ -2461,8 +2013,6 @@ function pred_index(at: i32[], id: i32): i32 {
   return at[id];
 }
 
-// position_count is the number of positions regalloc_linear numbers: one per
-// instruction and one per block's terminator.
 pub function position_count(f: SFunc): i32 {
   let n: i32 = 0;
   for blk in f.blocks {
@@ -2471,8 +2021,6 @@ pub function position_count(f: SFunc): i32 {
   return n;
 }
 
-// block_positions maps each non-negative block id to the position of the
-// first block carrying it, -1 for an id no block carries.
 pub function block_positions(f: SFunc): i32[] {
   let top: i32 = 0 - 1;
   for blk in f.blocks {
@@ -2497,9 +2045,6 @@ pub function block_positions(f: SFunc): i32[] {
   return out;
 }
 
-// successor_id is branch `which` of `t` by block id, in branch order: a
-// plain branch has one, a conditional two, and -1 stands past them. A walk
-// over the two reads them without building a list.
 pub function successor_id(t: STerm, which: i32): i32 {
   if (t.kind_tag == 2 && which == 0) {
     return t.target;
@@ -2515,9 +2060,6 @@ pub function successor_id(t: STerm, which: i32): i32 {
   return 0 - 1;
 }
 
-// distinct_successor_position is successor_id's branch by position, or -1
-// for a second branch to the first's block, so a branch to one block on
-// both arms is one successor; an edge to an id no block carries is -1 too.
 function distinct_successor_position(at: i32[], t: STerm, which: i32): i32 {
   let id: i32 = successor_id(t, which);
   if (id < 0 || which == 1 && id == t.t) {
@@ -2563,28 +2105,10 @@ function index_of_reg(a: i32[], x: i32): i32 {
   return 0 - 1;
 }
 
-// assign_spill_slots gives the spilled values frame slots, sharing one between
-// values whose intervals do not meet. A value nothing defines (a parameter) is
-// stored on entry, so it is live from position 0. A value takes the slot of
-// `hints.hint[v]`, its phi mate, before any other: when the slot is free, or
-// when the mate still holds it and `hints.take_over[v]` says the two were
-// found not to interfere. The edge between them then moves nothing. Failing
-// that it takes the slot of its mate or of one of the values it reads (a
-// phi's operands, or the operands a two-address op computes over), the mate
-// first, when no value in that slot is
-// live where it is defined, nor it where they are (path_slot), although their
-// intervals meet: an else-if chain inside a loop merges each arm's value with
-// the loop header's phi, whose interval covers the whole body when it is read
-// after the loop. A value with no such slot passes over a free one whose last
-// holder is the mate of a value not placed yet: a block's phis start one after
-// another, but every operand arriving from before them dies at the edge, so
-// the first phi would otherwise take the slot a later one wants.
-// marked reports whether `v` is set in `marks`, which may be empty.
 function marked(marks: boolean[], v: i32): boolean {
   return v >= 0 && v < marks.len() && marks[v];
 }
 
-// unmarked_or_none is `v`, or -1 when `marks` sets it.
 function unmarked_or_none(v: i32, marks: boolean[]): i32 {
   if (marked(marks, v)) {
     return 0 - 1;
@@ -2592,7 +2116,6 @@ function unmarked_or_none(v: i32, marks: boolean[]): i32 {
   return v;
 }
 
-// unmarked is `vs` without the values set in `marks`.
 function unmarked(vs: i32[], marks: boolean[]): i32[] {
   if (marks.len() == 0) {
     return vs;
@@ -2606,12 +2129,8 @@ function unmarked(vs: i32[], marks: boolean[]): i32[] {
   return out;
 }
 
-// PairSlots is the slot table assign_spill_slots keeps: each unit's end, its
-// holder and the values in it.
 struct PairSlots { slot_end: i32[], holder: i32[], occupants: i32[][] }
 
-// even_pair leaves one unit unused, never free, before a new pair that would
-// start at an odd unit `p`, held by lane value `v`.
 function even_pair(t: PairSlots, p: i32, v: i32): PairSlots {
   if (p % 2 == 0) {
     return t;
@@ -2619,8 +2138,6 @@ function even_pair(t: PairSlots, p: i32, v: i32): PairSlots {
   return PairSlots { slot_end: t.slot_end.append(2147483647), holder: t.holder.append(v), occupants: t.occupants.append([v]) };
 }
 
-// take_pair gives lane value `v` the units p and p + 1. It shares them with
-// nothing, so both end where `v` does, at `end`.
 function take_pair(t: PairSlots, p: i32, end: i32, v: i32): PairSlots {
   let u: i32 = p;
   while (u <= p + 1) {
@@ -2664,8 +2181,6 @@ function assign_spill_slots(f: SFunc, shape: SlotShape, lo: i32[], hi: i32[], re
       reg_of = reg_of.with(v, spill_code(p));
       continue;
     }
-    // A value other than a lane value takes no slot from a lane mate or a lane
-    // operand: those slots are units of a pair.
     let ends: i32[] = closed_pairs(slot_end, pairs);
     let h: i32 = unmarked_or_none(hints.hint[v], lanes);
     let s: i32 = hinted_slot(ends, holder, reg_of, h, from[v], hints.take_over[v]);
@@ -2708,7 +2223,6 @@ function assign_spill_slots(f: SFunc, shape: SlotShape, lo: i32[], hi: i32[], re
   return reg_of;
 }
 
-// spilled_values are the values assign_spill_slots gives a slot.
 function spilled_values(reg_of: i32[], hi: i32[]): i32[] {
   let out: i32[] = [];
   let v: i32 = 0;
@@ -2721,11 +2235,8 @@ function spilled_values(reg_of: i32[], hi: i32[]): i32[] {
   return out;
 }
 
-// SlotShape is what slot sharing reads of a function's numbering.
 struct SlotShape { at: i32[], blk_start: i32[], def_blk: i32[], def_pos: i32[], def_a: i32[], def_b: i32[] }
 
-// slot_operands lists the spilled values v reads whose slot it could share:
-// a phi's operands, or the two a two-address op computes over.
 function slot_operands(f: SFunc, shape: SlotShape, reg_of: i32[], v: i32): i32[] {
   let out: i32[] = [];
   let bi: i32 = shape.def_blk[v];
@@ -2742,10 +2253,6 @@ function slot_operands(f: SFunc, shape: SlotShape, reg_of: i32[], v: i32): i32[]
   return out;
 }
 
-// path_slot is the slot of the first of `reads` whose occupants still live at
-// `from` are none of them live where v is defined, nor v where they are, and
-// which, when free, no other value's phi mate is keeping; -1 when there is
-// none.
 function path_slot(sites: ReadSites, live: SpillLive, shape: SlotShape, reads: i32[], slot_end: i32[], holder: i32[], occupants: i32[][], wanted_by: i32[], reg_of: i32[], hi: i32[], from: i32, v: i32): i32 {
   for c in reads {
     let cs: i32 = spill_slot(reg_of[c]);
@@ -2762,7 +2269,6 @@ function path_slot(sites: ReadSites, live: SpillLive, shape: SlotShape, reads: i
   return 0 - 1;
 }
 
-// still_in keeps the occupants whose intervals reach `from`.
 function still_in(occ: i32[], hi: i32[], from: i32): i32[] {
   let out: i32[] = [];
   for w in occ {
@@ -2773,13 +2279,6 @@ function still_in(occ: i32[], hi: i32[], from: i32): i32[] {
   return out;
 }
 
-// ReadSites lists where each value is read, as the block position and the
-// instruction position of each read: a terminator reads at the position after
-// its block's last instruction, and a phi reads its operand there in the
-// predecessor it arrives from. Value v's reads are entries start[v] up to
-// start[v + 1]. succ_a and succ_b are each block's successor positions, -1
-// for none; a branch to one block on both arms is one successor.
-// phi_end is, per block, the position just past its last phi.
 struct ReadSites { start: i32[], blk: i32[], pos: i32[], succ_a: i32[], succ_b: i32[], phi_end: i32[] }
 
 function read_sites(f: SFunc, at: i32[], blk_start: i32[]): ReadSites {
@@ -2875,9 +2374,6 @@ function read_sites(f: SFunc, at: i32[], blk_start: i32[]): ReadSites {
   return ReadSites { start: start, blk: blk, pos: pos, succ_a: succ_a, succ_b: succ_b, phi_end: phi_end };
 }
 
-// chain_dead_at_def says no value sharing `holder`'s register, the holder and
-// those it shares with, is live where `a` is defined. One whose interval ends
-// before a's begins is not.
 function chain_dead_at_def(sites: ReadSites, holder: i32, a: i32, shared_with: i32[], lo: i32[], hi: i32[], def_blk: i32[], def_pos: i32[]): boolean {
   let m: i32 = holder;
   while (m >= 0) {
@@ -2889,8 +2385,6 @@ function chain_dead_at_def(sites: ReadSites, holder: i32, a: i32, shared_with: i
   return true;
 }
 
-// live_near is what live_at_def decides inside a's block: 0 for not live, 1
-// for live, 2 when only the blocks reachable from a's can tell.
 function live_near(sites: ReadSites, r: i32, a: i32, def_blk: i32[], def_pos: i32[]): i32 {
   let ab: i32 = def_blk[a];
   if (r < 0 || ab < 0) {
@@ -2916,21 +2410,12 @@ function live_near(sites: ReadSites, r: i32, a: i32, def_blk: i32[], def_pos: i3
   if (!far) {
     return 0;
   }
-  // Read only in its own block, after its definition (a phi's operand
-  // is read at the predecessor's end): a path from `a` back to a read
-  // enters that block at its top and defines `r` again first.
   if (!elsewhere && rb != ab) {
     return 0;
   }
   return 2;
 }
 
-// live_at_def says r is live where a is defined: some read of r is reachable
-// from there without passing r's definition. The read at a's own definition
-// comes before the write and does not count; one in a's block after it does,
-// unless r is defined between. A block's phis are all defined at its entry,
-// whatever their order. A value with no definition, a parameter, is defined
-// before every block.
 function live_at_def(sites: ReadSites, r: i32, a: i32, def_blk: i32[], def_pos: i32[]): boolean {
   let near: i32 = live_near(sites, r, a, def_blk, def_pos);
   if (near != 2) {
@@ -2940,11 +2425,6 @@ function live_at_def(sites: ReadSites, r: i32, a: i32, def_blk: i32[], def_pos: 
   let rb: i32 = def_blk[r];
   let first: i32 = sites.start[r];
   let last: i32 = sites.start[r + 1];
-  // A walk of the blocks reachable from a's without passing r's. `walk`
-  // is the stack of blocks reached and not yet scanned, then a mark per
-  // block from `n` on, then from `2 * n` on a mark per block that reads r;
-  // a block is marked and stacked once, when first reached. a's own block
-  // is not marked, so a path back to it is walked.
   let n: i32 = sites.succ_a.len();
   let walk: i32[] = __alloc_i32(3 * n);
   let i: i32 = first;
@@ -2976,17 +2456,12 @@ function live_at_def(sites: ReadSites, r: i32, a: i32, def_blk: i32[], def_pos: 
   }
 }
 
-// SpillLive is live_at_def's walk answered once for a set of values: each
-// block's live-in set over them, bit k of words [b * words, (b + 1) * words)
-// for the value `index` numbers k. A value is used in every block that reads
-// it but its own, where it is defined first; nothing passes its definition.
 struct SpillLive { index: i32[], words: i32, live_in: i64[] }
 
 function no_spill_live(): SpillLive {
   return SpillLive { index: [], words: 0, live_in: [] };
 }
 
-// spill_live computes live-in sets over `values` to the fixed point.
 function spill_live(sites: ReadSites, def_blk: i32[], values: i32[], nvals: i32): SpillLive {
   let n: i32 = sites.succ_a.len();
   let words: i32 = (values.len() + 63) / 64;
@@ -3043,7 +2518,6 @@ function spill_bit(own rows: i64[], base: i32, k: i32): i64[] {
   return rows.with(w, rows[w] | 1i64 << (k % 64) as i64);
 }
 
-// spill_live_at is live_at_def for a value `live` covers, read off its sets.
 function spill_live_at(live: SpillLive, sites: ReadSites, r: i32, a: i32, def_blk: i32[], def_pos: i32[]): boolean {
   let near: i32 = live_near(sites, r, a, def_blk, def_pos);
   if (near != 2) {
@@ -3077,7 +2551,6 @@ function spill_starts(lo: i32[], def_pos: i32[]): i32[] {
   return from;
 }
 
-// wanted_by[m] is the spilled value whose phi mate is m, or -1.
 function mates_wanted(hi: i32[], reg_of: i32[], hint: i32[]): i32[] {
   let wanted_by: i32[] = util.minus_ones(reg_of.len());
   let i: i32 = 0;
@@ -3091,8 +2564,6 @@ function mates_wanted(hi: i32[], reg_of: i32[], hint: i32[]): i32[] {
   return wanted_by;
 }
 
-// The slot of the mate h, when it is free at `from` or the value may take it
-// over from h; -1 otherwise.
 function hinted_slot(slot_end: i32[], holder: i32[], reg_of: i32[], h: i32, from: i32, take_over: boolean): i32 {
   if (h < 0 || reg_of[h] >= 0 - 1) {
     return 0 - 1;
@@ -3112,11 +2583,6 @@ function free_slot(slot_end: i32[], holder: i32[], wanted_by: i32[], reg_of: i32
   return s;
 }
 
-// free_pair is the low unit of the first lane pair (`pairs`) free at `from`,
-// for a lane value; past the end when none is, where an odd end leaves one
-// unit unused so the pair stays at an even index. A lane value takes only a
-// pair another lane value had: the emitters move every value in a pair's
-// units 16 bytes at a time.
 function free_pair(slot_end: i32[], holder: i32[], wanted_by: i32[], reg_of: i32[], pairs: i32[], from: i32, v: i32): i32 {
   for p in pairs {
     if (slot_free_at(slot_end, holder, wanted_by, reg_of, from, v, p) && slot_free_at(slot_end, holder, wanted_by, reg_of, from, v, p + 1)) {
@@ -3126,8 +2592,6 @@ function free_pair(slot_end: i32[], holder: i32[], wanted_by: i32[], reg_of: i32
   return slot_end.len();
 }
 
-// closed_pairs is `slot_end` with the lane pairs' units never free, as a
-// value other than a lane value sees them.
 function closed_pairs(slot_end: i32[], pairs: i32[]): i32[] {
   for p in pairs {
     slot_end = slot_end.with(p, 2147483647).with(p + 1, 2147483647);
@@ -3139,27 +2603,6 @@ function slot_free_at(slot_end: i32[], holder: i32[], wanted_by: i32[], reg_of: 
   return slot_end[s] < from && !kept_for_mate(wanted_by, reg_of, holder[s], v);
 }
 
-// Imms marks the integer constants an emitter reads as immediate operands and
-// never materialises: `is_imm[v]` says value v needs no home. A constant
-// qualifies when it lies in lo..hi and every use is a binary op reading it as
-// the right operand of an op named in `right`, or as the left operand of one
-// named in `left` (the commutative ops and the comparisons, which the emitter
-// turns round), the offset of a byte load or store (54, 55), which the
-// emitter reads as a displacement, the index of an array element or string
-// byte (42..44) up to 4087, which both emitters fold into the address and the
-// bounds compare, a phi operand, which the edge's moves load into the phi's
-// home, or a returned value, loaded into the result register; a use anywhere
-// else keeps it in a register. When both
-// operands are constants (the optimiser's folds do not run here, so
-// `0i64 - 5i64` reaches the emitter) only the right one is an immediate, so
-// the op still has a register to compute in. `konst[v]` says v is an integer
-// constant at all and `value[v]` is its value, whether or not it is an
-// immediate, for an arm that specialises on a constant it still reads from a
-// register (the x86-64 literal-divisor forms).
-// is_imm says a value is read as an immediate and never materialised; konst
-// and value hold the integer constants (kinds 1 and 3). A symbolic immediate,
-// an address a backend compares as a sign-extended imm32, has sym_at[v] > 0
-// and its label at syms[sym_at[v] - 1]; imm_sym reads it.
 pub struct Imms { is_imm: boolean[], konst: boolean[], value: i64[], sym_at: i32[], syms: string[] }
 
 pub function imm_sym(imm: Imms, v: i32): string {
@@ -3167,7 +2610,6 @@ pub function imm_sym(imm: Imms, v: i32): string {
   return if (k > 0) { imm.syms[k - 1] } else { "" };
 }
 
-// with_sym marks v an immediate spelt as the label `sym`.
 pub function with_sym(own imm: Imms, v: i32, sym: string): Imms {
   let syms: string[] = imm.syms.append(sym);
   return Imms { ...imm, is_imm: imm.is_imm.with(v, true), sym_at: imm.sym_at.with(v, syms.len()), syms: syms };
@@ -3214,7 +2656,6 @@ pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: string[], left: str
 }
 
 function imm_use(ins: SInst, a: i32, konst: boolean[], c: i64, right: string[], left: string[]): boolean {
-  // A word-scaled displacement encodable on both native ISAs.
   if ((ins.kind_tag == 52 || ins.kind_tag == 53) && a == 1) {
     return c >= 0i64 && c <= 4095i64;
   }
@@ -3246,9 +2687,6 @@ function imm_use(ins: SInst, a: i32, konst: boolean[], c: i64, right: string[], 
   return false;
 }
 
-// literal_first_bytes is, per value, the first byte of the string literal
-// the value is the address of (kind 47), or -1: for every other value, and
-// for the empty literal, which has no byte to read.
 pub function literal_first_bytes(f: SFunc): i32[] {
   let out: i32[] = util.minus_ones(f.nvals);
   for blk in f.blocks {
@@ -3261,9 +2699,6 @@ pub function literal_first_bytes(f: SFunc): i32[] {
   return out;
 }
 
-// use_counts is how many instruction operands and terminators read each
-// value; a value read once by the branch that ends its block can be
-// consumed as flags rather than materialised.
 pub function use_counts(f: SFunc): i32[] {
   let uses: i32[] = __alloc_i32(f.nvals);
   for blk in f.blocks {
@@ -3285,19 +2720,6 @@ pub function use_counts(f: SFunc): i32[] {
   return uses;
 }
 
-// A phi whose operands are all one value IS that value. The production lift
-// emits a placeholder phi per live local at every merge and every loop
-// header, and most locals are untouched on the paths that meet there, so most
-// of those phis are trivial. Folding them before allocation takes the values
-// out of the interval set altogether, which is where the frame traffic comes
-// from — an allocator can only choose between spilling and not spilling, it
-// cannot decline to have a value.
-//
-// A self-reference does not count: a loop header phi reads [init, itself]
-// while the body leaves the local alone, and that is trivial too.
-
-// phi_sole_operand is the one value a phi collapses to, or -1. `repl`
-// resolves operands folded in an earlier round.
 function phi_sole_operand(ins: SInst, repl: i32[]): i32 {
   let only: i32 = 0 - 1;
   let i: i32 = 0;
@@ -3324,8 +2746,6 @@ function resolve_repl(repl: i32[], v: i32): i32 {
   return v;
 }
 
-// trivial_phi_repl builds the value-to-value map, to a fixpoint: folding one
-// phi can make the next trivial.
 function trivial_phi_repl(f: SFunc): i32[] {
   let repl: i32[] = __alloc_i32(f.nvals);
   let i: i32 = 0;
@@ -3357,18 +2777,8 @@ function trivial_phi_repl(f: SFunc): i32[] {
   return repl;
 }
 
-// ---- inlining ------------------------------------------------------------
-// A leaf is a function a caller may take in place of a call to it: one block,
-// or a chain of blocks each branching to the next, that returns a value and
-// calls nothing, of at most leaf_limit() instructions
-// that compute (constants, copies, binaries, unaries) and its parameters. Its
-// body is already reference-counted as the callee's own, so splicing it in
-// place of the call keeps every retain and release the call would have made.
-// `name` is the callee name a call to it carries.
 pub struct Leaf { name: string, func: SFunc }
 
-// Leaves is a unit's leaves with their names indexed, so a call finds its
-// leaf, if any, by one lookup.
 pub struct Leaves { list: Leaf[], ix: util.NameIndex }
 
 pub function leaves_of(list: Leaf[]): Leaves {
@@ -3387,7 +2797,6 @@ function leaf_kind(k: i32): boolean {
   return k == 1 || k == 2 || k == 3 || k == 6 || k == 7 || k == 9 || k == 10;
 }
 
-// leaf_of is the leaf `f` is, as one block, or none.
 pub function leaf_of(name: string, f: SFunc): Leaf[] {
   if (f.takes_env || f.blocks.len() == 0) {
     return [];
@@ -3416,9 +2825,6 @@ pub function leaf_of(name: string, f: SFunc): Leaf[] {
   return [];
 }
 
-// returning_leaf is the leaf of `f`'s instructions, flattened into one block
-// that ends in `term`, or none when they return no value, include an op a leaf
-// may not, or are too many.
 function returning_leaf(name: string, f: SFunc, insts: SInst[], term: STerm): Leaf[] {
   if (term.value < 0) {
     return [];
@@ -3439,17 +2845,11 @@ function returning_leaf(name: string, f: SFunc, insts: SInst[], term: STerm): Le
   return [Leaf { name: name, func: SFunc { ...f, blocks: [one] } }];
 }
 
-// inline_leaves replaces each direct call to a leaf with the leaf's
-// instructions: its parameters read the call's
-// arguments, its other values are renumbered past the caller's, and the call's
-// result becomes a copy of the value the leaf returns.
 pub function inline_leaves(f: SFunc, leaves: Leaves): SFunc {
   if (leaves.list.len() == 0) {
     return f;
   }
   let nvals: i32 = f.nvals;
-  // `blocks` is written from the first block that splices a leaf on, and a
-  // block's `insts` from its first spliced call on.
   let blocks: SBlock[] = [];
   let copying: boolean = false;
   let bi: i32 = 0;
@@ -3512,8 +2912,6 @@ pub function inline_leaves(f: SFunc, leaves: Leaves): SFunc {
   return SFunc { ...f, nvals: nvals, blocks: blocks };
 }
 
-// calls_leaf reports a direct call in `f` to one of `leaves`: whether
-// inline_leaves has anything to splice.
 pub function calls_leaf(f: SFunc, leaves: Leaves): boolean {
   for b in f.blocks {
     for ins in b.insts {
@@ -3525,8 +2923,6 @@ pub function calls_leaf(f: SFunc, leaves: Leaves): boolean {
   return false;
 }
 
-// leaf_index is the first leaf named `name` taking `argc` arguments, -1 for
-// none; the chain ascends, so the first hit is the first in the list.
 function leaf_index(leaves: Leaves, name: string, argc: i32): i32 {
   let i: i32 = leaves.ix.chain(name);
   while (i >= 0) {
@@ -3538,7 +2934,6 @@ function leaf_index(leaves: Leaves, name: string, argc: i32): i32 {
   return 0 - 1;
 }
 
-// prune_trivial_phis drops the folded phis and rewrites every reader.
 pub function prune_trivial_phis(f: SFunc): Formed {
   let repl: i32[] = trivial_phi_repl(f);
   let any: boolean = false;
@@ -3561,11 +2956,7 @@ pub function prune_trivial_phis(f: SFunc): Formed {
   return Formed { f: rewrite_through(f, flat), repl: flat };
 }
 
-// rewrite_through drops every instruction whose result `flat` maps to another
-// value and points every reader at the value it maps to.
 function rewrite_through(f: SFunc, flat: i32[]): SFunc {
-  // `nblocks` is written from the first block that changes on, and a block's
-  // `ninsts` from its first dropped or rewritten instruction on.
   let nblocks: SBlock[] = [];
   let copying: boolean = false;
   let bi: i32 = 0;
@@ -3616,14 +3007,7 @@ function rewrite_through(f: SFunc, flat: i32[]): SFunc {
   return SFunc { ...f, blocks: nblocks };
 }
 
-// merge_duplicates maps an instruction that repeats an earlier one in its
-// block, the same pure operation on the same operands, onto the earlier one,
-// so a rotate whose operand is written out twice reaches fuse_rotates as one
-// value (#10615). Constants compare by value. Loads, calls and integer
-// divisions are left alone.
 function merge_duplicates(f: SFunc): Formed {
-  // `canon` is what each value compares as: the value it merged into, or for
-  // a constant the first constant of the same value, in any block.
   let canon: i32[] = identity_repl(f.nvals);
   let n: i32 = 0;
   for blk in f.blocks {
@@ -3720,7 +3104,6 @@ function operand_id(a: i32, canon: i32[]): i32 {
   return canon[a];
 }
 
-// inst_hash is a non-negative hash of an instruction's operation and operands.
 function inst_hash(ins: SInst, canon: i32[]): i32 {
   let h: i32 = (ins.kind_tag * 31 + (ins.imm & 65535)) * 31 + (__str_hash(ins.str, 0) & 65535) & 1048575;
   for a in ins.args {
@@ -3743,7 +3126,6 @@ function same_operation(a: SInst, b: SInst, canon: i32[]): boolean {
   return true;
 }
 
-// args_move reports whether `resolved` maps any operand of `ins` elsewhere.
 function args_move(ins: SInst, resolved: i32[]): boolean {
   for a in ins.args {
     if (a >= 0 && resolved[a] != a) {
@@ -3763,10 +3145,6 @@ function term_moves(t: STerm, resolved: i32[]): boolean {
   return false;
 }
 
-// repeated_block_id names the first block id that appears twice in `f.blocks`,
-// or -1 when every id is distinct. The emitters write one `.Lssa_<fn>_<id>:`
-// per entry, so a repeat spells one label twice and the assembler rejects the
-// whole module without naming the pass that produced it (#9688).
 pub function repeated_block_id(f: SFunc): i32 {
   let top: i32 = 0;
   for blk in f.blocks {
@@ -3784,22 +3162,8 @@ pub function repeated_block_id(f: SFunc): i32 {
   return 0 - 1;
 }
 
-// prune_dead drops every pure instruction (const / copy / binary / unary /
-// phi) whose result reaches no instruction with an effect and no terminator,
-// through any number of pure instructions. Marking from those roots, rather
-// than asking whether each result has a reader, is what removes a cycle of
-// phis that only read each other. Params and calls are always kept.
-// thread_forwarding sends every edge past the empty blocks on its way: a
-// block with no instructions whose terminator is a plain branch to a block
-// with no phis adds nothing, so its predecessors branch to its target and,
-// once nothing reaches it, it is dropped. prune_dead and prune_trivial_phis
-// leave such blocks behind wherever a branch's arms or a loop's exits
-// carried only values nothing read. A block with phis keeps every edge into
-// it, since the phis' operands are per predecessor. `changed` says an edge
-// moved or a block was dropped.
 pub function thread_forwarding(f: SFunc): Threading {
   let at: i32[] = block_positions(f);
-  // `nblocks` is written from the first block whose branch moves on.
   let nblocks: SBlock[] = [];
   let copying: boolean = false;
   let bi: i32 = 0;
@@ -3856,7 +3220,6 @@ pub function thread_forwarding(f: SFunc): Threading {
       which = which + 1;
     }
   }
-  // `kept` is written from the first unreachable block on.
   let kept: SBlock[] = [];
   let dropping: boolean = false;
   let i: i32 = 0;
@@ -3878,8 +3241,6 @@ pub function thread_forwarding(f: SFunc): Threading {
   return Threading { f: SFunc { ...out, blocks: refreshed_preds(out) }, changed: copying || dropping };
 }
 
-// forwarded follows a chain of empty forwarding blocks from `id` to the
-// first block that is not one; a cycle of them ends the walk where it is.
 function forwarded(f: SFunc, at: i32[], id: i32): i32 {
   let cur: i32 = id;
   let steps: i32 = 0;
@@ -3910,10 +3271,6 @@ function has_phi(b: SBlock): boolean {
   return false;
 }
 
-// refreshed_preds recomputes the predecessor list of every block without
-// phis from the edges as they now are. A block with phis keeps its list,
-// whose order the phis' operands follow, less the entries no edge backs any
-// more: a dropped block, or a folded branch that no longer comes this way.
 pub function refreshed_preds(f: SFunc): SBlock[] {
   let at: i32[] = block_positions(f);
   let preds: i32[][] = [];
@@ -3934,7 +3291,6 @@ pub function refreshed_preds(f: SFunc): SBlock[] {
     }
     i = i + 1;
   }
-  // `out` is written from the first block whose list changes on.
   let out: SBlock[] = [];
   let copying: boolean = false;
   i = 0;
@@ -3968,7 +3324,6 @@ pub function refreshed_preds(f: SFunc): SBlock[] {
   return out;
 }
 
-// every_pred reports whether `edges` backs every entry of `ps`.
 function every_pred(ps: i32[], edges: i32[]): boolean {
   for p in ps {
     if (!has_pred(edges, p)) {
@@ -3992,9 +3347,6 @@ function same_preds(a: i32[], b: i32[]): boolean {
   return true;
 }
 
-// trim_phi_edges drops the predecessor slots of b, and each phi's operand
-// for them, whose predecessor is not among `edges`, the blocks that branch
-// to b now.
 function trim_phi_edges(b: SBlock, edges: i32[]): SBlock {
   let keep: boolean[] = [];
   let npreds: i32[] = [];
@@ -4036,23 +3388,6 @@ function has_pred(ps: i32[], id: i32): boolean {
   return false;
 }
 
-// ---- branches on boolean joins ---------------------------------------------
-//
-// A boolean made as a VALUE by `&&` or `||` — a predicate spliced into its
-// caller, or a flag held in a local — reaches its use as a phi of each arm's
-// 0/1, and a branch on that phi tests again what the arms just decided.
-// thread_bool_joins sends each arm straight to the branch's targets: an arm
-// bringing a constant jumps to the side the constant picks, and one bringing a
-// comparison branches on it, which the emitters fuse into compare and jump.
-//
-// The join must hold that phi alone, read by nothing but the branch (its own,
-// or that of an empty block it falls into), be entered only forward, and
-// branch forward to blocks without phis. An arm is moved only when it ends in
-// a plain branch to the join. Every block that dominates the join dominates
-// each block entering it, so no other block changes dominator.
-
-// BoolJoin is a join the pass can take apart: `j` its position, `k` the
-// position of the empty block holding the branch or -1, `t` / `f` the targets.
 struct BoolJoin { ok: boolean, j: i32, k: i32, t: i32, f: i32 }
 
 pub struct Threading { f: SFunc, changed: boolean }
@@ -4075,8 +3410,6 @@ pub function thread_bool_joins(f: SFunc): Threading {
   return Threading { f: g, changed: changed };
 }
 
-// thread_round threads every join whose blocks no earlier join in the round
-// rewrote; the next round sees the graph that leaves.
 function thread_round(f: SFunc): Threading {
   let at: i32[] = block_positions(f);
   let uses: i32[] = use_counts(f);
@@ -4106,8 +3439,6 @@ function thread_round(f: SFunc): Threading {
   return Threading { f: SFunc { ...g, blocks: refreshed_preds(g) }, changed: true };
 }
 
-// truth_constants maps each value an integer or boolean constant defines to
-// 1 or 0 as a branch reads it, and every other value to -1.
 function truth_constants(f: SFunc): i32[] {
   let out: i32[] = util.minus_ones(f.nvals);
   for blk in f.blocks {
@@ -4124,7 +3455,6 @@ function truth_constants(f: SFunc): i32[] {
   return out;
 }
 
-// bool_join_at is the join at position j, or one that is not ok.
 function bool_join_at(f: SFunc, at: i32[], uses: i32[], j: i32): BoolJoin {
   let blk: SBlock = f.blocks[j];
   let none: BoolJoin = BoolJoin { ok: false, j: j, k: 0 - 1, t: 0, f: 0 };
@@ -4149,8 +3479,6 @@ function bool_join_at(f: SFunc, at: i32[], uses: i32[], j: i32): BoolJoin {
   return BoolJoin { ok: true, j: j, k: k, t: br.t, f: br.f };
 }
 
-// entered_forward says every edge into position j comes from a block laid out
-// before it, one edge per predecessor, and the phi has an operand for each.
 function entered_forward(f: SFunc, at: i32[], j: i32): boolean {
   let blk: SBlock = f.blocks[j];
   if (blk.preds.len() == 0 || blk.insts[0].args.len() != blk.preds.len()) {
@@ -4167,20 +3495,15 @@ function entered_forward(f: SFunc, at: i32[], j: i32): boolean {
   return true;
 }
 
-// branch_only says b holds nothing but a conditional branch and is entered
-// from `from` alone.
 function branch_only(b: SBlock, from: i32): boolean {
   return b.insts.len() == 0 && b.term.kind_tag == 3 && b.preds.len() == 1 && b.preds[0] == from;
 }
 
-// plain_target says the block `id` is laid out past position `last` and has
-// no phis, so a new edge into it needs no operand.
 function plain_target(f: SFunc, at: i32[], id: i32, last: i32): boolean {
   let p: i32 = position_of(at, id);
   return p > last && !has_phi(f.blocks[p]);
 }
 
-// join_busy says an earlier join this round rewrote a block this one would.
 function join_busy(f: SFunc, at: i32[], busy: boolean[], jn: BoolJoin): boolean {
   if (busy[jn.j] || jn.k >= 0 && busy[jn.k]) {
     return true;
@@ -4193,8 +3516,6 @@ function join_busy(f: SFunc, at: i32[], busy: boolean[], jn: BoolJoin): boolean 
   return false;
 }
 
-// thread_join moves every edge into the join that ends a plain branch, and
-// drops the join once no edge is left entering it.
 function thread_join(f: SFunc, at: i32[], konst: i32[], jn: BoolJoin, r: ThreadRound): ThreadRound {
   let jb: SBlock = f.blocks[jn.j];
   let blocks: SBlock[] = r.blocks;
@@ -4221,8 +3542,6 @@ function thread_join(f: SFunc, at: i32[], konst: i32[], jn: BoolJoin, r: ThreadR
   return ThreadRound { blocks: blocks, busy: busy, gone: gone, changed: r.changed || kept < jb.preds.len() };
 }
 
-// arm_term is where an arm bringing `v` to the join goes instead: the target
-// a constant picks, or a branch on `v` itself.
 function arm_term(v: i32, konst: i32[], jn: BoolJoin): STerm {
   if (v >= 0 && v < konst.len() && konst[v] == 1) {
     return t_br(jn.t);
@@ -4233,27 +3552,6 @@ function arm_term(v: i32, konst: i32[], jn: BoolJoin): STerm {
   return t_brif(v, jn.t, jn.f);
 }
 
-// ---- conditional values ----------------------------------------------------
-//
-// A branch whose two arms compute a few pure integer values and then meet,
-// at a join's phis or at a return each, becomes straight-line code: the arms'
-// instructions move up into the branching block, and each value the arms
-// chose between becomes a `select` on the branch's condition, which the
-// emitters render as a conditional move. A branch the data decides at random
-// mispredicts half the time; a conditional move never does.
-//
-// An arm is the edge itself, or a block entered from the branch alone that
-// holds at most select_arm_limit() instructions, each of which may run on the
-// path that did not take it: no memory access, no call, no division, no
-// float. A join must be entered from the two arms alone. A float the
-// emitters keep in a float register stays a phi.
-//
-// The pass runs on the certified form: what it moves holds no reference
-// count operation, so it changes none of the events the certifier proved.
-
-// Diamond is a branch the pass can flatten: `head` the branching block's
-// position, `t` / `f` each arm's position or -1 for an arm that is the edge
-// itself, and `join` the join's position, or -1 when both arms return.
 struct Diamond { ok: boolean, head: i32, t: i32, f: i32, join: i32 }
 
 pub function select_arm_limit(): i32 {
@@ -4274,9 +3572,6 @@ pub function select_branches(f: SFunc): SFunc {
   return g;
 }
 
-// select_round flattens every diamond whose blocks no earlier one in the
-// round rewrote; the next round sees the graph that leaves, where a join
-// that became straight-line code may head a diamond of its own.
 function select_round(f: SFunc): Threading {
   let at: i32[] = block_positions(f);
   let fl: boolean[] = float_values(f, [], false);
@@ -4304,12 +3599,8 @@ function select_round(f: SFunc): Threading {
   return Threading { f: SFunc { ...f, nvals: r.nvals, blocks: kept }, changed: true };
 }
 
-// Flattening is a round's rewritten blocks, the positions it rewrote (busy)
-// and dropped (gone), and the next fresh value.
 struct Flattening { blocks: SBlock[], busy: boolean[], gone: boolean[], nvals: i32, changed: boolean }
 
-// flatten_diamond rewrites diamond d: the head takes the arms' instructions
-// and a select per value they chose between, and the arms are dropped.
 function flatten_diamond(f: SFunc, d: Diamond, r: Flattening): Flattening {
   let head: SBlock = f.blocks[d.head];
   let insts: SInst[] = hoisted(head, util.append_all(arm_insts(f, d.t), arm_insts(f, d.f)));
@@ -4336,8 +3627,6 @@ function drop_arm(r: Flattening, arm: i32): Flattening {
   return Flattening { ...r, busy: r.busy.with(arm, true), gone: r.gone.with(arm, true) };
 }
 
-// diamond_at is the diamond the branch ending position p heads, or one that
-// is not ok.
 function diamond_at(f: SFunc, at: i32[], fl: boolean[], p: i32): Diamond {
   let none: Diamond = Diamond { ok: false, head: p, t: 0 - 1, f: 0 - 1, join: 0 - 1 };
   let head: SBlock = f.blocks[p];
@@ -4365,8 +3654,6 @@ function diamond_at(f: SFunc, at: i32[], fl: boolean[], p: i32): Diamond {
   return Diamond { ok: true, head: p, t: at_t, f: at_f, join: jp };
 }
 
-// arm_at is position p when its block is an arm of the branch out of `from`
-// (select_arm), and -1 when the branch goes straight to it.
 function arm_at(f: SFunc, p: i32, from: i32): i32 {
   if (select_arm(f.blocks[p], from)) {
     return p;
@@ -4374,8 +3661,6 @@ function arm_at(f: SFunc, p: i32, from: i32): i32 {
   return 0 - 1;
 }
 
-// arms_fit says two arm blocks hold no more than select_arm_limit() + 1
-// instructions between them.
 function arms_fit(f: SFunc, at_t: i32, at_f: i32): boolean {
   if (at_t < 0 || at_f < 0) {
     return true;
@@ -4383,7 +3668,6 @@ function arms_fit(f: SFunc, at_t: i32, at_f: i32): boolean {
   return f.blocks[at_t].insts.len() + f.blocks[at_f].insts.len() <= select_arm_limit() + 1;
 }
 
-// returns_picked says the arm at position a returns a value that is no float.
 function returns_picked(f: SFunc, fl: boolean[], a: i32): boolean {
   if (a < 0) {
     return false;
@@ -4392,9 +3676,6 @@ function returns_picked(f: SFunc, fl: boolean[], a: i32): boolean {
   return t.kind_tag == 1 && t.value >= 0 && !picks_float(fl, t.value);
 }
 
-// join_of is the position both edges out of the head at p meet at, through
-// the arm block on each side that has one, or -1. An edge with no arm block
-// goes to the join itself; at least one side has an arm.
 function join_of(f: SFunc, at: i32[], p: i32, tp: i32, at_t: i32, fp: i32, at_f: i32): i32 {
   if (at_t < 0 && at_f < 0) {
     return 0 - 1;
@@ -4407,8 +3688,6 @@ function join_of(f: SFunc, at: i32[], p: i32, tp: i32, at_t: i32, fp: i32, at_f:
   return jt;
 }
 
-// arm_exit is where the edge to position p leads: past its arm block's plain
-// branch, or p itself when it has no arm block; -1 for an arm that returns.
 function arm_exit(f: SFunc, at: i32[], p: i32, arm: i32): i32 {
   if (arm < 0) {
     return p;
@@ -4420,17 +3699,11 @@ function arm_exit(f: SFunc, at: i32[], p: i32, arm: i32): i32 {
   return position_of(at, t.target);
 }
 
-// two_way says the head ends in a branch with two distinct targets on a
-// condition no call computes.
 function two_way(head: SBlock): boolean {
   let br: STerm = head.term;
   return br.kind_tag == 3 && br.t != br.f && !tested_by_call(head, br.cond);
 }
 
-// tested_by_call says the head computes the branch's condition with a call
-// or an inline rc primitive, or negates one. Those branch as they compute
-// it, and the uniqueness test's guard chain sets the very flags the branch
-// reads, so a select would only add a test of the value they leave.
 function tested_by_call(head: SBlock, cond: i32): boolean {
   for ins in head.insts {
     if (ins.result == cond && ins.kind_tag == 10 && ins.str == "!") {
@@ -4443,9 +3716,6 @@ function tested_by_call(head: SBlock, cond: i32): boolean {
   return false;
 }
 
-// select_arm says b is entered from the block `from` alone, holds no phi and
-// no more than select_arm_limit() instructions, and each may run whichever
-// way the branch goes.
 function select_arm(b: SBlock, from: i32): boolean {
   if (b.preds.len() != 1 || b.preds[0] != from || b.insts.len() > select_arm_limit()) {
     return false;
@@ -4461,8 +3731,6 @@ function select_arm(b: SBlock, from: i32): boolean {
   return true;
 }
 
-// speculable names an instruction that may run on a path that did not ask
-// for it: a constant, a copy, and the integer operators that cannot trap.
 function speculable(ins: SInst): boolean {
   let k: i32 = ins.kind_tag;
   if (k == 1 || k == 2 || k == 3 || k == 7) {
@@ -4477,8 +3745,6 @@ function speculable(ins: SInst): boolean {
   return false;
 }
 
-// int_unary names the integer unaries: the width casts, the rotate and the
-// bit counts, none of which reads memory or traps.
 function int_unary(op: string): boolean {
   if (util.has_str(["!", "int_extend", "int_wrap", "u32_wrap"], op)) {
     return true;
@@ -4491,8 +3757,6 @@ function int_unary(op: string): boolean {
   return false;
 }
 
-// select_join says the join j is entered from the two arms' sources alone and
-// holds at most two phis, none of a float.
 function select_join(f: SFunc, fl: boolean[], j: SBlock, from_t: i32, from_f: i32): boolean {
   if (j.preds.len() != 2 || !has_pred(j.preds, from_t) || !has_pred(j.preds, from_f)) {
     return false;
@@ -4513,8 +3777,6 @@ function picks_float(fl: boolean[], v: i32): boolean {
   return v >= 0 && v < fl.len() && fl[v];
 }
 
-// arm_source is the block an arm's edge into the join leaves from: the arm,
-// or the head when the arm is the edge itself.
 function arm_source(f: SFunc, head: SBlock, arm: i32): i32 {
   if (arm < 0) {
     return head.id;
@@ -4533,10 +3795,6 @@ function diamond_busy(busy: boolean[], d: Diamond): boolean {
   return busy[d.head] || d.t >= 0 && busy[d.t] || d.f >= 0 && busy[d.f] || d.join >= 0 && busy[d.join];
 }
 
-// hoisted is the head's instructions with the arms' added. They go in ahead
-// of the instruction that ends the head when it computes the condition and
-// no arm reads it, so a comparison still sits beside its select; never
-// ahead of a phi, which must lead its block.
 function hoisted(head: SBlock, arms: SInst[]): SInst[] {
   let n: i32 = head.insts.len();
   if (n == 0 || head.insts[n - 1].result != head.term.cond || head.insts[n - 1].kind_tag == 8 || arms_read(arms, head.term.cond)) {
@@ -4555,8 +3813,6 @@ function arms_read(arms: SInst[], v: i32): boolean {
   return false;
 }
 
-// select_run is the first position of the run of selects around position
-// ii that read ii's condition, and the position just past it.
 pub function select_run(blk: SBlock, ii: i32): i32[] {
   let c: i32 = blk.insts[ii].args[0];
   let lo: i32 = ii;
@@ -4570,9 +3826,6 @@ pub function select_run(blk: SBlock, ii: i32): i32[] {
   return [lo, hi];
 }
 
-// join_selects is a select, or a copy when both arms bring the same value,
-// for each of the join's phis. The selects come first and together, so the
-// emitters read one compare's flags for all of them.
 function join_selects(j: SBlock, cond: i32, from_t: i32, from_f: i32): SInst[] {
   let picks: SInst[] = [];
   let copies: SInst[] = [];
@@ -4610,9 +3863,6 @@ function slice_insts(a: SInst[], lo: i32, hi: i32): SInst[] {
   return out;
 }
 
-// Formed is a function with `repl`, the value each of the input's values was
-// replaced by (resolved, so one lookup is enough); empty when none was. A `-g`
-// build follows a variable's value through it (#11410).
 pub struct Formed { f: SFunc, repl: i32[] }
 
 function formed_by(f: SFunc, repl: i32[]): Formed {
@@ -4625,7 +3875,6 @@ function formed_by(f: SFunc, repl: i32[]): Formed {
   return Formed { f: f, repl: flat };
 }
 
-// compose_repl is the replacement `b` makes after `a`.
 function compose_repl(a: i32[], b: i32[]): i32[] {
   if (a.len() == 0) {
     return b;
@@ -4644,20 +3893,10 @@ function compose_repl(a: i32[], b: i32[]): i32[] {
   return out;
 }
 
-// register_form is a lifted function as the register backends allocate it:
-// trivial phis folded, repeated pure operations merged, rotates fused, wraps
-// nothing reads dropped, dead values pruned, branches on boolean joins
-// threaded and forwarding blocks threaded. Threading drops the blocks it
-// leaves unreachable, so what only they read is pruned after it.
-// Dead values are pruned before the wraps too: a fused rotate's right shift
-// would otherwise still read its operand's high half.
 pub function register_form(f: SFunc): Formed {
   let folded: Formed = prune_trivial_phis(slot_calls(without_lines(f)));
   let merged: Formed = merge_duplicates(folded.f);
   let shared: Formed = share_shape_loads(merged.f);
-  // drop_low_wraps deletes each wrap it replaces, and the wrap's operand
-  // takes over its reads, so nothing it leaves is dead. prune_dead is
-  // idempotent, so a pass that changed nothing needs no prune after it.
   let unwrapped: Formed = drop_low_wraps(prune_dead(fuse_rotates(double_lanes(shared.f))));
   let g: SFunc = unwrapped.f;
   let bytes: Formed = fold_byte_access(g);
@@ -4676,8 +3915,6 @@ pub function register_form(f: SFunc): Formed {
   return Formed { f: g, repl: compose_repl(compose_repl(compose_repl(compose_repl(folded.repl, merged.repl), shared.repl), unwrapped.repl), bytes.repl) };
 }
 
-// Multiplication by two and addition to self have the same IEEE result.
-// The addition removes the splat and its register from vector loops.
 pub function double_lanes(f: SFunc): SFunc {
   let has_two: boolean = false;
   let has_multiply: boolean = false;
@@ -4728,7 +3965,6 @@ pub function double_lanes(f: SFunc): SFunc {
   return SFunc { ...f, blocks: blocks };
 }
 
-// Source positions describe code; they are not allocator or optimizer inputs.
 function without_lines(f: SFunc): SFunc {
   if (!has_kind(f, 35)) {
     return f;
@@ -4746,17 +3982,10 @@ function without_lines(f: SFunc): SFunc {
   return SFunc { ...f, blocks: blocks };
 }
 
-// slot_call is a call through a function value that reads the body's address
-// out of slot 0 of the environment it passes first, args[1]; its args[0]
-// repeats the environment.
 pub function slot_call(ins: SInst): boolean {
   return ins.kind_tag == 56 && ins.str == "slot";
 }
 
-// slot_calls makes a slot_call of each call through a function value whose
-// address is the unchecked read of slot 0 of the environment the call passes
-// (ssarc.body_address) and is read nowhere else, and drops the read: the
-// emitter loads the address from the environment at the call.
 function slot_calls(f: SFunc): SFunc {
   if (!has_kind(f, 56)) {
     return f;
@@ -4794,7 +4023,6 @@ pub function has_kind(f: SFunc, k: i32): boolean {
   return false;
 }
 
-// slot_reads maps each unchecked read of slot 0 of a box to the box.
 function slot_reads(f: SFunc): i32[] {
   let zero: boolean[] = __alloc_bool(f.nvals);
   for blk in f.blocks {
@@ -4815,8 +4043,6 @@ function slot_reads(f: SFunc): i32[] {
   return env_of;
 }
 
-// slot_block is `blk` with its slot calls marked and the reads they replace
-// dropped; a block with neither is handed back as it is.
 function slot_block(blk: SBlock, env_of: i32[], uses: i32[], dropped: boolean[]): SBlock {
   let edit: boolean = false;
   for ins in blk.insts {
@@ -4836,19 +4062,10 @@ function slot_block(blk: SBlock, env_of: i32[], uses: i32[], dropped: boolean[])
   return SBlock { ...blk, insts: insts };
 }
 
-// reads_own_slot is a call through a function value whose target is read out
-// of slot 0 of the environment it passes and by nothing else.
 function reads_own_slot(ins: SInst, env_of: i32[], uses: i32[]): boolean {
   return ins.kind_tag == 56 && ins.args.len() > 1 && env_of[ins.args[0]] == ins.args[1] && uses[ins.args[0]] == 1;
 }
 
-// share_shape_loads maps a load of a box's word 0, its shape, onto an earlier
-// load of the same word that reaches it along a chain of blocks each entered
-// from one predecessor with nothing between them that may write memory: the
-// shape of a `match`'s chain of variant tests. A runtime call may update a box
-// in place (a map iterator's advance does), so a call ends what is shared. A
-// box whose word 0 or elements the function stores, and any function with a
-// raw store, is left alone.
 function share_shape_loads(f: SFunc): Formed {
   let stored: boolean[] = __alloc_bool(f.nvals);
   let loads: i32 = 0;
@@ -4896,10 +4113,6 @@ function share_shape_loads(f: SFunc): Formed {
   return Formed { f: rewrite_through(f, repl), repl: repl };
 }
 
-// earlier_shape is the load of `box`'s word 0 that position `k` of block `bi`
-// reads its shape from: the nearest before it in the block, or up the chain of
-// blocks each entered from one earlier block, with nothing that may write
-// memory on the way. -1 when there is none.
 function earlier_shape(f: SFunc, at: i32[], bi: i32, k: i32, box: i32): i32 {
   let b: i32 = bi;
   let j: i32 = k - 1;
@@ -4926,8 +4139,6 @@ function earlier_shape(f: SFunc, at: i32[], bi: i32, k: i32, box: i32): i32 {
   }
 }
 
-// may_write is an instruction that may write memory: one with an effect other
-// than a line mark or a bounds-checked read, which can only abort.
 function may_write(k: i32): boolean {
   return inst_has_effect(k) && k != 35 && k != 42 && k != 44;
 }
@@ -4936,13 +4147,6 @@ function shape_load(ins: SInst, nvals: i32): boolean {
   return ins.kind_tag == 40 && ins.imm == 0 && ins.args.len() == 1 && ins.args[0] >= 0 && ins.args[0] < nvals && ins.result >= 0 && ins.result < nvals && ins.str == "";
 }
 
-// fold_byte_access does two things for a byte. It replaces an extension,
-// wrap or widening cast of a byte value by its operand: a byte load leaves
-// 0..255 in the whole register, which every one of those leaves unchanged.
-// And it gives a byte load or store at `add(a, b) + 0` the address `a + b`,
-// when the full-width sum is read nowhere else, so the backends use the
-// base-plus-index form rather than computing the sum and a zero index. The
-// register backends only: on wasm an extension changes the value's type.
 pub function fold_byte_access(f: SFunc): Formed {
   if (!has_byte_access(f)) {
     return Formed { f: f, repl: [] };
@@ -5034,8 +4238,6 @@ pub function fold_byte_access(f: SFunc): Formed {
   return formed_by(SFunc { ...f, blocks: nblocks }, repl);
 }
 
-// has_byte_access says `f` holds an instruction fold_byte_access can start
-// from: a byte load or store, or one byte_source may call a byte.
 function has_byte_access(f: SFunc): boolean {
   for blk in f.blocks {
     for ins in blk.insts {
@@ -5048,9 +4250,6 @@ function has_byte_access(f: SFunc): boolean {
   return false;
 }
 
-// byte_source is an instruction whose value is a byte, 0..255 zero-extended
-// to the whole register: a byte load, an element of a u8 array, a byte of a
-// string, or an `and` with a constant mask no wider than a byte.
 function byte_source(f: SFunc, def_b: i32[], def_k: i32[], ins: SInst): boolean {
   if (ins.kind_tag == 54) {
     return true;
@@ -5064,8 +4263,6 @@ function byte_source(f: SFunc, def_b: i32[], def_k: i32[], ins: SInst): boolean 
   return false;
 }
 
-// byte_extension is a unary that leaves a value in 0..255 unchanged: a 32-bit
-// wrap or extension, signed or not, or a cast to u8, i32 or u32.
 function byte_extension(ins: SInst): boolean {
   if (ins.kind_tag != 10 || ins.args.len() != 1) {
     return false;
@@ -5078,7 +4275,6 @@ function const_zero(f: SFunc, def_b: i32[], def_k: i32[], v: i32): boolean {
   return const_in(f, def_b, def_k, v, 0i64, 0i64);
 }
 
-// const_in says v is an integer constant in lo..hi.
 function const_in(f: SFunc, def_b: i32[], def_k: i32[], v: i32, lo: i64, hi: i64): boolean {
   let d: SInst = def_at(f, def_b, def_k, v);
   if (d.kind_tag == 1) {
@@ -5091,23 +4287,10 @@ function const_in(f: SFunc, def_b: i32[], def_k: i32[], v: i32, lo: i64, hi: i64
   return false;
 }
 
-// drop_low_wraps replaces a 32-bit wrap, extend or cast, signed or unsigned, by
-// its operand where nothing reads the high half of its result. A sum,
-// difference, product, bitwise op or left shift reads only its operands' low
-// halves when nothing reads its own high half, as do a shift's count, a 32-bit
-// rotate or byte swap and the narrowing unaries, so the wrap the lowering puts
-// after each 32-bit op is needed only where the value reaches a comparison, a
-// division, a right shift, a call, a store, a branch or a return. A signed
-// loop counter's step goes too, read or not: `v + 1` for a v that is below a
-// 32-bit value cannot overflow (counter_step). The register backends only: on
-// wasm the wrap changes the value's type.
 pub function drop_low_wraps(f: SFunc): Formed {
   if (!has_low_wrap(f)) {
     return Formed { f: f, repl: [] };
   }
-  // prop[v] is how many leading operands of v's definition have their high
-  // half read once v's is (high_operands); def_b / def_k locate v's
-  // definition, -1 for a value nothing defines.
   let prop: i32[] = __alloc_i32(f.nvals);
   let def_b: i32[] = __alloc_i32(f.nvals);
   let def_k: i32[] = __alloc_i32(f.nvals);
@@ -5237,8 +4420,6 @@ function has_low_wrap(f: SFunc): boolean {
   return false;
 }
 
-// block_reads_replaced says a block defines or reads a value `repl` maps
-// elsewhere, so drop_low_wraps has to rebuild it.
 function block_reads_replaced(blk: SBlock, repl: i32[]): boolean {
   for ins in blk.insts {
     if (ins.result >= 0 && ins.result < repl.len() && repl[ins.result] != ins.result) {
@@ -5254,12 +4435,6 @@ function block_reads_replaced(blk: SBlock, repl: i32[]): boolean {
   return tv >= 0 && tv < repl.len() && repl[tv] != tv;
 }
 
-// counter_step says `a` is `v + 1` at 32 bits computed where v is known to be
-// below a 32-bit value (tested_below): v + 1 cannot pass INT32_MAX, so a wrap
-// of it changes nothing whoever reads it. A reader of the high half (a call,
-// `sarq`) still sees the sign extension because v's own register holds it:
-// the header's compare marks v high, and high_operands carries that through
-// the phi to the wrap that defines v.
 function counter_step(f: SFunc, at: i32[], def_b: i32[], def_k: i32[], a: i32): boolean {
   let add: SInst = def_at(f, def_b, def_k, a);
   if (add.kind_tag != 9 || add.str != "add" || add.imm == 64 || add.args.len() != 2) {
@@ -5271,11 +4446,6 @@ function counter_step(f: SFunc, at: i32[], def_b: i32[], def_k: i32[], a: i32): 
   return const_one(f, def_b, def_k, add.args[0]) && tested_below(f, at, def_b, def_k, add.args[1], def_b[a]);
 }
 
-// tested_below says block position `d` runs only after v tested below a 32-bit
-// value: v is a phi whose block branches on `v < n` (or out on `v >= n`) to a
-// successor that dominates d, which refuses a body another test also enters.
-// The successor must be entered from that test alone too: the lowering never
-// branches into a shared block today, but a lifted op_brif can.
 function tested_below(f: SFunc, at: i32[], def_b: i32[], def_k: i32[], v: i32, d: i32): boolean {
   if (def_at(f, def_b, def_k, v).kind_tag != 8) {
     return false;
@@ -5299,9 +4469,6 @@ function tested_below(f: SFunc, at: i32[], def_b: i32[], def_k: i32[], v: i32, d
   return dominates_position(f, at, b, d);
 }
 
-// dominates_position says every path from the entry to position d passes
-// position b: walking predecessors back from d without stepping onto b never
-// reaches the entry. A dominated d keeps the walk inside the region b heads.
 function dominates_position(f: SFunc, at: i32[], b: i32, d: i32): boolean {
   if (b == d) {
     return true;
@@ -5337,8 +4504,6 @@ function dominates_position(f: SFunc, at: i32[], b: i32, d: i32): boolean {
   return true;
 }
 
-// compares_below says c is a 32-bit `o first n` or `n second o`; a binary's
-// imm is 64 at full width.
 function compares_below(c: SInst, o: i32, first: string, second: string): boolean {
   if (c.kind_tag != 9 || c.imm == 64 || c.args.len() != 2) {
     return false;
@@ -5351,8 +4516,6 @@ function const_one(f: SFunc, def_b: i32[], def_k: i32[], v: i32): boolean {
   return d.kind_tag == 1 && d.imm == 1;
 }
 
-// def_at is v's defining instruction, or one of kind 0 for a value nothing
-// defines.
 function def_at(f: SFunc, def_b: i32[], def_k: i32[], v: i32): SInst {
   if (v < 0 || v >= def_b.len() || def_b[v] < 0) {
     return SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
@@ -5360,8 +4523,6 @@ function def_at(f: SFunc, def_b: i32[], def_k: i32[], v: i32): SInst {
   return f.blocks[def_b[v]].insts[def_k[v]];
 }
 
-// signed_wrap is a signed 32-bit wrap, extend or cast, which the register
-// backends render as a sign extension of the low half.
 function signed_wrap(ins: SInst): boolean {
   if (ins.kind_tag != 10 || ins.args.len() != 1 || ins.imm != 0) {
     return false;
@@ -5369,8 +4530,6 @@ function signed_wrap(ins: SInst): boolean {
   return ins.str == "int_wrap" || ins.str == "int_extend" || ins.str == "int_cast:i32";
 }
 
-// low_wrap is a signed wrap or a u32 one, which the register backends render
-// as a zero extension of the low half.
 function low_wrap(ins: SInst): boolean {
   if (signed_wrap(ins)) {
     return true;
@@ -5378,14 +4537,10 @@ function low_wrap(ins: SInst): boolean {
   return ins.kind_tag == 10 && ins.args.len() == 1 && (ins.str == "u32_wrap" || ins.str == "int_cast:u32");
 }
 
-// low_half_binary is a binary whose result's low half depends on its
-// operands' low halves alone.
 function low_half_binary(op: string): boolean {
   return op == "add" || op == "sub" || op == "mul" || op == "and" || op == "or" || op == "xor";
 }
 
-// reads_low_half says `ins` reads only the low half of its operand `k`, or
-// passes the question on to its own result (high_operands).
 function reads_low_half(ins: SInst, k: i32): boolean {
   if (ins.kind_tag == 7 || ins.kind_tag == 8) {
     return true;
@@ -5408,9 +4563,6 @@ function reads_low_half(ins: SInst, k: i32): boolean {
   return false;
 }
 
-// high_operands is how many leading operands of `d` have their high half read
-// once d's own is: all of a copy's, a phi's and a low-half binary's, a left
-// shift's value but not its count.
 function high_operands(d: SInst): i32 {
   if (d.kind_tag == 7 || d.kind_tag == 8 || d.kind_tag == 9 && low_half_binary(d.str)) {
     return d.args.len();
@@ -5421,7 +4573,6 @@ function high_operands(d: SInst): i32 {
   return 0;
 }
 
-// term_operand is the value a terminator reads, or -1.
 function term_operand(t: STerm): i32 {
   if (t.kind_tag == 1) {
     return t.value;
@@ -5432,10 +4583,6 @@ function term_operand(t: STerm): i32 {
   return 0 - 1;
 }
 
-// fuse_rotates rewrites `(x >> n) | (x << (W - n))`, the only spelling Fern
-// has for a rotate, into one `rotr:W:n` unary on x (#10615). A u32 keeps its
-// value zero-extended, so its left half carries a u32_wrap and its right half
-// needs none; a 64-bit rotate has neither. The shifts are left to prune_dead.
 pub function fuse_rotates(f: SFunc): SFunc {
   if (!has_or(f)) {
     return f;
@@ -5444,7 +4591,6 @@ pub function fuse_rotates(f: SFunc): SFunc {
   return rewrite_insts(f, defs, rotate_of).f;
 }
 
-// rotate_of is the rotate an `or` computes, or an instruction of kind 0.
 function rotate_of(defs: SInst[], ins: SInst): SInst {
   if (ins.kind_tag != 9 || ins.str != "or" || ins.args.len() != 2) {
     return no_inst();
@@ -5456,12 +4602,10 @@ function rotate_of(defs: SInst[], ins: SInst): SInst {
   return m;
 }
 
-// no_inst is the kind-0 instruction a matcher answers for no match.
 function no_inst(): SInst {
   return SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
 }
 
-// inst_defs is each value's defining instruction, kind 0 where none is.
 function inst_defs(f: SFunc): SInst[] {
   let defs: SInst[] = [];
   let i: i32 = 0;
@@ -5479,10 +4623,6 @@ function inst_defs(f: SFunc): SInst[] {
   return defs;
 }
 
-// rewrite_insts replaces each instruction `rewrite` answers one of a nonzero
-// kind for, given the function's definitions. `nblocks` is written from the first block that changes on, and a
-// block's `ninsts` from its first changed instruction on, so what keeps
-// every instruction keeps its record.
 function rewrite_insts(f: SFunc, defs: SInst[], rewrite: (SInst[], SInst) => SInst): Threading {
   let nblocks: SBlock[] = [];
   let copying: boolean = false;
@@ -5520,8 +4660,6 @@ function rewrite_insts(f: SFunc, defs: SInst[], rewrite: (SInst[], SInst) => SIn
   return Threading { f: SFunc { ...f, blocks: nblocks }, changed: true };
 }
 
-// has_or reports whether `f` holds a two-operand `or`, the only instruction
-// fuse_rotates rewrites.
 function has_or(f: SFunc): boolean {
   for blk in f.blocks {
     for ins in blk.insts {
@@ -5533,8 +4671,6 @@ function has_or(f: SFunc): boolean {
   return false;
 }
 
-// rotate_half_pair is the rotate `or` computes when `rv` is the logical right
-// shift and `lv` the left one, or an instruction of kind 0 when it is not one.
 function rotate_half_pair(defs: SInst[], or: SInst, rv: i32, lv: i32): SInst {
   let no: SInst = no_inst();
   let rs: SInst = def_of(defs, rv);
@@ -5561,10 +4697,6 @@ function rotate_half_pair(defs: SInst[], or: SInst, rv: i32, lv: i32): SInst {
   return SInst { kind_tag: 10, result: or.result, args: [rs.args[0]], imm: 0, str: "rotr:" + util.i32_to_string(w) + ":" + util.i64_to_string(n) };
 }
 
-// fuse_and_not combines a full inversion feeding an and into one binary
-// `and_not`: args [a, b] compute a & ~b. It runs after carry recognition so
-// the carry matcher still sees its original formula. Shared inversions stay
-// live for their other uses; only newly dead scalar definitions disappear.
 pub function fuse_and_not(f: SFunc): SFunc {
   if (!has_and_xor(f)) {
     return f;
@@ -5609,12 +4741,6 @@ function and_not_of(defs: SInst[], ins: SInst): SInst {
   return no_inst();
 }
 
-// carry_triple reports instruction ii of blk as a 64-bit sum or difference,
-// the carry or borrow out of it (fuse_carries) next, and after that the one
-// add or subtract that reads the carry (`uses` counts each value's readers).
-// The emitters keep such a carry in the flags: the sum sets them and the
-// reader adds or subtracts them with zero, and only loads, moves and stores
-// come between.
 pub function carry_triple(blk: SBlock, ii: i32, uses: i32[]): boolean {
   if (ii < 0 || ii + 2 >= blk.insts.len()) {
     return false;
@@ -5643,14 +4769,6 @@ pub function carry_triple(blk: SBlock, ii: i32, uses: i32[]): boolean {
   return reader.args[0] == c.result != (reader.args[1] == c.result);
 }
 
-// fuse_carries rewrites the branch-free carry out of a 64-bit add,
-// `(x & y | (x | y) & (s ^ -1)) >> 63` over s = x + y or s = x + y + c, and
-// the borrow out of a subtract, `((x ^ -1) & y | ((x ^ -1) | y) & d) >> 63`
-// over d = x - y or d = x - y - b, into one `carry` (kind 37), which the
-// emitters read off the flags (#12558). The incoming c or b must be 0 or 1
-// for the flags to agree with the formula: a right shift by 63, an and with
-// 1, or another carry. The formula's ands and ors are pruned when nothing
-// else reads them.
 pub function fuse_carries(f: SFunc): SFunc {
   if (!has_carry_shift(f)) {
     return f;
@@ -5674,7 +4792,6 @@ function has_carry_shift(f: SFunc): boolean {
   return false;
 }
 
-// is_top_bit is a 64-bit logical right shift by 63.
 function is_top_bit(defs: SInst[], ins: SInst): boolean {
   return ins.kind_tag == 9 && ins.str == "shr_u" && ins.imm == 64 && ins.args.len() == 2 && is_const(defs, ins.args[1], 63i64);
 }
@@ -5687,7 +4804,6 @@ function is_const(defs: SInst[], v: i32, want: i64): boolean {
   return d.kind_tag == 3 && util.lit_to_i64(d.str) == want;
 }
 
-// bin_of is v's defining binary `op`, or an instruction of kind 0.
 function bin_of(defs: SInst[], v: i32, op: string): SInst {
   let d: SInst = def_of(defs, copy_root(defs, v));
   if (d.kind_tag == 9 && d.str == op && d.args.len() == 2) {
@@ -5696,14 +4812,11 @@ function bin_of(defs: SInst[], v: i32, op: string): SInst {
   return no_inst();
 }
 
-// wide_of is v's defining 64-bit add or sub (`op`), or an instruction of
-// kind 0.
 function wide_of(defs: SInst[], v: i32, op: string): SInst {
   let d: SInst = bin_of(defs, v, op);
   return if (d.imm == 64) { d } else { no_inst() };
 }
 
-// not_of is the value v inverts as `v ^ -1`, or -1.
 function not_of(defs: SInst[], v: i32): i32 {
   let d: SInst = bin_of(defs, v, "xor");
   if (d.kind_tag == 0) {
@@ -5718,14 +4831,12 @@ function not_of(defs: SInst[], v: i32): i32 {
   return 0 - 1;
 }
 
-// same_pair is whether a and b are the roots of x and y in either order.
 function same_pair(defs: SInst[], a: i32, b: i32, x: i32, y: i32): boolean {
   let ra: i32 = copy_root(defs, a);
   let rb: i32 = copy_root(defs, b);
   return ra == x && rb == y || ra == y && rb == x;
 }
 
-// zero_one is a value known to be 0 or 1.
 function zero_one(defs: SInst[], v: i32): boolean {
   let d: SInst = def_of(defs, copy_root(defs, v));
   if (d.kind_tag == 37 || is_top_bit(defs, d)) {
@@ -5734,7 +4845,6 @@ function zero_one(defs: SInst[], v: i32): boolean {
   return d.kind_tag == 9 && d.str == "and" && d.args.len() == 2 && (is_const(defs, d.args[0], 1i64) || is_const(defs, d.args[1], 1i64));
 }
 
-// carry_of is the carry a shift by 63 computes, or an instruction of kind 0.
 function carry_of(defs: SInst[], shr: SInst): SInst {
   if (!is_top_bit(defs, shr)) {
     return no_inst();
@@ -5750,8 +4860,6 @@ function carry_of(defs: SInst[], shr: SInst): SInst {
   return m;
 }
 
-// carry_halves matches `p | q`: p the and the operands' own top bits carry
-// out of, q the and a carry into the top bit does.
 function carry_halves(defs: SInst[], shr: SInst, p: i32, q: i32): SInst {
   let pa: SInst = bin_of(defs, p, "and");
   let qa: SInst = bin_of(defs, q, "and");
@@ -5772,7 +4880,6 @@ function carry_halves(defs: SInst[], shr: SInst, p: i32, q: i32): SInst {
   return no_inst();
 }
 
-// add_carry matches p = x & y and q = (x | y) & (s ^ -1), s the sum.
 function add_carry(defs: SInst[], shr: SInst, p: SInst, either: i32, inv: i32): SInst {
   let x: i32 = copy_root(defs, p.args[0]);
   let y: i32 = copy_root(defs, p.args[1]);
@@ -5798,8 +4905,6 @@ function add_carry(defs: SInst[], shr: SInst, p: SInst, either: i32, inv: i32): 
   return no_inst();
 }
 
-// sub_borrow matches p = (x ^ -1) & y and q = ((x ^ -1) | y) & d, d the
-// difference.
 function sub_borrow(defs: SInst[], shr: SInst, p: SInst, either: i32, diff: i32): SInst {
   let k: i32 = 0;
   while (k < 2) {
@@ -5813,7 +4918,6 @@ function sub_borrow(defs: SInst[], shr: SInst, p: SInst, either: i32, diff: i32)
   return no_inst();
 }
 
-// inverted_or is whether v is `(x ^ -1) | y`, in either order.
 function inverted_or(defs: SInst[], v: i32, x: i32, y: i32): boolean {
   let e: SInst = bin_of(defs, v, "or");
   if (e.kind_tag == 0) {
@@ -5822,7 +4926,6 @@ function inverted_or(defs: SInst[], v: i32, x: i32, y: i32): boolean {
   return not_of(defs, e.args[0]) == x && copy_root(defs, e.args[1]) == y || not_of(defs, e.args[1]) == x && copy_root(defs, e.args[0]) == y;
 }
 
-// borrow_from is the borrow when diff is x - y or x - y - b, b 0 or 1.
 function borrow_from(defs: SInst[], shr: SInst, diff: i32, x: i32, y: i32): SInst {
   let d: SInst = wide_of(defs, diff, "sub");
   if (d.kind_tag == 0) {
@@ -5838,7 +4941,6 @@ function borrow_from(defs: SInst[], shr: SInst, diff: i32, x: i32, y: i32): SIns
   return no_inst();
 }
 
-// zero_extends_u32 is a unary the emitters render as a 32-bit zero extension.
 function zero_extends_u32(ins: SInst): boolean {
   if (ins.kind_tag != 10 || ins.args.len() != 1) {
     return false;
@@ -5856,7 +4958,6 @@ function def_of(defs: SInst[], v: i32): SInst {
   return defs[v];
 }
 
-// A shift's imm is its operand width; anything but 64 is the 32-bit form.
 function shift_width(imm: i32): i32 {
   if (imm == 64) {
     return 64;
@@ -5864,7 +4965,6 @@ function shift_width(imm: i32): i32 {
   return 32;
 }
 
-// copy_root follows `copy` instructions back to the value they alias.
 function copy_root(defs: SInst[], v: i32): i32 {
   let r: i32 = v;
   let steps: i32 = 0;
@@ -5879,8 +4979,6 @@ function copy_root(defs: SInst[], v: i32): i32 {
   return r;
 }
 
-// const_value is an integer constant's value, or -1 for anything else (no
-// rotate count is negative).
 function const_value(defs: SInst[], v: i32): i64 {
   let d: SInst = def_of(defs, copy_root(defs, v));
   if (d.kind_tag == 1) {
@@ -5892,7 +4990,6 @@ function const_value(defs: SInst[], v: i32): i64 {
   return 0i64 - 1i64;
 }
 
-// rotr_width and rotr_count read a `rotr:W:n` unary's name back.
 pub function rotr_width(what: string): i32 {
   if (util.str_has_prefix(what, "rotr:64:")) {
     return 64;
@@ -5910,11 +5007,6 @@ pub function rotr_count(what: string): i32 {
   return n;
 }
 
-// prune_dead drops the pure instructions nothing reads. A block that keeps
-// every instruction keeps its record, and a function that keeps every block
-// is returned as it came: `nblocks` is written from the first block that
-// loses an instruction on, and a block's `ninsts` from its first dead
-// instruction on.
 pub function prune_dead(f: SFunc): SFunc {
   let live: i32[] = prune_mark(f, prune_roots(f));
   let nblocks: SBlock[] = [];
@@ -5975,20 +5067,13 @@ function blocks_before(blocks: SBlock[], n: i32): SBlock[] {
   return out;
 }
 
-// inst_has_effect names the instructions kept whether or not their result is
-// read: params, calls, allocation and stores, and the output and buffer ops.
 function inst_has_effect(k: i32): boolean {
-  // Below 19: params, calls, allocation, stores and concat. From 19 on
-  // everything but a select (36), a load (40) and a label address (45..47) has one: the
-  // output, file and buffer ops, a store, a bounds-checked read (it may
-  // abort) and the box allocation.
   if (k < 19) {
     return k == 6 || k == 11 || k == 12 || k == 14 || k == 16 || k == 17;
   }
   return k != 36 && k != 40 && k != 45 && k != 46 && k != 47 && k != 52 && k != 54 && k != 57 && k != 58 && k != 61;
 }
 
-// prune_roots is every value an effectful instruction or a terminator reads.
 function prune_roots(f: SFunc): i32[] {
   let work: i32[] = [];
   for blk in f.blocks {
@@ -6009,8 +5094,6 @@ function prune_roots(f: SFunc): i32[] {
   return work;
 }
 
-// prune_mark marks the roots and, through the pure instructions that define
-// them, everything they read.
 function prune_mark(f: SFunc, work: i32[]): i32[] {
   let live: i32[] = __alloc_i32(f.nvals);
   let def_b: i32[] = __alloc_i32(f.nvals);
@@ -6044,8 +5127,6 @@ function prune_mark(f: SFunc, work: i32[]): i32[] {
   return live;
 }
 
-// count_insts totals the instructions across all blocks (used by tests to
-// confirm the optimiser actually shrinks the IR).
 pub function count_insts(f: SFunc): i32 {
   let n: i32 = 0;
   let bi: i32 = 0;

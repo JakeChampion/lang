@@ -9,11 +9,6 @@ import (
 	"testing"
 )
 
-// Bounded eager iterator collectors `take` / `skip`, written in the inline
-// prelude as bounded generics (#2691). `take(it, k)` collects the first k
-// yielded values; `skip(it, k)` drops them and collects the rest. Both return a
-// fresh `T[]` (the same safe shape as filter — no tuple/struct field access on
-// a generic return), so they lower on the self-host IR path.
 const iterTakeSkipPrelude = `pub trait Iterator[T] { function next(self: Self): Option[(T, Self)]; }
 pub struct Range { lo: i32, hi: i32 }
 pub function range(lo: i32, hi: i32): Range { return Range { lo: lo, hi: hi }; }
@@ -40,22 +35,15 @@ var iterTakeSkipCases = []struct {
 	main string
 	want int
 }{
-	// take the first 4 of [0,100): [0,1,2,3]; sum 6 + len 4 = 10.
 	{"take", `function main(): i32 { let a = take(range(0, 100), 4); let s = 0; for v in a { s = s + v; } return s + a.len(); }`, 10},
-	// take more than available: take 9 of [0,3) yields [0,1,2]; sum 3 + len 3 = 6.
 	{"take-saturating", `function main(): i32 { let a = take(range(0, 3), 9); let s = 0; for v in a { s = s + v; } return s + a.len(); }`, 6},
-	// skip the first 4 of [0,6): [4,5]; sum 9 + len 2 = 11.
 	{"skip", `function main(): i32 { let b = skip(range(0, 6), 4); let s = 0; for v in b { s = s + v; } return s + b.len(); }`, 11},
-	// skip past the end: skip 10 of [0,3) yields []; len 0 + 5 = 5.
 	{"skip-past-end", `function main(): i32 { let b = skip(range(0, 3), 10); return b.len() + 5; }`, 5},
-	// take(0) is empty; skip(0) keeps all of [0,4) = sum 6; 0 + 6 = 6.
 	{"take0-skip0", `function main(): i32 { let a = take(range(0, 4), 0); let b = skip(range(0, 4), 0); let s = 0; for v in b { s = s + v; } return a.len() + s; }`, 6},
 }
 
 func iterTakeSkipProg(mainBody string) string { return iterTakeSkipPrelude + mainBody + "\n" }
 
-// TestNativeIterTakeSkip runs the inline take/skip programs on the native
-// interp / x86-64 / wasm backends, oracle-checked.
 func TestNativeIterTakeSkip(t *testing.T) {
 	for _, tc := range iterTakeSkipCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -73,7 +61,6 @@ func TestNativeIterTakeSkip(t *testing.T) {
 	}
 }
 
-// TestNativeIterTakeSkipArm64 is the arm64 leg (CI-gated; qemu).
 func TestNativeIterTakeSkipArm64(t *testing.T) {
 	for _, tc := range iterTakeSkipCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -85,9 +72,6 @@ func TestNativeIterTakeSkipArm64(t *testing.T) {
 	}
 }
 
-// TestNativeIterTakeSkipModule exercises the shipped `import "core/iter"`
-// module's lazy `take` and `skip` methods over real `range` iterators on the
-// native backends.
 func TestNativeIterTakeSkipModule(t *testing.T) {
 	src := `import "core/iter" as iter;
 function main(): i32 {
@@ -110,8 +94,6 @@ function main(): i32 {
 	}
 }
 
-// TestSelfHostIterTakeSkipIRX86_64 routes each inline case through the
-// self-hosted x86-64 IR driver, pins routing to "ir", and oracle-checks it.
 func TestSelfHostIterTakeSkipIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -145,7 +127,6 @@ func TestSelfHostIterTakeSkipIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostIterTakeSkipIRWasm runs the same cases through the wasm IR backend.
 func TestSelfHostIterTakeSkipIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host iter take/skip wasm IR e2e")

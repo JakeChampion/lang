@@ -8,75 +8,40 @@ import (
 	"testing"
 )
 
-// annotateIdentCases exercise the ExprIdent.ty carrier — the fifth in the
-// Phase-A annotate-and-consume migration (docs/TYPED-IR-REWRITE.md), after
-// ExprCall.ty (#5531), ExprFieldAccess.ty and ExprIndex.ty (#6165) and
-// ExprSlice.ty.
-//
-// A module `const` has no slot: its read is a call to a zero-argument accessor,
-// so a bare const name must take its type from the annotation. Two shapes
-// diverge when it does not:
-//
-//   - `const M: u32` read bare and shifted with `>>` must shift UNSIGNED. wasm
-//     only: a u32 with bit 31 set is a signed-negative i32 there, while x86-64
-//     and arm64 keep it zero-extended in a 64-bit register.
-//   - `const B: boolean` must dispatch as a boolean, so `B.to_json()` renders
-//     true / false rather than 1 / 0. Both backends.
-//
-// The controls are the i64, f64 and string const reads and the same u32 value
-// through a local or a parameter.
 var annotateIdentCases = []struct {
 	name string
 	src  string
 }{
-	// The u32 half. Every case shifts a const whose bit 31 is set, so a signed
-	// shift and an unsigned one give different answers.
 	{"const_u32_shift", `const M: u32 = 2147484527u32;
-function main(): i32 { return ((M >> 1u32) % 100u32) as i32; }`}, // 63; was 11
+function main(): i32 { return ((M >> 1u32) % 100u32) as i32; }`},
 	{"const_u32_shift_bound", `const M: u32 = 2147484527u32;
-function main(): i32 { let v: u32 = M >> 1u32; return (v % 100u32) as i32; }`}, // 63; was 11
+function main(): i32 { let v: u32 = M >> 1u32; return (v % 100u32) as i32; }`},
 	{"const_u32_shift_wide", `const M: u32 = 3221225472u32;
-function main(): i32 { return ((M >> 4u32) % 100u32) as i32; }`}, // 92; was 32
+function main(): i32 { return ((M >> 4u32) % 100u32) as i32; }`},
 
-	// The boolean half. to_json is the reachable boolean method (std/json's
-	// `impl Json for boolean`); a bool dispatched as i32 renders 1 / 0, which
-	// differs from true / false in LENGTH as well as in text.
 	{"const_bool_to_json_true", `import "std/json";
 const B: boolean = true;
-function main(): i32 { return B.to_json().len() as i32; }`}, // 4; was 1
+function main(): i32 { return B.to_json().len() as i32; }`},
 	{"const_bool_to_json_false", `import "std/json";
 const B: boolean = false;
-function main(): i32 { return B.to_json().len() as i32; }`}, // 5; was 1
+function main(): i32 { return B.to_json().len() as i32; }`},
 
-	// Control: the same u32 shift through a LOCAL, whose slot carries u32.
 	{"local_u32_shift", `function main(): i32 {
     let m: u32 = 2147484527u32;
     return ((m >> 1u32) % 100u32) as i32;
-}`}, // 63
-	// Control: the same u32 const through a call PARAMETER, which types from
-	// the param's slot rather than the ident.
+}`},
 	{"const_u32_via_param", `const A: u32 = 2147484527u32;
 function shr(x: u32): u32 { return x >> 1u32; }
-function main(): i32 { return (shr(A) % 100u32) as i32; }`}, // 63
+function main(): i32 { return (shr(A) % 100u32) as i32; }`},
 
-	// Control: the i64 const width case (#4801). Without it the accessor
-	// returns i64 and the lowering adds i32, which wasmtime rejects outright.
 	{"const_i64_width", `const B: i64 = 5000000000i64;
-function main(): i32 { return ((B + 1i64) % 100i64) as i32; }`}, // 1
-	// Control: the f64 const case (#4801's sibling).
+function main(): i32 { return ((B + 1i64) % 100i64) as i32; }`},
 	{"const_f64", `const F: f64 = 12.5;
-function main(): i32 { return (F * 4.0) as i32; }`}, // 50
-	// Control: the string const case (#2954). A string box read as an array
-	// header is a silent miscompile, so this one must not regress quietly.
+function main(): i32 { return (F * 4.0) as i32; }`},
 	{"const_string_len", `const G: string = "hello";
-function main(): i32 { return G.len() as i32; }`}, // 5
+function main(): i32 { return G.len() as i32; }`},
 }
 
-// TestSelfHostAnnotateIdentX86_64 runs the cases on the self-host x86-64
-// backend, where the boolean half diverged and the u32 half never did (a u32
-// stays zero-extended in a 64-bit register). fern.fern is the driver because it
-// runs checker.annotate_module; a driver that skips annotation leaves every ty
-// empty and cannot regress.
 func TestSelfHostAnnotateIdentX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
@@ -113,8 +78,6 @@ func TestSelfHostAnnotateIdentX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostAnnotateIdentWasm is the wasm leg, and the one that carries the
-// u32 cases: only there does a signed shift of a bit-31-set value differ.
 func TestSelfHostAnnotateIdentWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping annotate-ident wasm cases")

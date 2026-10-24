@@ -14,9 +14,6 @@ import (
 	"time"
 )
 
-// WasiTCPCensusProbe exercises real socket ownership without stream I/O,
-// whose buffers have separate reclamation requirements. The guest owns both
-// ends and uses an ephemeral listener, avoiding a port-reservation race.
 const WasiTCPCensusProbe = `function main(): i32 {
     let i: i32 = 0;
     while (i < 32) {
@@ -36,9 +33,6 @@ const WasiTCPCensusProbe = `function main(): i32 {
     return 0;
 }`
 
-// CheckWasiSocketCensus runs the production component against real WASI sockets.
-// Require the instrumented allocator's report, not just a successful exit or
-// a flat high-water mark: unreclaimed blocks could satisfy both of those.
 func CheckWasiSocketCensus(t *testing.T, component string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -49,8 +43,6 @@ func CheckWasiSocketCensus(t *testing.T, component string) {
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("socket lifecycle: %v\nstdout: %s\nstderr: %s", err, &stdout, &stderr)
 	}
-	// The bootstrap harness prints main's result; the self-host command
-	// communicates it through the exit code instead.
 	if got := strings.TrimSpace(stdout.String()); got != "" && got != "0" {
 		t.Fatalf("socket lifecycle returned %q", got)
 	}
@@ -72,8 +64,6 @@ func CheckWasiSocketCensus(t *testing.T, component string) {
 	t.Log(matches[0][0])
 }
 
-// WasiUDPCensusProbe receives every datagram on a real loopback socket. The
-// byte comparison catches freeing normalized payloads before the host reads.
 func WasiUDPCensusProbe(t *testing.T, data string) (string, func()) {
 	t.Helper()
 	conn, err := net.ListenPacket("udp4", "127.0.0.1:0")

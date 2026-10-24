@@ -1,4 +1,3 @@
-// Descriptor-derived release binding must still prove both actual bodies.
 import "../physicalbody";
 import "../semrecords";
 import "../ssasem";
@@ -32,7 +31,6 @@ function described(row: ssaprepare.Emitted, helper: Option[physicalbody.Helper])
 
 function metadata(row: ssaprepare.Emitted, m: physicalbody.Metadata): ssaprepare.Emitted {
   let s = row.body.selected;
-  // Preserve the descriptor while isolating this row's producer store.
   let origin = physicalbody.Origin { ...s.origin, producer: 0 };
   return ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, selected: physicalbody.Selected { producers: [m], origin: origin } } };
 }
@@ -61,13 +59,11 @@ function controls(pair: ssaprepare.Emitted[], arch: string): void {
     check(pair.with(i, metadata(row, physicalbody.Metadata { ...m, records: semrecords.no_records() })), arch, false);
     check(pair.with(i, metadata(row, physicalbody.Metadata { ...m, finalizers: [ssasem.Finalizer { receiver: "Leaf", symbol: "drop_leaf" }] })), arch, false);
     check(pair.with(i, metadata(row, physicalbody.Metadata { ...m, records: semrecords.records_of(util.append_all(m.records.list, m.records.list)) })), arch, false);
-    // Invalid producer indices must refuse before reading their descriptors.
     let s = row.body.selected;
     let origin = physicalbody.Origin { ...s.origin, producer: s.producers.len() };
     check(pair.with(i, ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, selected: physicalbody.Selected { ...s, origin: origin } } }), arch, false);
     i = i + 1;
   }
-  // Agreeing descriptors cannot manufacture a missing nominal schema.
   let wrong: ssaprepare.Emitted[] = [];
   for row in pair {
     if let Some(h) = row.body.selected.origin.helper {

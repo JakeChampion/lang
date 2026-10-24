@@ -11,10 +11,6 @@ function inner[E: Answer](r: Result[i32, E]): i32 {
 }
 `
 
-// A bounded generic call is instantiated from arguments the monomorphiser
-// could not type (#10683): a tuple element of a generic parameter, and a bare
-// `Some`/`Ok`/`Err` construction binding one half of an Option or Result
-// parameter. Each program exits 0 when the answer is right.
 var genericArgBindingCases = []struct{ name, src string }{
 	{"tuple-element", answerPrelude + `function outer[E: Answer](p: (i32, Result[i32, E])): i32 { return inner(p.1); }
 function main(): i32 {
@@ -36,8 +32,6 @@ function main(): i32 {
     return 0;
 }
 `},
-	// The binders of a destructuring loop header: a map's key and value, and
-	// an element of an array of tuples.
 	{"map-loop-key-and-value", answerPrelude + `import "core/map";
 function get[T: Answer](x: T): i32 { return x.answer(); }
 function main(): i32 {
@@ -48,7 +42,6 @@ function main(): i32 {
     return 0;
 }
 `},
-	// A map literal with no annotation is typed by its entries (#12457).
 	{"unannotated-map-loop-key-and-value", answerPrelude + `import "core/map";
 function get[T: Answer](x: T): i32 { return x.answer(); }
 function main(): i32 {

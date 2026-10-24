@@ -7,9 +7,6 @@ import (
 	"testing"
 )
 
-// hostFsFacts on Darwin takes three calls, as the builtin itself does: its
-// `struct statfs` has the block size and none of the length limits, so both
-// come from `pathconf(2)`, which Darwin has and Linux does not.
 func hostFsFacts(t *testing.T, dir string) (blockSize, nameMax, pathMax int64) {
 	t.Helper()
 	const (
@@ -31,8 +28,6 @@ func hostFsFacts(t *testing.T, dir string) (blockSize, nameMax, pathMax int64) {
 	return int64(st.Bsize), int64(name), int64(path)
 }
 
-// hostFsIdentity is `f_type`, `f_fsid` (first word high) and, for the
-// fundamental block size the record does not have, `f_bsize`.
 func hostFsIdentity(t *testing.T, dir string) (fsType, fsid, fragSize int64) {
 	t.Helper()
 	var st syscall.Statfs_t

@@ -8,17 +8,6 @@ import (
 	"testing"
 )
 
-// The Fold pass simplifies a br_if whose condition is a compile-time
-// constant (the loop / break / continue shape), mirroring its existing
-// constant-if pruning. `while (true)` drops its exit br_if entirely (the
-// loop body's `break` becomes the only exit); `while (false)` turns the
-// exit br_if into an unconditional OpBr so the loop exits at the top.
-// Both must keep the same observable behaviour on every backend.
-//
-// count_true iterates until i reaches 5 via the break (exercises the
-// constant-false / never-taken br_if that Fold drops); count_false never
-// runs its body (exercises the constant-true / always-taken br_if that
-// Fold rewrites to OpBr). 5 + 0 = 5.
 const constBrIfFoldSrc = `function count_true(): i32 {
     let i: i32 = 0;
     while (true) {

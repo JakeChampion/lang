@@ -1,5 +1,3 @@
-// Packed array helpers consume the receiver and borrow the source. The
-// i32[] carrier describes ownership; only raw byte accesses read its data.
 pub function is_helper(name: string): boolean {
   return name == "__fern_bytes_append_range" || name == "__fern_bytes_write_range";
 }
@@ -45,7 +43,6 @@ function native_write(unique: string): string {
 }
 
 function native_clone(): string {
-  // The borrowed argument keeps the old storage alive through the raw copy.
   return "@noinline function __fern_bytes_clone(a: i32[], words: i32): i32[] { "
     + "let p: usize = __raw_arr_box(words); __memcpy(p + 8, __raw_arr_ptr(a) + 8, a.len()); "
     + "__store_i64(p, a.len() as i64); return __raw_array(p); } ";

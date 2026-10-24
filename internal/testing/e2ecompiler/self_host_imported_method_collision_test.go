@@ -10,30 +10,11 @@ import (
 	"testing"
 )
 
-// importedMethodCollisionCases pin an imported struct METHOD against a free
-// function of the same spelling in the importing module (#8997).
-//
-// The self-host var-binding lowering classified `let t: Counter = c.release()`
-// by looking `release` up in the array-returning-function registry under its
-// BARE name, gated only on "the receiver is a struct". The registry keys every
-// free function by that same bare name, so an unrelated
-// `release(i32[], i32): i32[]` in the importing module marked the Counter-typed
-// slot as an array and the next method call on it refused to lower
-// ("release_zero (did not lower: call `.value`)"). The array-returning method
-// registration is also keyed "<BaseType>.<method>", and the expression-level
-// check (expr_is_arr_src) has always used that qualified key; the binding path
-// now does the same.
-//
-// Both cases keep the name collision — it IS the regression — and both need the
-// method to arrive by IMPORT, since a whole-program registry is what carries
-// the importing module's free function into the imported module's lowering.
 var importedMethodCollisionCases = []struct {
 	name  string
 	files map[string]string
 	want  int
 }{
-	// The #8997 repro: a struct-returning method shadowed by an
-	// array-returning free function of the same name.
 	{"struct-method-vs-free-arr-fn", map[string]string{
 		"counter.fern": `pub struct Counter { n: i32 }
 
@@ -58,10 +39,6 @@ function main(): i32 {
 }
 `}, 42},
 
-	// The control the qualified key must not lose: here the METHOD is the
-	// array-returning one and the free function is not, so the binding must
-	// still classify as an array — `for y in ys` requires the slot flag, not
-	// just the expression classifier.
 	{"arr-ret-method-vs-free-scalar-fn", map[string]string{
 		"bag.fern": `pub struct Bag { xs: i32[] }
 
@@ -85,8 +62,6 @@ function main(): i32 {
 `}, 42},
 }
 
-// writeImportedMethodCollisionProject lays the case's modules out in a fresh
-// directory and returns the entry path.
 func writeImportedMethodCollisionProject(t *testing.T, files map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -98,7 +73,6 @@ func writeImportedMethodCollisionProject(t *testing.T, files map[string]string) 
 	return filepath.Join(dir, "main.fern")
 }
 
-// TestSelfHostImportedMethodCollisionX86_64 — the x86-64 IR path.
 func TestSelfHostImportedMethodCollisionX86_64(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 	if len(runner) != 0 {
@@ -119,7 +93,6 @@ func TestSelfHostImportedMethodCollisionX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostImportedMethodCollisionArm64 — the arm64 IR path.
 func TestSelfHostImportedMethodCollisionArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	_, x86runner, driverBin := buildModloadArm64DriverX86(t)
@@ -141,9 +114,6 @@ func TestSelfHostImportedMethodCollisionArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostImportedMethodCollisionWasm — the wasm IR path, which reaches the
-// same lowering through the per-module emit + link driver rather than a merged
-// whole-program emit.
 func TestSelfHostImportedMethodCollisionWasm(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {

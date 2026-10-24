@@ -9,22 +9,6 @@ import (
 	"testing"
 )
 
-// nestedClosureIRCases are nested capturing lambdas — a lambda whose body
-// DEFINES another lambda. These bailed for two reasons,
-// both fixed here:
-//
-//  1. Capture analysis (astwalk.collect_idents_expr's ExprLambda case) recursed
-//     into the inner lambda's body and collected the inner lambda's OWN params
-//     (e.g. the `y` of `(y) => {…}`) as references of the outer scope, so the
-//     outer lambda's capture analysis saw an unresolvable capture and declined
-//     the lift. It now contributes only the inner lambda's FREE variables.
-//
-//  2. lift_lambdas processed only the module's original functions once, so a
-//     lambda lifted OUT of another lambda's body (the inner one) was never
-//     re-examined. It now drives a worklist that re-processes every lifted
-//     `__lam_N`, so nested lambdas lift in successive rounds. A two-level
-//     capture resolves because the outer lift turns the captured outer var into
-//     a PARAM the inner lift then sees.
 var nestedClosureIRCases = []struct {
 	name     string
 	src      string
@@ -36,9 +20,6 @@ var nestedClosureIRCases = []struct {
 	{"triple-nested", `function main(): i32 { let f = (x: i32): i32 => { let g = (y: i32): i32 => { let h = (z: i32): i32 => { return z + 1; }; return h(y); }; return g(x); }; return f(10); }`, 11},
 }
 
-// TestSelfHostNestedClosureX86IR gates nested capturing lambdas on x86-64: each
-// case asserts the program routes through the "ir" path (via asm_pathprobe_run)
-// and that the IR path computes the oracle exit code.
 func TestSelfHostNestedClosureX86IR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

@@ -39,8 +39,6 @@ function effects(s: string, entry: string, local: string): void {
   for line in ["ret $8", "movl %eax, %eax\nret", "movq %rax, (%rsp)\nret", "movq %rax, 8(%rsp)\nret"] {
     check(change(s, local + "_ret:\n    ret", local + "_ret:\n" + line), entry, false);
   }
-  // The object header stays exactly zero; reloading or zero-extending it
-  // is safe, while even storing zero back to it is outside this proof.
   check(change(s, inc, inc + "\nmovl -8(%rax), %ecx\nmovl %ecx, %ecx"), entry, true);
   check(change(s, inc, inc + "\nmovl %ecx, -8(%rax)"), entry, false);
   for line in ["movq -8(%rax), %rcx", "movl -16(%rax), %ecx", "movl -8(%rdx), %ecx"] {
@@ -72,8 +70,6 @@ function entries(s: string, entry: string): void {
 }
 
 function increment(s: string, entry: string, to: string): string {
-  // Mutate only this helper's increment so inserted labels stay unique
-  // across the complete output, which also contains the other helper.
   let marker = entry + ".r:\n";
   let bodies = s.split(marker);
   require(bodies.len() == 2);
@@ -91,13 +87,9 @@ function increment(s: string, entry: string, to: string): string {
 
 function counter_flags(s: string, entry: string): void {
   let inc = "incl __fern_rc_underflow(%rip)";
-  // Unknown counter flags cannot inherit zero-header flags, even if both
-  // syntactic branches happen to rejoin. This checker conservatively refuses.
   for name in ["je", "jne", "js", "jns", "jo", "jno", "jl", "jge", "jg", "jle"] {
     check(increment(s, entry, inc + "\n" + name + " .Lzero_join\n.Lzero_join:"), entry, false);
   }
-  // CMP 0,1 sets CF; INC must preserve it. TEST zero clears CF, which INC
-  // must also preserve. A taken branch safely bypasses an unknown opcode.
   check(increment(s, entry, "cmpl $1, %ecx\n" + inc + "\njb .Lzero_skip\nunknown_instruction\n.Lzero_skip:"), entry, true);
   check(increment(s, entry, "testl %ecx, %ecx\n" + inc + "\njae .Lzero_skip\nunknown_instruction\n.Lzero_skip:"), entry, true);
   check(increment(s, entry, "cmpl $1, %ecx\n" + inc + "\njae .Lzero_skip\nunknown_instruction\n.Lzero_skip:"), entry, false);

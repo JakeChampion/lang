@@ -5,31 +5,9 @@ import (
 	"testing"
 )
 
-// The Option twin of the rc-enum alias-match case: a CONFINED alias bind must
-// not deny the source its consuming-match free.
-//
-// Confinement has two halves that are only sound together:
-//
-//	an alias consumed by its own `match (x)` is a borrow, not an escape — a
-//	  scan that flags every bare ident refuses every actually-used alias,
-//	  and the source leaks;
-//	reading a match scrutinee as a borrow is true of the BOX and false of
-//	  the PAYLOAD, so an alias whose arm carries the payload out must still
-//	  be refused.
-//
-// EVERY case here gates on the EXIT CODE and the sanitizer leg, not the census
-// alone: an over-releasing build exits 99 with a PERFECTLY BALANCED census. On
-// the typed lowering every row balances with the right exit.
-// See docs/rc-log/2026-08-28-optarr-alias-match.md and
-// docs/rc-log/2026-08-29-option-alias-payload-out.md.
-//
-// Exits confirmed against bin/fern -interp.
-
 func optionAliasMatchConsumedCases() []tupleAliasParamCase {
 	return []tupleAliasParamCase{
 		{
-			// The matrix cell opt_arr__fnscope__alias_match: alias matched,
-			// source matched, both borrow-only.
 			name: "alias_and_source_matched",
 			src: `function round(i: i32): i32 {
     let src: Option[i32[]] = Some([i, i + 1]);
@@ -43,9 +21,6 @@ function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc =
 			want: 68,
 		},
 		{
-			// A DEAD alias with the source matched — the shape the plain
-			// escape scan already handled once match-borrow was not needed.
-			// Kept so a regression distinguishes the two halves.
 			name: "dead_alias_source_matched",
 			src: `function round(i: i32): i32 {
     let src: Option[i32[]] = Some([i, i + 1]);
@@ -58,7 +33,6 @@ function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc =
 			want: 34,
 		},
 		{
-			// The alias handed to a BORROWING callee stays confined.
 			name: "alias_to_borrowing_callee",
 			src: `function peek(o: Option[i32[]]): i32 { match (o) { Some(v) => { return v.len(); }, None => {} } return 0; }
 function round(i: i32): i32 {
@@ -72,10 +46,6 @@ function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc =
 			want: 68,
 		},
 		{
-			// THE FREE-SAFETY GUARD. The alias's arm moves the payload out,
-			// so a release of the source under it would free a buffer the
-			// frame still holds. An over-release exits 99 with a balanced
-			// census, so the exit is what guards it.
 			name: "payload_out_via_alias_refused",
 			src: `function round(i: i32): i32 {
     let src: Option[i32[]] = Some([i, i + 1]);
@@ -89,7 +59,6 @@ function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc =
 			want: 68,
 		},
 		{
-			// The alias ESCAPES the frame.
 			name: "returned_alias_refused",
 			src: `function mk(i: i32): Option[i32[]] {
     let src: Option[i32[]] = Some([i, i + 1]);
@@ -107,7 +76,6 @@ function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc =
 			want: 34,
 		},
 		{
-			// A REASSIGNED alias is not confined.
 			name: "reassigned_alias_refused",
 			src: `function round(i: i32): i32 {
     let src: Option[i32[]] = Some([i, i + 1]);
@@ -135,8 +103,6 @@ func TestSelfHostOptionAliasMatchConsumedX86_64(t *testing.T) {
 			asm := hevCompile(t, runner, driverBin, tc.src, []string{"FERN_LEAKCHECK=1"})
 			progBin := buildBin(t, gcc, dir, "optaliasmc_"+tc.name, asm)
 			stderr, exit := hevRun(t, runner, progBin)
-			// THE assertion. An over-release here balances the census, so the
-			// exit code is the only thing that sees it.
 			if exit != tc.want {
 				t.Fatalf("%s exited %d, want %d (99 = rc underflow; 139 = read freed memory)", tc.name, exit, tc.want)
 			}

@@ -1,7 +1,7 @@
 import "core/int";
 
-// Evaluate the return value before cleanup. Rebinding its source does not
-// replace the returned immutable array or release it before the caller reads.
+
+
 function snapshot(): i32[] {
     let items: i32[] = [7];
     defer items = [9];

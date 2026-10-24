@@ -2,12 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// A BufWriter's buffer is freed when the last copy of the writer dies, not
-// only by close() (#11201). `kept` is flushed and never closed, as a writer
-// over stdout always is; `b` and `c` are two copies sharing one buffer, where
-// the first copy's death must leave the second's buffer whole; `f` is closed,
-// which must not free the buffer a second time. Each writes past its own
-// threshold, so the buffer is pushed into and flushed in every case.
 const bufWriterReleaseSrc = `import "std/io_buffered" as io;
 
 function more(b: io.BufWriter, s: string): io.BufWriter { return b.write_string(s); }
@@ -66,8 +60,6 @@ func TestSelfHostBufWriterReleasesItsBuffer(t *testing.T) {
 	}
 }
 
-// The same program built under the sanitizer: freeing the buffer at the
-// first copy's death, or again after close(), is a use-after-free there.
 func TestSelfHostBufWriterReleaseSanitized(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	stderr, code := cli.exitOf(t, bufWriterReleaseSrc, "x86-64-linux", "FERN_SANITIZE=1")

@@ -58,10 +58,6 @@ func writeTreeProgram(t *testing.T, module string) string {
 	return src
 }
 
-// A match in an imported module is held to E030 over its arms as written
-// (#12257), where they name its enum's variants bare while the enum lists
-// them under the module's prefix: a complete match compiles and runs, one
-// that leaves `Node(Black, ..)` unmatched names the variant.
 func TestSelfHostImportedModuleMatchExhaustiveness(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	if out, code := cli.exitOfFile(t, writeTreeProgram(t, exhaustiveModuleSrc), "x86-64-linux", nil); code != 0 {

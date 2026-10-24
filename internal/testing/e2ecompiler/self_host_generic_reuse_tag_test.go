@@ -5,12 +5,6 @@ import (
 	"testing"
 )
 
-// A generic enum's variant is tagged per instantiation
-// (`GO0$Result$i32$i32$Has`). A construction that reuses a dead box wrote
-// the bare variant name instead, so a match in a method instantiated for the
-// enum took the other arm and the payload was never released. Here the box
-// of `a`, dead after `a.get()`, is the donor. Found by fernsmith's generic
-// struct and enum productions.
 var genericReuseTagCases = []struct {
 	name, src, want string
 }{

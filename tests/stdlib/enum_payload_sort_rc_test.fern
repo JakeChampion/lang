@@ -1,20 +1,6 @@
 import "core/cmp";
 import "std/test";
 
-// tests/stdlib/enum_payload_sort_rc_test.fern — self-host RC regression
-// guard for #5311: a heap `string[]` extracted from an enum payload with
-// `match Ok(names)` and passed to a CONSUMING, reallocating function (the
-// generic `cmp.sort_by`, whose `src = dst` COW frees its working backing) must
-// be freed EXACTLY once. The bug: the match-arm's exit dec-sweep decremented the
-// extracted array in ADDITION to the consumer's free — a double-free that
-// poisoned the __fern_alloc freelist and SIGSEGV'd under alloc-reuse pressure,
-// but only on the self-host codegen path (the interpreter oracle was always
-// correct). The construction-side alias-inc (#5358) balances the extraction, and
-// `sort_by` borrow-retains its argument rather than consuming the caller's ref,
-// so the array is freed once. The churn loops + the empty-array case (freelist
-// class 3, which a later string box recycles) turn any residual double-free
-// fatal — a clean run proves the balance holds.
-
 function make_names(k: i32): Result[string[], i32] {
   let a: string[] = [];
   let i: i32 = 0;
@@ -40,8 +26,6 @@ function ascending(xs: string[]): boolean {
   return true;
 }
 
-// The core #5311 shape: extract via match, sort (consuming), keep the result
-// live across an allocating call, repeat under churn.
 function test_match_payload_sort(): test.TestOutcome {
   let rounds: i32 = 0;
   while (rounds < 24) {
@@ -74,9 +58,6 @@ function test_match_payload_sort(): test.TestOutcome {
   return test.pass();
 }
 
-// The empty-array danger case: `Ok([])`'s backing is freelist class 3, which a
-// later 24-byte string box recycles — the shape most likely to fault fatally if
-// double-freed.
 function test_empty_payload_sort(): test.TestOutcome {
   let rounds: i32 = 0;
   while (rounds < 64) {

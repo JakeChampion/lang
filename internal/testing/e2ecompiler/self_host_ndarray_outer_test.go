@@ -9,10 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The callback records its position so changing traversal order cannot pass
-// merely by producing the same unordered set of products. Strided cases make
-// both packed guards necessary; extent-one reversals exercise packed handles
-// whose visible strides are not canonical.
 const ndarrayOuterSrc = `import "std/ndarray";
 import "std/i64";
 function check(a: ndarray.NdArray[f64], b: ndarray.NdArray[f64]): boolean {

@@ -1,23 +1,23 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// #7867 slice 1. `structParamProjectionsSafe` credited
-// `__method_Array_push`'s RECEIVER and never its ELEMENT, so a
-// fresh temp handed to a callee that pushes it was stranded: the
-// callee inc'd the element into the buffer and nothing gave the
-// caller's own reference back. 2 blocks a round here (the Op box
-// and its heap string), linear and unbounded — 12 allocs / 6
-// frees at three rounds before, 12 / 12 after.
-//
-// @noinline on both is essential. `inline.go` inlines a
-// single-reference callee at a loop call site, and an inlined
-// callee has no argument temp to reclaim, so the shape measures
-// clean without it whether or not the bug is present.
-//
-// The string is built by concatenation rather than written as a
-// literal: a literal is a static .rodata cell with an immortal
-// header, so the element's second block would not exist and the
-// case would understate itself.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 struct Op { a: i32, s: string, b: i32 }
 struct St { ops: Op[] }
 

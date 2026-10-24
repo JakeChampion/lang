@@ -9,9 +9,6 @@ import (
 	"testing"
 )
 
-// unclosedBraceCases each end inside a `{` — a block, a declaration, a match,
-// a literal — and every block parser closes one it cannot find the `}` of
-// without complaint, so before #11315 the self-host accepted all of them.
 var unclosedBraceCases = []struct{ name, src string }{
 	{"function-body", "function main(): i32 {\n  return 0;\n"},
 	{"struct-decl", "struct P { x: i32\n"},
@@ -20,21 +17,11 @@ var unclosedBraceCases = []struct{ name, src string }{
 	{"while-block", "function main(): i32 {\n  while (true) {\n    break;\n  \n  return 0;\n}\n"},
 	{"match-arms", "function main(): i32 {\n  let x: i32 = 1;\n  match (x) {\n    1 => { return 1; },\n    _ => { return 0; }\n}\n"},
 	{"lambda-body", "function main(): i32 {\n  let f: (i32) => i32 = (a: i32): i32 => {\n    return a;\n  return f(0);\n}\n"},
-	// The missing `}` is mid-file: function a swallows main, so the input
-	// still ends inside a's body.
 	{"before-another-function", "function a(): i32 {\n  return 1;\n\nfunction main(): i32 { return 0; }\n"},
 }
 
-// p001At reads the position off either compiler's `path:line:col: error[P001]`
-// line; the self-host's message opens with the enclosing construct, native's
-// with `expected`.
 var p001At = regexp.MustCompile(`:(\d+):(\d+): error\[P001\]: .*expected "\}"`)
 
-// TestSelfHostCheckRejectsUnclosedBraceX86_64 is the differential for
-// #11315: `-check` refuses a program that ends inside a `{`, with P001 at
-// the end of the input, where native reports its `expected "}"`. It is also
-// the formatter's half: `-fmt -w` must refuse to write such a file back,
-// since what it would write is a repair nobody asked for.
 func TestSelfHostCheckRejectsUnclosedBraceX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

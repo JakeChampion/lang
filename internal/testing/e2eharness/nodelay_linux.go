@@ -19,16 +19,11 @@ import (
 	"unsafe"
 )
 
-// pidfd_open and pidfd_getfd share their numbers across Linux's
-// architectures.
 const (
 	sysPidfdOpen  = 434
 	sysPidfdGetfd = 438
 )
 
-// eachConnectedTCP calls f with a copy, taken with pidfd_getfd, of every
-// connected TCP socket the process `pid` holds. A listener and anything
-// that is not a TCP socket are skipped.
 func eachConnectedTCP(t *testing.T, pid int, f func(fd int)) {
 	t.Helper()
 	pidfd, _, errno := syscall.Syscall(sysPidfdOpen, uintptr(pid), 0, 0)
@@ -60,7 +55,6 @@ func eachConnectedTCP(t *testing.T, pid int, f func(fd int)) {
 	}
 }
 
-// connectedTCP is whether the socket is a connected TCP socket.
 func connectedTCP(fd int) bool {
 	if ty, err := syscall.GetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_TYPE); err != nil || ty != syscall.SOCK_STREAM {
 		return false
@@ -74,9 +68,6 @@ func connectedTCP(fd int) bool {
 	return errno == 0
 }
 
-// ConnectedTCPNoDelay reads TCP_NODELAY on every connected TCP socket the
-// process `pid` holds: the count of sockets with the option on, and the
-// count with it off.
 func ConnectedTCPNoDelay(t *testing.T, pid int) (on, off int) {
 	t.Helper()
 	eachConnectedTCP(t, pid, func(fd int) {
@@ -93,9 +84,6 @@ func ConnectedTCPNoDelay(t *testing.T, pid int) (on, off int) {
 	return on, off
 }
 
-// ConnectedTCPSegmentsOut is the segments sent over every connected TCP
-// socket the process `pid` holds, summed: TCP_INFO's tcpi_segs_out, the
-// u32 at offset 136.
 func ConnectedTCPSegmentsOut(t *testing.T, pid int) uint64 {
 	t.Helper()
 	var total uint64
@@ -113,7 +101,6 @@ func ConnectedTCPSegmentsOut(t *testing.T, pid int) uint64 {
 	return total
 }
 
-// NoDelayServerSource is a single-loop server answering "ok".
 func NoDelayServerSource() string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
@@ -127,9 +114,6 @@ function main(): i32 {
 `)
 }
 
-// CheckServeNoDelay drives NoDelayServerSource: a keep-alive connection
-// answered and held open is, in the server, a connected TCP socket with
-// TCP_NODELAY on, and the server holds none with it off.
 func CheckServeNoDelay(t *testing.T, cmd *exec.Cmd, addr string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
@@ -153,9 +137,6 @@ func CheckServeNoDelay(t *testing.T, cmd *exec.Cmd, addr string) {
 	}
 }
 
-// NetNoDelayProbe dials itself through std/net's `connect` and takes the
-// connection with `accept`, prints "ready" and waits, so both ends are
-// connected sockets of one process for CheckNetNoDelay to read.
 func NetNoDelayProbe() string {
 	return `import "std/net";
 function main(): i32 {
@@ -172,9 +153,6 @@ function main(): i32 {
 `
 }
 
-// CheckNetNoDelay drives a started NetNoDelayProbe whose stdout is
-// `out`: once it reports ready, the dialled and the accepted socket both
-// have TCP_NODELAY on.
 func CheckNetNoDelay(t *testing.T, cmd *exec.Cmd, out io.Reader) {
 	t.Helper()
 	ready := make(chan string, 1)
@@ -196,12 +174,6 @@ func CheckNetNoDelay(t *testing.T, cmd *exec.Cmd, out io.Reader) {
 	}
 }
 
-// CheckServeCorksBurst drives NoDelayServerSource: 32 requests pipelined
-// in one write on a keep-alive connection are answered by one readable
-// event, whose 32 responses the loop corks into one write. With
-// TCP_NODELAY on, every write is at least a segment, so the server's
-// segments out across the burst are few, where a write per response would
-// be 32.
 func CheckServeCorksBurst(t *testing.T, cmd *exec.Cmd, addr string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)

@@ -18,13 +18,7 @@ type dropCase struct {
 	lines string
 }
 
-// dropFinalizerCases run a `core/mem.Drop` finalizer through the typed
-// lowering (#10756). Each value's `drop` has to run exactly once and read its
-// fields, so the output is compared as a multiset of lines; dropOrderCases
-// pin when it runs.
 var dropFinalizerCases = []dropCase{
-	// Monomorphized receivers keep their Drop trait membership. An inherent
-	// method with the same name does not establish that membership.
 	{"generic-specializations-and-aliases", `import "core/mem" as memory;
 struct Leaf[T] { n: T }
 impl[T] memory.Drop for Leaf[T] {
@@ -72,7 +66,6 @@ function main(): i32 {
     return a.n + b.n - 16;
 }
 `, "used\ngeneric Drop\nplain Drop"},
-	// Generic enums must preserve Drop for both payload and payload-free variants.
 	{"generic-enum-specializations", `import "core/mem";
 enum Signal[T] { Value(T), Empty }
 impl[T] mem.Drop for Signal[T] {
@@ -94,7 +87,6 @@ function main(): i32 {
   return n - 14;
 }
 `, "hello\nused\ndrop Signal\ndrop Signal\ndrop Signal"},
-	// An array element, a field, an enum payload and a returned value.
 	{"every-container-shape", `import "core/mem";
 import "std/i32";
 struct W { n: i32 }
@@ -116,7 +108,6 @@ function main(): i32 {
     return 0;
 }
 `, "len 2\nfield 3\npayload 4\nreturned 5\ndrop 1\ndrop 2\ndrop 3\ndrop 4\ndrop 5"},
-	// A literal of scalar fields, which is otherwise a static box, reached through two names.
 	{"static-constant-and-alias", `import "core/mem";
 import "std/i32";
 struct W { n: i32 }
@@ -130,7 +121,6 @@ function main(): i32 {
     return 0;
 }
 `, "both 11\ndrop 1"},
-	// An enum whose payloads own nothing: the finalizer is the only reason it has a release.
 	{"all-scalar-enum", `import "core/mem";
 import "std/i32";
 enum Sig { Open(i32), Closed }
@@ -144,7 +134,6 @@ function main(): i32 {
     return 0;
 }
 `, "v 7\ndrop Sig\nend"},
-	// A rebinding that would otherwise refill the old box in place.
 	{"self-overwrite", `import "core/mem";
 import "std/i32";
 struct W { v: i32[] }
@@ -166,7 +155,6 @@ function main(): i32 {
     return 0;
 }
 `, "drop W2\nwi\ndrop W1\nwi\ndrop B\nbj\ndrop B\nbj\nend\ndrop W1\ndrop B"},
-	// A dying box a later construction of the same shape would otherwise take.
 	{"reuse-donor", `import "core/mem";
 import "std/i32";
 struct W { n: i32 }
@@ -189,11 +177,6 @@ function main(): i32 {
 `, "p 2\niter 10\ndrop 10\niter 11\nend\ndrop 2\ndrop 11"},
 }
 
-// dropOrderCases pin that a finalizer runs at its value's death, after the
-// value's last use and no earlier (#11846), so the output is compared line
-// for line. A field read of a value built in the same function, once the
-// producer is inlined, is the read the lowering could take off the
-// construction's operands instead of the box.
 var dropOrderCases = []dropCase{
 	{"inlined-producer-read-by-field", `import "std/string";
 import "std/i32";
@@ -379,8 +362,6 @@ function main(): i32 {
 	return entry
 }
 
-// runDropCases runs both tables through run, which compiles and executes a
-// program for one target.
 func runDropCases(t *testing.T, run func(t *testing.T, src string) (int, string)) {
 	check := func(cases []dropCase, norm func(string) string, how string) {
 		for _, tc := range cases {

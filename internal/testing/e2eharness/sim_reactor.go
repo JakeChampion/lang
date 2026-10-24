@@ -1,12 +1,5 @@
 package e2eharness
 
-// SimReactorProbe pins the reactor leg of std/sim's Driver: watched
-// descriptors, the readiness a test scripts with ready_at, a wait that
-// advances the virtual clock to the earliest selected readiness or to the
-// timeout, the interest bits that select it, an unwatch that drops a
-// descriptor's readiness, and wait_into filling an events array the caller
-// keeps. Exit 42 and "ok" on stdout iff every check
-// holds, else the number of the first failing check.
 func SimReactorProbe() string {
 	return `import "core/int";
 import "std/async";

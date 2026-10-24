@@ -5,15 +5,6 @@ import (
 	"testing"
 )
 
-// A BLOCK-scoped rc-payload `Option` built by a DIRECT ctor and consumed by a
-// match one block deeper (#6319, the rc-payload analogue of #6526's scalar row).
-//
-// The payload is released exactly once. Missed, the direct ctor leaked 35200
-// bytes over 100 rounds where every other spelling of the shape was 0; credited
-// twice it double-frees, because an rc-payload drop releases the payload as
-// well as the box — unlike the scalar row, where a second credit is harmless.
-
-// The row this closes: rc payload, direct ctor, declared in a loop, match nested.
 const blkRcDirectNestedSrc = `import "core/int";
 function main(): i32 {
     let acc: i32 = 0;
@@ -33,8 +24,6 @@ function main(): i32 {
 }
 `
 
-// The same shape from a CALL — #6480's row, block-scoped. Already worked; it must
-// keep working with exactly one credit now the direct ctor shares the lookup.
 const blkRcCallNestedSrc = `import "core/int";
 function make(i: i32): Result[i32[], string] {
     if (i < 0) { return Err("neg"); }
@@ -58,7 +47,6 @@ function main(): i32 {
 }
 `
 
-// The FLAT control for the direct ctor — the spelling that always worked.
 const blkRcDirectFlatSrc = `import "core/int";
 function main(): i32 {
     let acc: i32 = 0;
@@ -76,8 +64,6 @@ function main(): i32 {
 }
 `
 
-// The hazard, block-scoped: the arm binding escapes to an outer local, so the
-// payload is still reachable where the drop would land and must be refused.
 const blkRcEscapeSrc = `import "core/int";
 function main(): i32 {
     let held: i32[] = [0, 0];
@@ -108,9 +94,6 @@ func TestSelfHostBlockRcPayloadNestedMatchX86_64(t *testing.T) {
 
 	counts := func(t *testing.T, name, src string) (int64, int64, int64) {
 		t.Helper()
-		// These return a value, not the underflow counter, so `fern -interp` IS
-		// the oracle: a double-freed payload shows up as a wrong answer or a
-		// crash, which matters more than the byte counts.
 		want := interpExit(t, interpBin, src)
 		asm := hevCompile(t, runner, driverBin, src, []string{"FERN_LEAKCHECK=1"})
 		progBin := buildBin(t, gcc, dir, name, asm)
@@ -153,11 +136,6 @@ func TestSelfHostBlockRcPayloadNestedMatchX86_64(t *testing.T) {
 		})
 	}
 
-	// The arm binding escapes to an outer local. That once refused the
-	// consuming match and stranded the payload, which this row pinned as
-	// live != 0; a scalar-array payload's store-out is a counted claim, so the
-	// match is admitted and the row balances like its siblings. Exit agreement
-	// above is still the real detector of a release under a live reference.
 	t.Run("arm_binding_escapes", func(t *testing.T) {
 		allocs, frees, live := counts(t, "arm_binding_escapes", blkRcEscapeSrc)
 		if live != 0 || allocs != frees {

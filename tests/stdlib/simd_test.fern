@@ -3,17 +3,8 @@ import "std/simd" as simd;
 import "std/f64";
 import "std/num" as num;
 
-// tests/stdlib/simd_test.fern — one kernel, several evaluators
-// (docs/SIMD-GENERIC-KERNELS.md): the same generic body on f64, on the
-// lane types f64x2 and f32x4, on Dual (its derivative) and on DoubleDouble
-// (about 106 bits).
-//
-// Run:
-//   fern -interp tests/stdlib/simd_test.fern
-
-// A kernel written once against the traits.
 function cubic[T: simd.Lanes](x: T): T {
-  return simd.horner(x, [0.0, -2.0, 0.0, 1.0]);  // x^3 - 2x
+  return simd.horner(x, [0.0, -2.0, 0.0, 1.0]);
 }
 
 function clamp_sum[T: simd.Lanes](x: T): T {
@@ -54,7 +45,6 @@ function test_lanes_const(): test.TestOutcome {
   return test.pass();
 }
 
-// d/dx (x^3 - 2x) at 2 is 3 * 4 - 2 = 10.
 function test_dual_polynomial(): test.TestOutcome {
   let x: simd.Dual[f64] = simd.seed(2.0);
   let y: simd.Dual[f64] = cubic(x);
@@ -64,8 +54,6 @@ function test_dual_polynomial(): test.TestOutcome {
   return test.assert_eq_f64_near(y.d, 10.0, 1.0e-12);
 }
 
-// The derivative of a select follows the chosen lane: y = x^2 + 2x has
-// slope 4 at x = 1 and the clamped 5 has slope 0 at x = 3.
 function test_dual_select(): test.TestOutcome {
   let x1: simd.Dual[f64] = simd.seed(1.0);
   let x3: simd.Dual[f64] = simd.seed(3.0);
@@ -80,8 +68,6 @@ function test_dual_select(): test.TestOutcome {
   return test.pass();
 }
 
-// sigmoid'(x) = s (1 - s), against the analytic form and a central
-// difference.
 function test_dual_sigmoid(): test.TestOutcome {
   let x: simd.Dual[f64] = simd.seed(0.5);
   let y: simd.Dual[f64] = sigmoid(x);
@@ -119,7 +105,6 @@ function test_dual_chain_rules(): test.TestOutcome {
   return test.pass();
 }
 
-// d/dx x^y at (2, 3) is 3 * 2^2 = 12; d/dy is 8 ln 2.
 function test_dual_pow(): test.TestOutcome {
   let x: simd.Dual[f64] = simd.seed(2.0);
   let y: simd.Dual[f64] = simd.dual(3.0, 0.0);
@@ -131,8 +116,6 @@ function test_dual_pow(): test.TestOutcome {
   return test.assert_eq_f64_near(q.d, 8.0 * 2.0.log(), 1.0e-12);
 }
 
-// A double-double keeps the bit a double drops: (1 + 2^-60) - 1 is
-// exactly 2^-60.
 function test_dd_keeps_low_bits(): test.TestOutcome {
   let one: simd.DoubleDouble[f64] = simd.dd_splat(1.0);
   let tiny: simd.DoubleDouble[f64] = simd.dd_splat(8.673617379884035e-19);
@@ -143,7 +126,6 @@ function test_dd_keeps_low_bits(): test.TestOutcome {
   return test.pass();
 }
 
-// sqrt(2)^2 - 2 vanishes to about 1e-32; a double's own root leaves 4e-16.
 function test_dd_sqrt(): test.TestOutcome {
   let two: simd.DoubleDouble[f64] = simd.dd_splat(2.0);
   let r: simd.DoubleDouble[f64] = two.sqrt();
@@ -154,9 +136,6 @@ function test_dd_sqrt(): test.TestOutcome {
   return test.pass();
 }
 
-// e = 2.718281828459045 + 1.4456468917292502e-16, ln 2 =
-// 0.6931471805599453 + 2.3190468138462996e-17: the low words carry the
-// digits past f64.
 function test_dd_exp_log(): test.TestOutcome {
   let one: simd.DoubleDouble[f64] = simd.dd_splat(1.0);
   let e: simd.DoubleDouble[f64] = one.exp();
@@ -177,7 +156,6 @@ function test_dd_trig(): test.TestOutcome {
   let x: simd.DoubleDouble[f64] = simd.dd_splat(1.0);
   let s: simd.DoubleDouble[f64] = x.sin();
   let c: simd.DoubleDouble[f64] = x.cos();
-  // sin 1 = 0.8414709848078965 + 1.776845092935536e-18.
   if (s.hi != 0.8414709848078965 || (s.lo - 1.776845092935536e-18).abs() > 1.0e-30) {
     return test.fail("sin 1 = " + s.hi.to_string() + " + " + s.lo.to_string());
   }
@@ -186,7 +164,6 @@ function test_dd_trig(): test.TestOutcome {
   if (one.hi.abs() > 1.0e-31) {
     return test.fail("sin^2 + cos^2 - 1 = " + one.hi.to_string());
   }
-  // Quadrants: sin and cos of 2, 4 and -5 against the doubles.
   let xs: f64[] = [2.0, 4.0, -5.0, 100.0];
   let i: i32 = 0;
   while (i < xs.len()) {
@@ -204,10 +181,6 @@ function test_dd_trig(): test.TestOutcome {
 function test_dd_small_arguments(): test.TestOutcome {
   let x: simd.DoubleDouble[f64] = simd.dd_splat(1.0e-10);
   let em: simd.DoubleDouble[f64] = x.expm1();
-  // For the double nearest 1e-10, expm1 is 1.00000000005e-10 +
-  // 3.3900133221217734e-27 and log1p is 9.999999999500001e-11 -
-  // 3.389513322121794e-27: the x^2 / 2 term and the rounding of the high
-  // word both live in lo.
   if (em.hi != 1.00000000005e-10 || (em.lo - 3.3900133221217734e-27).abs() > 1.0e-33) {
     return test.fail("expm1 = " + em.hi.to_string() + " + " + em.lo.to_string());
   }
@@ -221,7 +194,6 @@ function test_dd_small_arguments(): test.TestOutcome {
 function test_dd_generic_kernel(): test.TestOutcome {
   let x: simd.DoubleDouble[f64] = simd.dd_splat(0.5);
   let s: simd.DoubleDouble[f64] = sigmoid(x);
-  // sigmoid(0.5) = 0.6224593312018546 - 2.855738705812305e-17.
   if (s.hi != 0.6224593312018546 || (s.lo + 2.855738705812305e-17).abs() > 1.0e-30) {
     return test.fail("sigmoid = " + s.hi.to_string() + " + " + s.lo.to_string());
   }
@@ -230,7 +202,6 @@ function test_dd_generic_kernel(): test.TestOutcome {
   return test.assert_true(c.hi == 5.0 && c.lo == 0.0);
 }
 
-// Dual over DoubleDouble: the chain rule at the higher precision.
 function test_dual_of_dd(): test.TestOutcome {
   let x: simd.Dual[simd.DoubleDouble[f64]] = simd.seed(3.0);
   let y: simd.Dual[simd.DoubleDouble[f64]] = cubic(x);
@@ -239,7 +210,6 @@ function test_dual_of_dd(): test.TestOutcome {
   }
   let s: simd.Dual[simd.DoubleDouble[f64]] = sigmoid(x);
   let expect: f64 = sigmoid(3.0) * (1.0 - sigmoid(3.0));
-  // The f64 reference is the less accurate side.
   return test.assert_eq_f64_rel(s.d.hi, expect, 1.0e-14);
 }
 
@@ -250,8 +220,6 @@ function test_dd_f32(): test.TestOutcome {
   return test.assert_true((err.hi as f64).abs() < 1.0e-13);
 }
 
-// `ne` and `eq` are IEEE: a NaN operand compares unequal to everything,
-// itself included, and the double-double `lt` tie-break on `hi` follows.
 function test_eq_nan(): test.TestOutcome {
   let z: f64 = 0.0;
   let nan: f64 = z / z;
@@ -281,10 +249,6 @@ function close_rel(a: f64, b: f64, tol: f64): boolean {
   return (a - b).abs() <= tol * m;
 }
 
-// Every Math function on DoubleDouble and every Dual derivative against
-// std/f64 over a range of arguments: the double-double value within a few
-// ulp of the f64 result (the f64 side is the less accurate one), and the
-// derivative against the analytic form built from std/f64.
 function test_sweep_against_float(): test.TestOutcome {
   let names: string[] = ["exp", "log", "sin", "cos", "tan", "tanh", "atan", "expm1", "log1p", "pow"];
   let i: i32 = 0;
@@ -326,9 +290,6 @@ function test_sweep_against_float(): test.TestOutcome {
   return test.pass();
 }
 
-// The lane types run the same kernels, and each lane gives the scalar's
-// answer exactly: the lane operators round as the scalar ones do, and Math
-// applies the scalar function to each lane.
 function test_kernel_on_f64x2(): test.TestOutcome {
   let x: f64x2 = __f64x2_of(2.0, 1.0);
   if (cubic(x).lane(0) != cubic(2.0) || cubic(x).lane(1) != cubic(1.0)) {
@@ -363,7 +324,6 @@ function test_kernel_on_f32x4(): test.TestOutcome {
   return test.pass();
 }
 
-// The masks are 1.0 and 0.0 in each lane, as on a scalar, and NaN is IEEE.
 function test_lane_masks(): test.TestOutcome {
   let z: f64 = 0.0;
   let nan: f64 = z / z;
@@ -386,8 +346,6 @@ function test_lane_masks(): test.TestOutcome {
   return test.pass();
 }
 
-// `lane` past the last lane reads the last lane; `ldexp` is exact per lane;
-// the std/num identities are lane-wise and `neg` keeps the sign of zero.
 function test_lane_helpers(): test.TestOutcome {
   let v: f32x4 = __f32x4_of(1.0, 2.0, 3.0, 4.0);
   if (v.lane(3) != 4.0 || v.lane(9) != 4.0 || __f64x2_of(5.0, 6.0).lane(4) != 6.0) {
@@ -413,7 +371,6 @@ function test_lane_helpers(): test.TestOutcome {
   return test.pass();
 }
 
-// Every Math function on f64x2 and f32x4, lane by lane, against the scalar.
 function test_lane_math_sweep(): test.TestOutcome {
   let names: string[] = ["exp", "log", "sin", "cos", "tan", "tanh", "atan", "expm1", "log1p", "pow"];
   let i: i32 = 0;
@@ -452,7 +409,6 @@ function test_lane_math_sweep(): test.TestOutcome {
   return test.pass();
 }
 
-// same_f64 is bit-for-bit equality, with every NaN equal to every NaN.
 function same_f64(a: f64, b: f64): boolean {
   if (a != a) {
     return b != b;

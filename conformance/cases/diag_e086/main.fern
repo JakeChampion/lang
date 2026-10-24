@@ -1,4 +1,4 @@
-// Pins E086 for a stdlib path that names no stdlib module.
+
 import "std/nosuch";
 
 function main(): i32 {

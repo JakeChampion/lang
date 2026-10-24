@@ -59,10 +59,6 @@ function main(): i32 {
 
 func HTTPByteSerializationOutput() []byte {
 	var out []byte
-	// connection is the Connection field's value: "close" when the response
-	// ends the connection, "keep-alive" to an HTTP/1.0 request the
-	// connection outlives, and "" for a persisting HTTP/1.1 response,
-	// which carries no field.
 	add := func(status int, body []byte, headOnly bool, connection string, proof bool) {
 		header := fmt.Sprintf("HTTP/1.1 %d %s\r\n", status, http.StatusText(status))
 		if proof {
@@ -73,8 +69,6 @@ func HTTPByteSerializationOutput() []byte {
 			header += fmt.Sprintf("Content-Length: %d\r\n", len(body))
 		}
 		if status == 101 {
-			// A 101's Connection names the upgrade, whatever keep_alive says
-			// (http_serialize_response_head_into).
 			connection = "Upgrade"
 		}
 		if connection != "" {

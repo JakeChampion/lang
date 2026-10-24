@@ -15,10 +15,6 @@ import (
 	"time"
 )
 
-// WebSocketServerSource is a one-worker server with a WebSocket echo at
-// /ws (std/http/websocket): each text or binary message is sent back,
-// a message of "close" has the handler close with 1001; /ok is the
-// hello. The message cap is 200 KiB.
 func WebSocketServerSource() string {
 	return `import "std/http";
 import "std/serve";
@@ -47,8 +43,6 @@ function main(): i32 {
 `
 }
 
-// wsClient is the smallest client the checks need: the handshake, masked
-// frames out, frames in.
 type wsClient struct {
 	t    *testing.T
 	conn net.Conn
@@ -119,8 +113,6 @@ func (c *wsClient) send(fin bool, opcode byte, payload []byte) {
 	}
 }
 
-// recv reads one frame: its opcode and payload, unmasked (a server does
-// not mask).
 func (c *wsClient) recv() (byte, []byte, error) {
 	var head [2]byte
 	if _, err := io.ReadFull(c.r, head[:]); err != nil {
@@ -169,13 +161,6 @@ func trimmed(b []byte) string {
 	return string(b)
 }
 
-// CheckWebSocketSequential drives WebSocketServerSource one client at a
-// time: text and binary echoed; a message in three fragments echoed
-// whole; a ping between fragments answered at once; a 150 KiB message
-// under the 8-byte length; the close handshake from the client, echoed
-// with its code and the connection then closed by the server; the
-// handler's own close, answered by the client and the connection then
-// closed; a protocol violation closed 1002; and /ok served after.
 func CheckWebSocketSequential(t *testing.T, addr string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
@@ -222,13 +207,6 @@ func CheckWebSocketSequential(t *testing.T, addr string) {
 	}
 }
 
-// checkDeclinedHandshakeKeepsConnection sends a valid handshake the
-// handler declines — a `Sec-WebSocket-Key` is present, so the loop
-// streams it as an upgrade (length -2), but `Sec-WebSocket-Version: 8`
-// makes `accept` answer 426 rather than 101. The loop must keep the
-// connection: `__upgrade_head` carries the request's keep-alive and the
-// declined branch restores it for the -2 head, so a plain request follows
-// on the same connection. Without the restore the 426 would close it.
 func checkDeclinedHandshakeKeepsConnection(t *testing.T, addr string) {
 	t.Helper()
 	conn := dialRaw(t, addr)
@@ -262,11 +240,6 @@ func checkDeclinedHandshakeKeepsConnection(t *testing.T, addr string) {
 	after.Body.Close()
 }
 
-// CheckWebSocketOverlap drives WebSocketServerSource with a session held
-// open and idle while /ok is answered on another connection, then the
-// session used again: only a server whose session parks passes this;
-// the Go compiler's blocking fallback is checked by
-// CheckWebSocketSequential.
 func CheckWebSocketOverlap(t *testing.T, addr string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)

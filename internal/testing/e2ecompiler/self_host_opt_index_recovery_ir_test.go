@@ -7,33 +7,23 @@ import (
 	"testing"
 )
 
-// optIndexRecoveryCases pin the Option/Result element recovery for an indexed
-// read, across every shape the index BASE can take (#5646 option 3): a local,
-// a named struct field, a nested index (`aoa[i][j]`) and a tuple element
-// (`t.N[i]`), in both value position and as a match scrutinee.
-//
-// Every `want` stays in [0, 126) — the wasm leg exits through WASI, which
-// rejects anything above that.
 var optIndexRecoveryCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// New: the base is itself an index.
 	{"nested-index", `
 function main(): i32 {
     let aoa: Option[i32][][] = [[Some(4), None], [Some(9)]];
     match (aoa[0][0]) { Some(v) => { return v; }, None => { return 1; } }
 }
 `, 4},
-	// New: the base is a tuple element.
 	{"tuple-elem-index", `
 function main(): i32 {
     let t: (Option[i32][], i32) = ([Some(7), None], 3);
     match (t.0[0]) { Some(v) => { return v; }, None => { return 1; } }
 }
 `, 7},
-	// New, via `?` rather than `match` — the value-position resolver.
 	{"nested-index-try", `
 function first(aoa: Option[i32][][]): Option[i32] {
     let v: i32 = aoa[0][0]?;
@@ -43,14 +33,12 @@ function main(): i32 {
     match (first([[Some(4), None]])) { Some(v) => { return v; }, None => { return 1; } }
 }
 `, 5},
-	// Pre-existing: the base is a local.
 	{"local-index", `
 function main(): i32 {
     let a: Option[i32][] = [Some(4), None];
     match (a[0]) { Some(v) => { return v; }, None => { return 1; } }
 }
 `, 4},
-	// Pre-existing: the base is a struct field.
 	{"struct-field-index", `
 struct B { o: Option[i32][] }
 function main(): i32 {
@@ -58,7 +46,6 @@ function main(): i32 {
     match (b.o[0]) { Some(v) => { return v; }, None => { return 1; } }
 }
 `, 5},
-	// The None arm still has to be reachable through the recovered type.
 	{"nested-index-none", `
 function main(): i32 {
     let aoa: Option[i32][][] = [[None, Some(4)]];
@@ -67,9 +54,6 @@ function main(): i32 {
 `, 6},
 }
 
-// TestSelfHostOptIndexRecoveryIRX86_64 asserts each shape lowers on the IR path
-// — proven by running the driver under FERN_STRICT_IR, where a bail is exit 3 —
-// and still produces the interpreter's answer.
 func TestSelfHostOptIndexRecoveryIRX86_64(t *testing.T) {
 	gcc, runner, driverBin := strictIRDriver(t)
 	dir := filepath.Dir(driverBin)
@@ -95,8 +79,6 @@ func TestSelfHostOptIndexRecoveryIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostOptIndexRecoveryIRWasm runs the same cases through the wasm IR
-// backend, which shares the resolver.
 func TestSelfHostOptIndexRecoveryIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host opt-index-recovery wasm IR e2e")

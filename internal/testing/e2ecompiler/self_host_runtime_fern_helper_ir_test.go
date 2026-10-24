@@ -5,22 +5,14 @@ import (
 	"testing"
 )
 
-// Issue #2649 — IR-path runtime helpers written in Fern.
-//
-// The compiler builds each migrated helper from its Fern source
-// (asmcore.rt_src_*, lowered by asm_ir.emit_ir_runtime_fern_fn), so it links as
-// the ordinary user-function symbol __fn___fern_<name>. The behavioural suites
-// prove the helpers compute correctly; this test locks in the *migration*: the
-// emitted asm must define the Fern-compiled symbol and must NOT contain the old
-// hand-asm body's local labels, so a silent revert fails.
 func TestSelfHostRuntimeHelpersAreFernIR(t *testing.T) {
 	cli := newStrictCLI(t)
 
 	cases := []struct {
 		name string
 		prog string
-		sym  string   // Fern-compiled symbol the IR asm must define + call
-		gone []string // hand-asm labels of the old IR body/wrapper that must be gone
+		sym  string
+		gone []string
 	}{
 		{
 			"str_cmp",
@@ -29,17 +21,12 @@ func TestSelfHostRuntimeHelpersAreFernIR(t *testing.T) {
 			[]string{"\n__fern_str_cmp:", ".Lstrcmp_loop"},
 		},
 		{
-			// One operand comes from args(): two literals fold to a constant and
-			// emit no comparison, which quietly made this case vacuous.
 			"str_eq",
 			`function main(): i32 { let xs: string[] = args(); if (xs[0] == "ab") { return 1; } return 0; }`,
 			"__fn___fern_str_eq",
 			[]string{"\n__fern_str_eq:", ".Lstreq_loop"},
 		},
 		{
-			// str_trim — migrated on the IR path too (the AST + IR str_trim both
-			// became Fern). The old hand-written IR body's local labels (.Lir_trim_*)
-			// must be gone.
 			"str_trim",
 			`import "std/string";
 function main(): i32 { return "  hi ".trim().len(); }`,
@@ -47,8 +34,6 @@ function main(): i32 { return "  hi ".trim().len(); }`,
 			[]string{"\n__fern_str_trim:", ".Lir_trim_front", ".Ltrim_front"},
 		},
 		{
-			// str_lines — migrated on the IR path too. The old hand-written IR body
-			// (__fern_str_lines: / .Lir_lines_box) must be gone.
 			"str_lines",
 			`import "std/string";
 function main(): i32 { return "a\nb\n".lines().len(); }`,
@@ -56,8 +41,6 @@ function main(): i32 { return "a\nb\n".lines().len(); }`,
 			[]string{"\n__fern_str_lines:", ".Lir_lines_box"},
 		},
 		{
-			// str_bytes — migrated on the IR path too. The old hand-written IR body
-			// (__fern_str_bytes: / .Lir_bytes_loop) must be gone.
 			"str_bytes",
 			`import "std/string";
 function main(): i32 { return "abc".bytes().len(); }`,
@@ -65,17 +48,12 @@ function main(): i32 { return "abc".bytes().len(); }`,
 			[]string{"\n__fern_str_bytes:", ".Lir_bytes_loop"},
 		},
 		{
-			// str_concat — backs `+` on strings. The old hand-written register-ABI
-			// body (__fern_str_concat: / .Lstrconcat_a_loop) must be gone. One
-			// operand comes from args() so the concat is not folded to a constant.
 			"str_concat",
 			`function main(): i32 { let xs: string[] = args(); let s: string = xs[0] + "cd"; return s.len(); }`,
 			"__fn___fern_str_concat",
 			[]string{"\n__fern_str_concat:", ".Lstrconcat_a_loop"},
 		},
 		{
-			// str_to_upper — migrated on the IR path too. The old hand-written IR
-			// body (__fern_str_to_upper: / .Lir_upper_loop) must be gone.
 			"str_to_upper",
 			`import "std/string";
 function main(): i32 { return "aB".to_ascii_upper()[0] as i32; }`,
@@ -83,7 +61,6 @@ function main(): i32 { return "aB".to_ascii_upper()[0] as i32; }`,
 			[]string{"\n__fern_str_to_upper:", ".Lir_upper_loop"},
 		},
 		{
-			// str_to_lower — the lower-case sibling on the IR path.
 			"str_to_lower",
 			`import "std/string";
 function main(): i32 { return "Ab".to_ascii_lower()[0] as i32; }`,
@@ -91,9 +68,6 @@ function main(): i32 { return "Ab".to_ascii_lower()[0] as i32; }`,
 			[]string{"\n__fern_str_to_lower:", ".Lir_lower_loop"},
 		},
 		{
-			// str_repeat — migrated on the IR path too (#2649). The old hand-written
-			// IR body (__fern_str_repeat: / .Lir_rep_outer) must be gone; the
-			// op_str_repeat handler now calls __fn___fern_str_repeat via the stack ABI.
 			"str_repeat",
 			`import "std/string";
 function main(): i32 { return "ab".repeat(3).len(); }`,
@@ -101,9 +75,6 @@ function main(): i32 { return "ab".repeat(3).len(); }`,
 			[]string{"\n__fern_str_repeat:", ".Lir_rep_outer"},
 		},
 		{
-			// str_replace — migrated on the IR path too (#2649). The old hand-written
-			// IR body (__fern_str_replace: / .Lir_repl_walk) must be gone; the
-			// op_str_replace handler now calls __fn___fern_str_replace via the stack ABI.
 			"str_replace",
 			`import "std/string";
 function main(): i32 { return "a.b".replace(".", "-").len(); }`,
@@ -111,18 +82,12 @@ function main(): i32 { return "a.b".replace(".", "-").len(); }`,
 			[]string{"\n__fern_str_replace:", ".Lir_repl_walk"},
 		},
 		{
-			// string_from_bytes_unchecked — migrated on the IR path too (#2649). The old
-			// hand-written IR body (__fern_string_from_bytes: / .Lir_sfb_loop) must
-			// be gone; op_str_from_bytes now calls __fn___fern_string_from_bytes_u8.
 			"string_from_bytes_unchecked",
 			`function main(): i32 { let b: u8[] = [104 as u8, 105 as u8]; return string_from_bytes_unchecked(b).len(); }`,
 			"__fn___fern_string_from_bytes_u8",
 			[]string{"\n__fern_string_from_bytes:", ".Lir_sfb_loop"},
 		},
 		{
-			// str_split — migrated on the IR path too (#2649). The old hand-written
-			// IR body (__fern_str_split: / .Lir_split_cl) must be gone; op_str_split
-			// now calls __fn___fern_str_split via the stack ABI.
 			"str_split",
 			`import "std/string";
 function main(): i32 { return "a,b,c".split(",").len(); }`,
@@ -130,21 +95,12 @@ function main(): i32 { return "a,b,c".split(",").len(); }`,
 			[]string{"\n__fern_str_split:", ".Lir_split_cl"},
 		},
 		{
-			// random_bytes — the first syscall-leaf migrated to Fern (#2649),
-			// over the __syscall3 sub-floor. The old hand-written IR body
-			// (__fern_random_bytes:) must be gone; op_random_bytes now calls
-			// __fn___fern_random_bytes_u8 via the stack ABI, whose body does the
-			// getrandom syscall through the raw `syscall` the __syscall3 op emits.
 			"random_bytes",
 			`function main(): i32 { let b: u8[] = random_bytes(8); return b.len(); }`,
 			"__fn___fern_random_bytes_u8",
 			[]string{"\n__fern_random_bytes:"},
 		},
 		{
-			// monotonic_ns — clock leaf migrated to Fern (#2649) over the
-			// __syscall3 / __raw_scratch / __load_i64 floor. The old hand-asm
-			// IR body (__fern_monotonic_ns:) must be gone; op_monotonic_ns now
-			// calls __fn___fern_monotonic_ns.
 			"monotonic_ns",
 			`function main(): i32 { let a: i64 = monotonic_ns(); if (a > (0 as i64)) { return 1; } return 0; }`,
 			"__fn___fern_monotonic_ns",
@@ -163,128 +119,78 @@ function main(): i32 { return "a,b,c".split(",").len(); }`,
 			[]string{"\n__fern_now_ns:"},
 		},
 		{
-			// stat — the first syscall leaf returning a user-typed
-			// Result[FileStat, IoError] (#2649), migrated to Fern over the
-			// __syscall3 / __raw_scratch / __load_i32/i64 floor. The old
-			// hand-asm IR body (__fern_stat:) is gone; op_stat now calls
-			// __fn___fern_stat, whose body builds Ok(FileStat{...}) /
-			// Err(NotFound(_)) through the normal struct/enum lowering.
 			"stat",
 			`function main(): i32 { match (stat("/tmp")) { Ok(s) => { return 1; }, Err(e) => { return 0; } } }`,
 			"__fn___fern_stat",
 			[]string{"\n__fern_stat:"},
 		},
 		{
-			// read_file — Result[string, IoError] leaf (#2649): the sized read
-			// buffer becomes the Ok(string). The old hand-asm IR body
-			// (__fern_read_file:) is gone; op_read_file calls __fn___fern_read_file.
 			"read_file",
 			`function main(): i32 { match (read_file("/nonexistent")) { Ok(s) => { return 1; }, Err(e) => { return 0; } } }`,
 			"__fn___fern_read_file",
 			[]string{"\n__fern_read_file:"},
 		},
 		{
-			// remove_file — Result[void, IoError] leaf (#2649): unlinkat via __syscall3.
-			// The old hand-asm IR body (__fern_remove_file:) is gone; op_remove_file
-			// calls __fn___fern_remove_file.
 			"remove_file",
 			`function main(): i32 { match (remove_file("/nonexistent-xyz")) { Ok(_) => { return 0; }, Err(e) => { return 1; } } }`,
 			"__fn___fern_remove_file",
 			[]string{"\n__fern_remove_file:"},
 		},
 		{
-			// write_file — Result[void, IoError] leaf (#2649), first __syscall4 user
-			// (openat with O_CREAT mode). Old hand-asm IR body (__fern_write_file:)
-			// gone; op_write_file calls __fn___fern_write_file.
 			"write_file",
 			`function main(): i32 { match (write_file("/tmp/fern-lockin-wf", "x")) { Ok(_) => { return 0; }, Err(e) => { return 1; } } }`,
 			"__fn___fern_write_file",
 			[]string{"\n__fern_write_file:"},
 		},
 		{
-			// temp_dir — Result[string, IoError] leaf (#2649), the first migrated
-			// helper that CALLS another Fern helper (monotonic_ns). Old hand-asm IR
-			// body (__fern_temp_dir:) gone; op_temp_dir calls __fn___fern_temp_dir.
 			"temp_dir",
 			`function main(): i32 { match (temp_dir("ferntest")) { Ok(p) => { return 0; }, Err(e) => { return 1; } } }`,
 			"__fn___fern_temp_dir",
 			[]string{"\n__fern_temp_dir:"},
 		},
 		{
-			// env — Option[string] leaf (#2649), first __raw_environ user. Walks the
-			// envp array + copies the value. Old hand-asm IR body (__fern_env:) gone;
-			// op_env calls __fn___fern_env. (__fern_envp global kept for subprocess.)
 			"env",
 			`function main(): i32 { match (env("PATH")) { Some(v) => { return 0; }, None => { return 1; } } }`,
 			"__fn___fern_env",
 			[]string{"\n__fern_env:"},
 		},
 		{
-			// read_dir — Result[string[], IoError] leaf (#2649): drains the directory
-			// with a getdents64 loop over a fresh buffer per read, building the
-			// string[] with .append(). Old hand-asm IR body (__fern_read_dir:) gone;
-			// op_read_dir calls __fn___fern_read_dir. The .Lrd_* local labels of the
-			// retired hand-asm body must be gone.
 			"read_dir",
 			`function main(): i32 { match (read_dir("/tmp")) { Ok(es) => { return 0; }, Err(e) => { return 1; } } }`,
 			"__fn___fern_read_dir",
 			[]string{"\n__fern_read_dir:", ".Lrd_g", ".Lrd_p2"},
 		},
 		{
-			// remove_dir_all — Result[void, IoError] leaf (#2649), the last fs syscall leaf.
-			// Best-effort recursive rm -rf: probe openat to classify, delegate
-			// enumeration to the (Fern) read_dir, recurse, rmdir. Old hand-asm IR body
-			// (__fern_remove_dir_all:) gone; op_remove_dir_all calls the stack-ABI
-			// __fn___fern_remove_dir_all. The .Lrda_* local labels of the retired
-			// hand-asm body must be gone.
 			"remove_dir_all",
 			`function main(): i32 { match (remove_dir_all("/nonexistent-fern-xyz")) { Ok(_) => { return 0; }, Err(e) => { return 1; } } }`,
 			"__fn___fern_remove_dir_all",
 			[]string{"\n__fern_remove_dir_all:", ".Lrda_copy", ".Lrda_it"},
 		},
 		{
-			// print_str — the first of the three stdout/stderr leaves (#2649), all
-			// plain write(2). The old register-ABI hand-asm body
-			// (__fern_print_str:) is gone; op_print_str calls the stack-ABI
-			// __fn___fern_print_str, whose body writes straight out of the
-			// caller's box via __raw_data.
 			"print_str",
 			`function main(): i32 { print("x"); return 0; }`,
 			"__fn___fern_print_str",
 			[]string{"\n__fern_print_str:"},
 		},
 		{
-			// putchar — the byte-level twin of print_str. The hand-asm staged its
-			// byte in a stack slot, which a Fern helper cannot name; the migrated
-			// body uses __raw_scratch instead.
 			"putchar",
 			`function main(): i32 { putchar(65); return 0; }`,
 			"__fn___fern_putchar",
 			[]string{"\n__fern_putchar:"},
 		},
 		{
-			// eprint_str — fd 2 plus the trailing newline that is part of eprint's
-			// contract, as one writev over two iovecs rather than a buffer build.
 			"eprint_str",
 			`function main(): i32 { eprint("x"); return 0; }`,
 			"__fn___fern_eprint_str",
 			[]string{"\n__fern_eprint_str:"},
 		},
 		{
-			// reader_read_chunk — the Reader half of the same read(2), taking the
-			// fd rather than assuming 0. The old hand-asm body
-			// (__fern_reader_read_chunk: / .Lirc_*) is gone; op_read_chunk calls
-			// __fn___fern_reader_read_chunk. Migrating it also gave the Some box a
-			// real refcount header, which the bare-__fern_alloc hand-asm never wrote.
 			"reader_read_chunk",
 			`function main(): i32 { let r: Reader = stdin(); return match (r.read_chunk(4096)) { Ok(c) => c.len(), Err(e) => 0 }; }`,
 			"__fn___fern_reader_read_chunk",
 			[]string{"\n__fern_reader_read_chunk:", ".Lirc_none", ".Lirc_ret"},
 		},
 		{
-			// reader_close — close(2), always None. The old hand-asm body
-			// (__fern_reader_close:) carried no local labels at all; the symbol
-			// itself is the whole marker.
 			"reader_close",
 			`function main(): i32 { let r: Reader = stdin(); r.close(); return 7; }`,
 			"__fn___fern_reader_close",
@@ -303,15 +209,6 @@ function main(): i32 { return "a,b,c".split(",").len(); }`,
 				t.Errorf("asm missing call %s — call site not resolving to the Fern helper", tc.sym)
 			}
 			for _, bad := range tc.gone {
-				// Label patterns ("\n__fern_x:" definitions, ".L*" local
-				// labels) are unique to the retired hand-written bodies, so
-				// they scan the whole output. Generic instruction idioms
-				// (the old stack-arg load `movq 8(%rsp), %rdi`) can
-				// legitimately appear in OTHER hand-written runtime helpers
-				// (#4551's __fn___fern_alloc_reuse uses the same load), so
-				// they scan only the helper-under-test's own body — the
-				// migration contract is that THIS symbol's body is
-				// Fern-compiled, not that the idiom vanished globally.
 				scope := got
 				if !strings.HasPrefix(bad, "\n") && !strings.HasPrefix(bad, ".") {
 					scope = extractFuncBody(got, tc.sym)
@@ -323,11 +220,6 @@ function main(): i32 { return "a,b,c".split(",").len(); }`,
 		})
 	}
 
-	// Consolidation lock-in (#2649): the fs-syscall leaves share ONE errno→IoError
-	// classifier, __fern_io_error, instead of each inlining the five-way branch.
-	// A program touching all four must emit __fn___fern_io_error exactly once, and
-	// each fs helper's body must CALL it (an ordinary call-graph edge) rather than
-	// inline the variant construction — so no fs-helper body names PermissionDenied.
 	t.Run("io_error_shared", func(t *testing.T) {
 		const prog = `function main(): i32 {
     let r: i32 = 0;
@@ -347,9 +239,6 @@ function main(): i32 { return "a,b,c".split(",").len(); }`,
 		if !strings.Contains(got, "call __fn___fern_io_error") {
 			t.Error("no `call __fn___fern_io_error` — the fs helpers are not calling the shared classifier")
 		}
-		// Each fs helper delegates its error path to io_error: its body must CALL
-		// the shared classifier (an ordinary call-graph edge) rather than inline the
-		// five-way branch. A silent revert to inlining drops the call.
 		for _, sym := range []string{"__fn___fern_stat", "__fn___fern_read_file", "__fn___fern_remove_file", "__fn___fern_write_file", "__fn___fern_temp_dir", "__fn___fern_read_dir", "__fn___fern_remove_dir_all"} {
 			body := extractFuncBody(got, sym)
 			if body == "" {
@@ -363,10 +252,6 @@ function main(): i32 { return "a,b,c".split(",").len(); }`,
 	})
 }
 
-// extractFuncBody returns the asm text of the named function: from its
-// column-0 `sym:` label to the next column-0 function label (local `.L*:`
-// labels inside the body don't terminate it). Empty when the label is
-// missing — callers that need the definition assert it separately.
 func extractFuncBody(asm, sym string) string {
 	start := strings.Index(asm, "\n"+sym+":")
 	if start < 0 {
@@ -380,15 +265,6 @@ func extractFuncBody(asm, sym string) string {
 		}
 		lineStart := off + next + 1
 		rest := body[lineStart:]
-		// A local label is not the next function. `.L…` is the ELF spelling;
-		// Mach-O's is a bare `L…` (no dot), so an arm64-darwin body ended at its
-		// first branch target and everything after it — including the syscall
-		// number the caller is looking for — read as absent rather than wrong.
-		// Nothing local is ever a call target, so neither prefix can be a
-		// function here. Nor is a numeric label (`1:`), GAS's other local
-		// form, which a guarded branch uses to skip over its trap.
-		// The function's own register entries, `sym.r:` and arm64's `sym.k:`,
-		// are inside it too.
 		if len(rest) > 0 && rest[0] != ' ' && rest[0] != '\t' && rest[0] != '.' && rest[0] != 'L' && rest[0] != '\n' && (rest[0] < '0' || rest[0] > '9') && !strings.HasPrefix(rest, sym+".r:") && !strings.HasPrefix(rest, sym+".k:") {
 			if end := strings.Index(rest, "\n"); end < 0 || strings.Contains(rest[:end], ":") {
 				return body[:lineStart]

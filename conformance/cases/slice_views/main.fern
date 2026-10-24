@@ -1,9 +1,9 @@
 import "core/int";
 import "std/i32";
 
-// Audit fixture: slice views `[T]` — a borrowed window `a[i:j]` over an owned
-// array, with `.len()`, indexing, iteration, slice-of-slice, empty slices, and
-// `[string]` element slices. Run across interp / x86-64 / arm64 / wasm.
+
+
+
 function sum(s: [i32]): i32 {
     let t: i32 = 0;
     for x in s { t = t + x; }
@@ -12,23 +12,23 @@ function sum(s: [i32]): i32 {
 
 function main(): i32 {
     let a: i32[] = [10, 20, 30, 40, 50];
-    let s: [i32] = a[1:4];                 // window [20, 30, 40]
-    print((s.len()).to_string());         // 3
-    print((s[0]).to_string());            // 20
-    print((s[2]).to_string());            // 40
-    print((sum(s)).to_string());          // 90
+    let s: [i32] = a[1:4];
+    print((s.len()).to_string());
+    print((s[0]).to_string());
+    print((s[2]).to_string());
+    print((sum(s)).to_string());
 
-    let s2: [i32] = s[0:2];                // slice of a slice -> [20, 30]
-    print((s2.len()).to_string());        // 2
+    let s2: [i32] = s[0:2];
+    print((s2.len()).to_string());
 
-    let empty: [i32] = a[2:2];             // empty window
-    print((empty.len()).to_string());     // 0
+    let empty: [i32] = a[2:2];
+    print((empty.len()).to_string());
 
     let strs: string[] = ["ab", "cde", "f"];
-    let ss: [string] = strs[0:2];          // ["ab", "cde"]
-    print((ss[1].len()).to_string());     // 3
+    let ss: [string] = strs[0:2];
+    print((ss[1].len()).to_string());
 
-    // Assertions (return nonzero on mismatch).
+
     if (s.len() != 3) { return 11; }
     if (s[1] != 30) { return 12; }
     if (sum(a[0:5]) != 150) { return 13; }

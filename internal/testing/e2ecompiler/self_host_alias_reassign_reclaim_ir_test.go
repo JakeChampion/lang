@@ -7,29 +7,11 @@ import (
 	"testing"
 )
 
-// aliasReassignReclaimCases pin a FRESH struct local (`let t = S { arr: [] }`)
-// that is later REASSIGNED from an ALIAS — a match-arm payload binding
-// (`t = l`), a struct-field read (`t = x.s`), or an array-element read
-// (`t = xs[i]`) — so its rc fields now point into a box the container still
-// owns (#3425). The loop's next-iteration `let t = ...` must not free them out
-// from under the container. The programs churn fresh arrays after scan() so a
-// freed buffer is REUSED (7/8-filled) before the reads: a double-free reads the
-// reused data (sum wrong -> 90) rather than the originals.
 var aliasReassignReclaimCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// The mirror image (#8983): a local bound from a SPREAD over a borrowed base
-	// (`let ls = Sc { ...s, depth: 0 }`) holds a fresh rc-1 box, and a unique box is
-	// taken to own its fields — `ls.bind(…)` moves the array out of it and pushes
-	// in place, and the rebind's reclaim frees what the successor replaced. The
-	// base copy used to carry the arrays uncounted, so both landed on the
-	// caller's buffers: `s.names` grew under the caller and `s.types` was freed
-	// while `s` still read it (the checker's annotate_lambda_expr, which took
-	// the self-built compiler down in the emit-all fixpoint). The copy now
-	// retains every array it carries. 91 = the caller's scope changed length;
-	// 92 = its buffer was reused; 99 = over-release.
 	{"spread-carry-owned", `struct Sc { names: string[], types: i32[], depth: i32 }
 function (s: Sc) bind(n: string, t: i32): Sc { return Sc { names: s.names.append(n), types: s.types.append(t), depth: s.depth }; }
 function lam(s: Sc, ps: string[]): i32 {
@@ -53,7 +35,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// Array-element alias (`t = b.items[i]`): the ExprIndex reassign branch.
 	{"alias-element", `struct S { arr: i32[] }
 struct Box { items: S[] }
 function scan(b: Box): Box {
@@ -76,7 +57,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// Struct-field alias (`t = b.items[i].s`): the ExprFieldAccess reassign branch.
 	{"alias-field", `struct S { arr: i32[] }
 struct Wrap { s: S }
 struct Box { items: Wrap[] }
@@ -100,8 +80,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// Negative: a fresh struct rebound from a fresh struct LITERAL (`t = S {..}`)
-	// is NOT an alias — it stays reclaimable, values exact, no over-release.
 	{"fresh-relit-safe", `struct S { arr: i32[] }
 function main(): i32 {
     let t: S = S { arr: [0] };
@@ -114,9 +92,6 @@ function main(): i32 {
 }`, 0},
 }
 
-// TestSelfHostAliasReassignReclaimIRX86_64 drives the cases through the
-// self-hosted x86-64 compiler (asm_run), which routes each small program through
-// the IR path. Underflow-guarded; the corrupt-read manifests as exit 90.
 func TestSelfHostAliasReassignReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

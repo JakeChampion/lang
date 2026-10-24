@@ -1,9 +1,5 @@
 import "std/i32";
 
-// string_build — accumulating concatenation, the shape the rc==1 append cliff
-// is about. `__fern_strcat` and the copy it performs when the accumulator is
-// shared are the cost; the repo carries whole diagnostics for this
-// (__arr_push_shared_bytes, FERN_CLIFF_REPORT) and had no benchmark of it.
 function build(n: i32): string {
   let out: string = "";
   let i: i32 = 0;

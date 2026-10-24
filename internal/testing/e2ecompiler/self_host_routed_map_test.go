@@ -10,17 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// A map whose key is a string, a 32-bit integer, a boolean or a keyed type,
-// and whose value is one of those or a box, runs on core/map's hash table
-// under the typed lowering (ssarc.routed_map_site, #9608). These cases pin what
-// the routing has to keep: the whole Map surface, copy-on-write under an alias, negative keys
-// (which cross into core/map's usize slot and must be equal slots however they
-// were computed), u32 values past 2^31, boolean columns, and the units a string
-// or box column holds — on every target, with every allocation returned.
-
-// routedMapSurfaceSrc exercises every routed op: construction, insert with and
-// without an alias, get / get_or / has, without, keys / values, the cursor,
-// a map in a struct field, in an array, captured by a closure, and cleared.
 const routedMapSurfaceSrc = `import "core/map";
 import "std/i32";
 
@@ -72,8 +61,6 @@ function main(): i32 {
 }
 `
 
-// routedMapNegativeKeysSrc inserts keys computed in a loop and looks them up
-// by literal: the two forms reach the slot through different instructions.
 const routedMapNegativeKeysSrc = `import "core/map";
 import "std/i32";
 function main(): i32 {
@@ -87,8 +74,6 @@ function main(): i32 {
 }
 `
 
-// routedMapCowSrc: an insert or a without through an alias copies, and the
-// original is untouched.
 const routedMapCowSrc = `import "core/map";
 import "std/i32";
 function build(n: i32): Map[i32, i32] {
@@ -110,7 +95,6 @@ function main(): i32 {
 }
 `
 
-// routedMapU32BoolSrc: a u32 column past 2^31 and boolean columns.
 const routedMapU32BoolSrc = `import "core/map";
 import "std/i32";
 function main(): i32 {
@@ -132,10 +116,6 @@ function main(): i32 {
 }
 `
 
-// routedMapStringKeysSrc: a string key column holds one unit of each key. An
-// overwrite keeps the equal key already there and releases the arriving one;
-// `without` releases the key it removes; a copy under an alias takes a unit of
-// every key; the map's last release walks them all.
 const routedMapStringKeysSrc = `import "core/map";
 import "std/i32";
 function key(i: i32): string { return "k" + i.to_string(); }
@@ -172,11 +152,6 @@ function main(): i32 {
 }
 `
 
-// routedMapKeyedKeysSrc: a keyed key column (a derived Eq + Hash struct or
-// enum, a tuple, an array) holds one unit of each key and hashes and compares
-// through closures over the key type's own functions. An overwrite releases
-// the incoming key, a delete the removed one, an alias's copy retains every
-// key, and the last drop releases them all.
 const routedMapKeyedKeysSrc = `import "core/map";
 import "core/cmp";
 import "std/i32";
@@ -240,11 +215,6 @@ function main(): i32 {
 }
 `
 
-// routedMapGenericKeyedKeysSrc: a generic instance key routes like any keyed
-// key (#9608): a struct instance by its clone's derived methods, an enum
-// instance by its instantiated ones. A bare unit variant handed to a map
-// method takes its instantiation from the map's key type, including through a
-// tuple destructured from `without`.
 const routedMapGenericKeyedKeysSrc = `import "core/map";
 import "core/cmp";
 import "std/i32";
@@ -283,11 +253,6 @@ function main(): i32 {
 }
 `
 
-// routedMapMapValuesSrc: a map's value column holding maps (#9608). Each
-// inner map is a counted box like any other value: a read retains it, so an
-// insert through the read copies rather than writing the outer map's entry,
-// an alias of the outer map keeps the old inner map, and the last drop
-// releases every inner map once.
 const routedMapMapValuesSrc = `import "core/map";
 import "std/i32";
 function build(n: i32): Map[string, Map[i32, i32]] {
@@ -324,13 +289,6 @@ function main(): i32 {
 }
 `
 
-// routedMapViewValuesSrc: a `str` value column is a string column (#10867).
-// Each entry is a unit of what the insert stored: a counted view descriptor
-// over an arena string, a counted string held as a view, or a literal, a
-// window onto one included. An overwrite and a without release the entry
-// they supersede, an alias's insert or without copies, a lent receiver's
-// insert copies, and the strings allocated after them would reissue any box
-// released early. Integer, view, i64 and keyed key columns all take one.
 const routedMapViewValuesSrc = `import "core/map";
 import "core/cmp";
 import "std/i32";
@@ -400,9 +358,6 @@ function main(): i32 {
 }
 `
 
-// routedMapUsizeValuesSrc: a usize value is the whole pointer-wide slot. The
-// values pass 2^32 on the register backends (and wrap past 2^31 on wasm), so
-// a slot that took only their low 32 bits would read back unequal.
 const routedMapUsizeValuesSrc = `import "core/map";
 import "std/i32";
 function main(): i32 {
@@ -432,8 +387,6 @@ function main(): i32 {
 }
 `
 
-// routedMapUsizeKeysSrc: a usize key is the slot itself, as a usize value
-// is. The checker admits it, and the lowering refused it until #11851.
 const routedMapUsizeKeysSrc = `import "core/map";
 import "std/i32";
 function main(): i32 {
@@ -454,8 +407,6 @@ function main(): i32 {
 }
 `
 
-// routedMapCharValuesSrc: a char value column is an i32 column, the values()
-// snapshot included.
 const routedMapCharValuesSrc = `import "core/map";
 import "std/i32";
 function main(): i32 {
@@ -473,9 +424,6 @@ function main(): i32 {
 }
 `
 
-// routedMapStringValuesSrc: string value columns hold their strings in the
-// slots, so an overwrite, a delete, an alias's copy and the last drop each
-// release exactly the values they own, and a get hands out its own reference.
 const routedMapStringValuesSrc = `import "core/map";
 import "std/i32";
 
@@ -515,10 +463,6 @@ function main(): i32 {
 }
 `
 
-// routedMapBoxValuesSrc: array, record and enum value columns hold one unit of
-// each box. core/map retains a box on every read and on a copy, and the
-// lowering releases the box an overwrite supersedes, a delete removes and the
-// last drop still holds, the last through the type's own release.
 const routedMapBoxValuesSrc = `import "core/map";
 import "std/i32";
 
@@ -579,7 +523,6 @@ function main(): i32 {
 }
 `
 
-// routedMapTupleValuesSrc: a tuple value is a box like a record's.
 const routedMapTupleValuesSrc = `import "core/map";
 import "std/i32";
 function main(): i32 {
@@ -602,9 +545,6 @@ function main(): i32 {
 }
 `
 
-// routedMapDynValuesSrc: a dyn value's box is whichever concrete it holds —
-// a boxed i32 or string, a record, an enum — and each is retained and
-// released through the one dyn release.
 const routedMapDynValuesSrc = `import "core/map";
 import "std/i32";
 trait Show { function show(self: Self): i32; }
@@ -632,8 +572,6 @@ function main(): i32 {
 }
 `
 
-// routedMapTwoDynValuesSrc: two dyn types release through helpers of their
-// own; keyed alike, one type's release would leave the other's concretes.
 const routedMapTwoDynValuesSrc = `import "core/map";
 import "std/i32";
 trait Aa { function a(self: Self): i32; }
@@ -663,9 +601,6 @@ function main(): i32 {
 }
 `
 
-// routedMapGenericDynValuesSrc: a dyn over a generic trait pinned at two
-// arguments names its release by a trait set that is spelled with a comma,
-// brackets and a space, none of which a symbol may hold.
 const routedMapGenericDynValuesSrc = `import "core/map";
 import "std/i32";
 trait Tagged[A, B] { function tag(self: Self): i32; }
@@ -693,8 +628,6 @@ function main(): i32 {
 }
 `
 
-// routedMapStringArrayValuesSrc: a string[] value is a box whose release also
-// releases every string it holds.
 const routedMapStringArrayValuesSrc = `import "core/map";
 import "std/i32";
 function main(): i32 {
@@ -771,7 +704,6 @@ func TestSelfHostRoutedScalarMaps(t *testing.T) {
 		})
 	}
 
-	// Each program calls core/map.
 	for _, c := range cases {
 		asm := routedMapAsm(t, selfHostBin, stdlibRoot, c.src)
 		if !strings.Contains(asm, "call __fn___map_put_") {
@@ -799,8 +731,6 @@ func routedMapAsm(t *testing.T, fernBin, stdlibRoot, src string) string {
 	return string(b)
 }
 
-// routedMapRun compiles src for target through the typed lowering, runs it
-// and returns trimmed stdout and stderr. `env` joins the compile's environment.
 func routedMapRun(t *testing.T, fernBin, stdlibRoot, src, target string, env ...string) (string, string) {
 	t.Helper()
 	dir := t.TempDir()

@@ -8,19 +8,6 @@ import (
 	"testing"
 )
 
-// selfHostTrmcSource drives tail recursion modulo cons on the typed path
-// (#10462): a self-call whose result is a payload of the variant the block
-// returns becomes a loop that builds the chain and fills its hole. Every walk
-// is 300,000 cells deep, past any stack here, so a body that stayed a
-// recursion dies rather than answers.
-//
-// `keep` is lent to every walk and scored again at the end, so a walk that
-// released cells its caller still holds answers a different `after`; `g`
-// hands the walk a temporary it may consume as it goes. Most exits fill the
-// hole with a node built there; `mirror`'s hands back the node it was given,
-// and `append_to`'s an element of an array it borrows, so `tails` is read back
-// afterwards. The answer was confirmed at 3,000 cells against `fern -interp`,
-// whose own recursion is too slow at this depth.
 const selfHostTrmcSource = `import "std/i32";
 
 enum List { Cons(i32, List), Neg(i32, List), Nil }
@@ -222,9 +209,6 @@ function main(): i32 {
 
 const selfHostTrmcWant = "0|before=1000021 a=3100021 b=3000000 c=999974 d=300003 e=900000 f=0 g=3100021 m=1199991 j=1000080 tail=59 k=39 after=1000021 underflow=0\n"
 
-// TestSelfHostSemanticTrmc runs that program on every target through the
-// typed lowering and pins the answer, a clean sanitizer leg with nothing held
-// at exit, and the shape: no function the rewrite takes calls itself any more.
 func TestSelfHostSemanticTrmc(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -243,9 +227,6 @@ func TestSelfHostSemanticTrmc(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The call sites left in the listing: main's, plus the one self-call of
-	// `mirror` that is not in tail position. A rewritten function keeps none
-	// of its own.
 	t.Run("shape", func(t *testing.T) {
 		out := filepath.Join(t.TempDir(), "prog.s")
 		cmd := exec.Command(fernBin, "-target", "x86-64-linux", "-emit", "asm", "-o", out, src, stdlibRoot)

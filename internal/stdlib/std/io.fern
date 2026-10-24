@@ -1,29 +1,8 @@
-// std/io — convenience wrappers around the built-in Reader /
-// Writer primitives.
-//
-// `read_all_stdin()` returns complete, validated stdin text as
-// Result[string, IoError]; `read_input(path)` picks stdin or a file
-// from a path operand and returns the same result type; `read_line(r)`
-// reads one line and no more.
-// The raw read_all_bytes/read_all_stdin_bytes/read_input_bytes counterparts
-// return Result[u8[], IoError], preserving bytes and reporting I/O failures.
-//
-// The `path` these take is a plain `string`, so it inherits
-// std/path's assumption that filesystem paths are valid UTF-8 —
-// see that module's header for why there is no `OsStr` and what
-// to do with a path that is not. This is the syscall boundary
-// where such a path would enter, which is exactly where the
-// problem should surface.
-//
-// No prelude: these are in scope only after a program
-// declares `import "std/io";` (docs/PRELUDE-TO-MODULES.md,
-// Phase 5).
+// This module provides methods for readers and writers.
 
 import "std/io_outcome";
 import "std/utf8" as utf8;
 
-// The successful caller owns this packed buffer and must free it. Keeping
-// it packed lets the text boundary validate without a whole-input u8[] copy.
 function read_all_buffer(r: Reader): Result[usize, IoError] {
   let b: usize = buf_new(4096);
   while (true) {
@@ -43,9 +22,6 @@ function read_all_buffer(r: Reader): Result[usize, IoError] {
   return Ok(b);
 }
 
-// Read raw input to EOF without interpreting chunks as text. The caller owns
-// the reader and remains responsible for closing it. A failed read returns
-// its error, never a partial success; the accumulated buffer is released.
 pub function read_all_bytes(r: Reader): Result[u8[], IoError] {
   match (read_all_buffer(r)) {
     Err(e) => {
@@ -81,8 +57,6 @@ function read_stdin_buffer(): Result[usize, IoError] {
   }
 }
 
-// Consume and close stdin. A read error takes precedence over a close error;
-// otherwise a failed close is reported rather than silently discarded.
 pub function read_all_stdin_bytes(): Result[u8[], IoError] {
   match (read_stdin_buffer()) {
     Err(e) => {
@@ -96,8 +70,6 @@ pub function read_all_stdin_bytes(): Result[u8[], IoError] {
   }
 }
 
-// Raw counterpart to read_input: empty and dash operands consume stdin;
-// every other operand names a file. No UTF-8 decoding is performed.
 pub function read_input_bytes(path: string): Result[u8[], IoError] {
   if (path == "-" || path == "") {
     return read_all_stdin_bytes();
@@ -105,13 +77,6 @@ pub function read_input_bytes(path: string): Result[u8[], IoError] {
   return read_file_bytes(path);
 }
 
-// `read_line(r)` — the next line of `r`, its '\n' included: `Ok(None)` at
-// the end of input with nothing read, the error when a read fails, and
-// `InvalidUtf8("")` for a line that is not UTF-8. It reads a byte at a
-// time, so it never takes a byte past the line off the stream: what
-// follows stays for the next read, another reader of the descriptor, or
-// a child process. `LineReader` (std/io_buffered) is the buffered reader
-// for walking a whole input.
 pub function read_line(r: Reader): Result[Option[string], IoError] {
   let b: usize = buf_new(128);
   let more: boolean = true;
@@ -147,10 +112,6 @@ pub function read_line(r: Reader): Result[Option[string], IoError] {
   }
 }
 
-// Consume and close stdin, then validate the complete input as UTF-8.
-// A scalar may cross any read boundary. Empty input is Ok(""); malformed
-// input is Err(InvalidUtf8("stdin")). I/O failures are propagated without
-// returning partial text. Use read_all_stdin_bytes for arbitrary bytes.
 pub function read_all_stdin(): Result[string, IoError] {
   match (read_stdin_buffer()) {
     Err(e) => {
@@ -171,18 +132,6 @@ pub function read_all_stdin(): Result[string, IoError] {
   }
 }
 
-// `read_input(path)` — read a CLI-style input operand: the
-// conventional `-` (and the empty string) mean "read all of
-// stdin"; any other value is a file path read via the `read_file`
-// builtin. Returns `Result[string, IoError]` so callers can report
-// a per-file error and continue — the exact shape the cat / wc /
-// head / grep / … family wants instead of hand-rolling the
-// stdin-vs-file branch in every tool.
-//
-//   match (io.read_input(path)) {
-//     Ok(text) => { … },
-//     Err(_)   => { eprint("tool: " + path + ": cannot open"); },
-//   }
 pub function read_input(path: string): Result[string, IoError] {
   if (path == "-" || path == "") {
     return read_all_stdin();

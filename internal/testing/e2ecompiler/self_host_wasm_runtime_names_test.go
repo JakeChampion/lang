@@ -9,12 +9,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostWasmUserNamesDoNotShadowTheRuntime defines a user function under
-// each name the wasm runtime once gave its own imports and entry points, then
-// calls the builtins that reach those imports. The runtime's ids carry the
-// __fern_ prefix, so neither side takes the other's definition: a user
-// `fd_write` used to make every print call it with the import's four
-// arguments.
 func TestSelfHostWasmUserNamesDoNotShadowTheRuntime(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	wasmtime, err := exec.LookPath("wasmtime")

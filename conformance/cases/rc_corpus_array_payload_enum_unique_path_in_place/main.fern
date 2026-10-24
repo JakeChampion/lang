@@ -1,13 +1,13 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// #8056: an array-carrying enum is owned by default, its consuming
-// match hands the child array to the binding, and a self-reassign
-// argument is MOVED into the owned position — so a uniquely held
-// trie is rewritten in place on the unique path. The take-out
-// (`kids.with(sub, E)` before the descent) is the library idiom that
-// keeps the child unique too. Value-correct after 40 rounds; the
-// leak gate pins it at zero.
+
+
+
+
+
+
+
+
+
+
 enum N { E, L(i32[]), B(N[]) }
 function with_in(node: N, shift: i32, i: i32, x: i32): N {
     match (node) {

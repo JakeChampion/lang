@@ -8,47 +8,10 @@ import (
 	"testing"
 )
 
-// chown(1) is the first utility here whose whole subject is a property the
-// tree comparison did not look at. Every other field of `treeEntry` — kind,
-// mode, symlink target, bytes, hard-link group — is one a run that did NOTHING
-// AT ALL leaves untouched, so the corpus below would have passed a `chown`
-// that parsed every operand, printed every line and made no call.
-//
-// So every case here sets `ownership`, which puts each entry's uid and gid
-// into that comparison. It is opt-in because no other utility sets an id, and
-// because an id is one more thing two machines can differ on for reasons that
-// are not the utility's.
-//
-// ---- what the corpus can assume about the machine --------------------------
-//
-// Almost nothing. The suite runs as root in one lane and as a plain user in
-// another, so "this succeeds" is not a property a case may assert: an owner
-// change is EPERM for a normal user and silent for root, and the two produce
-// different bytes. What IS stable is that GNU and Fern see the SAME machine,
-// so a case whose answer depends on the runner still compares equal — which is
-// why the corpus leans on specs that are faults, no-ops, or changes to ids the
-// process already has.
-//
-// The ids it names are the ones every unix has in /etc/passwd and /etc/group
-// rather than the invoking user, who on some hosts is not in either file.
-//
-// ---- the one divergence, and it is GNU reading uninitialised memory --------
-//
-// `chown -v` on a DANGLING symlink under `--dereference` prints a "from"
-// clause built from a stat buffer the failed stat never filled: the same link
-// reports `from wheel`, `from 2` and `from _uucp:wheel` on one machine
-// depending on what was last on the stack. There is no value to match, so no
-// corpus case pairs `-v` with that combination. The stderr line and the exit
-// status ARE deterministic and are compared; docs/COREUTILS.md records it.
-
 func init() {
 	registerCorpus("chown", chownCases)
 }
 
-// chownTree is the fixture nearly every case runs against: a file, a
-// directory with a file and a subdirectory under it, a symlink to the file, a
-// symlink to the directory, and a broken one. Between them they reach every
-// arm of the walk and both symlink questions.
 func chownTree(t *testing.T, dir string) {
 	t.Helper()
 	write := func(name, body string) {
@@ -78,10 +41,6 @@ func chownTree(t *testing.T, dir string) {
 	link("no-such-target", "broken")
 }
 
-// chownLongTree adds to chownTree a chain 45 directories of 100 characters
-// deep, past PATH_MAX, built by a shell that only ever `cd`s one level down so
-// no path to its leaf is formed. Its cases compare the walk's lines rather
-// than the tree, which the comparison would have to stat by the full path.
 func chownLongTree(t *testing.T, dir string) {
 	t.Helper()
 	chownTree(t, dir)
@@ -97,9 +56,6 @@ printf leaf > leaf
 	}
 }
 
-// chownSpecCases are the grammar and its diagnostics: they never reach a file,
-// so they are shared verbatim between the two utilities' corpora except where
-// the utility changes the reading.
 func chownSpecCases(add func(invocation), util string) {
 	spec := func(name string, s string) {
 		add(invocation{name: name, args: []string{s, "f"}, seedTree: chownTree, ownership: true})
@@ -141,8 +97,6 @@ func chownSpecCases(add func(invocation), util string) {
 	spec("dot separator both bad", "zzznope.zzznope")
 }
 
-// chownOptionCases are getopt's own answers plus the arities, which are the
-// same shape for both utilities and differ only in the operand's name.
 func chownOptionCases(add func(invocation), good string) {
 	add(invocation{name: "no operands"})
 	add(invocation{name: "spec but no file", args: []string{good}})
@@ -174,12 +128,10 @@ func chownOptionCases(add func(invocation), good string) {
 	add(invocation{name: "unambiguous p", args: []string{"--p", good, "f"}, seedTree: chownTree, ownership: true})
 	add(invocation{name: "a spec beginning with a dash", args: []string{"-1", "f"}, seedTree: chownTree, ownership: true})
 
-	// The traversal flags outside -R are accepted and do nothing.
 	add(invocation{name: "H without recursive", args: []string{"-H", good, "f"}, seedTree: chownTree, ownership: true})
 	add(invocation{name: "L without recursive", args: []string{"-L", good, "f"}, seedTree: chownTree, ownership: true})
 	add(invocation{name: "P without recursive", args: []string{"-P", good, "f"}, seedTree: chownTree, ownership: true})
 
-	// The one refused combination, and the three spellings that lift it.
 	add(invocation{name: "recursive dereference alone", args: []string{"--dereference", "-R"}})
 	add(invocation{name: "recursive dereference with a spec", args: []string{"--dereference", "-R", good}})
 	add(invocation{name: "recursive dereference with a file", args: []string{"-R", "--dereference", good, "f"}, seedTree: chownTree, ownership: true})
@@ -187,23 +139,16 @@ func chownOptionCases(add func(invocation), good string) {
 	add(invocation{name: "recursive dereference with L", args: []string{"-R", "--dereference", "-L", good, "d"}, seedTree: chownTree, ownership: true})
 }
 
-// chownRootCases are the --preserve-root failsafe. They name `/` and are safe
-// because the refusal happens before anything is touched; the spec is a bad
-// one wherever the refusal is not what is being tested.
 func chownRootCases(add func(invocation), good string) {
 	add(invocation{name: "preserve-root refuses slash", args: []string{"-R", "--preserve-root", good, "/"}})
 	add(invocation{name: "preserve-root refuses double slash", args: []string{"-R", "--preserve-root", good, "//"}})
 	add(invocation{name: "preserve-root refuses slash dot", args: []string{"-R", "--preserve-root", good, "/."}})
 	add(invocation{name: "preserve-root refuses slash dot slash", args: []string{"-R", "--preserve-root", good, "/./"}})
-	// Without -R there is no failsafe: it just tries, and fails or does not
-	// depending on who is running.
 	add(invocation{name: "preserve-root without recursive", args: []string{"--preserve-root", good, "/"}})
-	// The spec is parsed BEFORE the failsafe is asked.
 	add(invocation{name: "a bad spec outranks the failsafe", args: []string{"-R", "--preserve-root", "zzznope", "/"}})
 	add(invocation{name: "no-preserve-root is the default", args: []string{"--no-preserve-root", "-R", "zzznope", "/"}})
 	add(invocation{name: "last of the two root flags wins", args: []string{"--preserve-root", "--no-preserve-root", "-R", "zzznope", "/"}})
 	add(invocation{name: "and the other way round", args: []string{"--no-preserve-root", "--preserve-root", "-R", good, "/"}})
-	// The refusal is per operand and does not stop the run.
 	add(invocation{name: "the run continues past the refusal", args: []string{"-R", "--preserve-root", good, "/", "nope"}, seedTree: chownTree, ownership: true})
 	add(invocation{name: "silent does not suppress the refusal", args: []string{"-R", "-f", "--preserve-root", good, "/"}})
 }
@@ -220,12 +165,6 @@ func chownCases(t *testing.T) []invocation {
 		add(invocation{name: name, args: args, seedTree: chownTree, ownership: true})
 	}
 
-	// ---- the verbose wording -------------------------------------------
-	// Every one of these is a spec the process cannot apply unless it is
-	// root, and both sides meet the same answer either way. What they pin
-	// is which NOUN the line uses and how the "to" half renders, which is
-	// not simply the spec typed back: a numeric user beside a symbolic
-	// group disappears from it.
 	tree("verbose user by name", "-v", "root", "f")
 	tree("verbose user and group by name", "-v", "root:daemon", "f")
 	tree("verbose group by name", "-v", ":daemon", "f")
@@ -244,7 +183,6 @@ func chownCases(t *testing.T) []invocation {
 	tree("verbose then changes", "-v", "-c", "root", "f")
 	tree("changes then verbose", "-c", "-v", "root", "f")
 
-	// ---- entries that cannot be reached ---------------------------------
 	tree("a name that is not there", "root", "nope")
 	tree("verbose on a name that is not there", "-v", "root", "nope")
 	tree("changes on a name that is not there", "-c", "root", "nope")
@@ -255,22 +193,17 @@ func chownCases(t *testing.T) []invocation {
 	tree("a bad name and a good one", "root", "nope", "f")
 	tree("a name below a name that is not there", "root", "nope/deeper")
 
-	// ---- symlinks --------------------------------------------------------
 	tree("a symlink is followed by default", "-v", ":daemon", "lnk")
 	tree("no-dereference short", "-h", "-v", ":daemon", "lnk")
 	tree("no-dereference long", "--no-dereference", "-v", ":daemon", "lnk")
 	tree("dereference explicitly", "--dereference", "-v", ":daemon", "lnk")
 	tree("dereference then no-dereference", "--dereference", "-h", "-v", ":daemon", "lnk")
 	tree("no-dereference then dereference", "-h", "--dereference", "-v", ":daemon", "lnk")
-	// A broken link followed is `cannot dereference`; not followed it is an
-	// ordinary entry. The `-v` line is left off the followed form: GNU fills
-	// its "from" clause from a stat that failed.
 	tree("a broken link followed", ":daemon", "broken")
 	tree("a broken link followed, silent", "-f", ":daemon", "broken")
 	tree("a broken link followed, changes", "-c", ":daemon", "broken")
 	tree("a broken link not followed", "-h", "-v", ":daemon", "broken")
 
-	// ---- the walk --------------------------------------------------------
 	tree("recursive", "-R", "-v", ":daemon", "d")
 	tree("recursive quiet", "-R", ":daemon", "d")
 	tree("recursive changes", "-R", "-c", ":daemon", "d")
@@ -290,7 +223,6 @@ func chownCases(t *testing.T) []invocation {
 	tree("recursive on a name that is not there", "-R", "-v", ":daemon", "nope")
 	add(invocation{name: "recursive beyond PATH_MAX", args: []string{"-R", "-v", ":daemon", "longpath"}, seedTree: chownLongTree})
 
-	// ---- --reference -----------------------------------------------------
 	tree("reference", "--reference=d", "f")
 	tree("reference verbose", "--reference=d", "-v", "f")
 	tree("reference changes", "--reference=d", "-c", "f")
@@ -302,10 +234,6 @@ func chownCases(t *testing.T) []invocation {
 	tree("reference twice", "--reference=d", "--reference=f", "-v", "f")
 	tree("reference outranks a bad spec", "--reference=nope", "zzznope", "f")
 
-	// ---- --from ----------------------------------------------------------
-	// `--f` is `--from`, which takes an argument — so it consumes the spec
-	// and the FILE becomes the spec. chown-only: chgrp did not have the
-	// option until after 9.1 (see chgrp_test.go).
 	tree("f prefix is from", "--f", "root", "f")
 	tree("from that cannot match", "--from=root:daemon", "-v", ":daemon", "f")
 	tree("from that cannot match, changes", "--from=root:daemon", "-c", ":daemon", "f")
@@ -325,7 +253,6 @@ func TestChown(t *testing.T) {
 	requireParity(t, "chown", chownCases(t))
 }
 
-// The two options whose TEXT is ours by design (docs/COREUTILS.md).
 func TestChownHelp(t *testing.T) {
 	requireHelp(t, "chown", []string{"--help"}, 0)
 	requireHelp(t, "chown", []string{"--h"}, 0)

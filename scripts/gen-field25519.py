@@ -72,7 +72,7 @@ def finish_wide(g, name, params, t, what):
         c, x = g.mac(t[j], t[4 + j], "38u64", c)
         r.append(x)
     out = fold(g, r, c)
-    return "// %s is %s, below 2^256.\npub function %s(%s): Fe {\n%s\n%s\n}\n" % (name, what, name, params, g.body(), fe_return(out))
+    return "// %s returns a field representation of %s with a value less than `2^256`.\npub function %s(%s): Fe {\n%s\n%s\n}\n" % (name, what, name, params, g.body(), fe_return(out))
 
 def add():
     g = Gen()
@@ -84,7 +84,7 @@ def add():
         s, k = g.add(a[j], b[j], k)
         r.append(s)
     out = fold(g, r, k)
-    return "// add is a + b, below 2^256.\npub function add(a: Fe, b: Fe): Fe {\n%s\n%s\n}\n" % (g.body(), fe_return(out))
+    return "// add returns a field representation of `a + b` with a value less than `2^256`.\npub function add(a: Fe, b: Fe): Fe {\n%s\n%s\n}\n" % (g.body(), fe_return(out))
 
 def sub():
     g = Gen()
@@ -104,7 +104,7 @@ def sub():
         x, k = g.sub(d[j], k)
         out.append(x)
     out[0] = g.let("%s - %s * 38u64" % (out[0], k), "d")
-    return "// sub is a - b, below 2^256.\npub function sub(a: Fe, b: Fe): Fe {\n%s\n%s\n}\n" % (g.body(), fe_return(out))
+    return "// sub returns a field representation of `a - b` with a value less than `2^256`.\npub function sub(a: Fe, b: Fe): Fe {\n%s\n%s\n}\n" % (g.body(), fe_return(out))
 
 def mul_small():
     g = Gen()
@@ -115,7 +115,7 @@ def mul_small():
         c, x = g.mac(None, a[j], "k", c)
         r.append(x)
     out = fold(g, r, c)
-    return "// mul_small is a * k for k below 2^32, below 2^256.\npub function mul_small(a: Fe, k: u64): Fe {\n%s\n%s\n}\n" % (g.body(), fe_return(out))
+    return "// mul_small returns a field representation of `a * k` with a value less than `2^256`.\n// `k` must be less than `2^32`.\npub function mul_small(a: Fe, k: u64): Fe {\n%s\n%s\n}\n" % (g.body(), fe_return(out))
 
 def canonical():
     g = Gen()
@@ -137,7 +137,7 @@ def canonical():
     q = g.let("0u64 - (%s >> 63u64)" % w[3], "q")
     w[3] = g.let("%s & 0x7fffffffffffffffu64" % w[3], "w")
     out = ["%s ^ (%s ^ %s) & %s" % (v[j], v[j], w[j], q) for j in range(4)]
-    return "// __canonical is a mod p, the one value below p that a stands for.\nfunction __canonical(a: Fe): Fe {\n%s\n%s\n}\n" % (g.body(), fe_return(out))
+    return "// __canonical returns `a mod p` as a value less than `p`.\nfunction __canonical(a: Fe): Fe {\n%s\n%s\n}\n" % (g.body(), fe_return(out))
 
 def check(fns):
     rnd = random.Random(1)

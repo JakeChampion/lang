@@ -6,21 +6,6 @@ import (
 	"testing"
 )
 
-// compoundBitwiseIRCases widen the self-host IR subset to the bitwise / shift
-// compound-assignment operators: `&= |= ^= <<= >>=` (on bare-ident lvalues —
-// fields are immutable and array subscripts read-only, so those lvalue forms
-// aren't valid compound targets in either front-end). The native Go parser's
-// `compoundOps` map
-// (internal/syntax/parser/parser.go) has always desugared all ten compound forms to
-// `x = x <op> y`, but the self-host parser's `is_compound` recognised only the
-// arithmetic five (`+= -= *= /= %=`) — so a program using `x &= y` parsed wrong
-// and the module bailed. parser.fern now mirrors the native
-// set exactly, so the bitwise/shift forms desugar to the already-IR-eligible
-// binary ops and the whole module routes IR.
-//
-// Each case is oracle-checked against the interpreter and routing-pinned to "ir"
-// via asm_pathprobe_run, mirroring self_host_labeled_break_ir_test.go. Results
-// stay <= 120 (cf. the wasmtime exit-code gap #2908).
 var compoundBitwiseIRCases = []struct {
 	name string
 	main string
@@ -30,16 +15,11 @@ var compoundBitwiseIRCases = []struct {
 	{"xor-eq", `function main(): i32 { let x = 12; x ^= 10; return x; }`},
 	{"shl-eq", `function main(): i32 { let x = 3; x <<= 4; return x; }`},
 	{"shr-eq", `function main(): i32 { let x = 100; x >>= 2; return x; }`},
-	// the operator should compose with the surrounding control flow.
 	{"shl-eq-in-loop", `function main(): i32 { let x = 1; let i = 0; while (i < 5) { x <<= 1; i += 1; } return x; }`},
 	{"and-eq-mask-loop", `function main(): i32 { let acc = 0; let i = 0; while (i < 8) { acc |= i; i += 1; } acc &= 7; return acc; }`},
-	// regression: the arithmetic compound forms still route IR unchanged.
 	{"add-eq-regress", `function main(): i32 { let x = 10; x += 5; return x; }`},
 }
 
-// TestSelfHostCompoundBitwiseIRX86_64 routes each case through the self-hosted
-// x86-64 IR driver (asm_run), pins the routing to "ir" (asm_pathprobe_run), and
-// oracle-checks the exit code against the interpreter.
 func TestSelfHostCompoundBitwiseIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
@@ -75,10 +55,6 @@ func TestSelfHostCompoundBitwiseIRX86_64(t *testing.T) {
 	}
 }
 
-// TestNativeCompoundBitwiseX86_64 is the native-backend half: the same programs
-// compiled through the Go compiler's x86-64 emitter must produce the same exit
-// codes. The native parser already supported the bitwise/shift compound forms,
-// so this pins parity — both front-ends desugar `x <op>= y` identically.
 func TestNativeCompoundBitwiseX86_64(t *testing.T) {
 	interpBin := buildLangBinForInterp(t)
 	for _, tc := range compoundBitwiseIRCases {

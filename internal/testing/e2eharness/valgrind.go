@@ -7,9 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/envflag"
 )
 
-// Valgrind returns valgrind's path, skipping the test when it is not on PATH.
-// FERN_REQUIRE_VALGRIND=1 turns the skip into a failure, for a lane that
-// installs valgrind — the mirror of FERN_REQUIRE_WASMTIME.
 func Valgrind(t testing.TB) string {
 	t.Helper()
 	p, err := exec.LookPath("valgrind")

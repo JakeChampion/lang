@@ -1,15 +1,3 @@
-// rev.fern — reverse the bytes of each line, like `rev(1)`.
-//
-// Each line is emitted with its byte order reversed; line order is
-// preserved. Operates on raw bytes (so multi-byte UTF-8 sequences are
-// reversed byte-wise, matching util-linux `rev`).
-//
-//   $ printf 'hello\nworld\n' | ./rev
-//   olleh
-//   dlrow
-//
-// Showcases: building a string by walking another backwards, the
-// single-byte slice idiom `s[i:i+1]`.
 import "std/string";
 import "std/io";
 

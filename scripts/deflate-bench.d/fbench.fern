@@ -1,7 +1,3 @@
-// fbench — std/deflate on one file.
-//   fbench c FILE RUNS OUT  compress RUNS times, write the stream to OUT,
-//                           decompress it RUNS times, verify the round trip
-//   fbench d STREAM ORIG RUNS  decompress another encoder's raw stream
 import "std/deflate";
 import "std/i64";
 import "std/i32";

@@ -39,7 +39,6 @@ pub function consistent(row: ssaprepare.Emitted): void {
   }
 }
 
-// only_at is where `sub` stands in `text` when it occurs there exactly once.
 function only_at(text: string, sub: string): Option[i32] {
   if let Some(first) = text.index_of(sub) {
     if let Some(last) = text.last_index_of(sub) {

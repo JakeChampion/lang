@@ -11,11 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// TestVerifyGateRunsOnNativeCompile pins that FERN_IR_VERIFY=1 reaches every
-// native backend's emit path (#8798): the compile succeeds on a sound
-// program AND the gate's coverage line is on stderr, which is what separates
-// "wired and quiet" from "never called". ir.VerifyOrRefuse's own tests cover
-// the refusal; no real lowering produces malformed IR to refuse here.
 func TestVerifyGateRunsOnNativeCompile(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()

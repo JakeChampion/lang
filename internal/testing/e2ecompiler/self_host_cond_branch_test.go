@@ -8,12 +8,6 @@ import (
 	"testing"
 )
 
-// An `if` or `while` condition built from `&&`, `||` and `!` lowers to a chain
-// of branches (semsource.cond), each comparison fused with the branch that
-// takes it, rather than a boolean joined in a phi and tested again. `both` and
-// `either` must therefore materialise no flag; `value` returns the same kind of
-// expression as a boolean, so it still does, which is what keeps the absence
-// in the other two from passing vacuously.
 const condBranchProg = `@noinline function both(a: i32, b: i32, c: i32): i32 {
     if (a < b && b < c) { return 1; }
     return 2;
@@ -77,8 +71,6 @@ func TestSelfHostCondBranch(t *testing.T) {
 	}
 }
 
-// condBranchBody is the CLI's listing of `name` up to the next function's
-// label, so every return the function has is inside it.
 func condBranchBody(t *testing.T, asm, name string) string {
 	t.Helper()
 	m := regexp.MustCompile(`(?s)\n__fn_` + name + `\.r:\n(.*?)\n__fn_`).FindStringSubmatch(asm)

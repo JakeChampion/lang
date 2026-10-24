@@ -1,14 +1,14 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// A fresh array passed to a constructor that STORES it (#6522), plus
-// the aliased spelling of the same call. The per-argument stage-(b)
-// reclaim decs the caller's temp right after the call, so this is the
-// case that says the dec nets against the constructor's store rather
-// than freeing what the struct now owns: the stored array is read
-// back through the returned struct, and a LIVE local passed at the
-// same position is read after the call too — the alias half, where
-// the temp is not fresh and the caller must keep its reference.
+
+
+
+
+
+
+
+
+
+
+
 import "core/int";
 struct Node { name: string, deps: i32[], mtime: i32 }
 function two(a: i32, b: i32): i32[] { return [a, b]; }

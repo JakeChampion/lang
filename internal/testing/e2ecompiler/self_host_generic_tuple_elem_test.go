@@ -5,12 +5,6 @@ import (
 	"testing"
 )
 
-// A call in a generic's body whose argument is a tuple element of a generic
-// parameter (#10683): `inner(p.1)` with `p: (S, Result[i32, E])`. The mono
-// pass inferred nothing for a tuple index, so the inner call stayed the
-// template and the instance failed to lower with `inner` undefined; an
-// erased, unbounded `S` beside the element must not stop the element's own
-// type from binding either. std/http's `respond_with` is this shape.
 func TestSelfHostGenericTupleElementArgIRX86_64(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 	src := `trait Answer { function answer(self: Self): i32; }
@@ -47,10 +41,6 @@ function main(): i32 {
 	}
 }
 
-// The same issue's second shape: a bare `Err(...)` (or `Ok`, `Some`) as the
-// argument binding a generic's type parameter. The constructors belong to
-// no declared enum, so the variant-argument binding knew nothing of them,
-// `E` never bound and the call stayed the template (`outer` undefined).
 func TestSelfHostGenericBuiltinVariantArgIRX86_64(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 	src := `trait Answer { function answer(self: Self): i32; }

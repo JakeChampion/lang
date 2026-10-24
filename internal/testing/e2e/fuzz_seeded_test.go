@@ -1,19 +1,5 @@
 package e2e
 
-// std/fuzz draws its mutations from a seeded PCG32 rather than the CSPRNG.
-//
-// Two things change. Mutation no longer costs a syscall per draw (up to two
-// per mutation, 14 call sites). And a run is now REPRODUCIBLE: `fuzz.run`
-// draws one seed from the CSPRNG, names it in the failure diagnostic, and
-// `fuzz.run_seeded` replays that exact sequence — which is the difference
-// between a fuzz failure you can debug and one you cannot reproduce.
-//
-// The determinism assertion is the point of this test: two `fuzz.run_seeded`
-// calls with equal seeds must produce byte-identical diagnostics, including
-// the iteration number, the mutation mode, and the offending input. That
-// pins the whole chain — seeding, the threaded state through __fuzz_mutate,
-// and the mutation strategy dispatch — not just "it returned a failure".
-
 import "testing"
 
 const fuzzSeededProg = `

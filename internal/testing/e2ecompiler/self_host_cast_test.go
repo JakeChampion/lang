@@ -7,10 +7,6 @@ import (
 	"testing"
 )
 
-// castCases are valid-Fern programs exercising `expr as Type` integer
-// casts (the self-host emitter masks unsigned / sign-extends signed to
-// the target width). Each returns an i32 exit code; the expected values were
-// cross-checked against the Go x86-64 backend, the suite's oracle.
 var castCases = []struct {
 	name string
 	src  string
@@ -20,12 +16,7 @@ var castCases = []struct {
 	{"u8-in-range", "function main(): i32 { return (15 as u8) as i32; }", 15},
 	{"u32-passthrough", "function main(): i32 { let x: i32 = 42; return (x as u32) as i32; }", 42},
 	{"cast-with-bitwise", "function main(): i32 { let b: i32 = 171; return ((b >> 4) & 15) as u8 as i32; }", 10},
-	// A literal-only operand computes SIGNED: native once settled it at u32
-	// and `(3 - 4) as f64` came out 4294967295 while `((0 - 7) / 2) as u8`
-	// divided as u32 to 252.
 	{"literal-arith-operand-is-signed", "function main(): i32 { let f: f64 = (3 - 4) as f64; if (f != 0.0 - 1.0) { return 1; } return (((0 - 7) / 2) as u8) as i32; }", 253},
-	// Bitwise / shift operators. Absent from the parser's precedence table
-	// they are silently dropped, with a parser runaway inside parens.
 	{"bit-and", "function main(): i32 { return 5 & 3; }", 1},
 	{"bit-or", "function main(): i32 { return 5 | 2; }", 7},
 	{"bit-xor", "function main(): i32 { return 6 ^ 3; }", 5},
@@ -34,9 +25,6 @@ var castCases = []struct {
 	{"bit-precedence", "function main(): i32 { return (8 & 12) | (1 << 1); }", 10},
 }
 
-// TestSelfHostCastX86_64 builds the asm_run self-host compiler with the
-// pin, then compiles each cast program with it; the emitted binary's exit
-// code must match the expected value.
 func TestSelfHostCastX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -70,10 +58,6 @@ func TestSelfHostCastX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostCastArm64 mirrors TestSelfHostCastX86_64 for the ARM64
-// emitter (CI-gated under qemu-aarch64): the asm_ir_run (-target arm64-linux) driver
-// (x86 host binary) compiles each cast / bitwise program to aarch64
-// asm, run under qemu, exit code must match.
 func TestSelfHostCastArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

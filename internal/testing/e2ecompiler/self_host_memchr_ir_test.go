@@ -9,30 +9,6 @@ import (
 	"testing"
 )
 
-// `__memchr(s, byte, from)` on the self-host IR path — the first fused SIMD
-// kernel of docs/ATLAS-PLATFORM-PLAN.md §3, lowered on all three self-host
-// backends with a vector body: AVX2 and SSE2 tiers on x86-64, NEON on arm64,
-// v128 on wasm. Holding them all to ONE expectation is what these tests are
-// for; the corpus was written while every body was scalar and passed
-// unchanged through each vector swap, which is the whole reason it is worth
-// anything.
-//
-// `std/string` routes its single-byte search through the intrinsic, and every
-// backend routes IR-or-error (docs/SELFHOST-AST-RETIREMENT.md), so a missing
-// lowering is a hard compile error rather than a slow path.
-
-// memchrIRProg is SELF-CHECKING: it carries its own reference implementation
-// written in Fern and compares `__memchr` against it, so the corpus can be
-// swept exhaustively without a Go-side expectation list to keep in step.
-//
-// The sweep runs length 0..72 with the needle at every position and the scan
-// starting before / at / after it. That range covers two full 32-byte vector
-// blocks, a 16-byte one and a partial tail, so every boundary a vector body
-// can get wrong — the hand-over from one tier to the next, a hit in the
-// tail, a `from` landing mid-block — is swept on every backend.
-//
-// A failure returns a small distinct code rather than a count, so the exit
-// status says WHICH shape disagreed. 42 means every comparison matched.
 const memchrIRProg = `function ref(s: string, b: i32, from: i32): i32 {
     if (b < 0) { return 0 - 1; }
     if (b > 255) { return 0 - 1; }
@@ -71,8 +47,6 @@ function main(): i32 {
 }
 `
 
-// runMemchrIR compiles memchrIRProg with the self-host modload driver for the
-// given register target and returns the exit code.
 func runMemchrIR(t *testing.T, target string) int {
 	t.Helper()
 	var runner, runPrefix, extra []string
@@ -117,16 +91,6 @@ func TestSelfHostMemchrIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostMemchrIRWasm runs the same program through the self-hosted wasm
-// IR driver. The self-host wasm string is a single `[len@0][bytes@4]` block —
-// not the native wasm backend's two-word SSO pair — so the byte address is
-// unconditional here and there is no inline-string branch to get wrong. That
-// difference is why this leg is not redundant with the two above.
-//
-// The op lowers to a call rather than inline code: the body needs a loop over
-// its own locals, and the operand stack here is the wasm value stack. The
-// helper's presence in the emitted text is asserted, so a module that silently
-// stopped needing it would fail rather than pass by not exercising anything.
 func TestSelfHostMemchrIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host memchr wasm IR e2e")

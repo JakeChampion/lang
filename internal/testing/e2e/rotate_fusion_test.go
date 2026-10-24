@@ -1,26 +1,5 @@
 package e2e
 
-// `(x >> n) | (x << (W-n))` with a constant n — the way every Fern program
-// spells a rotate, since there is no rotate operator — fuses to a single
-// ir.OpRotr, and each backend issues its own rotate instruction for it:
-// `ror` on x86-64 and arm64, `i32.rotr` / `i64.rotr` on wasm.
-//
-// The values below are chosen so a WRONG lowering cannot pass. A right shift
-// that stayed arithmetic gives the correct answer for every operand with a
-// clear top bit, so the cases here have bit 31 (or bit 63) set. A rotate that
-// took the 64-bit register form on a 32-bit operand, or masked its count at
-// the wrong width, drags the other half of the register through — so the
-// counts sweep the whole range including 1 and W-1.
-//
-// The mirror spelling `(x << n) | (x >> (W-n))` is a LEFT rotate; the IR
-// normalises it to a right rotate by W-n, so both directions are exercised.
-// The count boundaries the fusion refuses — 0 and W — are checked here too:
-// they are not rotates by this pattern and must keep computing what the
-// unfused shifts computed.
-//
-// The interpreter runs the same source without ever seeing the IR, so it is an
-// independent oracle for every number below.
-
 import "testing"
 
 const rotateFusionProg = `

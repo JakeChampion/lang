@@ -1,23 +1,5 @@
 package componenttype
 
-// classify.go is P2 slice 3 of bring-your-own WIT
-// (docs/WIT-BRING-YOUR-OWN.md): derive each imported function's lowering kind
-// from its resolved signature, via the canonical-ABI flattening rules —
-// reproducing the kinds the composer currently hard-codes (gNoOpt / gMem /
-// gMemRealloc) so a WIT-driven path can replace the registry.
-//
-// Rules (for a guest→host lowered import):
-//   - realloc is needed iff a RESULT carries heap data (a list or string,
-//     possibly nested) — the host allocates it in guest memory on return.
-//   - memory is needed iff realloc is, OR any PARAM carries heap data, OR the
-//     result is returned indirectly (its flattened core value count exceeds
-//     the single allowed flat result, so it spills through a return pointer).
-//   - otherwise the call is scalar in/out: no-opt.
-
-// LowerKind is an import's canonical-ABI lowering kind. The values match the
-// suffix engine's import kinds (0 no-opt, 1 mem, 2 mem+realloc); resource.drop
-// is synthesized by the composer, not derived from a world, so it has no entry
-// here.
 type LowerKind int
 
 const (
@@ -39,16 +21,12 @@ func (k LowerKind) String() string {
 	}
 }
 
-// maxFlatResults is the canonical-ABI cap on a lowered function's flattened
-// core results before the result is returned indirectly through memory.
 const maxFlatResults = 1
 
-// Classify returns the lowering kind for a function of this interface.
 func (wi WorldInterface) Classify(f WorldFunc) LowerKind {
 	if f.Sig == nil {
 		return KindNoOpt
 	}
-	// realloc: any result carries heap data.
 	needRealloc := false
 	for _, r := range wi.resultTypes(f.Sig) {
 		if wi.containsHeap(r) {
@@ -59,7 +37,6 @@ func (wi WorldInterface) Classify(f WorldFunc) LowerKind {
 	if needRealloc {
 		return KindMemRealloc
 	}
-	// memory: a heap param, or an indirect (multi-flat) result.
 	for _, p := range f.Sig.Params {
 		if wi.containsHeap(p.Ty) {
 			return KindMem
@@ -75,8 +52,6 @@ func (wi WorldInterface) Classify(f WorldFunc) LowerKind {
 	return KindNoOpt
 }
 
-// resultTypes returns a function's result value types (one for an unnamed
-// single result, the list for named results).
 func (wi WorldInterface) resultTypes(sig *FuncType) []Valtype {
 	if sig.NamedResults {
 		out := make([]Valtype, len(sig.Results))
@@ -88,19 +63,14 @@ func (wi WorldInterface) resultTypes(sig *FuncType) []Valtype {
 	return []Valtype{sig.Result}
 }
 
-// containsHeap reports whether a value type carries linear-memory data (a
-// list or string, possibly nested inside a record / variant / tuple / option
-// / result). Handles (own/borrow), enums, flags and other primitives do not.
 func (wi WorldInterface) containsHeap(v Valtype) bool {
 	if v.IsPrim {
 		return v.Prim == primString
 	}
 	d := wi.ResolveDef(v)
-	if d == nil { // resource handle or unresolved alias — scalar
+	if d == nil {
 		return false
 	}
-	// A definition's inner indices read its owner's type-index space: this
-	// interface's, or the one a `use` brought the type in from.
 	o := wi.ownerOf(v.Idx)
 	switch d.Tag {
 	case tagList:
@@ -136,23 +106,21 @@ func (wi WorldInterface) containsHeap(v Valtype) bool {
 	return false
 }
 
-// flattenCount returns the number of core values a value type lowers to under
-// the canonical ABI.
 func (wi WorldInterface) flattenCount(v Valtype) int {
 	if v.IsPrim {
 		if v.Prim == primString {
-			return 2 // ptr + len
+			return 2
 		}
 		return 1
 	}
 	d := wi.ResolveDef(v)
-	if d == nil { // handle
+	if d == nil {
 		return 1
 	}
 	o := wi.ownerOf(v.Idx)
 	switch d.Tag {
 	case tagList:
-		return 2 // ptr + len
+		return 2
 	case tagOwn, tagBorrow, tagEnum, tagFlags:
 		return 1
 	case tagOption:

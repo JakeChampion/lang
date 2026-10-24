@@ -12,17 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExternRecordParamCustomProvider is the P4c record-parameter gate
-// (docs/WIT-BRING-YOUR-OWN.md): a Fern program passes a struct to an `@import`
-// extern whose WIT signature takes a `record`. The canonical ABI flattens a
-// small record param to its fields' core types, so the wasm backend's wrapper
-// loads each field off the Fern struct value (at its rc-header-inclusive
-// offset) and pushes it in declaration order — the field layout was precomputed
-// during IR lowering (ir.ExternFunc.ParamRecords).
-//
-// The provider exports `sum-point: func(p: point) -> s32` over a
-// `record point { x: s32, y: s32 }`, receiving the flattened (x, y) and
-// returning their sum. The Fern side passes Point{ x: 10, y: 32 } (sum 42).
 func TestExternRecordParamCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -40,7 +29,6 @@ func TestExternRecordParamCustomProvider(t *testing.T) {
 		}
 	}
 
-	// --- Provider component exporting local:test/sink@0.1.0 sum-point. ---
 	provWit := filepath.Join(dir, "provwit")
 	if err := os.MkdirAll(provWit, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -50,8 +38,6 @@ func TestExternRecordParamCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export sink; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// sum-point receives the record flattened to (x, y) — two i32 params — and
-	// returns their sum.
 	provCoreWat := filepath.Join(dir, "prov_core.wat")
 	if err := os.WriteFile(provCoreWat, []byte(`(module
   (memory (export "memory") 1)
@@ -66,7 +52,6 @@ func TestExternRecordParamCustomProvider(t *testing.T) {
 	run(wasmtools, "component", "embed", provWit, "-w", "provider", provCore, "-o", provEmbed)
 	run(wasmtools, "component", "new", provEmbed, "-o", provider)
 
-	// --- User world: custom sink iface + wasi stdout. ---
 	userWit := filepath.Join(dir, "userwit")
 	if out, err := exec.Command("cp", "-r", "../../../cmd/fern/wit/deps", filepath.Join(userWit, "deps")).CombinedOutput(); err != nil {
 		_ = os.MkdirAll(userWit, 0o755)
@@ -101,7 +86,6 @@ func TestExternRecordParamCustomProvider(t *testing.T) {
 		t.Fatalf("DecodeWorldBytes: %v", err)
 	}
 
-	// --- User program: pass Point{ x: 10, y: 32 } (sum 42) to the extern. ---
 	const want = "pt-ok"
 	src := `struct Point { x: i32, y: i32 }
 

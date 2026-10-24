@@ -6,12 +6,6 @@ import (
 	"testing"
 )
 
-// A fresh temporary lent to a borrowing callee is released by the caller
-// (refs #9450): a variant construction written at the call site, whose
-// payloads are fresh, and a string[] literal of fresh or literal elements at a
-// borrowable position of a callee that returns no pointer. `first` hands an
-// element back, so its literal must not be freed before `f` is done with it;
-// the sanitizer is what would see it if it were.
 const lentTempReleaseSrc = `import "std/i32";
 enum E { A(i32), B(i32) }
 enum S { Word(string), Nothing }

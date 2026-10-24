@@ -1,32 +1,7 @@
 package e2e
 
-// A map local built from a `Map { … }` LITERAL reclaims like one built from
-// `map_new(n)` plus inserts (#7122).
-//
-// rhsTainted had no MapLit arm, so the literal fell to its conservative
-// "unknown shape is tainted" default and the local was never freeEligible.
-// Both the loop-body reinit drop and the exit sweep then degraded to the flat
-// __drop_struct_flat_Map, which frees none of the map's handle, buf or value
-// column — so every round of a churn stranded the whole map. Measured per
-// round over a 1000/2000/4000-round churn (__heap_bump_bytes() delta ÷ rounds),
-// as x86-64 | arm64 | wasm:
-//
-//	Map[i32, i32]     128 | 128 |  96
-//	Map[string, i32]  128 | 144 | 112
-//	Map[i32, string]  128 | 144 | 112
-//	Map[i32, i32[]]   160 | 160 | 128
-//	Map[i32, Q]       192 | 192 | 144
-//
-// All five are flat afterwards on both natives, and the array-value column
-// keeps wasm's own 32 B/round residual — which the map_new spelling has too,
-// before and after, and which mapLitArrValueParityProg pins as parity rather
-// than hiding.
-
 import "testing"
 
-// Per-round bytes must be zero for every map-literal churn shape. Each gate
-// measures the 2n delta, so a fixed startup cost divides away and only a
-// per-round leak survives. The exit code names the shape that leaked.
 const mapLitReclaimBytesProg = `
 import "core/map";
 
@@ -135,11 +110,6 @@ func TestMapLitReclaimBytesWasm(t *testing.T) {
 	}
 }
 
-// An ARRAY value column is the one shape with a backend residual of its own:
-// wasm strands 32 B/round of it whichever way the map is built. The claim the
-// fix makes there is parity with the map_new spelling, so that is what this
-// gates — the literal costs no more per round than the inserts do. Pre-fix the
-// literal reads 160 | 160 | 128 against the inserts' 0 | 0 | 32.
 const mapLitArrValueParityProg = `
 import "core/map";
 
@@ -203,10 +173,6 @@ func TestMapLitArrValueParityWasm(t *testing.T) {
 	}
 }
 
-// The aliasing side: what the reclaim credit must NOT free. Each case reads its
-// aliased value back after the round that built the map has ended, so an
-// over-release reads wrong or faults. They pass either side of the fix — the
-// point is that granting the literal its drop did not change any of them.
 const mapLitAliasProg = `
 import "core/map";
 

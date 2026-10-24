@@ -1,8 +1,8 @@
 import "std/i32";
 
-// A method whose own type parameter appears only in its result takes it from
-// the written list, on a plain receiver and on a generic one, where the list
-// names the method's parameters after the receiver's.
+
+
+
 struct W { n: i32 }
 
 function (w: W) empty[T](): T[] {

@@ -1,14 +1,6 @@
 import "std/test";
 import "core/int" as int;
 
-// tests/stdlib/int_test.fern — pure-Fern coverage of core/int's
-// integer-formatting primitives: int_to_string (signed i32 → decimal,
-// incl. the INT_MIN unsigned-safe path), parse_int_radix (bases 2..36,
-// sign handling, out-of-range / bad-digit → None) and int_to_string_radix
-// (the inverse, lowercase digits). These sit behind the (n).to_string() /
-// to_hex / parse_hex_int method sugar; the Go-side suites unit-test the
-// prelude origin, this is the migration-shaped (pure-Fern) companion.
-
 function test_to_string_zero(): test.TestOutcome {
   let i: i32 = 0;
   while (i < 120) {
@@ -41,7 +33,6 @@ function test_to_string_max(): test.TestOutcome {
 }
 
 function test_to_string_min(): test.TestOutcome {
-  // INT_MIN — exercises the unsigned-safe negation path.
   return test.assert_eq(int.int_to_string(0 - 2147483647 - 1), "-2147483648");
 }
 
@@ -57,8 +48,6 @@ function parsed(s: string, base: i32): string {
   return "";
 }
 
-// A magnitude i32 cannot hold is None rather than a wrapped value, with
-// INT_MIN itself still parsed.
 function test_parse_overflow_none(): test.TestOutcome {
   let got: string = parsed("2147483647", 10) + " " + parsed("2147483648", 10) + " " + parsed("-2147483648", 10) + " " + parsed("-2147483649", 10) + " " + parsed("99999999999999999999", 10) + " " + parsed("7fffffff", 16) + " " + parsed("80000000", 16) + " " + parsed("-80000000", 16);
   return test.assert_eq(got, "2147483647 None -2147483648 None None 2147483647 None -2147483648");
@@ -131,7 +120,6 @@ function test_parse_bad_base_none(): test.TestOutcome {
 }
 
 function test_parse_digit_ge_base_none(): test.TestOutcome {
-  // '8' is not a valid base-8 digit.
   match (int.parse_int_radix("8", 8)) {
     Some(v) => {
       return test.fail("expected None for digit >= base");
@@ -170,13 +158,12 @@ function test_radix_neg(): test.TestOutcome {
 }
 
 function test_radix_min(): test.TestOutcome {
-  // INT_MIN through the i64-magnitude path.
   return test.assert_eq(int.int_to_string_radix(0 - 2147483647 - 1, 16), "-80000000");
 }
 
 function test_roundtrip(): test.TestOutcome {
   match (int.parse_int_radix(int.int_to_string_radix(48879, 16), 16)) {
-    Some(v) => {  // 0xBEEF
+    Some(v) => {
       return test.assert_eq(v, 48879);
     },
     None => {

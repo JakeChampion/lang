@@ -9,23 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The `long double` each Fern target has, which is the model
-// coreutils/lib/ld must pick for it (#8513).
-//
-// GNU's printf, seq and numfmt convert in `long double`, so the parity
-// corpus is only ever run against the format of the host it runs on —
-// x86-64 on one CI lane, aarch64 on another. Nothing in that corpus can
-// see a target it is not running on, and printf shipped an x87 model
-// hardcoded for a year because the x86-64 lane was the only one that
-// existed. This table is the part that does not depend on where the
-// tests run: it names the format for every target, and the check below
-// interprets the real selection once per target with target_arch() and
-// target_os() folded for it.
-//
-// The numbers are the C compiler's, read off the target's own
-// preprocessor (`clang --target=<t> -dM -E -x c /dev/null`, the
-// __LDBL_MANT_DIG__ and __LDBL_MAX_EXP__ macros) and confirmed against
-// aarch64 glibc's LDBL_MANT_DIG under qemu.
 type ldFormat struct {
 	mant     int
 	emax     int
@@ -38,12 +21,7 @@ var (
 	binary64  = ldFormat{mant: 53, emax: 1023, explicit: false}
 )
 
-// longDoubleFor is the rule stated over the two halves of a target name
-// rather than over the names themselves, so a target added to
-// internal/pkg/platforms is covered the moment its ISA and environment are
-// ones already known — and fails loudly the moment either is not.
 func longDoubleFor(isa, env string) (ldFormat, bool) {
-	// Apple's ABI narrows the type to double whatever the ISA.
 	if env == "darwin" {
 		return binary64, true
 	}
@@ -56,10 +34,6 @@ func longDoubleFor(isa, env string) (ldFormat, bool) {
 	return ldFormat{}, false
 }
 
-// TestLongDoubleModelPerTarget interprets coreutils/lib/ld's format()
-// once for every target Fern compiles for. It runs on any host: the two
-// target builtins fold from constfold's inputs, not from the machine,
-// so the arm64-darwin answer is checked here as much as on a Mac.
 func TestLongDoubleModelPerTarget(t *testing.T) {
 	probe, err := filepath.Abs(filepath.Join("testdata", "ld_target", "main.fern"))
 	if err != nil {

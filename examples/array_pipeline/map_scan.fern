@@ -1,6 +1,3 @@
-// Compare this identical workload with FERN_NO_ARRAY_FUSION=1 and enabled.
-// A fourth argument, "loop", selects the handwritten while/append control.
-// Time and count only the pipeline; verify every prefix outside the timer.
 import "std/array";
 import "std/string";
 

@@ -1,36 +1,8 @@
-// signals.fern — the signal name/number table, for the utilities that take a
-// signal as an argument: `env --block-signal` / `--default-signal` /
-// `--ignore-signal` / `--list-signal-handling`, and `kill -s` / `-l` / `-L`.
-//
-// The numbers are the HOST KERNEL'S, and the two kernels disagree on most of
-// them. SIGUSR1 is 30 on Darwin and 10 on Linux; SIGSTOP 17 and 19; SIGCHLD 20
-// and 17. A table that picked one would name the wrong signal on the other, and
-// do it silently — `kill -USR1` would deliver something else rather than fail —
-// so the table is chosen by `target_os()`, each half taken from that kernel's
-// own header: Darwin's `sys/signal.h`, Linux's `asm-generic/signal.h`.
-//
-// THE NUMBERS COME FROM THE KERNEL HEADER; THE NAMES GNU PRINTS COME FROM
-// GLIBC. The two disagree, and every divergence #9643 fixed was that one
-// mistake: `asm-generic/signal.h` has `SIGIO 29` with SIGPOLL as its alias,
-// plus `SIGLOST 29` and `SIGUNUSED 31`, while glibc's `bits/signum-arch.h`
-// has `SIGPOLL 29` with SIGIO as the alias and defines neither of the other
-// two. A GNU build enumerates glibc, so glibc is what `kill -l` prints and
-// what `number()` must accept. Check a printed name against
-// `bits/signum-arch.h`, not against the kernel.
-//
-// Linux additionally has the realtime range RTMIN(32)..RTMAX(64), which Darwin
-// has not got at all. GNU spells those `RTMIN`, `RTMIN+3`, `RTMAX-1` and prints
-// them from `kill -l`, so they belong in the table rather than in a footnote.
 import "std/string";
 import "std/array";
 import "std/i32";
 import "std/signal";
 
-// `names()` — every signal this kernel has, in NUMBER order, without the `SIG`
-// prefix. Index i holds signal i+1's name.
-//
-// Where one number has two names the PRIMARY one is here — the one `kill -l`
-// prints — and the alternates are accepted on input by `number()`.
 pub function names(): string[] {
   if (target_os() == "darwin") {
     return ["HUP", "INT", "QUIT", "ILL", "TRAP", "ABRT", "EMT", "FPE", "KILL", "BUS", "SEGV", "SYS", "PIPE", "ALRM", "TERM", "URG", "STOP", "TSTP", "CONT", "CHLD", "TTIN", "TTOU", "IO", "XCPU", "XFSZ", "VTALRM", "PROF", "WINCH", "INFO", "USR1", "USR2"];
@@ -38,14 +10,6 @@ pub function names(): string[] {
   return ["HUP", "INT", "QUIT", "ILL", "TRAP", "ABRT", "BUS", "FPE", "KILL", "USR1", "SEGV", "USR2", "PIPE", "ALRM", "TERM", "STKFLT", "CHLD", "CONT", "STOP", "TSTP", "TTIN", "TTOU", "URG", "XCPU", "XFSZ", "VTALRM", "PROF", "WINCH", "POLL", "PWR", "SYS"];
 }
 
-// `rt_min()` / `rt_max()` — the realtime range, or 0 when the kernel has none.
-//
-// 34, not the kernel's 32: glibc reserves 32 and 33 for NPTL and starts its own
-// SIGRTMIN above them, and GNU coreutils is linked against glibc, so 34 is what
-// the oracle calls RTMIN. Measured rather than assumed — `env --block-signal=32`
-// answers `'32': invalid signal` on a glibc host, while `RTMIN` traces as 34 and
-// `RTMIN+3` as 37. Fern emits static binaries with no libc, so this is a value
-// we choose; matching GNU is the whole point of choosing it.
 pub function rt_min(): i32 {
   if (target_os() == "darwin") {
     return 0;
@@ -60,8 +24,6 @@ pub function rt_max(): i32 {
   return 64;
 }
 
-// `highest()` — the largest number this kernel defines, which bounds every
-// sweep over the table.
 pub function highest(): i32 {
   if (rt_max() != 0) {
     return rt_max();
@@ -69,13 +31,7 @@ pub function highest(): i32 {
   return names().len();
 }
 
-// `name(n)` — signal `n`'s name without the `SIG` prefix, or "" for a number
-// this kernel does not use. Realtime signals are named by their offset from
-// whichever end is nearer, the way `kill -l` prints them.
 pub function name(n: i32): string {
-  // gnulib's sig2str table carries `{ 0, "EXIT" }`, and operand2sig's validity
-  // test is `sig2str` succeeding — so zero having a name here is what makes
-  // `name(n) != ""` mean exactly "a signal spelling GNU accepts".
   if (n == 0) {
     return "EXIT";
   }
@@ -94,29 +50,12 @@ pub function name(n: i32): string {
   if (n == hi) {
     return "RTMAX";
   }
-  // The nearer end wins, so the two halves meet without overlapping.
   if (n - lo <= hi - n) {
     return "RTMIN+" + (n - lo).to_string();
   }
   return "RTMAX-" + (hi - n).to_string();
 }
 
-// `descriptions()` — the one-line text `kill -t` / `-L` print beside each
-// signal, in NUMBER order like `names()`. Index i holds signal i+1's.
-//
-// These are the PLATFORM LIBC's strings, not GNU's: `src/kill.c` calls
-// `strsignal` whenever the host has it, and both hosts do, so gnulib's own
-// `lib/siglist.h` fallback is never what a GNU build prints. That rules out
-// taking them from the coreutils tarball.
-//
-// The Linux half is the oracle's, read straight off `kill -t` on a glibc host.
-// The Darwin half is Apple's published Libc — `gen/FreeBSD/siglist.c`'s
-// `sys_siglist`, which is what Darwin's own `strsignal` answers — and it is
-// UNGATED: the corpus never runs on Darwin (#9645), so nothing here would
-// catch an error in it. The two kernels word the same signal differently
-// often enough that neither half can be guessed from the other: 6 is
-// "Aborted" against "Abort trap", 5 "Trace/breakpoint trap" against
-// "Trace/BPT trap", 17 "Child exited" against "Suspended (signal)".
 function descriptions(): string[] {
   if (target_os() == "darwin") {
     return ["Hangup", "Interrupt", "Quit", "Illegal instruction", "Trace/BPT trap", "Abort trap", "EMT trap", "Floating point exception", "Killed", "Bus error", "Segmentation fault", "Bad system call", "Broken pipe", "Alarm clock", "Terminated", "Urgent I/O condition", "Suspended (signal)", "Suspended", "Continued", "Child exited", "Stopped (tty input)", "Stopped (tty output)", "I/O possible", "Cputime limit exceeded", "Filesize limit exceeded", "Virtual timer expired", "Profiling timer expired", "Window size changes", "Information request", "User defined signal 1", "User defined signal 2"];
@@ -124,22 +63,6 @@ function descriptions(): string[] {
   return ["Hangup", "Interrupt", "Quit", "Illegal instruction", "Trace/breakpoint trap", "Aborted", "Bus error", "Floating point exception", "Killed", "User defined signal 1", "Segmentation fault", "User defined signal 2", "Broken pipe", "Alarm clock", "Terminated", "Stack fault", "Child exited", "Continued", "Stopped (signal)", "Stopped", "Stopped (tty input)", "Stopped (tty output)", "Urgent I/O condition", "CPU time limit exceeded", "File size limit exceeded", "Virtual timer expired", "Profiling timer expired", "Window changed", "I/O possible", "Power failure", "Bad system call"];
 }
 
-// `description(n)` — signal `n`'s text, or "" for a number this kernel does
-// not use. The realtime rows number from RTMIN and count UP, so RTMAX is
-// "Real-time signal 30" — NOT `name(n)`'s nearer-end `RTMIN+k` / `RTMAX-k`
-// form, which would call the same signal RTMAX-0.
-// DARWIN SUFFIXES EVERY LINE WITH THE NUMBER, and glibc does not. `kill -t`
-// prints `strsignal(signum)`, not the raw table, and Darwin's strsignal
-// composes `"<text>: <n>"` — `Hangup: 1`, `Killed: 9` — where glibc returns
-// `Hangup` alone. Measured off the oracle on a macos-15 runner, all 31 rows.
-//
-// Which also means zero is NOT `sys_siglist[0]`. That entry is the string
-// "Signal 0", but Darwin's strsignal rejects 0 as out of range before it
-// reaches the table, so the answer is its unknown form, `Unknown signal: 0`
-// — with a colon, where glibc's has none.
-//
-// Reading `sys_siglist` and stopping there is what got this wrong: the table
-// was right and the function that wraps it was never modelled.
 pub function description(n: i32): string {
   let dar: boolean = target_os() == "darwin";
   if (n == 0) {
@@ -162,43 +85,6 @@ pub function description(n: i32): string {
   return "Real-time signal " + (n - lo).to_string();
 }
 
-// `alternates()` — names that share a number with one in `names()`. Accepted on
-// input, never printed. Each entry is the name, and `alternate_values()` the
-// number at the same index.
-//
-// This is exactly glibc's ALIAS set: `bits/signum-arch.h` gives 29, 6 and 17
-// the primary names SIGPOLL, SIGABRT and SIGCHLD, then defines SIGIO, SIGIOT
-// and SIGCLD as aliases of them — which is also why `names()` prints POLL at
-// 29 rather than IO.
-//
-// `LOST` and `UNUSED` are NOT here, and the reason is where they come from:
-// both are KERNEL names (`asm-generic/signal.h` has SIGLOST 29 and SIGUNUSED
-// 31) that glibc never defines. A GNU build enumerates glibc, so it cannot see
-// them and answers `'LOST': invalid signal`; accepting them diverged on a name
-// a caller can actually type.
-//
-// `POLL` IS NOT A DARWIN NAME EITHER, for the same reason one step removed.
-// xnu's `bsd/sys/signal.h` does define `SIGPOLL 7` — but in the `#if` branch
-// that EXCLUDES `SIGEMT` and `SIGIOT`, so a build gets one set or the other
-// and never both:
-//
-//     #if (defined(_POSIX_C_SOURCE) && !defined(_DARWIN_C_SOURCE))
-//     #define SIGPOLL 7
-//     #else
-//     #define SIGIOT  SIGABRT
-//     #define SIGEMT  7
-//     #endif
-//
-// coreutils' own `lib/config.h` defines `_DARWIN_C_SOURCE` (autoconf's
-// AC_USE_SYSTEM_EXTENSIONS), so the oracle takes the second branch: EMT and
-// IOT exist, POLL does not, gnulib's `#ifdef SIGPOLL` fails, and `kill -s
-// POLL` answers `invalid signal`. It is also why 7 PRINTS as EMT: gnulib
-// resolves a number by walking its table for the first entry with that
-// number, POLL sits ahead of EMT in it, and only POLL's absence leaves EMT.
-//
-// Both halves of this rule are the same rule: what a name resolves to is
-// decided by WHAT THE ORACLE'S BUILD CAN SEE, not by what the platform header
-// contains. Reading the header's full text is what put POLL here.
 function alternates(): string[] {
   if (target_os() == "darwin") {
     return ["IOT"];
@@ -208,23 +94,11 @@ function alternates(): string[] {
 
 function alternate_values(): i32[] {
   if (target_os() == "darwin") {
-    // IOT is the historical ABRT, and Darwin has no other alias a coreutils
-    // build can see — CLD is not in xnu's header at all, and POLL is in the
-    // branch the oracle does not compile.
     return [6];
   }
   return [6, 29, 17];
 }
 
-// `number(s)` — the number the NAME `s` spells, or 0 when it spells nothing.
-//
-// For a name this program writes down itself (`number("TERM")`). ANYTHING FROM
-// ARGV GOES THROUGH `operand2sig` INSTEAD: a number reaching here is refused,
-// where on the command line it is a signal, and zero is not expressible.
-// Getting that split wrong is what shipped #9652 in three utilities.
-//
-// Case-insensitive, as GNU is: `int`, `Int` and `sigint` all name signal 2.
-// Only the INPUT is; every name this module PRINTS is upper case.
 pub function number(s: string): i32 {
   if (s.len() == 0) {
     return 0;
@@ -236,8 +110,6 @@ pub function number(s: string): i32 {
   return table_number(bare);
 }
 
-// `table_number(bare)` — the names-and-alternates lookup both name paths share,
-// already upper case and already stripped of any `SIG`. 0 for no match.
 function table_number(bare: string): i32 {
   let ns: string[] = names();
   let i: i32 = 0;
@@ -259,13 +131,6 @@ function table_number(bare: string): i32 {
   return realtime_number(bare);
 }
 
-// `parse_u31(s)` — `s` as a non-negative decimal, or -1 unless every byte is a
-// digit AND the value fits the `int` GNU parses into.
-//
-// Both halves of that are GNU's: `operand2sig` reads with `strtol` into a
-// `long`, then rejects on `*endp` (a non-digit byte), on `errno` (out of
-// `long` range) and on `i != l` (out of `int` range). So `2000000000` is a
-// signal spelling and `2147483648` is not.
 function parse_u31(s: string): i32 {
   if (s.len() == 0) {
     return 0 - 1;
@@ -290,13 +155,6 @@ function parse_u31(s: string): i32 {
   return v;
 }
 
-// `str2signum(bare)` — gnulib's `str2signum`, on a string already upper cased.
-// -1 for no match.
-//
-// A LEADING DIGIT is accepted here and bounded by the highest signal, which is
-// how `SIG9` reaches signal 9 once `operand2sig` has stripped the prefix. Note
-// what that means: the mask below does NOT apply on this path, so `137` is
-// KILL while `SIG137` is nothing at all.
 function str2signum(bare: string): i32 {
   if (bare.len() == 0) {
     return 0 - 1;
@@ -319,25 +177,6 @@ function str2signum(bare: string): i32 {
   return 0 - 1;
 }
 
-// `operand2sig(operand)` — the signal one command-line word names, or -1.
-//
-// GNU's `src/operand2sig.c`, which `kill`, `env` and `timeout` all share, and
-// the ONLY entry point any of their argument parsing may use. Two rules in it
-// are not guessable from the option's documentation:
-//
-//   - A NUMBER IS MASKED, because it may be the exit status of a process a
-//     signal killed rather than a signal: `signum &= signum >= 0xFF ? 0xFF :
-//     0x7F`, so `-l 137` is KILL (128 + 9) and `-l 393` is nothing (393 & 255
-//     is 137, which no signal is). The two masks are not one mask — mod 128
-//     would call 393 KILL as well — and 0xFF is there for the shells that add
-//     255 rather than 128. GNU caps the input at nothing at all, on purpose
-//     and with a comment saying so, so `-l 2000000000` is `EXIT`.
-//   - `EXIT` NAMES SIGNAL 0, from the same table `name` reads. Callers that
-//     cannot use signal 0 reject it themselves after asking, the way `env`
-//     does; it is a valid spelling here.
-//
-// Zero and invalid are DIFFERENT ANSWERS, which is the whole reason this
-// returns -1 rather than `number`'s 0.
 pub function operand2sig(operand: string): i32 {
   if (operand.len() == 0) {
     return 0 - 1;
@@ -352,9 +191,6 @@ pub function operand2sig(operand: string): i32 {
     if (v >= 255) {
       n = v % 256;
     }
-    // A NUMBER only has to be in range; it does not have to be one the
-    // kernel names. GNU <= 9.4 asked sig2str for a name and refused 32
-    // and 33, which glibc reserves and leaves unnamed.
     if (n > highest()) {
       return 0 - 1;
     }
@@ -362,8 +198,6 @@ pub function operand2sig(operand: string): i32 {
   }
   let up: string = upper(operand);
   let found: i32 = str2signum(up);
-  // The prefix is stripped only on a SECOND attempt, so `RTMIN+3` and
-  // `SIGRTMIN+3` both resolve while `SIGSIGINT` does not.
   if (found < 0 && up.starts_with("SIG")) {
     found = str2signum(slice_unchecked(up, 3, up.len()) + "");
   }
@@ -373,8 +207,6 @@ pub function operand2sig(operand: string): i32 {
   return found;
 }
 
-// The realtime spellings: RTMIN, RTMAX, and either with a signed offset. Linux
-// only; on Darwin `rt_min()` is 0 and every one of these answers 0.
 function realtime_number(bare: string): i32 {
   let lo: i32 = rt_min();
   let hi: i32 = rt_max();
@@ -419,11 +251,6 @@ function realtime_number(bare: string): i32 {
   return n;
 }
 
-// `die_of(sig)` — end this process by `sig`, so the parent's wait sees a
-// death by that signal: the default disposition back, the signal unblocked,
-// then raised. GNU's dd and timeout end this way after a signal they caught.
-// A signal whose default does not end the process, or a raise the target
-// cannot deliver, falls through to exit with the shell's 128 + sig.
 pub function die_of(sig: i32): void {
   signal.default(sig);
   signal.unblock(signal.bit(sig));
@@ -431,7 +258,6 @@ pub function die_of(sig: i32): void {
   exit(128 + sig);
 }
 
-// ASCII upper-casing, which is all a signal name can contain.
 function upper(s: string): string {
   return s.to_ascii_upper();
 }

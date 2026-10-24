@@ -11,18 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestSelfHostExternEnumResultCustomProvider is the self-host port of the WIT
-// `enum` result (docs/WIT-BRING-YOUR-OWN.md, Go-side
-// TestExternEnumResultCustomProvider). A WIT enum is returned as a single i32
-// discriminant (by value). The self-host has no static sentinels — a payloadless
-// enum value is a heap `[struct_id@0]` box (exactly what a bare `Green`
-// produces) — so the wrapper maps the disc back to the matching variant's
-// struct_id (extern_plain_enum_sid, the inverse of the param mapping) and stores
-// it in a fresh 4-byte box.
-//
-// The provider exports `choose: func(n: s32) -> color` over `enum color { red,
-// green, blue }` returning disc = n. The self-host program `match`es
-// choose(0/1/2) → Red/Green/Blue — a full disc→struct_id→tag round-trip.
 func TestSelfHostExternEnumResultCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {

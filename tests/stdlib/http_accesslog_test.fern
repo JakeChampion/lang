@@ -3,13 +3,6 @@ import "std/http";
 import "std/http/accesslog";
 import "std/mock_platform";
 
-// tests/stdlib/http_accesslog_test.fern — std/http/accesslog: a request's
-// record in the OTel log data model's OTLP/JSON spelling, its span, peer and
-// user agent included when present and left out when not; a 5xx logged at
-// ERROR; durations in seconds; a body size only where it is known without
-// reading the body; and the middleware writing the record through
-// `plat.log` and returning the response untouched.
-
 function plat(): mock_platform.MockPlatform {
   let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
   m.now_set(1700000000123 as i64);
@@ -61,7 +54,6 @@ function test_the_middleware_logs_and_passes_the_response_on(): test.TestOutcome
   return test.pass();
 }
 
-// A failure behind the middleware is logged as the answer it becomes.
 function test_a_failure_is_logged_as_its_answer(): test.TestOutcome {
   let m: mock_platform.MockPlatform = plat();
   let resp: HttpResponse = http.respond(accesslog.logged(get("/gone"), m, (r: HttpRequest): Result[HttpResponse, dyn http.ToResponse] => Err(http.fail(404, "no such page"))));

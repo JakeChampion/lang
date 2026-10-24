@@ -1,7 +1,3 @@
-// Local Option[scalar] values can carry a tag and payload without a box.
-// Prove a complete copy/phi component private before changing any value's
-// representation. This runs before ownership planning; escaped boxes retain
-// their ordinary ABI and lifetime. None's zero payload is never observable.
 import "./ssa";
 import "./ssasem";
 import "./semrecords";
@@ -11,7 +7,6 @@ function scalar(t: typeinfo.Type): boolean {
   return ssasem.is_integer(t) || ssasem.is_float(t) || ssasem.is_bool(t) || ssasem.is_char(t);
 }
 
-// The resolved builtin schema, including its scalar payload, is the proof.
 function option_schema(f: ssasem.Func, t: typeinfo.Type): i32 {
   let at: i32 = semrecords.find_enum(f.enums, t);
   if (at < 0 || ssasem.has_finalizer(f, t)) {
@@ -53,10 +48,6 @@ function local_read(ins: ssa.SInst, active: boolean[]): boolean {
   return ins.kind_tag == ssasem.variant_get() && ins.str == "Some" && ins.imm == 0;
 }
 
-// Rejection flows both ways through copy/phi edges: an escape on one alias
-// preserves every joined constructor, and an external input preserves every
-// downstream alias. A worklist visits each rejected value once, including
-// cyclic phis, rather than recursively chasing incoming definitions.
 function candidates(f: ssasem.Func): boolean[] {
   let active: boolean[] = [];
   let peers: i32[][] = [];
@@ -189,8 +180,6 @@ pub function split(f: ssasem.Func): ssasem.Func {
   return unsplit_debug_bindings(ssasem.Func { ...f, values: values, graph: ssa.SFunc { ...f.graph, nvals: values.len(), blocks: blocks } }, active);
 }
 
-// A split aggregate has no single source-level home. Omit its location until
-// debug expressions can describe both the tag and payload together.
 function unsplit_debug_bindings(f: ssasem.Func, split: boolean[]): ssasem.Func {
   let vals: i32[] = [];
   let names: string[] = [];

@@ -1,10 +1,3 @@
-// The directory handle end to end: `open_dir` and every Dir method against a
-// fixture — a file, a subdirectory, a symlink to it — and, on the compiled
-// targets, a walk that removes a tree deeper than PATH_MAX by descending one
-// handle at a time. A path-taking walk stops at 4096 bytes on Linux and 1024
-// on Darwin; this one never forms a path longer than a component.
-//
-// Each exit code names the step that failed; 0 is a pass.
 package e2e
 
 import (
@@ -21,15 +14,11 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// dirDeepLevels directories of dirDeepWidth bytes each are about 6 KiB of
-// path, past both kernels' PATH_MAX.
 const (
 	dirDeepLevels = 60
 	dirDeepWidth  = 100
 )
 
-// dirHandleSource is the probe, rooted at `root`. `deep` adds the walk that
-// removes ./deep, which must report dirDeepLevels+1 directories.
 func dirHandleSource(root string, deep bool) string {
 	walk := ""
 	if deep {
@@ -116,10 +105,6 @@ function main(): i32 {
 `, root, filepath.Join(root, "f"), walk)
 }
 
-// dirHandleFixture builds the probe's tree in a fresh directory under dir
-// and answers its path. The deep chain is made by a shell stepping into each
-// directory it creates; `cd -P` keeps the shell from joining it onto $PWD,
-// so no path to it is ever formed.
 func dirHandleFixture(t *testing.T, dir string, deep bool) string {
 	t.Helper()
 	root := filepath.Join(dir, "work")
@@ -144,7 +129,6 @@ printf leaf > leaf
 	return root
 }
 
-// dirHandleCheckLeft wants the probe to have left only the file and the link.
 func dirHandleCheckLeft(t *testing.T, root string) {
 	t.Helper()
 	ents, err := os.ReadDir(root)
@@ -179,8 +163,6 @@ func TestArm64DirHandle(t *testing.T) {
 	dirHandleCheckLeft(t, root)
 }
 
-// XNU's *at calls take Linux's shapes under their own numbers and flag bits;
-// built everywhere, run on Apple Silicon.
 func TestArm64DarwinDirHandle(t *testing.T) {
 	dir := t.TempDir()
 	root := dirHandleFixture(t, dir, true)
@@ -190,8 +172,6 @@ func TestArm64DarwinDirHandle(t *testing.T) {
 	dirHandleCheckLeft(t, root)
 }
 
-// The interpreter resolves a name by the Dir's path, so it is held to
-// PATH_MAX and runs the probe without the deep walk.
 func TestInterpDirHandle(t *testing.T) {
 	root := dirHandleFixture(t, t.TempDir(), false)
 	if code := runInterpExit(t, dirHandleSource(root, false)); code != 0 {
@@ -200,8 +180,6 @@ func TestInterpDirHandle(t *testing.T) {
 	dirHandleCheckLeft(t, root)
 }
 
-// No wasm backend lowers the handle, so `open_dir` is gated on `fsdir`
-// rather than answering at run time; the methods need no gate of their own.
 func TestDirHandleGatedOnFsdir(t *testing.T) {
 	prog, err := parser.Parse(dirHandleSource("/tmp", false))
 	if err != nil {
@@ -228,7 +206,6 @@ func TestDirHandleGatedOnFsdir(t *testing.T) {
 	}
 }
 
-// The compiler's own gate (compiler/platforms.fern) refuses it too.
 func TestDirHandleRefusedOnWasm(t *testing.T) {
 	fern := buildFernCLI(t)
 	dir := t.TempDir()

@@ -1,5 +1,3 @@
-// Package sourcelint holds fast, dependency-free repo-hygiene checks that run
-// in the ordinary `go test ./...` lane (no build tools, no fixtures).
 package sourcelint
 
 import (
@@ -10,37 +8,10 @@ import (
 	"testing"
 )
 
-// A test guarded by `if os.Getenv("RUN_X") == "" { t.Skip(...) }` (or by
-// `envflag.On("FERN_X")`, the boolean FERN_* reader) runs nowhere
-// unless something sets RUN_X. When nothing does, the test is DARK: it is in
-// the tree, it looks like coverage, `go test ./...` reports it as a pass, and
-// it has never executed.
-//
-// A sweep of every such gate against .github/, Makefile and scripts/ found
-// three set by NOTHING. Each had a sound reason for being gated, recorded only
-// in a prose comment with no mechanism to ever re-check it, and one had gone
-// stale: the dark gate over the in-process assembler hid a missing `ud2`
-// encoding that left the use-after-free detector unbuildable on the default
-// assemble path.
-//
-// So: every RUN_* / FERN_* / DIFF_ORACLE_* gate in test-side code must either
-// be SET somewhere under .github/ (a real lane runs it) or carry an explicit
-//
-//	// CI-DARK: NAME — <reason>
-//
-// marker in its own file. The marker is not an exemption — it is the
-// enumerable list of "coverage we are knowingly not getting", which is the
-// thing that was impossible to produce before.
 var envGateRe = regexp.MustCompile(`(?:os\.Getenv|envflag\.On)\("((?:RUN_|FERN_|DIFF_ORACLE_)[A-Z0-9_]+)"\)`)
 
-// ciDarkRe matches the acknowledgement marker. The reason text after the name
-// is required — a bare marker would just be a way to silence the check.
 var ciDarkRe = regexp.MustCompile(`CI-DARK:\s*((?:RUN_|FERN_|DIFF_ORACLE_)[A-Z0-9_]+)\s*[—:-]\s*\S`)
 
-// gateScanRoots are the test-side trees whose env gates decide whether
-// coverage happens. Non-test production code (internal/syntax/ast's compile-mode
-// knobs, internal/pkg/pkgcache's cache dir) reads env vars for configuration, not
-// for gating tests, and is deliberately out of scope.
 var gateScanRoots = []string{
 	filepath.Join("internal", "testing", "e2e"),
 	filepath.Join("internal", "testing", "e2ecompiler"),
@@ -90,12 +61,6 @@ func TestNoSilentlyCIDarkEnvGates(t *testing.T) {
 	}
 }
 
-// envNamesReferencedByCI returns every RUN_* / FERN_* / DIFF_ORACLE_* name
-// mentioned anywhere under .github/. Mention rather than assignment on
-// purpose: a name can reach a job through a matrix entry, a composite action's
-// input, or a shell expansion, and this check only needs to know that CI knows
-// about it — over-matching here fails OPEN, which is the right direction for a
-// hygiene lint.
 func envNamesReferencedByCI(t *testing.T, root string) map[string]bool {
 	t.Helper()
 	found := map[string]bool{}

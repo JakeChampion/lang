@@ -1,24 +1,3 @@
-// sum.fern — GNU-compatible `sum`.
-//
-//   sum [-rs] [FILE]...
-//
-// A 16-bit checksum and a block count per operand. Two algorithms, and
-// the last of `-r` / `-s` on the line wins:
-//
-//   -r  BSD, the default: rotate the running sum right one bit, add the
-//       byte, keep 16 bits. Blocks are 1 KiB, and the line is the
-//       checksum zero-padded to five columns and the count in five.
-//   -s  System V: add every byte into a 32-bit accumulator and fold it
-//       to 16 bits twice, so the carry of the first fold lands. Blocks
-//       are 512 bytes, and the two numbers are printed bare.
-//
-// The block count is rounded UP, so any non-empty input is at least one
-// block and an empty one is zero.
-//
-// The name is printed for every operand, `-` included, and not at all
-// when there is none — `sum < f` is two numbers on their own. An input
-// that fails to open or fails to read prints its diagnostic and no
-// line at all, and the exit status is 1 if any operand failed.
 import "std/i64";
 import "std/hash";
 import "std/io_buffered";
@@ -46,10 +25,6 @@ function help_text(): string {
   return out;
 }
 
-// ---- the two checksums -----------------------------------------------------
-// `Ctx` — the running checksum. Both accumulators are carried and one
-// is fed, so the algorithm is decided once per chunk rather than once
-// per byte; `std/hash` holds the kernels and the block sizes.
 struct Ctx { sysv: boolean, bsd: hash.BsdSum, sv: hash.SysvSum }
 
 function ctx_new(sysv: boolean): Ctx {
@@ -77,15 +52,8 @@ function ctx_blocks(c: Ctx): i64 {
   return c.bsd.blocks() as i64;
 }
 
-// ---- one input -------------------------------------------------------------
-// `Tally` — one input's answer, or the failure that stopped it. A
-// failed input prints no line, so `checksum` is only read when
-// `failed` is false.
 struct Tally { checksum: i64, blocks: i64, err: Option[IoError], failed: boolean }
 
-// Bytes per read(2). The checksum kernels are per byte and dominate,
-// so this only has to be large enough that the syscalls disappear;
-// 64 KiB is where `wc` measured that on the same machine.
 function read_size(): i32 {
   return 65536;
 }
@@ -114,8 +82,6 @@ function sum_reader(r: Reader, sysv: boolean, owned: boolean): Tally {
   return Tally { checksum: ctx_checksum(c), blocks: ctx_blocks(c), err: None, failed: false };
 }
 
-// `sum_path(path, sysv)` — one operand summed. `-` is standard input,
-// which is never closed.
 function sum_path(path: string, sysv: boolean): Tally {
   if (path == "-") {
     return sum_reader(stdin(), sysv, false);
@@ -130,10 +96,6 @@ function sum_path(path: string, sysv: boolean): Tally {
   }
 }
 
-// ---- output ----------------------------------------------------------------
-// `pad(s, width, zero)` — `s` right-aligned in `width` columns, with
-// zeros rather than spaces when `zero`. The BSD line is `%05d %5d`;
-// System V prints both numbers bare.
 function pad(s: string, width: i32, zero: boolean): string {
   let n: i32 = width - s.len();
   if (n <= 0) {
@@ -185,9 +147,6 @@ pub function main(): i32 {
     operands = ["-"];
   }
 
-  // Line buffered, as GNU sets stdout to be: each line reaches the fd
-  // as it is printed, so `> /dev/full` names ENOSPC on the line that
-  // failed rather than at the close.
   let out: io_buffered.BufWriter = gnu.out_new();
   let ok: boolean = true;
   let i: i32 = 0;

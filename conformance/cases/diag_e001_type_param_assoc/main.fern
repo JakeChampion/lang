@@ -1,7 +1,7 @@
-// E001: an associated call on a type parameter goes through one of its
-// bounds. An unbounded `T` has no associated functions, whatever an
-// instantiation provides, and a bound that declares none of the name does not
-// supply one either.
+
+
+
+
 import "core/cmp";
 
 function make[T](x: T): T {

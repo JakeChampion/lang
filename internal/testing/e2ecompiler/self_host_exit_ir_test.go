@@ -8,10 +8,6 @@ import (
 	"testing"
 )
 
-// exitIRCases exercise the `exit(n)` builtin through the IR path on all three
-// backends. exit lowers to an inline exit_group (x86 #231 / arm64 #94) or proc_exit
-// (wasm) op — no runtime helper. The program's `return 99` is never reached, so
-// the exit code proves exit ran with the right argument.
 var exitIRCases = []struct {
 	name string
 	src  string

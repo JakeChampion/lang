@@ -6,21 +6,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostTargetNameFoldsOnTheModloadDriverX86_64 pins what the self-host
-// answers for `target_os()` and `target_arch()` when the driver, not fern.fern,
-// is doing the compiling.
-//
-// There is no symbol of either name to call: an unfolded call lowered as a
-// `call_direct` names a function no module defines, and the module does not
-// lower (`module not IR-eligible: interp`, with the bail site only visible
-// under FERN_STRICT_IR=1).
-//
-// Two halves are asserted here. asm_modload_run folds from its own -target, the
-// way fern.fern does, so the ISA is the one asked for rather than the pointer
-// width's default; and the lowering answers an unfolded call anyway, so a
-// driver that names no target still lowers. Compiling for x86-64 is what
-// separates them: the ISA default is arm64, so a program that prints
-// target_arch() and says "x86-64" can only have been folded.
 func TestSelfHostTargetNameFoldsOnTheModloadDriverX86_64(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 

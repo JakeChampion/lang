@@ -4,14 +4,6 @@ import (
 	"testing"
 )
 
-// httpHandlerFinishProg is a bring-your-own wasi:http handler that writes the
-// body AND calls outgoing-body.finish to seal it — exercising the last two
-// extern shapes: an `option<own<trailers>>` parameter (passed None) and a
-// `result<_, error-code>` return. error-code is a 39-case variant returned
-// indirectly; the handler reads it discriminant-only by modeling the return as
-// Result[i64, i64], and the result-return wrapper floors the canonical return
-// area at 64 bytes (the canonical-ABI retptr bound) so the host can't overrun
-// it (docs/WIT-BRING-YOUR-OWN.md).
 const httpHandlerFinishProg = `@import("wasi:http/types@0.2.0", "incoming-request")
 resource IncomingRequest;
 @import("wasi:http/types@0.2.0", "response-outparam")
@@ -83,9 +75,6 @@ function on_request(request: own IncomingRequest, response_out: own ResponseOutp
 	return;
 }`
 
-// TestExportWasiHttpHandlerFinishServes proves the full response path: a handler
-// writes "hi", calls outgoing-body.finish (option<own<trailers>> param +
-// result<_, error-code> return), and `wasmtime serve` delivers 200 + body "hi".
 func TestExportWasiHttpHandlerFinishServes(t *testing.T) {
 	if got := serveHttpHandlerBody(t, httpHandlerFinishProg); got != "hi" {
 		t.Fatalf("body = %q; want %q", got, "hi")

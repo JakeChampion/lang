@@ -1,16 +1,16 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// `.with` on an array of rc-tracked STRUCT elements through a functional
-// record update, reassigned in a loop (`r = upd(r, i, ...)`). Each upd
-// copies r.ops (the receiver stays live, forcing the CoW copy branch) and
-// replaces one element. The copy shares the receiver's struct-pointer
-// elements; the plain __fern_arr_cow_inplace memcpy'd them WITHOUT an inc,
-// so when the previous r was dropped it freed the elements the new r still
-// referenced — a use-after-free that recycled the boxes mid-loop and
-// corrupted later reads (native returned the wrong sum). The
-// pointer-aware __fern_arr_cow_inplace_ptr inc's each copied element so
-// both arrays own it. sum = 3*(0+..+39) = 2340; -2340 → 0 when correct.
+
+
+
+
+
+
+
+
+
+
+
+
+
 struct Op2 { a: i32, c: i32 }
 struct R { ops: Op2[], p: i32 }
 function upd(r: R, i: i32, v: i32): R {

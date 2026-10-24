@@ -6,11 +6,6 @@ import (
 	"testing"
 )
 
-// A fresh argument temp is released after a call whose result is a pointer,
-// when the callee holds the argument only through counted stores or not at
-// all. The callee is named, a function-typed local or a struct field, and the
-// temp is an inline `.with` copy, an array literal or a struct literal. Each
-// program's result is the interpreter's.
 func TestPointerResultCallReleasesItsArgumentTemps(t *testing.T) {
 	cases := []struct {
 		name string
@@ -134,9 +129,6 @@ function main(): i32 {
 	}
 }
 
-// An array handed back bare is a retention the summary refuses, so a
-// function value that might be `keep` keeps the temps passed through it. The
-// result must still read what the argument held.
 func TestPointerResultCallKeepsATempAnIdentityCalleeReturns(t *testing.T) {
 	src := `@noinline function keep(xs: i32[]): i32[] { return xs; }
 function main(): i32 {

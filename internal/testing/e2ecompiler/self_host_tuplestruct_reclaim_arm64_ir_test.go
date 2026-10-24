@@ -4,10 +4,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostTupleStructReclaimIRArm64 is the arm64 port of
-// TestSelfHostTupleStructReclaimIRX86_64: the reclaim of a tuple with a struct
-// element lives in shared lowering and lowers through op_tuple_get and
-// __fern_rc_dec, both backend-complete. Case table shared with the x86-64 leg.
 func TestSelfHostTupleStructReclaimIRArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range tupleStructReclaimCases {

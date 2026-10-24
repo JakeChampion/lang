@@ -7,12 +7,6 @@ import (
 	"testing"
 )
 
-// higherOrderCases cover function types `(T) => R` and higher-order
-// functions: a function passed by name as a value (lowered to a 1-slot
-// closure box `[&__fn_name]`), called through the closure-call path. A
-// real capturing closure (the `function(…)` lambda form) passed as an
-// argument exercises the same box-in-register convention. Exit codes
-// cross-checked vs the Go backend.
 const hoDblHelper = "function dbl(x: i32): i32 { return x * 2; } "
 
 var higherOrderCases = []struct {
@@ -26,8 +20,6 @@ var higherOrderCases = []struct {
 	{"twice", hoDblHelper + "function twice(f: (i32) => i32, x: i32): i32 { return f(f(x)); } function main(): i32 { return twice(dbl, 10) + 2; }", 42},
 }
 
-// TestSelfHostHigherOrderX86_64 — function values + higher-order
-// functions with the self-hosted x86-64 compiler.
 func TestSelfHostHigherOrderX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -61,7 +53,6 @@ func TestSelfHostHigherOrderX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostHigherOrderArm64 — CI-gated arm64 counterpart.
 func TestSelfHostHigherOrderArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range higherOrderCases {

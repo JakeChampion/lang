@@ -8,20 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostOpenFileWasmIR covers the streaming file-I/O intrinsics
-// open_writer / open_appender / open_reader / open_exclusive (op_open_file) +
-// Writer.write
-// (op_writer_write) on the self-host WASM IR path (#4372 file half, #7758, #7926).
-// wasm_ir emits $__fern_open_file (path_open under preopen fd 3, mapping the openat
-// flags to WASI oflags/rights/fdflags, then boxing Ok(fd) / Err($__fern_build_io_error))
-// and $__fern_writer_write (fd_write in a short-write loop, boxing None /
-// Some($__fern_build_io_error)). Runs under wasmtime with `--dir=.::/` granting
-// the run dir as fd 3, and verifies the host file.
-//
-// The programs match on the intrinsics' Result —
-// `match (open_writer(p)) { Ok(w) => .., Err(e) => .. }` over
-// Result[Writer, IoError] (#7758). Each source below exits identically under
-// `bin/fern -interp`.
 func TestSelfHostOpenFileWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host open_file wasm IR e2e")
@@ -59,9 +45,6 @@ func TestSelfHostOpenFileWasmIR(t *testing.T) {
 		return rc.ProcessState.ExitCode()
 	}
 
-	// open_writer + Writer.write + close: writes "hello world" to ow.txt, returns 0.
-	// The write's result is MATCHED, not discarded: $__fern_writer_write boxes an
-	// Result[void, IoError] (#7926), so Ok is what a completed write says.
 	t.Run("writer", func(t *testing.T) {
 		src := `function main(): i32 { match (open_writer("ow.txt")) { Ok(w) => { match (w.write("hello world")) { Err(_) => { return 92; }, Ok(_) => {} } w.close(); }, Err(_) => { return 91; } } return 0; }`
 		if code := run(t, src); code != 0 {
@@ -76,7 +59,6 @@ func TestSelfHostOpenFileWasmIR(t *testing.T) {
 		}
 	})
 
-	// open_appender (O_APPEND): seed "AB", append "CD" → "ABCD".
 	t.Run("appender", func(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, "oa.txt"), []byte("AB"), 0o644); err != nil {
 			t.Fatalf("seed oa.txt: %v", err)
@@ -94,10 +76,6 @@ func TestSelfHostOpenFileWasmIR(t *testing.T) {
 		}
 	})
 
-	// open_exclusive (O_EXCL): the first open creates, the second meets EEXIST and
-	// comes back as AlreadyExists rather than truncating. WASI puts EXCLUSIVE in
-	// path_open's oflags (Create|Exclusive = 5), so this is the third flag word
-	// $__fern_open_file maps (#8776).
 	t.Run("exclusive", func(t *testing.T) {
 		_ = os.Remove(filepath.Join(dir, "ox.txt"))
 		src := `function main(): i32 { match (open_exclusive("ox.txt")) { Ok(w) => { w.write("EX"); w.close(); }, Err(_) => { return 91; } } match (open_exclusive("ox.txt")) { Ok(w2) => { w2.close(); return 92; }, Err(e) => { match (e) { AlreadyExists(_) => {}, _ => { return 93; } } } } return 0; }`
@@ -113,8 +91,6 @@ func TestSelfHostOpenFileWasmIR(t *testing.T) {
 		}
 	})
 
-	// open_reader + read_chunk: reads a seeded file, returns its length. "hello
-	// world" → 11.
 	t.Run("reader", func(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, "or.txt"), []byte("hello world"), 0o644); err != nil {
 			t.Fatalf("seed or.txt: %v", err)
@@ -125,8 +101,6 @@ func TestSelfHostOpenFileWasmIR(t *testing.T) {
 		}
 	})
 
-	// Error path: open_reader on a missing file → Err, and the payload is a real
-	// IoError variant (NotFound), not a raw errno — the same value native produces.
 	t.Run("open-error", func(t *testing.T) {
 		src := `function main(): i32 { match (open_reader("does_not_exist_xyz.txt")) { Ok(r) => { r.close(); return 0; }, Err(e) => { match (e) { NotFound(_) => { return 42; }, _ => { return 43; } } } } return 1; }`
 		if code := run(t, src); code != 42 {
@@ -134,8 +108,6 @@ func TestSelfHostOpenFileWasmIR(t *testing.T) {
 		}
 	})
 
-	// r.read_chunk_bytes(n) reads the RECEIVER's fd, not stdin: a file Reader's
-	// bytes are the file's. "a\nbb\n" is 5 bytes, read two at a time (#7758).
 	t.Run("reader-read-chunks", func(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, "rl.txt"), []byte("a\nbb\n"), 0o644); err != nil {
 			t.Fatalf("seed rl.txt: %v", err)

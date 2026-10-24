@@ -8,15 +8,6 @@ import (
 	"testing"
 )
 
-// The self-host's wasm backend has to lower `isatty` too — `std/cli`'s colour
-// gate calls it, and std/cli is stdlib, so "wasm rejects this builtin" would
-// mean the stdlib does not compile for wasm.
-//
-// A component has no fd table, so the answer is the constant 0, matching what
-// native's preview-2 helper emits (see internal/codegen/wasmbin's
-// buildIsattyBodyP2). The test runs the module rather than grepping the WAT,
-// because a wrong stack discipline — forgetting to drop the fd operand — is a
-// validation error at instantiation, not a textual difference.
 func TestSelfHostIsattyIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host isatty wasm IR e2e")

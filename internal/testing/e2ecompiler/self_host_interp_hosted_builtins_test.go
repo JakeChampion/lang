@@ -9,16 +9,6 @@ import (
 	"testing"
 )
 
-// The interpreter `fern -interp` runs is the self-host one (compiler/interp.fern),
-// and it answers every builtin a hosted target provides the way `fern-oracle
-// -interp` does (#12662). Each program under testdata/interp_hosted calls one
-// family of them and prints what it got; both interpreters run it with the same
-// environment, each in a fresh directory passed as its first argument, and must
-// print the same stdout and stderr and exit with the same status.
-//
-// The abort rows are the language's own failures: an index or slice out of
-// range, a negative allocation and a failed assert stop the program with the
-// Go interpreter's message and exit status 1 (docs/ARRAY-BOUNDS.md).
 func TestSelfHostInterpHostedBuiltinsMatchOracle(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("the programs name Linux paths and errnos")
@@ -53,9 +43,6 @@ func TestSelfHostInterpHostedBuiltinsMatchOracle(t *testing.T) {
 	}
 }
 
-// The raw syscall and C-call floor take machine addresses, which neither
-// interpreter has. Private syscalls are rejected at source admission.
-// The public C-call primitive reaches the address-space refusal.
 func TestSelfHostInterpRefusesTheRawFloor(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range []struct {

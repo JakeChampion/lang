@@ -8,9 +8,6 @@ import (
 	"testing"
 )
 
-// The checked adapter lives in the ndarray unit while the rewritten call
-// lives in a user library. Link both enabled and disabled forms so pruning
-// cannot silently discard a cross-unit dependency.
 func TestSelfHostNdarrayInnerPerModule(t *testing.T) {
 	x86gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)

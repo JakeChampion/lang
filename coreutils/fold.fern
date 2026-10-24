@@ -1,30 +1,8 @@
-// fold.fern — GNU-compatible `fold`.
-//
-//   fold [-bs] [-w WIDTH] [FILE]...
-//
-// Lines longer than WIDTH (80 by default) are broken. Width is COLUMNS,
-// not bytes, so a tab advances to the next multiple of eight, `\b` goes
-// back one and `\r` returns to zero — `-b` turns all of that off and
-// counts bytes. `-s` breaks at the last blank of the over-long line
-// instead of mid-word, and falls back to the hard break when the line
-// holds no blank at all.
-//
-// Two shapes are easy to get wrong and are the reference binary's:
-//
-//   - The character that overflows is re-measured against the FRESH
-//     line, so a tab that does not fit in the remainder of one line
-//     starts the next one from column zero — and if it does not fit an
-//     empty line either, it goes out alone.
-//   - Files are not joined. A FILE with no final newline has its tail
-//     written with no newline added, and the next FILE starts a new
-//     line at column zero.
 import "std/array";
 import "std/u64";
 import "std/io_buffered";
 import "./lib/gnu";
 
-// Option ids in GNU's declaration order — `fold --=x` lists `--bytes`
-// `--characters` `--spaces` `--width`.
 function opt_bytes(): i32 {
   return 1;
 }
@@ -41,9 +19,6 @@ function opt_width(): i32 {
   return 3;
 }
 
-// The obsolete `-NUM` form is `-w NUM`, carried by the ten digits
-// declared as options taking an OPTIONAL value: `-5x` is the digit 5
-// with "x" glued on, and the width text is the two put back together.
 function opt_digit(d: i32): i32 {
   return 10 + d;
 }
@@ -64,7 +39,6 @@ function help_text(): string {
   return out;
 }
 
-// Bytes per read(2), and the writer's threshold: bytes per write(2).
 function read_size(): i32 {
   return 65536;
 }
@@ -85,16 +59,10 @@ function is_blank(c: i32): boolean {
   return c == 32 || c == 9;
 }
 
-// The ceiling gnulib puts on the width: SIZE_MAX less a tab's width and
-// one, so a tab at the last column still has somewhere to land.
 function width_max(): u64 {
   return 18446744073709551606 as u64;
 }
 
-// `width_of(text)` — a `-w` value, or the diagnostic and exit(1) GNU
-// gives it. Leading blanks and a `+` are accepted because this is
-// strtoumax underneath; a multiplier suffix is NOT, unlike head's count.
-// A usage error here prints one line and NO `Try …` line.
 function width_of(text: string): u64 {
   let i: i32 = 0;
   while (i < text.len() && (text[i] as i32 == 32 || text[i] as i32 >= 9 && text[i] as i32 <= 13)) {
@@ -139,10 +107,6 @@ function width_of(text: string): u64 {
   return value;
 }
 
-// The three ways fold measures a line: its display columns (the
-// default), its bytes (`-b`), or its characters (`-c`, 9.8), which in
-// the C locale differs from columns only in that every byte counts as
-// one.
 function count_columns(): i32 {
   return 0;
 }
@@ -155,10 +119,6 @@ function count_chars(): i32 {
   return 2;
 }
 
-// What one byte costs. In the C locale `c32width` answers 0 for NUL and
-// -1 — which fold reads as 1 — for every other non-printable byte, so
-// NUL is the one byte that occupies no column at all. `-c` counts it as
-// a character like any other.
 function byte_width(c: i32, mode: i32): i32 {
   if (mode == count_columns() && c == 0) {
     return 0;
@@ -166,9 +126,6 @@ function byte_width(c: i32, mode: i32): i32 {
   return 1;
 }
 
-// The column `c` leaves the cursor on, and how wide it was — which is
-// what the NEXT backspace goes back over. Under `-b` every byte is one
-// column and nothing is special.
 function advance(column: u64, lastw: i32, c: i32, mode: i32): (u64, i32) {
   if (mode == count_bytes_mode()) {
     return (column + 1 as u64, 1);
@@ -236,15 +193,9 @@ pub function main(): i32 {
   return run(files, width, mode, break_spaces);
 }
 
-// `run(files, width, mode, break_spaces)` — the whole fold. Every
-// output line is pushed straight into stdout's builder, which is flushed
-// once it holds a block, so no byte is copied into an accumulator on the
-// way.
 function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32 {
   let o: io_buffered.BufWriter = gnu.out_with(block_size());
   let h: usize = o.handle();
-  // One set scan finds the next special byte without rescanning the rest
-  // of a line separately for each absent control character.
   let nul: u8 = 0;
   if (mode == count_columns()) {
     nul = 1;
@@ -320,8 +271,6 @@ function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32
               r.close();
             }
             have_reader = false;
-            // A FILE's last line does not run into the next FILE: the
-            // tail goes out here, with no newline added.
             if (buf_len(carry) > 0) {
               chunk = buf_take_bytes(carry);
               pos = 0;
@@ -358,8 +307,6 @@ function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32
       lo = 0;
       hi = buf.len();
     }
-    // Only the tail a file left behind is unterminated: it holds
-    // everything after that file's last line delimiter.
     let terminated: boolean = !tail;
     pos = j + 1;
 
@@ -368,18 +315,10 @@ function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32
       body = hi - 1;
     }
 
-    // The line is folded in place: `start` is where the output line
-    // being assembled begins in `buf` and `column` is what has been
-    // measured of it, so a line that does not wrap costs ONE append and
-    // a line that wraps costs one per piece. fold copies its input
-    // verbatim, so an output line is always a contiguous run of it.
     let start: i32 = lo;
     let p: i32 = lo;
     let column: u64 = 0 as u64;
     let lastw: i32 = 1;
-    // The next byte whose column cost is not one. Under -b there is no
-    // such byte; otherwise it is a cursor over the chunk, so finding
-    // them all costs one pass over it rather than one scan per line.
     let sp: i32 = 0 - 1;
     if (mode != count_bytes_mode()) {
       if (carried) {
@@ -397,11 +336,7 @@ function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32
       if (sp >= p && sp < run_end) {
         run_end = sp;
       }
-      // Ordinary bytes are one column each, so how many of them fit is
-      // arithmetic rather than a walk.
       while (p < run_end) {
-        // A byte that did not fit an empty line leaves the column PAST
-        // the width, so there is no room at all until the next break.
         let room: u64 = 0 as u64;
         if (column < width) {
           room = width - column;
@@ -437,7 +372,6 @@ function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32
       if (p >= body) {
         break;
       }
-      // One byte that moves the column by something other than one.
       let c: i32 = buf[p] as i32;
       let step: (u64, i32) = advance(column, lastw, c, mode);
       let next: u64 = step.0;
@@ -463,7 +397,6 @@ function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32
             o = o.flush();
           }
         } else {
-          // It does not fit an empty line either, so it goes out alone.
           column = next;
           lastw = step.1;
           p = p + 1;
@@ -477,8 +410,6 @@ function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32
         }
       }
     }
-    // Whatever is left of the line, with the terminator it came with —
-    // a file's last line keeps its missing newline missing.
     buf_push_bytes_range(h, buf, start, hi);
 
     if (specat >= 0 && specat < pos) {
@@ -497,11 +428,6 @@ function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32
   return 0;
 }
 
-// Where the output line beginning at `start` should be broken when the
-// byte at `limit` will not fit: `limit` itself, or under -s one past the
-// LAST blank before it, falling back to `limit` when the piece holds no
-// blank at all. The walk back is bounded by the width, which is what
-// GNU's own backward scan over its line buffer is bounded by too.
 function break_before(s: u8[], start: i32, limit: i32, break_spaces: boolean): i32 {
   if (!break_spaces) {
     return limit;
@@ -516,8 +442,6 @@ function break_before(s: u8[], start: i32, limit: i32, break_spaces: boolean): i
   return limit;
 }
 
-// The first byte at or after `from` in the mode's control-byte set.
-// -1 when the rest holds none, matching the cached-position convention.
 function special_at(s: u8[], from: i32, specials: u8[]): i32 {
   let at: i32 = __scan_set_bytes(s, from, specials);
   if (at == s.len()) {

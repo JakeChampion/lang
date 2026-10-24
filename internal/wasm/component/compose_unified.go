@@ -1,90 +1,37 @@
 package component
 
-// compose_unified.go is the single entry point that subsumes the four
-// shape-specific composers (CLI-stream / TCP / UDP / HTTP). A driver
-// classifies a core module's preview-2 imports into a ComposeRequest;
-// Compose surfaces the union of shared types via the engine's idempotent
-// ensure* methods, declares every import as a data-driven gImport, and
-// emits the chosen tail. Because surfacing is idempotent and the lowering
-// loop is data-driven, ANY mix of imports composes — sockets + files,
-// stdout + stderr together, args + env, an HTTP handler that also logs,
-// etc. — which is what lets the toolchain drop the preview-1 adapter.
-
-// ComposeRequest is the full preview-2 import surface a core module
-// needs, across every shape. Each field is independent; the driver sets
-// the ones the core actually imports.
 type ComposeRequest struct {
-	// CLI stdio (independent — a program may use stdout AND stderr).
 	Stdout, Stderr, Stdin bool
 
-	// io/streams methods + drops the core imports directly. BlockWrite /
-	// BlockRead back print/eprint, stdin reads, the file write/read
-	// chains, and a TCP connection's send/recv. DropInput / DropOutput
-	// are Reader/Writer close() → canon resource.drop.
 	BlockWrite, BlockRead bool
-	// StreamReactor is the reactor's surface on a connection:
-	// input-stream.subscribe and output-stream.subscribe, which put the
-	// pollable resource in the streams instance type, and the
-	// non-blocking input-stream.read.
-	StreamReactor bool
-	// UdpRecv adds incoming-datagram-stream.receive, whose list result
-	// needs the realloc lowering.
+	StreamReactor         bool
 	UdpRecv               bool
 	DropInput, DropOutput bool
-	DropError             bool // owned last-operation-failed payload
+	DropError             bool
 
-	// wasi:filesystem/types methods the core imports — the open-chain's
-	// via-stream directions and the path mutators, as an independent set
-	// rather than a mutually exclusive mode.
 	File FsFeatures
 
-	// Socket / HTTP method surfaces.
-	Tcp  bool // TCP server (listen/accept/close)
-	Udp  bool // the datagram sockets
-	Http bool // wasi:http/incoming-handler
+	Tcp  bool
+	Udp  bool
+	Http bool
 
-	// TcpConnect adds the outbound-client chain (start-connect /
-	// finish-connect) to the tcp instance type + lowerings. Implies
-	// Tcp. The wasm analog of the native tcp_connect_with; lets an edge
-	// handler reach upstreams.
 	TcpConnect bool
 
-	// Reactor timer: wasi:clocks/monotonic-clock.subscribe-duration
-	// (own<pollable>) + wasi:io/poll.pollable.block, composed
-	// standalone or alongside sockets. The wasm reactor's timer primitive.
 	Timer bool
 
-	// Reactor multiplexer: wasi:io/poll.poll(list<pollable>) ->
-	// list<u32>. Opts the imported wasi:io/poll instance into the
-	// heavier shape that also declares `poll`. The wasm analog of the
-	// native poll(fds) readiness multiplexer.
 	Poll bool
 
-	// Reactor pollable drop: wasi:io/poll.[resource-drop]pollable, so
-	// the reactor frees a consumed timer pollable. Socket capabilities also
-	// require this lowering; all paths share a single declaration.
 	PollableDrop bool
 
-	// Standalone CLI capabilities. WallNow is wasi:clocks/wall-clock.now
-	// (a memory trampoline). Args / Env are wasi:cli/environment
-	// get-arguments / get-environment (memory+realloc, shared interface).
 	WallNow, Args, Env bool
 
-	// Config is wasi:config/store.get (memory+realloc): deploy-time
-	// configuration on the proxy world, which has no environment.
 	Config bool
 
-	// Structured no-opt imports (exit / random / monotonic).
 	Structured []WasiImport
 
-	// Tail: when Http, exports wasi:http/incoming-handler. Otherwise
-	// ExportName == "" lifts wasi:cli/run; a non-empty name lifts a u32
-	// component export (the -component-wrap shape).
 	ExportName string
 }
 
-// streamDirections reports whether the request needs the input / output
-// halves of wasi:io/streams surfaced.
 func (r ComposeRequest) streamDirections() (needIn, needOut bool) {
 	needIn = r.Stdin || r.BlockRead || r.DropInput ||
 		r.File.Read || r.Tcp || r.Http || r.StreamReactor
@@ -93,24 +40,11 @@ func (r ComposeRequest) streamDirections() (needIn, needOut bool) {
 	return needIn, needOut
 }
 
-// Compose builds the component for a core module whose preview-2 imports
-// are described by req. coreExportName is the lifted core entry
-// (_lang_run for cli/run + named exports; the handle export for HTTP).
 func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte {
 	g := newGComposer()
-	// Decide the wasi:io/poll instance shape up front: req.Poll wants
-	// the `poll(list<pollable>)` multiplexer in addition to block.
-	// Set before any ensure* so ensureIoPoll builds the right shape
-	// whichever dependency reaches it first (timer or socket).
 	g.needPoll = req.Poll
-	// Outbound client opts the tcp instance type into the connect
-	// variant (start-connect / finish-connect). Set before ensureTcp.
 	g.needConnect = req.TcpConnect
 
-	// Surface io/streams first with the full direction union so the
-	// later ensure* calls (which request narrower directions) are no-ops.
-	// The subscribe methods return the io/poll pollable, so that instance
-	// comes first when they are wanted.
 	g.needStreamReactor = req.StreamReactor
 	if req.StreamReactor {
 		g.ensureIoPoll()
@@ -119,7 +53,6 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 		g.ensureIoStreams(needIn, needOut)
 	}
 
-	// Socket / HTTP surfaces.
 	if req.Tcp {
 		g.ensureTcp()
 		g.ensureInstanceNetwork()
@@ -133,9 +66,6 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 		g.ensureHttpTypes()
 	}
 	if req.Timer {
-		// If the program also imports monotonic-clock `now` (monotonic_ns),
-		// build a combined instance exporting both it and subscribe-duration —
-		// a component can import the interface only once.
 		monoNow := false
 		for _, imp := range req.Structured {
 			if imp.InterfaceName == "wasi:clocks/monotonic-clock@0.2.0" {
@@ -145,23 +75,17 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 		g.ensureMonotonicTimer(monoNow)
 	}
 	if req.Poll {
-		// The multiplexer needs the io/poll instance surfaced even
-		// when no socket / timer pulled it in (a poll-only program).
 		g.ensureIoPoll()
 	}
 	if req.PollableDrop && !req.Tcp && !req.Udp {
-		// Standalone reactor drop needs the io/poll instance + the
-		// pollable resource surfaced (sockets already do this).
 		g.ensureIoPoll()
 	}
 
-	// Filesystem.
 	hasFile := req.File.Any()
 	if hasFile {
 		g.ensureFilesystem(req.File)
 	}
 
-	// CLI stdio + standalone capabilities.
 	if req.Stdout {
 		g.ensureCliWrite("wasi:cli/stdout@0.2.0", "get-stdout")
 	}
@@ -186,8 +110,6 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 
 	const streams = "wasi:io/streams@0.2.0"
 
-	// --- declare the lowerings ---
-
 	if req.Tcp {
 		const tcp = "wasi:sockets/tcp@0.2.0"
 		g.add(
@@ -206,11 +128,6 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 			gImport{iface: tcp, name: "[resource-drop]tcp-socket", kind: gDrop, resourceT: g.surfaced["tcp-socket"]},
 		)
 		if req.TcpConnect {
-			// Outbound client: the connect chain. The tcp instance type
-			// is the connect variant (a superset of the server one), so
-			// the server lowerings above still resolve; these add the
-			// two connect methods. start-connect mirrors start-bind's
-			// 15-param ip-socket-address flattening.
 			g.add(
 				gImport{iface: tcp, name: "[method]tcp-socket.start-connect", kind: gMem, params: composeTcpStartBindParams},
 				gImport{iface: tcp, name: "[method]tcp-socket.finish-connect", kind: gMem, params: composeTcpSelfRetParams},
@@ -265,28 +182,19 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 		)
 	}
 
-	// Sockets and timers share pollable.block. Declare the shared method
-	// and resource drop once, regardless of how many surfaces need them.
 	if req.Tcp || req.Udp || req.Timer {
 		g.add(gImport{iface: "wasi:io/poll@0.2.0", name: "[method]pollable.block", kind: gNoOpt})
 	}
 	if req.Tcp || req.Udp || req.PollableDrop {
 		g.add(gImport{iface: "wasi:io/poll@0.2.0", name: "[resource-drop]pollable", kind: gDrop, resourceT: g.surfaced["pollable"]})
 	}
-	// subscribe-duration returns an owned pollable. Its resource type was
-	// surfaced by ensureIoPoll through ensureMonotonicTimer above.
 	if req.Timer {
 		g.add(gImport{iface: "wasi:clocks/monotonic-clock@0.2.0", name: "subscribe-duration", kind: gNoOpt})
 	}
 	if req.Poll {
-		// poll(list<pollable>) -> list<u32>: list param (ptr, len) +
-		// list result via return area — memory + realloc lowering,
-		// like fields.entries / get-arguments.
 		g.add(gImport{iface: "wasi:io/poll@0.2.0", name: "poll", kind: gMemRealloc, params: repeatI32(3)})
 	}
 
-	// Filesystem lowerings — one per method the core imports, in the
-	// same order ensureFilesystem declared them.
 	if hasFile {
 		const fsTypes = "wasi:filesystem/types@0.2.0"
 		g.add(gImport{iface: "wasi:filesystem/preopens@0.2.0", name: composeGetDirsName, kind: gMemRealloc, params: composeGetDirsParams})
@@ -318,8 +226,6 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 			g.add(gImport{iface: fsTypes, name: composeSymlinkAtName, kind: gMem, params: composeSymlinkAtParams})
 		}
 		if req.File.Readlink {
-			// The target comes back as a host-allocated string in our
-			// memory, so this one needs realloc where the mutators do not.
 			g.add(gImport{iface: fsTypes, name: composeReadlinkAtName, kind: gMemRealloc, params: composePathMutatorParams})
 		}
 		if req.File.Rename {
@@ -344,14 +250,9 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 			g.add(gImport{iface: fsTypes, name: composeStatAtName, kind: gMem, params: composeStatAtParams})
 		}
 		if req.File.StatSelf {
-			// (self, ret_ptr) -> (): the same return area as stat-at,
-			// for the descriptor itself.
 			g.add(gImport{iface: fsTypes, name: composeStatName, kind: gMem, params: composeSelfRetParams})
 		}
 		if req.File.ReadDir {
-			// read-directory-entry hands back an entry NAME, which the
-			// host allocates into our memory — hence realloc, where
-			// read-directory itself only yields a handle.
 			g.add(
 				gImport{iface: fsTypes, name: composeReadDirName, kind: gMem, params: composeSelfRetParams},
 				gImport{iface: fsTypes, name: composeDirEntryName, kind: gMemRealloc, params: composeSelfRetParams},
@@ -363,7 +264,6 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 		}
 	}
 
-	// io/streams methods + drops.
 	if req.BlockWrite {
 		g.add(gImport{iface: streams, name: composeBlockWriteName, kind: gMem, params: composeBlockWriteParams})
 	}
@@ -385,7 +285,6 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 		g.add(gImport{iface: "wasi:io/error@0.2.0", name: "[resource-drop]error", kind: gDrop, resourceT: g.ensureIoError()})
 	}
 
-	// CLI stdio getters (no-opts).
 	if req.Stdout {
 		g.add(gImport{iface: "wasi:cli/stdout@0.2.0", name: "get-stdout", kind: gNoOpt})
 	}
@@ -396,7 +295,6 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 		g.add(gImport{iface: "wasi:cli/stdin@0.2.0", name: "get-stdin", kind: gNoOpt})
 	}
 
-	// Standalone capabilities.
 	if req.WallNow {
 		g.add(gImport{iface: "wasi:clocks/wall-clock@0.2.0", name: "now", kind: gMem, params: composeOneI32Params})
 	}

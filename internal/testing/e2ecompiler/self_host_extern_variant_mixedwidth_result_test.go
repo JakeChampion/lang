@@ -11,17 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestSelfHostExternVariantMixedWidthResultCustomProvider is the self-host port of
-// the Go-side mixed-width `variant` *result* (docs/WIT-BRING-YOUR-OWN.md): a WIT
-// `variant ev { i(s32), l(s64) }` lifted into a self-host enum `Ev { I(i32),
-// L(i64) }`. The canonical join is i64, returned indirectly in the variant memory
-// layout (disc:u8 @0, payload @8 — 8-aligned because a 64-bit arm is present). The
-// result wrapper stores the full 8-byte payload into the box at offset 4; a match
-// on the 32-bit `I` arm then reads only its low 4 bytes (the S1 width-aware bind),
-// the `L` arm reads all 8 — so no per-arm result branch is needed.
-//
-// `classify: func(n: s32) -> ev`: n<10 -> i(7), else -> l(5000000000). The
-// self-host `match` recovers each arm's payload at its own width and checks it.
 func TestSelfHostExternVariantMixedWidthResultCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -49,9 +38,6 @@ func TestSelfHostExternVariantMixedWidthResultCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export src; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// classify returns the variant indirectly in the canonical memory layout: a
-	// 16-byte area (disc:u8 @0, payload @8) via cabi_realloc, 8-aligned because the
-	// i64 arm is present. i=0/l=1.
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)
   (global $h (mut i32) (i32.const 1024))

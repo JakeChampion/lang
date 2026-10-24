@@ -8,26 +8,10 @@ import (
 	"testing"
 )
 
-// The self-host's pre-codegen gate typed a method call from the METHOD NAME
-// alone, so `write`, `read_line`, `read_chunk` and `first` were reserved words
-// in practice: a user struct declaring one got the built-in resource signature
-// (or the first same-named method declared anywhere in the module), and the
-// resulting type mismatch rejected a valid program before codegen (#8462).
-//
-//	struct Sink { n: i32 }
-//	function (k: Sink) write(s: string): i32 { … }
-//	let x: i32 = k.write("abc");
-//	  → error[E003]: … declared i32 but initializer has type Option[unknown]
-//
-// The gate now resolves on (receiver type, method name). These cases pin that:
-// each defines user methods on the colliding names and asserts the values the
-// user's own methods return, against the native interpreter as the oracle.
 var methodRecvTypeCases = []struct {
 	name string
 	src  string
 }{
-	// The resource-method names. All three were answered from a fixed I/O
-	// signature whatever the receiver was.
 	{"resource_names_on_user_struct", `struct Sink { n: i32 }
 function (k: Sink) write(s: string): i32 { return s.len() + k.n; }
 function (k: Sink) read_line(): string { return "line"; }
@@ -39,17 +23,11 @@ function main(): i32 {
     let z: string = k.read_chunk(4);
     return x * 10 + y.len() + z.len();
 }`},
-	// A declared array method named like a builtin the checker does not
-	// pre-register (`join` is the semantic boundary's, not the checker's):
-	// the call resolves to the declaration and reaches the boundary as a
-	// direct call, never as the builtin's shape; the oracle says which ran.
 	{"user_join_on_string_array", `function (xs: string[]) join(sep: i32): i32 { return xs.len() + sep; }
 function main(): i32 {
     let xs: string[] = ["a", "b"];
     return xs.join(3);
 }`},
-	// A stdlib method winning the name: std/array's `(xs: T[]) first(): Option[T]`
-	// claimed `Bag.first` and the call typed as Option[i32].
 	{"stdlib_first_shadows_user_method", `import "std/array";
 struct Bag { items: i32[] }
 function (b: Bag) first(): i32[] { return b.items; }
@@ -58,8 +36,6 @@ function main(): i32 {
     let f: i32[] = bg.first();
     return f[0] + f[1];
 }`},
-	// Two user structs declaring the same method name: the FIRST declaration won
-	// for both receivers. Both must resolve to their own.
 	{"same_method_name_two_structs", `struct Label { z: i32 }
 function (o: Label) first(): Option[string] { return Some("sss"); }
 struct Bag { items: i32[] }
@@ -71,20 +47,12 @@ function main(): i32 {
     match (Label { z: 0 }.first()) { Some(s) => { n = s.len(); }, None => { n = 0; } }
     return n * 10 + f[0] + f[1];
 }`},
-	// The match-scrutinee sibling of the same defect: the payload type of
-	// `match (k.read_line())` came from the name too, so a user `read_line`
-	// returning Option[i32] bound its payload as a string.
 	{"match_on_user_read_line", `struct Sink { n: i32 }
 function (k: Sink) read_line(): Option[i32] { return Some(k.n + 6); }
 function main(): i32 {
     let k: Sink = Sink { n: 1 };
     match (k.read_line()) { Some(v) => { return v; }, None => { return 0; } }
 }`},
-	// The type-NAME sibling of the same defect: ty_from_ref classified any bare
-	// type whose spelling merely STARTED with "Map" as a coarse Map, so a user
-	// struct named MapConfig / MapCloneScan / Maple had its methods typed as map
-	// ops. Reached through a struct-typed FIELD, whose type still resolves by
-	// name.
 	{"map_prefixed_struct_name", `struct Maple { n: i32 }
 function (m: Maple) get(k: i32): i32 { return m.n + k; }
 struct Holder { m: Maple }
@@ -93,7 +61,6 @@ function main(): i32 {
     let x: i32 = h.m.get(1);
     return x;
 }`},
-	// Control: a real Map still dispatches as one.
 	{"real_map_still_a_map", `import "core/map";
 function main(): i32 {
     let m: Map[string, i32] = map_new(4);
@@ -103,8 +70,6 @@ function main(): i32 {
     if (m.contains("a")) { h = 1; }
     return v * 10 + m.len() + h + m.keys().len();
 }`},
-	// Breadth: a user struct whose methods take a handful of ordinary stdlib
-	// method names at once. None may be answered from a built-in signature.
 	{"common_stdlib_names_on_user_struct", `struct Doc { n: i32 }
 function (d: Doc) len(): i32 { return d.n; }
 function (d: Doc) get(k: i32): Option[i32] { return Some(d.n + k); }
@@ -132,10 +97,6 @@ function main(): i32 {
 }`},
 }
 
-// selfHostProdDriver builds the PRODUCTION self-hosted compiler (fern.fern) —
-// the driver that runs the pre-codegen gate over a real program against the
-// real stdlib — and returns it with the stdlib root and the x86-64 runner.
-// Shared with self_host_str_runtime_stdstring_parity_test.go.
 func selfHostProdDriver(t *testing.T) (fernBin, stdlibRoot string, x86runner []string) {
 	t.Helper()
 	gcc, runner := x86_64Tooling(t)
@@ -148,8 +109,6 @@ func selfHostProdDriver(t *testing.T) (fernBin, stdlibRoot string, x86runner []s
 	return buildSelfHostBin(t, gcc, dir, "fern.fern", "fern"), root, runner
 }
 
-// writeSelfHostProgram writes a one-file program into a fresh dir and returns
-// its path.
 func writeSelfHostProgram(t *testing.T, src string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -160,8 +119,6 @@ func writeSelfHostProgram(t *testing.T, src string) string {
 	return path
 }
 
-// selfHostInterpOracle runs a program under the native interpreter — the value
-// every self-host leg is compared against.
 func selfHostInterpOracle(t *testing.T, interpBin, src string) int {
 	t.Helper()
 	cmd := exec.Command(interpBin, "-interp", writeSelfHostProgram(t, src))
@@ -169,7 +126,6 @@ func selfHostInterpOracle(t *testing.T, interpBin, src string) int {
 	if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
 		t.Fatalf("interpreter did not exit normally: %s", out)
 	}
-	// The oracle itself must accept the program, or it pins nothing.
 	if bytes.Contains(out, []byte("error[")) {
 		t.Fatalf("interpreter rejected the program: %s", out)
 	}

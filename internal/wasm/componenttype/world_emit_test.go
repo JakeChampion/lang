@@ -8,11 +8,6 @@ import (
 	"testing"
 )
 
-// TestEmitInterfaceTypeImport gates the first P2 emission slice: emitting a
-// self-contained interface (wasi:io/error) from the decoded world produces a
-// component that `wasm-tools` validates and whose reconstructed WIT shows the
-// full interface (the `error` resource). The gate is "validates + the WIT
-// round-trips", per the P2 direction (not byte-identity).
 func TestEmitInterfaceTypeImport(t *testing.T) {
 	wasmtools, err := exec.LookPath("wasm-tools")
 	if err != nil {
@@ -50,9 +45,6 @@ func TestEmitInterfaceTypeImport(t *testing.T) {
 	}
 }
 
-// TestEmitInterfaceTypeImportRejectsShared confirms an interface that pulls in
-// shared types (io/streams aliases io/error's error) is refused until the
-// surfacing slice lands.
 func TestEmitInterfaceTypeImportRejectsShared(t *testing.T) {
 	w, err := DecodeWorld("fern")
 	if err != nil {
@@ -63,10 +55,6 @@ func TestEmitInterfaceTypeImportRejectsShared(t *testing.T) {
 	}
 }
 
-// TestEmitWorldImports gates the full-world emission: replaying the world's
-// decls as component sections yields a component that wasm-tools validates and
-// whose reconstructed WIT imports every interface of the world (with their
-// shared types resolved across interfaces). Run for both shipped worlds.
 func TestEmitWorldImports(t *testing.T) {
 	wasmtools, err := exec.LookPath("wasm-tools")
 	if err != nil {
@@ -113,10 +101,6 @@ func TestEmitWorldImports(t *testing.T) {
 	}
 }
 
-// TestPrefixLayout checks the index counts a world-driven suffix consumes, and
-// cross-checks them against the actual emitted prefix: the type-index count
-// equals the number of type+alias sections emitted, and the instance count
-// equals the number of import sections.
 func TestPrefixLayout(t *testing.T) {
 	w, err := DecodeWorld("fern")
 	if err != nil {
@@ -139,7 +123,6 @@ func TestPrefixLayout(t *testing.T) {
 		}
 	}
 
-	// Cross-check against the emitted prefix: count type/alias/import sections.
 	secs, err := w.EmitWorldImports()
 	if err != nil {
 		t.Fatalf("EmitWorldImports: %v", err)

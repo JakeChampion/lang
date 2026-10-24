@@ -2,9 +2,6 @@ package e2e
 
 import "testing"
 
-// structViewFieldProgram reads fields through the elements of a struct-array
-// view (`[P]`): a local view, a view parameter, and a string field (#10251).
-// Exits 0 on success, a distinct code per failed step.
 const structViewFieldProgram = `struct P { x: i32, name: string }
 
 function second_x(qs: [P]): i32 {

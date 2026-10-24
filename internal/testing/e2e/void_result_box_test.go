@@ -5,16 +5,6 @@ import (
 	"testing"
 )
 
-// `Result[void, IoError]`'s Ok box is built by the native runtimes at 16
-// bytes with the unit at +8, and the IR frees a box at the size its layout
-// says. At a 4-byte unit slot the layout said 8, so every void-result
-// helper call returned a 32-byte block to the 16-byte freelist class: the
-// census read allocs == frees with 16 live bytes a call (#8809). The unit
-// slot is pointer-width now, so the two sizes agree.
-//
-// A write_file / remove_file pair is the probe: the result boxes and the
-// helpers' NUL-terminated path copies (#9001) are the only allocations, so
-// the census must be exact and must not move with the round count.
 func voidResultLoopSrc(rounds int) string {
 	return fmt.Sprintf(`function main(): i32 {
     let i: i32 = 0;

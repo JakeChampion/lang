@@ -9,27 +9,8 @@ import (
 	"testing"
 )
 
-// arm64ImageSpan is the AArch64 b/bl reach in bytes: a signed 26-bit
-// instruction offset, ±2^25 instructions = ±128 MB. A .text bigger than
-// this needs branch veneers to link at all.
 const arm64ImageSpan = 1 << 27
 
-// TestSelfHostArm64ModloadNativeBuild builds the per-module orchestrator
-// driver — the largest program in the tree — for arm64 through the CLI's
-// default in-process pure-Go assembler and linker, then runs it.
-//
-// This is the lane that was missing when the self-host arm64 image passed
-// the ±128 MB b/bl span in mid-2026 and the driver stopped assembling
-// ("branch to ... spans 33891495 instructions"). CI was fully green on
-// the commit that tipped it: the x86 self-host shards build this driver
-// only as a host binary, and the aarch64 shards do not build it at all.
-// Nothing needs an aarch64 toolchain to catch it — the assembler and
-// linker are pure Go — so this test runs on every shard, and only the
-// final execution check waits for the aarch64 cross toolchain and qemu.
-//
-// It is a heavy build (a ~130 MB image, several GB of RSS), so it takes a
-// reservation against the harness RAM budget the same way a cold driver
-// build does.
 func TestSelfHostArm64ModloadNativeBuild(t *testing.T) {
 	fernBin := buildFernCLIBin(t)
 	dir := writeSelfHostModloadProject(t)
@@ -66,20 +47,12 @@ func TestSelfHostArm64ModloadNativeBuild(t *testing.T) {
 	if code == 0 {
 		t.Fatal("no executable PT_LOAD segment in the image")
 	}
-	// Not an assertion — a report. The span stopped being a ceiling when
-	// veneers landed, but it is still the number that explains a jump in
-	// image size, and it says whether this build is exercising the veneer
-	// path or merely the ordinary one.
 	if code > arm64ImageSpan {
 		t.Logf("code segment %d bytes — %d past the ±128 MB b/bl span, so this build is veneered", code, code-arm64ImageSpan)
 	} else {
 		t.Logf("code segment %d bytes — %d below the ±128 MB b/bl span", code, arm64ImageSpan-code)
 	}
 
-	// An image that links proves nothing about a veneer: the branched-to
-	// code has to actually run. Compile a program with the arm64-hosted
-	// driver and check the asm it emits. Only this half needs the aarch64
-	// toolchain — the build above is the part that must run everywhere.
 	t.Run("executes", func(t *testing.T) {
 		gcc, qemu := arm64Tooling(t)
 		prog := filepath.Join(dir, "prog.fern")
@@ -93,9 +66,6 @@ func TestSelfHostArm64ModloadNativeBuild(t *testing.T) {
 		if err != nil {
 			t.Fatalf("running the arm64 orchestrator: %v\n%s", err, stderr.String())
 		}
-		// Assembled and run, not just inspected: a veneer that lands
-		// anywhere but its target still produces plausible-looking asm
-		// from a compiler that crashed or went wrong mid-emit.
 		compiled := buildBinArm64(t, gcc, dir, "prog", string(asm))
 		run := runArm64Bin(qemu, compiled)
 		_ = run.Run()
@@ -105,13 +75,8 @@ func TestSelfHostArm64ModloadNativeBuild(t *testing.T) {
 	})
 }
 
-// arm64ImageBuildMB is this build's estimated peak RSS. The emit of a
-// ~130 MB image runs without the harness's in-process soft heap cap (it
-// is a `fern` subprocess), and was measured peaking at ~8.3 GB.
 const arm64ImageBuildMB = 8500
 
-// buildErr carries a failed build's combined output into the test's
-// failure message.
 type buildErr struct {
 	err error
 	out []byte
@@ -119,8 +84,6 @@ type buildErr struct {
 
 func (e *buildErr) Error() string { return e.err.Error() + "\n" + string(e.out) }
 
-// buildFernCLIBin compiles cmd/fern to a temp binary. The Go build cache
-// makes the repeated build essentially free.
 func buildFernCLIBin(t *testing.T) string {
 	t.Helper()
 	bin := filepath.Join(t.TempDir(), "fern")

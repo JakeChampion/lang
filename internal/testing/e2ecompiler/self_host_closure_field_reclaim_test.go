@@ -6,15 +6,6 @@ import (
 	"testing"
 )
 
-// --- A closure in a struct field must not leak per round (#6443) ---
-//
-// A closure FIELD is released with its record: the pair block, the env block
-// and every rc-tracked capture, not just the pair's count.
-//
-// This asserts the DELTA between a provider table whose record carries a
-// closure field and the identical table with a plain `i32` in that slot, at two
-// round counts. What must hold is that the closure field costs the same per
-// round at 100 rounds as at 200, i.e. nothing accumulates.
 func closureFieldChurnSrc(rounds int, closureField bool) string {
 	field, value, call := "k: i32", "k: n", "ps[j].k"
 	if closureField {
@@ -45,9 +36,6 @@ function main(): i32 {
 }
 
 func TestSelfHostClosureFieldReclaimX86_64(t *testing.T) {
-	// A single `fn` field must not take the whole `P[]` local out of the
-	// append-built struct-array reclaim (#6461): the element boxes, strings
-	// and closures under it are all released.
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "drivers/asm_load_run.fern")

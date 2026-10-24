@@ -1,62 +1,21 @@
-// std/sim — the deterministic simulation driver for std/async. See
-// docs/DST-PLATFORM-BRIEF.md, slices 1–2. A `Sim` implements
-// `async.Driver` over a VIRTUAL clock: pass it to `async.gather_on` /
-// `race_on` / `with_deadline_on` and the whole fan-out runs under
-// simulated time — identically on every backend, including the
-// interpreter (where fd-backed Pending futures never resolve). Every
-// nondeterministic choice (tie order between equally-ready futures)
-// comes from a seeded PRNG, so a run is a pure function of the seed:
-// a concurrency bug is a seed you replay, not a flake.
-//
-// TOKEN ENCODING: a sim readiness token IS its ready-at virtual time,
-// in MILLISECONDS (`tok = ready_at_ns / 1000000`), so the driver needs
-// no token table and `drop_token` is a no-op. Negative tokens are
-// never ready (mirroring poll(2), which ignores negative fds).
-//
-// Time advances ONLY inside a wait — `poll_ready`, `wait`, `advance_to` — a
-// busy loop that never waits is a hang in simulation exactly as in
-// production. Under `run_tasks` each wait is a park: the task hands the
-// driver its tokens, the driver moves the clock to the earliest due and
-// resumes that task, so tasks interleave in virtual time as handlers do
-// under the serve loop.
+// This module runs futures with a deterministic virtual clock.
+
 import "core/int";
 import "std/async";
 import "std/rand";
 import "std/time";
 
-// Sim — the simulation driver: virtual clock (ns, starts at 0) +
-// explicit PRNG state, and the reactor leg: the descriptors watched with
-// their interest bits, and the readiness a test scripts for them with
-// `ready_at`. Both shared tables use Cell[string] with `;`-ended rows:
-// `fd:interest` and `fd:at_ms:bits`, a
-// readiness time in milliseconds like a sim token. Construct with
-// `sim.new(seed)`.
 pub struct Sim { clock_ns: Cell[i64], rng: Cell[i64], watched: Cell[string], readiness: Cell[string] }
 
-// new(seed) — a fresh simulation at virtual time 0. Equal seeds give
-// bit-identical runs.
-//
-// SEED COMPATIBILITY: the generator changed (see `__roll`). A seed
-// recorded before that change replays a DIFFERENT sequence — same seed,
-// same determinism, different draws. Anything pinned to a pre-change
-// seed (a saved DST replay, a regression a test names by seed) has to be
-// re-recorded. Nothing else about the contract moved.
 pub function new(seed: i64): Sim {
   return Sim { clock_ns: cell_new(0 as i64), rng: cell_new(rand.rng_seed(seed)), watched: cell_new(""), readiness: cell_new("") };
 }
 
-// ready_at(fd, at_ms, bits) — script one readiness: `fd` reports `bits`
-// (1 readable, 2 writable, 4 error or hang-up) at virtual time `at_ms`, to
-// the first `wait` that reaches that time while `fd` is watched for one of
-// those bits, and once. A readiness no wait consumes stays scripted;
-// `unwatch` drops the descriptor's.
 pub function (s: Sim) ready_at(fd: i32, at_ms: i32, bits: i32): i32 {
   s.readiness.set(s.readiness.get() + int.int_to_string(fd) + ":" + int.int_to_string(at_ms) + ":" + int.int_to_string(bits) + ";");
   return 0;
 }
 
-// The rows of a table: every `;`-ended entry, each split on `:` into its
-// fields.
 function __sim_rows(table: string): string[][] {
   let rows: string[][] = [];
   for entry in table.split(";") {
@@ -78,7 +37,6 @@ function __sim_field(row: string[], i: i32): i32 {
   }
 }
 
-// __sim_interest is the interest bits fd is watched for, 0 when it is not.
 function __sim_interest(s: Sim, fd: i32): i32 {
   for row in __sim_rows(s.watched.get()) {
     if (__sim_field(row, 0) == fd) {
@@ -88,7 +46,6 @@ function __sim_interest(s: Sim, fd: i32): i32 {
   return 0;
 }
 
-// The watched table with fd's row replaced by `row` (dropped when empty).
 function __sim_rewatch(s: Sim, fd: i32, row: string): i32 {
   let out: string = "";
   for r in __sim_rows(s.watched.get()) {
@@ -100,48 +57,22 @@ function __sim_rewatch(s: Sim, fd: i32, row: string): i32 {
   return 0;
 }
 
-// __roll(drv, n) — deterministic pick in [0, n).
-//
-// One PCG32 step from std/rand, mapped with Lemire's multiply-shift and
-// rejection. NOT std/math.random_int — determinism is the point; the state
-// lives in the Sim and advances only through draws.
-//
-// This replaced a Park-Miller step (x' = 48271*x mod 2^31-1) mapped with a
-// bare `x % n`, which had two defects at once. The modulo was BIASED toward
-// small values whenever `n` did not divide 2^31-1 — the same defect
-// std/math.random_int shed — and Park-Miller is a 1990s LCG whose low bits
-// cycle with short periods, so the very bits a small-`n` modulo reads were
-// its worst. Debiasing the mapping alone would have spent the seed-
-// compatibility break without buying the quality, so both moved together
-// (#6193).
 function __roll(drv: Sim, n: i32): i32 {
   let step = rand.rng_below(drv.rng.get(), n);
   drv.rng.set(step.0);
   return step.1;
 }
 
-// random_i32() — one draw of 32 bits from the simulation's PRNG, which
-// advances by it: what a sim platform answers `plat.random_i32()` with,
-// so a handler's randomness is the seed's.
 pub function (s: Sim) random_i32(): i32 {
   let step = rand.rng_next(s.rng.get());
   s.rng.set(step.0);
   return step.1 as i32;
 }
 
-// rng_state() — the current PRNG state. Two sims constructed from the
-// same seed have equal states exactly while they have made the same
-// draws in the same order, so a test can assert two runs stayed in
-// lockstep (same-seed reproducibility) without comparing outcomes.
 pub function (s: Sim) rng_state(): i64 {
   return s.rng.get();
 }
 
-// sweep_seeds(n, prop) — run `prop(seed)` for seeds 1..n and return the
-// FIRST seed for which it returned false, or 0 when every seed passed.
-// The DST replay workflow in miniature: a failing property is a seed you
-// rerun under a debugger, not a flake you ignore. Deliberately free of
-// std/test so any harness (or plain `main`) can call it.
 pub function sweep_seeds(n: i64, prop: (i64) => boolean): i64 {
   let s: i64 = 1;
   while (s <= n) {
@@ -155,16 +86,6 @@ pub function sweep_seeds(n: i64, prop: (i64) => boolean): i64 {
 
 impl async.Driver for Sim {
   function poll_ready(self: Sim, toks: i32[], timeout_ms: i32): i32 {
-    // poll_ready — the virtual wait, honouring the real `poll`
-    // contract (compiler/asmcore.fern rt_src_poll):
-    // the index of the first token to become ready, or -1 on
-    // timeout / empty set / no waitable token. The clock advances to
-    // whichever of (earliest ready-at, now + timeout) comes first —
-    // on a tie the token wins, matching with_deadline's timer-slot
-    // convention (the deadline reads as the timer firing, ready ==
-    // nfds, not a bare -1). Ties between equally-ready tokens are
-    // broken by the seeded PRNG. Under a task the wait is a park and
-    // `run_tasks` answers it by the same rules.
     if (__task_cur() != 0) {
       return async.park_tokens(toks, timeout_ms);
     }
@@ -233,11 +154,6 @@ impl async.Driver for Sim {
     return 0;
   }
   function wait_into(self: Sim, own events: i32[], timeout_ms: i32): i32[] {
-    // wait_into — the virtual wait over the scripted readiness: the clock
-    // advances to the earliest readiness a watched descriptor's interest
-    // selects (one already due is due now), or to the timeout when that
-    // comes first (no pairs). Every readiness at that time is reported,
-    // in scripted order, and consumed.
     let room: i32 = events.len() / 2;
     if (room <= 0) {
       return async.end_pairs(events, 0);
@@ -283,15 +199,12 @@ impl async.Driver for Sim {
     return async.end_pairs(events, n);
   }
   function watch_signal(self: Sim, sig: i32): i32 {
-    // A signal is the descriptor -sig: `ready_at(-sig, at_ms, 1)` scripts
-    // its delivery.
     return self.watch(0 - sig, 1);
   }
   function unwatch_signal(self: Sim, sig: i32): i32 {
     return self.unwatch(0 - sig);
   }
   function watch_parent(self: Sim): i32 {
-    // A simulated process's parent outlives it.
     return 0;
   }
   function close(self: Sim): i32 {
@@ -299,11 +212,6 @@ impl async.Driver for Sim {
   }
 }
 
-// advance_to(to_ns) — the clock moved forward to `to_ns`, never back: how
-// a scripted peer (std/sim_fetch) spends the time its answer takes. Under
-// a task the move is a park until then, so the other tasks `run_tasks`
-// drives run meanwhile; it answers false, the clock left where the driver
-// put it, when the task was cancelled instead.
 pub function (s: Sim) advance_to(to_ns: i64): boolean {
   if (__task_cur() != 0) {
     let set: i32[] = [(to_ns / 1000000) as i32, 1];
@@ -317,24 +225,6 @@ pub function (s: Sim) advance_to(to_ns: i64): boolean {
   return true;
 }
 
-// ---- Tasks in virtual time ------------------------------------------------
-//
-// run_tasks(drv, entries, cancel_at_ms) — every entry run as a task, all
-// together, until each is done or cancelled, in virtual time. A task that
-// parks (`advance_to`, `poll_ready`, any `async.wait_any`) hands the driver
-// its wait, whose pairs' descriptors are ready-at times in milliseconds
-// like every sim token; the driver moves the clock to the earliest moment
-// any task is due — a pair's time, its bound's end, or `cancel_at_ms[i]`,
-// the virtual time task `i` is cancelled at (-1 for never: a scripted
-// disconnect) — and resumes that task with the pair's index, -1 at its
-// bound, or cancels it, the cancellation winning a tie and `task_cancel`
-// running it on with every wait answering `async.cancelled()`. Ties
-// between tasks, and between a task's pairs, are broken by the seeded
-// PRNG, so a run is a function of the seed. A task whose wait nothing can
-// answer is cancelled rather than left to hang. Answers in entry order:
-// `Done(v)` or `Cancelled`, each task's record freed. With no task ever
-// current (the interpreter, docs/ASYNC.md §8) each entry runs to its end
-// inside `task_start`, in order, and nothing is cancelled.
 pub function run_tasks[T](drv: Sim, entries: (() => T)[], cancel_at_ms: i32[]): async.TaskStatus[T][] {
   let tasks: async.Task[T][] = [];
   let out: async.TaskStatus[T][] = [];
@@ -351,7 +241,6 @@ pub function run_tasks[T](drv: Sim, entries: (() => T)[], cancel_at_ms: i32[]): 
   return out;
 }
 
-// The task's record freed once it is done or cancelled; its status either way.
 function __settled[T](t: async.Task[T], st: async.TaskStatus[T]): async.TaskStatus[T] {
   match (st) {
     Suspended(w) => {},
@@ -376,10 +265,6 @@ function __now_ms(drv: Sim): i32 {
   return (drv.clock_ns.get() / 1000000) as i32;
 }
 
-// The virtual millisecond the parked wait `w` is due at: the earliest of
-// its cancellation (`cancel_ms`, -1 for none), its pairs' ready-at times
-// and its bound's end, none earlier than `now_ms`; `now_ms` itself when
-// nothing can answer it.
 function __wait_due(w: async.Wait, now_ms: i32, cancel_ms: i32): i32 {
   let due: i32 = cancel_ms;
   if (w.timeout_ms >= 0 && (due < 0 || now_ms + w.timeout_ms < due)) {
@@ -399,7 +284,6 @@ function __wait_due(w: async.Wait, now_ms: i32, cancel_ms: i32): i32 {
   return due;
 }
 
-// The pairs of `w` due at `due_ms`, as indices.
 function __due_pairs(w: async.Wait, now_ms: i32, due_ms: i32): i32[] {
   let ties: i32[] = [];
   let i: i32 = 0;
@@ -416,9 +300,6 @@ function __due_pairs(w: async.Wait, now_ms: i32, due_ms: i32): i32[] {
   return ties;
 }
 
-// What the parked wait `w` is resumed with at `due_ms`: `async.cancelled()`
-// when its cancellation is due (or nothing can answer it), else the index
-// of a pair due now, else -1 at its bound.
 function __wait_word(drv: Sim, w: async.Wait, now_ms: i32, due_ms: i32, cancel_ms: i32): i32 {
   if (cancel_ms >= 0 && cancel_ms <= due_ms) {
     return async.cancelled();
@@ -436,7 +317,6 @@ function __wait_word(drv: Sim, w: async.Wait, now_ms: i32, due_ms: i32, cancel_m
   return async.cancelled();
 }
 
-// The index of the parked task due first, -1 with none parked.
 function __next_due[T](drv: Sim, out: async.TaskStatus[T][], cancel_at_ms: i32[]): i32 {
   let now_ms: i32 = __now_ms(drv);
   let best: i32 = 0;
@@ -467,8 +347,6 @@ function __next_due[T](drv: Sim, out: async.TaskStatus[T][], cancel_at_ms: i32[]
   return ties[__roll(drv, ties.len())];
 }
 
-// The parked task run on at its due: the clock moved there, the task
-// resumed with what its wait is answered, or cancelled.
 function __run_due[T](drv: Sim, t: async.Task[T], st: async.TaskStatus[T], cancel_ms: i32): async.TaskStatus[T] {
   match (st) {
     Suspended(w) => {
@@ -493,25 +371,15 @@ function __run_due[T](drv: Sim, t: async.Task[T], st: async.TaskStatus[T], cance
   return st;
 }
 
-// __pend(tok, next) — a Pending resolving to `next` when `tok` fires.
-// (The indirection exists because a closure may capture a Future[T]
-// but not a bare T — E044.)
 function __pend[T](tok: i32, next: async.Future[T]): async.Future[T] {
   return Pending(tok, (woken: i32) => next);
 }
 
-// future_at(drv, at_ns, v) — a Pending future resolving to `v` at
-// virtual time `at_ns` (absolute, ns).
 pub function future_at[T](drv: Sim, at_ns: i64, v: T): async.Future[T] {
   let done: async.Future[T] = Ready(v);
   return __pend((at_ns / 1000000) as i32, done);
 }
 
-// future_chain(drv, at_ns, step_ns, resuspends, v) — a Pending future
-// first ready at `at_ns` whose resume RE-SUSPENDS `resuspends` times,
-// each `step_ns` later, before resolving to `v` at virtual time
-// `at_ns + resuspends * step_ns`. The multi-step read shape
-// (fetch_future's __fetch_drain) under the virtual clock.
 pub function future_chain[T](drv: Sim, at_ns: i64, step_ns: i64, resuspends: i32, v: T): async.Future[T] {
   let f: async.Future[T] = Ready(v);
   let i: i32 = resuspends;
@@ -522,31 +390,6 @@ pub function future_chain[T](drv: Sim, at_ns: i64, step_ns: i64, resuspends: i32
   return f;
 }
 
-// ---------------------------------------------------------------------------
-// SimNet (docs/DST-PLATFORM-BRIEF.md, slice 2) — scripted request/response
-// endpoints, the sim sibling of `fetch.fetch_future`. Register upstreams on a
-// `Net`, then `net.fetch_future(host_be, port, path)` returns a
-// `Future[string]` honouring the REAL fetch_future's SCHEDULING: it resolves
-// to the response body; an unregistered endpoint resolves immediately to ""
-// (the real one's dead-upstream behaviour); a chunked response re-suspends
-// once per chunk (the `__fetch_drain` shape), each chunk arriving at its
-// scheduled virtual time, and resolves to the accumulated body at the LAST
-// chunk's time. Latencies are measured from the fetch call's virtual `now`.
-//
-// Bodies are `string` where the real fetch resolves to `u8[]`: a scripted
-// body is a program value and is well-formed by construction, so the D9
-// invariant the real transport has to respect does not bind here, and the
-// combinator timing these tests pin reads better against text.
-
-// Endpoint — one scripted upstream. A registered `path` of "" matches any
-// path on its host:port. `hits` is a shared Cell (struct fields are frozen —
-// E048 — but a Cell[i64] mutates through), counting fetches routed here
-// (faulted fetches included — the request still reached the upstream).
-// `fault` is the injected fault mode (0 none / 1 fail / 2 stall / 3
-// partial), `fault_k` the partial-mode chunk count, and `flaky_pct` the
-// per-call fault probability: -1 = deterministic (the fault always fires),
-// 0..100 = each fetch draws once from the sim PRNG and the fault fires
-// when the draw lands below it.
 pub struct Endpoint {
   host_be: i32,
   port: i32,
@@ -561,31 +404,17 @@ pub struct Endpoint {
   flaky_pct: i32,
 }
 
-// Net — a Sim plus its scripted endpoints. Registration is value-returning
-// (`n = n.serve(...)`) because struct fields are frozen; the per-endpoint
-// `hits` Cells are SHARED between the old and new Net values, so counters
-// survive further registration.
 pub struct Net { drv: Sim, eps: Endpoint[] }
 
-// net(drv) — a fresh SimNet with no endpoints on the given simulation.
 pub function net(drv: Sim): Net {
   return Net { drv: drv, eps: [] };
 }
 
-// serve(host_be, port, path, body, latency) — register an endpoint whose
-// whole body arrives in ONE chunk, `latency` of virtual time after the
-// fetch. First matching registration wins on lookup; path "" is a wildcard.
 pub function (n: Net) serve(host_be: i32, port: i32, path: string, body: string, latency: Duration): Net {
   let none: i32[] = [];
   return n.serve_chunked(host_be, port, path, body, latency, time.duration_nanos(0 as i64), none);
 }
 
-// serve_chunked(host_be, port, path, body, first_byte, chunk, chunk_lens)
-// — register an endpoint whose body arrives split per `chunk_lens`: chunk k
-// is ready `first_byte + k * chunk` after the fetch. Lengths past the
-// end of the body are clamped; bytes not covered by `chunk_lens` arrive as
-// one final chunk one `chunk` later; an empty `chunk_lens` means a single
-// chunk (== serve). Use `chunks_of` for a fixed-size schedule.
 pub function (n: Net) serve_chunked(host_be: i32, port: i32, path: string, body: string, first_byte: Duration, chunk: Duration, chunk_lens: i32[]): Net {
   let ep: Endpoint = Endpoint {
     host_be: host_be, port: port, path: path, body: body,
@@ -596,9 +425,6 @@ pub function (n: Net) serve_chunked(host_be: i32, port: i32, path: string, body:
   return Net { drv: n.drv, eps: n.eps.append(ep) };
 }
 
-// chunks_of(body_len, size) — the fixed-size chunking schedule: as many
-// `size`-length chunks as `body_len` needs (the last one short). An empty
-// body or non-positive size gives the empty schedule (single-chunk).
 pub function chunks_of(body_len: i32, size: i32): i32[] {
   let out: i32[] = [];
   if (size <= 0) {
@@ -616,8 +442,6 @@ pub function chunks_of(body_len: i32, size: i32): i32[] {
   return out;
 }
 
-// __find(n, host_be, port, path) — index of the first registration matching
-// host:port whose path is `path` or the "" wildcard, or -1.
 function __find(n: Net, host_be: i32, port: i32, path: string): i32 {
   let i: i32 = 0;
   while (i < n.eps.len()) {
@@ -632,8 +456,6 @@ function __find(n: Net, host_be: i32, port: i32, path: string): i32 {
   return -1;
 }
 
-// hits(host_be, port, path) — how many fetches have been routed to the
-// matching endpoint (0 for an unregistered one).
 pub function (n: Net) hits(host_be: i32, port: i32, path: string): i64 {
   let i: i32 = __find(n, host_be, port, path);
   if (i < 0) {
@@ -642,18 +464,6 @@ pub function (n: Net) hits(host_be: i32, port: i32, path: string): i64 {
   return n.eps[i].hits.get();
 }
 
-// ---------------------------------------------------------------------------
-// Fault injection (docs/DST-PLATFORM-BRIEF.md, slice 3) — seed-driven fault
-// schedules on registered endpoints, so fan-out code is testable against
-// flaky upstreams with every failure reproducible from the seed. Faults are
-// registered value-returning like `serve` (`n = n.fault_fail(...)`) on an
-// ALREADY-registered endpoint and compose with its scripted latency /
-// chunking; a fault registration for an unknown endpoint is a no-op (that
-// endpoint is already a dead upstream). Faulted fetches still count as hits.
-
-// __with_fault(n, host_be, port, path, mode, k, pct) — Net with the first
-// matching endpoint's fault fields replaced (the shared `hits` Cell carries
-// over), or `n` unchanged when nothing matches.
 function __with_fault(n: Net, host_be: i32, port: i32, path: string, mode: i32, k: i32, pct: i32): Net {
   let idx: i32 = __find(n, host_be, port, path);
   if (idx < 0) {
@@ -669,38 +479,18 @@ function __with_fault(n: Net, host_be: i32, port: i32, path: string, mode: i32, 
   return Net { drv: n.drv, eps: n.eps.with(idx, ne) };
 }
 
-// fault_fail(host_be, port, path) — every fetch of the matching endpoint
-// resolves immediately to Ready("") — the real fetch_future's connect/send
-// failure, so a failed upstream never stalls a fan-out.
 pub function (n: Net) fault_fail(host_be: i32, port: i32, path: string): Net {
   return __with_fault(n, host_be, port, path, 1, 0, -1);
 }
 
-// fault_stall(host_be, port, path) — every fetch of the matching endpoint
-// suspends on a never-ready token and NEVER resolves: the accepted-then-
-// silent upstream. `gather_on` fills its slot with `on_incomplete`;
-// `with_deadline_on` drops it with None at exactly the virtual deadline.
 pub function (n: Net) fault_stall(host_be: i32, port: i32, path: string): Net {
   return __with_fault(n, host_be, port, path, 2, 0, -1);
 }
 
-// fault_partial(host_be, port, path, k) — the half-dead connection: the
-// first min(k, #chunks) scheduled chunks arrive at their normal virtual
-// times, then the upstream goes silent and the future NEVER resolves (the
-// terminating close never happens — even `k >= #chunks` withholds it, and
-// `k <= 0` is a stall before the first byte). Partial NEVER errors; the
-// withheld prefix is only observable by draining the future by hand or by
-// bounding the fan-out with `with_deadline_on`.
 pub function (n: Net) fault_partial(host_be: i32, port: i32, path: string, k: i32): Net {
   return __with_fault(n, host_be, port, path, 3, k, -1);
 }
 
-// fault_flaky(host_be, port, path, p_percent) — probabilistic wrapper over
-// the endpoint's fault mode (defaulting it to fail if none was registered):
-// EVERY fetch of a flaky endpoint consumes exactly one draw from the sim
-// PRNG — shared with `poll_ready`'s tie-breaks, in program order — and the
-// fault fires when `draw < p_percent` (so 0 never faults, 100 always
-// faults, both still draw). Same seed + same call order = same outcomes.
 pub function (n: Net) fault_flaky(host_be: i32, port: i32, path: string, p_percent: i32): Net {
   let idx: i32 = __find(n, host_be, port, path);
   if (idx < 0) {
@@ -714,9 +504,6 @@ pub function (n: Net) fault_flaky(host_be: i32, port: i32, path: string, p_perce
   return __with_fault(n, host_be, port, path, mode, e.fault_k, p_percent);
 }
 
-// __net_stall() — a future on a never-ready token (negative tokens never
-// fire in the sim, mirroring poll(2) on negative fds); its resume is
-// unreachable.
 function __net_stall(): async.Future[string] {
   function resume(woken: i32): async.Future[string] {
     return __net_stall();
@@ -724,9 +511,6 @@ function __net_stall(): async.Future[string] {
   return Pending(-1, resume);
 }
 
-// __net_drain_stall(at_ms, i, k) - the partial-mode read:
-// deliver chunks `i..k` at their scheduled times, then suspend forever
-// instead of resolving.
 function __net_drain_stall(at_ms: i32[], i: i32, k: i32): async.Future[string] {
   if (i >= k) {
     return __net_stall();
@@ -737,9 +521,6 @@ function __net_drain_stall(at_ms: i32[], i: i32, k: i32): async.Future[string] {
   return Pending(at_ms[i], resume);
 }
 
-// Retain the complete valid body while scheduling each physical chunk.
-// A chunk can split a scalar, so it must never become a partial string.
-// Only the last resumption publishes the body; earlier ones just advance.
 function __net_drain(at_ms: i32[], body: string, i: i32): async.Future[string] {
   function resume(woken: i32): async.Future[string] {
     if (i + 1 >= at_ms.len()) {
@@ -750,13 +531,6 @@ function __net_drain(at_ms: i32[], body: string, i: i32): async.Future[string] {
   return Pending(at_ms[i], resume);
 }
 
-// fetch_future(host_be, port, path) — the scripted awaitable fetch. Mirrors
-// `fetch.fetch_future`: an unregistered endpoint is a dead upstream and
-// resolves immediately to "" (a Ready future — it never stalls a fan-out);
-// a registered one re-suspends once per scheduled chunk and resolves to the
-// full body at the last chunk's virtual time. Each call bumps the
-// endpoint's `hits` counter (faults included), then applies its fault mode
-// — via one PRNG draw when flaky — before the scripted read is built.
 pub function (n: Net) fetch_future(host_be: i32, port: i32, path: string): async.Future[string] {
   let idx: i32 = __find(n, host_be, port, path);
   if (idx < 0) {

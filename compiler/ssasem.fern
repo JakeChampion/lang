@@ -1,5 +1,3 @@
-// Typed semantic values before RC. Reuse SSA's graph, never lift ownership
-// facts from physical load/store/alloc or runtime helper names.
 import "./ssa";
 import "./sourcepos";
 import "./util";
@@ -10,8 +8,6 @@ import "./semrecords";
 import "./typeinfo";
 import "./byteconst";
 
-// The selected Drop provider, after receiver specialization and trait-method
-// interposition. Its symbol need not be the receiver followed by .drop.
 pub struct Finalizer { receiver: string, symbol: string }
 
 pub function finalizer_index(rows: Finalizer[], receiver: string): i32 {
@@ -43,35 +39,17 @@ pub struct Func {
   calls: Contract[],
   envs: EnvRow[],
   anchors: Anchor[],
-  // (dyn type, concrete) for every record and enum implementing the type's
-  // whole trait set; a dyn release dispatches on its box's shape over these.
   dyns: EnvRow[],
-  // The builtin names the module's own declarations take over
-  // (semsource.shadowed_builtins): a call to one is an ordinary call, never
-  // the builtin's op.
   shadows: string[],
-  // The records and enums an `impl mem.Drop` gives a finalizer and its symbol. The
-  // whole module's, so every function's drop helper for a type agrees.
   finalizers: Finalizer[],
-  // core/map is in the program's import closure. Without it no map value can
-  // exist, so a map type's release has only to link (ssarc.unlinked_map).
   map_module: boolean,
-  // Under `-g`, the values source variables are bound to and their names,
-  // parallel (semsource.note_binding). Empty otherwise.
   dbg_vals: i32[],
   dbg_names: string[],
   source_positions: sourcepos.SourceInfo,
 }
 
-// The parameters whose storage a callee's result reads, so a caller keeps
-// each of those arguments alive while the result lives: the callee returns
-// views of them, or something holding some. `params` is empty for a result
-// whose views read nothing the caller passed. Read off the whole module
-// (`semsource.anchor_module`).
 pub struct Anchor { name: string, params: i32[] }
 
-// A presence query borrows the function. Retrieving the owned symbol is only
-// necessary when a drop helper emits the call, not for reuse eligibility.
 pub function has_finalizer(f: Func, t: typeinfo.Type): boolean {
   if let typeinfo.TypeStruct(r) = t {
     return finalizer_index(f.finalizers, r.name) >= 0;
@@ -82,9 +60,6 @@ pub function has_finalizer(f: Func, t: typeinfo.Type): boolean {
   return false;
 }
 
-// The `drop` method an `impl mem.Drop` gives a record or an enum, or "". A
-// value of such a type is always a counted box, so the finalizer runs at the
-// free: never a static constant, never a box handed on for reuse.
 pub function finalizer_of(f: Func, t: typeinfo.Type): string {
   let n: string = "";
   if let typeinfo.TypeStruct(r) = t {
@@ -99,7 +74,6 @@ pub function finalizer_of(f: Func, t: typeinfo.Type): string {
   return "";
 }
 
-// Whether the callee named `name` has a row.
 pub function anchored(anchors: Anchor[], name: string): boolean {
   for a in anchors {
     if (a.name == name) {
@@ -109,8 +83,6 @@ pub function anchored(anchors: Anchor[], name: string): boolean {
   return false;
 }
 
-// The parameters the callee named `name` anchors its result to; none when it
-// has no row.
 pub function anchor_params(anchors: Anchor[], name: string): i32[] {
   for a in anchors {
     if (a.name == name) {
@@ -120,28 +92,10 @@ pub function anchor_params(anchors: Anchor[], name: string): i32[] {
   return [];
 }
 
-// Which environments a function value of a given type can be carrying. A
-// function value's static type names no captures, so releasing one matches the
-// box against these at run time — and the set has to be a property of the TYPE
-// rather than of whichever frame is doing the releasing, because the drop
-// helper for a record holding a function value is emitted by every function
-// that mentions that record and the copies must agree byte for byte
-// (ssarc.merge_helpers refuses a disagreement). Read off the module's whole
-// contract table, and closed over the frame's schema table, so a frame that
-// reaches the type only through a record field, or nested in a container a
-// field holds, lists the same environments as one that names it.
 pub struct EnvRow { fn_ty: typeinfo.Type, env_ty: typeinfo.Type }
 
-// A callee's declared signature as this function sees it: exact parameter
-// and result types, and one mode per parameter (the unit planner's value,
-// borrow or counted). A call is verified against its contract alone; the
-// callee's body is never consulted.
 pub struct Contract { name: string, params: typeinfo.Type[], modes: i32[], result: typeinfo.Type }
 
-// Contracts is a contract table with a bucket index over the names, so a call
-// resolves its callee's row by walking one chain, not the table.
-// envs is the rows whose first parameter is a closure's environment, the
-// closure bodies, in the list's order.
 pub struct Contracts { list: Contract[], names: util.NameIndex, envs: Contract[] }
 
 pub function contracts_of(list: Contract[]): Contracts {
@@ -160,8 +114,6 @@ pub function find_contract(table: Contracts, name: string): i32 {
   return table.names.find(name);
 }
 
-// find_contract_in is find_contract over a list with no index: a body's own
-// calls, or the table while it is still being collected.
 pub function find_contract_in(calls: Contract[], name: string): i32 {
   let i: i32 = 0;
   while (i < calls.len()) {
@@ -173,8 +125,6 @@ pub function find_contract_in(calls: Contract[], name: string): i32 {
   return 0 - 1;
 }
 
-// `parents` are the values each value is directly anchored to, and
-// `dependencies` their transitive closure, nearest first.
 pub struct Analysis {
   ok: boolean,
   why: string,
@@ -185,16 +135,10 @@ pub struct Analysis {
   anchored: Anchored,
 }
 
-// The dependency chains read backwards, the reads that borrow from each
-// value: the values anchored to `v` are `at[start[v] .. start[v + 1])`,
-// ascending. Built with the chains, so a query for one source walks its
-// anchored values rather than every value.
 pub struct Anchored { start: i32[], at: i32[] }
 
 pub function anchored_of(deps: i32[][], nvals: i32): Anchored {
   let count: i32[] = __alloc_i32(nvals + 1);
-  // The chains run to the values the analysis saw; a refused analysis has
-  // none.
   let known: i32 = deps.len();
   if (known > nvals) {
     known = nvals;
@@ -231,26 +175,16 @@ pub function anchored_of(deps: i32[][], nvals: i32): Anchored {
   return Anchored { start: start, at: at };
 }
 
-// What reads each value: for value v, one entry per operand naming it, at
-// `start[v]` up to `start[v + 1]`, in block and position order. `kinds` is the
-// kind of the instruction the operand belongs to, `term_use()` for a return
-// of v or a branch on it; `block` and `at` are where that instruction sits,
-// the block's index and the instruction's, a terminator at its block's
-// instruction count; `slot` is the operand's index, which for a phi names the
-// edge it is read on. The planner's rules that ask where or how a value is
-// read read it here rather than each scanning the function.
 pub struct Uses { start: i32[], kinds: i32[], block: i32[], at: i32[], slot: i32[] }
 
 pub function term_use(): i32 {
   return 0 - 1000;
 }
 
-// How many operands name `v`, a terminator's included.
 pub function use_count(u: Uses, v: i32): i32 {
   return u.start[v + 1] - u.start[v];
 }
 
-// Whether every use of `v` is an instruction of one of the `allowed` kinds.
 pub function uses_only(u: Uses, v: i32, allowed: i32[]): boolean {
   let i: i32 = u.start[v];
   while (i < u.start[v + 1]) {
@@ -262,8 +196,6 @@ pub function uses_only(u: Uses, v: i32, allowed: i32[]): boolean {
   return true;
 }
 
-// Whether an operand after position `pos` of block `bi` names `v`, the
-// block's terminator included.
 pub function read_after(u: Uses, bi: i32, pos: i32, v: i32): boolean {
   let i: i32 = first_use_in(u, v, bi);
   while (i < u.start[v + 1] && u.block[i] == bi) {
@@ -275,9 +207,6 @@ pub function read_after(u: Uses, bi: i32, pos: i32, v: i32): boolean {
   return false;
 }
 
-// first_use_in is the first of v's entries in block `bi` or a later one,
-// `start[v + 1]` when there is none: the entries run in block order, so a
-// block's reads of v follow from it while `block[i] == bi`.
 pub function first_use_in(u: Uses, v: i32, bi: i32): i32 {
   let lo: i32 = u.start[v];
   let hi: i32 = u.start[v + 1];
@@ -349,7 +278,6 @@ function uses_of(f: Func): Uses {
   return Uses { start: count, kinds: kinds, block: block, at: at, slot: slot };
 }
 
-// The value a terminator reads: a return's, or a branch's condition.
 function term_operand(t: ssa.STerm): i32 {
   if (t.kind_tag == 1) {
     return t.value;
@@ -360,8 +288,6 @@ function term_operand(t: ssa.STerm): i32 {
   return 0 - 1;
 }
 
-// Negative tags belong to this semantic phase. Physical SSA consumers do not
-// implement them. Existing parameter, copy, phi and scalar tags are reused.
 pub function param(): i32 {
   return 6;
 }
@@ -370,13 +296,10 @@ pub function array_new(): i32 {
   return 0 - 1;
 }
 
-// The payload contains canonical decimal byte words, with no scalar operands.
 pub function bytes_new(): i32 {
   return 0 - 55;
 }
 
-// Fresh empty scalar array with capacity for the i32 operand's element count.
-// Capacity is private storage; only append can expose initialized elements.
 pub function array_reserve(): i32 {
   return 0 - 53;
 }
@@ -389,9 +312,6 @@ pub function array_get(): i32 {
   return 0 - 3;
 }
 
-// The `imm` of an `array_get` or `str_index` that only checks its index
-// (ssabounds grouped_reads): it reads no element, and nothing reads its
-// result. 1 is an unchecked read and 0 a checked one.
 pub function check_only(): i32 {
   return 2;
 }
@@ -404,11 +324,6 @@ pub function record_new(): i32 {
   return 0 - 5;
 }
 
-// A record update names its base in `imm`, the base's value plus one, and a
-// plain literal leaves 0. The base is not an operand, since the construction
-// reads only the fields it keeps off it, but an update consumes the base's
-// box where it can, so whether the base is carried out is a question about
-// the update and not about its operands.
 pub function update_base(ins: ssa.SInst): i32 {
   if (ins.kind_tag == record_new() && ins.imm > 0) {
     return ins.imm - 1;
@@ -424,17 +339,11 @@ pub function call(): i32 {
   return 0 - 7;
 }
 
-// fresh_result_builtin names the builtins that are lent byte views and answer
-// an array they built, so their result keeps no borrow of an argument. The
-// checkers' fresh-result lists name the same kernels.
 pub function fresh_result_builtin(name: string): boolean {
   return name == "__bytes_owned" || name == "__bytes_range" || name == "__bytes_into" || name == "__aes_expand_key" || name == "__aes_ctr32"
     || name == "__ghash" || name == "__aes_gcm_seal" || name == "__aes_gcm_open" || name == "__sha256_hw_blocks" || name == "__sha1_hw_blocks";
 }
 
-// The builtins each of which is one machine operation on scalars, with no
-// effect (semsource's bit-count, high-multiply and float primitive contracts):
-// a body calling one computes as if it used an operator.
 pub function scalar_primitive(name: string): boolean {
   return name == "__mulhi_u64" || name == "__clz32" || name == "__ctz32" || name == "__popcount32" || name == "__clz64"
     || name == "__ctz64" || name == "__popcount64" || name == "__sqrt_f64" || name == "__floor_f64" || name == "__ceil_f64"
@@ -533,12 +442,6 @@ pub function map_get(): i32 {
   return 0 - 30;
 }
 
-// A COLUMN SNAPSHOT: `keys` answers the key column as an array, `values` the
-// value column. The array is fresh, but whether it OWNS its elements is the
-// column's business — the runtime copies a string column with a per-element
-// retain, an i32 column holds no references at all, and every other element
-// type is handed back as a raw ALIAS of the map's own elements. semsource
-// admits only the first two, so a result of these is owned whole.
 pub function map_keys(): i32 {
   return 0 - 31;
 }
@@ -547,8 +450,6 @@ pub function map_values(): i32 {
   return 0 - 32;
 }
 
-// `remove` removes one entry and answers the map; `cleared` answers a fresh empty map of the same shape, reading
-// nothing from the receiver.
 pub function map_delete(): i32 {
   return 0 - 33;
 }
@@ -557,51 +458,26 @@ pub function map_cleared(): i32 {
   return 0 - 34;
 }
 
-// The zero of a type: what a declaration the defer desugar lifted to the top
-// of its scope starts at, before the assignment left behind at the declaration
-// site runs. A reference type's zero is the null word: it allocates nothing,
-// and the lowering emits no release for it, so the lift costs a slot rather
-// than a box.
 pub function zero(): i32 {
   return 0 - 35;
 }
 
-// `s.bytes()`: one text operand's bytes as a FRESH `u8[]`, a
-// slot per byte. Not a window — the slot-array model has no zero-copy view, so
-// the AST lowering allocates here too (ir.op_str_bytes) and the result is a
-// unit of this frame like any other fresh container.
 pub function str_bytes(): i32 {
   return 0 - 36;
 }
 
-// `xs.join(sep)` over a `string[]` reads both operands and answers a fresh
-// string: one runtime helper, the same one the AST lowering calls.
 pub function arr_join(): i32 {
   return 0 - 37;
 }
 
-// `xs[lo:hi]` on an array of scalars: a fresh array holding a copy of the
-// window, bounds-checked by the runtime. An array whose elements own something
-// is not admitted, since the runtime copies the words without a retain.
 pub function arr_slice(): i32 {
   return 0 - 38;
 }
 
-// `xs.concat(ys)` on two arrays of the same scalar element type: a fresh
-// array holding both, sized once and copied by the runtime. It keeps
-// neither operand. An array whose elements own something is not admitted,
-// for the reason a slice's is not.
 pub function arr_concat(): i32 {
   return 0 - 54;
 }
 
-// Map iteration. `map_iter` hands back the cursor: a fresh counted block that
-// the frame owns and releases, and that is still anchored to the map, since
-// every read through it reads the map's own columns. The other four take that
-// cursor —
-// `mapiter_has_next` answers the bound, `mapiter_key` and `mapiter_value` load
-// the element at the cursor WITHOUT retaining it, and `mapiter_advance` bumps
-// the stored index in place and answers void.
 pub function map_iter(): i32 {
   return 0 - 39;
 }
@@ -622,26 +498,14 @@ pub function mapiter_advance(): i32 {
   return 0 - 43;
 }
 
-// A `dyn Trait` value is the struct or enum box it was widened from, whose
-// shape at offset 0 is what a dispatch reads. The widening is a projection of
-// that box, so a holder of the result owns the box's unit, and its release
-// dispatches on the shape to the concrete's drop (`Func.dyns`).
 pub function dyn_up(): i32 {
   return 0 - 44;
 }
 
-// A scalar or string widened to dyn has no shape of its own, so it is boxed:
-// a fresh cell laid out as a one-field record, whose shape is the primitive's
-// name (`str`) and whose field holds the value, owning a unit of a string.
 pub function dyn_box(): i32 {
   return 0 - 45;
 }
 
-// `x as? T` reads a dyn value's shape: `dyn_is` answers whether the box is a
-// `T`, and `dyn_as` is that same box typed as `T`, valid only where a
-// `dyn_is` has settled it, as a variant narrowing is. A `dyn_as` naming no
-// shape keeps the dyn type, and is valid where tests have refuted every
-// concrete holding a view: the box holds none, so it reads no other bytes.
 pub function dyn_is(): i32 {
   return 0 - 46;
 }
@@ -650,11 +514,6 @@ pub function dyn_as(): i32 {
   return 0 - 47;
 }
 
-// Tail recursion modulo cons (`tail_recursion`). `hole_at` is a node's
-// address, which owns nothing: the chain the node is linked into owns it.
-// `hole_fill(r, h, v)` stores `v` in field `imm` of the node at `h` and answers
-// `r`, or answers `v` when `h` is 0 and `r` is the empty chain. It takes the
-// units of `r` and `v`, and the field it writes held the zero placeholder.
 pub function hole_at(): i32 {
   return 0 - 48;
 }
@@ -663,21 +522,14 @@ pub function hole_fill(): i32 {
   return 0 - 49;
 }
 
-// An owned array lent as a view. The result reads the same storage, with
-// an explicit view type so physical lowering can preserve its representation.
 pub function array_lend(): i32 {
   return 0 - 50;
 }
 
-// A byte view reads the text operand's storage. Keep this distinct from the
-// owned copy even while physical lowering still uses the copying helper.
 pub function str_byte_view(): i32 {
   return 0 - 51;
 }
 
-// `acc + slice_unchecked(s, lo, hi)`: a string append whose right operand is a
-// range of `s`, so its bytes can go into the left operand's block without the
-// window being built first. Operands: acc, s, lo, hi.
 pub function append_range(): i32 {
   return 0 - 52;
 }
@@ -691,8 +543,6 @@ pub function is_map_iter_op(kind: i32): boolean {
     || kind == mapiter_value() || kind == mapiter_advance();
 }
 
-// A refused analysis, for a caller holding one slot per function and none to
-// put where a body was never produced.
 pub function refused_analysis(why: string): Analysis {
   return failed(why);
 }
@@ -718,9 +568,6 @@ pub function is_i32(t: typeinfo.Type): boolean {
   return false;
 }
 
-// One unsigned byte. It occupies an i32-shaped slot on every backend, so it costs
-// no new physical representation; what distinguishes it is the range, which
-// each operator whose result can leave it wraps back.
 pub function is_u8(t: typeinfo.Type): boolean {
   if let typeinfo.TypeI32(i) = t {
     return i.width == 8 && i.unsigned && !i.is_char;
@@ -728,9 +575,6 @@ pub function is_u8(t: typeinfo.Type): boolean {
   return false;
 }
 
-// The unsigned 32-bit integer. Like the byte it occupies an i32-shaped slot, but
-// over the whole 32-bit range, so a value past 2^31 fills the slot's sign bit
-// and every operator that reads one takes its unsigned form.
 pub function is_u32(t: typeinfo.Type): boolean {
   if let typeinfo.TypeI32(i) = t {
     return i.width == 32 && i.unsigned && !i.is_char;
@@ -738,9 +582,6 @@ pub function is_u32(t: typeinfo.Type): boolean {
   return false;
 }
 
-// A signed 64-bit integer. Unlike the byte it needs a slot of its own, which
-// only wasm spells out; the register backends already give every value a
-// 64-bit one.
 pub function is_i64(t: typeinfo.Type): boolean {
   if let typeinfo.TypeI32(i) = t {
     return i.width == 64 && !i.unsigned && !i.is_char;
@@ -748,7 +589,6 @@ pub function is_i64(t: typeinfo.Type): boolean {
   return false;
 }
 
-// The unsigned 64-bit integer: the i64's slot, read without a sign bit.
 pub function is_u64(t: typeinfo.Type): boolean {
   if let typeinfo.TypeI32(i) = t {
     return i.width == 64 && i.unsigned && !i.is_char;
@@ -756,15 +596,10 @@ pub function is_u64(t: typeinfo.Type): boolean {
   return false;
 }
 
-// The types that need a 64-bit slot of their own, which only wasm spells out.
 pub function is_wide(t: typeinfo.Type): boolean {
   return is_i64(t) || is_u64(t);
 }
 
-// The pointer-width unsigned integer: an address, occupying the narrow slot,
-// which is the address's own width on every backend — 32 bits on wasm, the
-// whole 64-bit slot on the register backends. An operator at it runs at that
-// width, never at the i32's.
 pub function is_usize(t: typeinfo.Type): boolean {
   if let typeinfo.TypeI32(i) = t {
     return i.width == typeinfo.width_ptr() && i.unsigned && !i.is_char;
@@ -772,15 +607,10 @@ pub function is_usize(t: typeinfo.Type): boolean {
   return false;
 }
 
-// The integer types read without a sign bit. It is what a widening extends by
-// and which form of the sign-reading operators — the orderings, the right
-// shift, division and remainder — the operand takes.
 pub function is_unsigned_int(t: typeinfo.Type): boolean {
   return is_u8(t) || is_u32(t) || is_u64(t) || is_usize(t);
 }
 
-// The 64-bit float. Like the i64 it occupies a slot of its own that only wasm
-// spells out; its operators are the float opcodes, which never wrap.
 pub function is_f64(t: typeinfo.Type): boolean {
   if let typeinfo.TypeFloat(fl) = t {
     return fl.width == 64 && !fl.polymorphic;
@@ -788,10 +618,6 @@ pub function is_f64(t: typeinfo.Type): boolean {
   return false;
 }
 
-// The 32-bit float occupies the f64's slot at single precision: every value of
-// the type is an f64 the f32 round-trip has already rounded, so the width is
-// a rounding applied wherever a value of the type is made — a constant, a
-// conversion, an operator's result — rather than a slot of its own.
 pub function is_f32(t: typeinfo.Type): boolean {
   if let typeinfo.TypeFloat(fl) = t {
     return fl.width == 32 && !fl.polymorphic;
@@ -803,8 +629,6 @@ pub function is_float(t: typeinfo.Type): boolean {
   return is_f64(t) || is_f32(t);
 }
 
-// A lane value (`f64x2`, `f32x4`): 128 bits in a vector register or a v128
-// local, with no unit, reached only through the lane ops.
 pub function is_lanes(t: typeinfo.Type): boolean {
   if let typeinfo.TypeLanes(_) = t {
     return true;
@@ -812,26 +636,11 @@ pub function is_lanes(t: typeinfo.Type): boolean {
   return false;
 }
 
-// The integer types this vocabulary admits. An operator is written for one of
-// them at a time: both operands carry the same type and so does the result.
-// The checker auto-widens the narrower side of a mixed-width operator and the
-// tree this producer reads is not rewritten with that conversion, so the
-// producer inserts it: at the pointer width, where the checker's own arm
-// widens whichever side is narrower. Every other mixed pair is refused here
-// rather than guessed at.
 pub function is_integer(t: typeinfo.Type): boolean {
   return is_i32(t) || is_u8(t) || is_u32(t) || is_i64(t) || is_u64(t) || is_usize(t);
 }
 
-// The types whose value is a POINTER: a box this vocabulary counts, or a view
-// of one. It is the address's counterpart — the two occupy the same slot on
-// every backend, which is what makes a cast between them a reinterpretation
-// rather than a conversion — and it is also the list whose counted layout the
-// ownership planner defines, so ssaunits reads it from here rather than
-// keeping a second copy.
 pub function reference(t: typeinfo.Type): boolean {
-  // A handle holds a descriptor (a stream handle behind a record's nominal),
-  // so it occupies a scalar slot and there is no address to count.
   if (semtypes.is_handle(t)) {
     return false;
   }
@@ -862,11 +671,6 @@ pub function reference(t: typeinfo.Type): boolean {
   return false;
 }
 
-// A constant whose value has no i32 immediate to fit in carries the literal's
-// SOURCE TEXT instead, which the backends splice into an immediate of the
-// right width. The 64-bit types do not fit the immediate at all, and neither
-// does a u32 past 2^31 — so the u32 takes the text form at every value rather
-// than at some of them.
 pub function text_constant(t: typeinfo.Type): boolean {
   return is_wide(t) || is_u32(t);
 }
@@ -885,7 +689,6 @@ function is_void(t: typeinfo.Type): boolean {
   return false;
 }
 
-// An owned string, whose box holds its bytes.
 pub function is_string(t: typeinfo.Type): boolean {
   if let typeinfo.TypeString(s) = t {
     return s.tag == 0;
@@ -893,8 +696,6 @@ pub function is_string(t: typeinfo.Type): boolean {
   return false;
 }
 
-// A string view (the checker's `str`): a box of its own over ANOTHER string's
-// bytes, so it is released by the helper that frees the box alone.
 pub function is_view(t: typeinfo.Type): boolean {
   if let typeinfo.TypeString(s) = t {
     return s.tag == 1;
@@ -902,14 +703,10 @@ pub function is_view(t: typeinfo.Type): boolean {
   return false;
 }
 
-// Either string type. A read of the bytes — the length, a byte, a window, an
-// operator — is blind to which box holds them.
 pub function is_text(t: typeinfo.Type): boolean {
   return is_string(t) || is_view(t);
 }
 
-// An array of strings or of views: `string[]` retags as `str[]` element for
-// element, since each element is one box either way.
 pub function is_text_array(t: typeinfo.Type): boolean {
   if let typeinfo.TypeArray(a) = t {
     return !a.view && is_text(a.elem);
@@ -917,8 +714,6 @@ pub function is_text_array(t: typeinfo.Type): boolean {
   return false;
 }
 
-// A unicode scalar. Every integer predicate here excludes it, so without a key
-// of its own it spells what the fall-through leaf does.
 pub function is_char(t: typeinfo.Type): boolean {
   if let typeinfo.TypeI32(i) = t {
     return i.is_char;
@@ -926,10 +721,6 @@ pub function is_char(t: typeinfo.Type): boolean {
   return false;
 }
 
-// can_hold says a value of type `outer` may hold, anywhere inside it, a value
-// of type `inner`. A union and its members name the same box, since a match
-// binds a member to the union's own box. A function value or a dyn value may
-// hold anything, and so may a type the schema does not describe.
 pub function can_hold(f: Func, outer: typeinfo.Type, inner: typeinfo.Type): boolean {
   let names: string[] = box_names(f, inner);
   let key: string = type_key(inner);
@@ -1010,8 +801,6 @@ pub function can_hold(f: Func, outer: typeinfo.Type, inner: typeinfo.Type): bool
   return false;
 }
 
-// box_names are the nominal names a box of type `t` is known by: a union's
-// own and its members', or a record's own and every union it is a member of.
 function box_names(f: Func, t: typeinfo.Type): string[] {
   let out: string[] = [];
   if let typeinfo.TypeUnion(u) = t {
@@ -1038,7 +827,6 @@ function box_names(f: Func, t: typeinfo.Type): string[] {
   return out;
 }
 
-// A function value: the env box a closure is carried in.
 pub function is_dyn(t: typeinfo.Type): boolean {
   if let typeinfo.TypeDyn(_) = t {
     return true;
@@ -1046,13 +834,6 @@ pub function is_dyn(t: typeinfo.Type): boolean {
   return false;
 }
 
-// A method call on a dyn receiver names its contract
-// `dyn <method>|<traits>|<arms>`, a spelling no declaration can take. `arms`
-// are the decl keys of the implementations the call dispatches to
-// (`semsource.dyn_arms`), which `ir.op_dyn_dispatch` carries, so every
-// backend's chain runs over exactly the arms whose contracts were checked. The
-// traits keep two dyn types with the same arms apart: the contract is the
-// implementations' shared signature with the dyn type at the receiver.
 pub function dyn_call_name(method: string, traits: string[], arms: string[]): string {
   let out: string = "dyn " + method + "|";
   let i: i32 = 0;
@@ -1079,8 +860,6 @@ pub function is_dyn_call(name: string): boolean {
   return name.len() > 4 && name[0] == b'd' && name[1] == b'y' && name[2] == b'n' && name[3] == b' ';
 }
 
-// The arms of a dyn call name: the list after its last `|`, which no trait
-// spelling can contain.
 pub function dyn_call_arms(name: string): string[] {
   let out: string[] = [];
   let start: i32 = name.len();
@@ -1128,11 +907,6 @@ pub function map_value(t: typeinfo.Type): typeinfo.Type {
   return typeinfo.unchecked();
 }
 
-// The map shapes this boundary admits: a string, scalar or keyed KEY column
-// over a value column the runtime's free family releases — a narrow scalar
-// column freed whole, or a counted column walked entry by entry. A string key
-// column is walked through the string dec, a keyed one through the function
-// the physical lowering names for the key type; a scalar one is freed whole.
 pub function is_supported_map(t: typeinfo.Type): boolean {
   if (!is_map(t)) {
     return false;
@@ -1143,32 +917,18 @@ pub function is_supported_map(t: typeinfo.Type): boolean {
   return narrow_map_value(map_value(t)) || wide_map_value(map_value(t)) || float_map_value(map_value(t)) || counted_map_value(map_value(t));
 }
 
-// An i64 or u64 value column. The register runtimes hold every cell at eight
-// bytes; wasm boxes each value into a cell of its own (the `_w64` helpers).
 pub function wide_map_value(v: typeinfo.Type): boolean {
   return is_integer(v) && is_wide(v);
 }
 
-// An i64 or u64 key column (#10005). The register runtimes' integer column is
-// eight bytes wide, so it takes the key as it takes an i32; wasm boxes each
-// key into a cell of its own, hashed and compared through the cell (the
-// `_k64` helpers). A float key is refused by the checker (E045).
 pub function wide_map_key(k: typeinfo.Type): boolean {
   return is_integer(k) && is_wide(k);
 }
 
-// A float value column. The self-host carries an f32 as an f64, so both widths
-// hold eight-byte f64 cells, which wasm reads and writes through the `_w64`
-// helpers as the value's bits.
 pub function float_map_value(v: typeinfo.Type): boolean {
   return is_float(v);
 }
 
-// A key column of boxes: a record or a union the runtime hashes and compares
-// through the key type's cmp.Hash `hash` and cmp.Eq `eq` — the checker admits
-// no other nominal as a map key — and owns one unit of per entry. A generic
-// instance is spelled with its arguments, which those methods are not named by
-// here, so only an argument-free nominal is admitted.
 pub function keyed_map_key(k: typeinfo.Type): boolean {
   if (semtypes.is_handle(k) || semtypes.is_map_iter(k) || semtypes.is_env(k) || semtypes.is_cell(k)) {
     return false;
@@ -1182,11 +942,6 @@ pub function keyed_map_key(k: typeinfo.Type): boolean {
   return structural_map_key(k);
 }
 
-// A tuple or array key, compared and hashed by value element by element
-// (#10020). Its `hash` and `eq` are generated per key type
-// (`semlower.key_helper_source`), so every element has to be something that
-// source can compare without naming a declaration: an integer, a boolean, a
-// char, a string, or another such tuple or array.
 pub function structural_map_key(k: typeinfo.Type): boolean {
   if let typeinfo.TypeTuple(tup) = k {
     for e in tup.elements {
@@ -1202,8 +957,6 @@ pub function structural_map_key(k: typeinfo.Type): boolean {
   return false;
 }
 
-// A type key with every byte an identifier cannot hold spelled `_`, so the
-// generated source can declare a function by it.
 function identifier_key(key: string): string {
   let out: string = "";
   let i: i32 = 0;
@@ -1223,10 +976,6 @@ function structural_key_element(e: typeinfo.Type): boolean {
   return is_integer(e) || is_bool(e) || is_char(e) || is_string(e) || structural_map_key(e);
 }
 
-// The function a keyed column's probes call, `which` being "eq" or "hash": the
-// receiver method `K.eq` / `K.hash` of K's cmp.Eq / cmp.Hash impl, derived or
-// written by hand, or for a structural key the generated free function
-// `K__eq` / `K__hash`.
 pub function keyed_map_key_fn(k: typeinfo.Type, which: string): string {
   if (structural_map_key(k)) {
     return keyed_map_key_name(k) + "__" + which;
@@ -1234,8 +983,6 @@ pub function keyed_map_key_fn(k: typeinfo.Type, which: string): string {
   return keyed_map_key_name(k) + "." + which;
 }
 
-// The nominal a keyed column's eq and hash hang off, or the name a
-// structural key's generated helpers are declared under.
 pub function keyed_map_key_name(k: typeinfo.Type): string {
   if let typeinfo.TypeStruct(r) = k {
     return r.name;
@@ -1249,11 +996,6 @@ pub function keyed_map_key_name(k: typeinfo.Type): string {
   return "";
 }
 
-// A column whose snapshot is a fresh array owning one unit of every element:
-// a string column and a column of boxes are copied with a per-element retain,
-// and a column of narrow scalars — `i32`, `u8`, `u32`, `bool`, `usize` —
-// holds no references. Any other element would come back aliasing the map's
-// own.
 pub function retained_column(elem: typeinfo.Type): boolean {
   return is_string(elem) || narrow_column(elem) || wide_map_value(elem) || float_map_value(elem) || keyed_map_key(elem) || counted_map_value(elem);
 }
@@ -1262,17 +1004,10 @@ function narrow_column(t: typeinfo.Type): boolean {
   return semtypes.is_never(t) || is_i32(t) || is_char(t) || is_u8(t) || is_u32(t) || is_bool(t) || is_usize(t);
 }
 
-// A key or value column held in the slot itself, which the map releases by
-// freeing the buffer alone: a boolean, a char, or an integer up to pointer
-// width. A never column holds no values and uses the same scalar storage.
 pub function narrow_map_value(v: typeinfo.Type): boolean {
   return semtypes.is_never(v) || is_bool(v) || is_char(v) || is_integer(v) && !is_wide(v);
 }
 
-// A value column the map owns a unit of per entry, released with the map: a
-// string column and a column of string arrays, which the runtime frees
-// deeply itself, and a column of boxes, which it releases by calling the
-// function the physical lowering names for the value type.
 pub function counted_map_value(v: typeinfo.Type): boolean {
   return is_string(v) || is_string_array(v) || boxed_map_value(v);
 }
@@ -1284,9 +1019,6 @@ pub function is_string_array(v: typeinfo.Type): boolean {
   return false;
 }
 
-// A value column whose entries are boxes of a shape the runtime does not
-// know: a record, a union, an array of anything but strings, a tuple, a dyn
-// value, a function value's environment box, a map.
 pub function boxed_map_value(v: typeinfo.Type): boolean {
   return reference(v) && !is_string(v) && !is_string_array(v);
 }
@@ -1298,9 +1030,6 @@ pub function func_params(t: typeinfo.Type): typeinfo.Type[] {
   return [];
 }
 
-// The CONSUMING slots a function type spells. A caller hands its unit over at
-// one of them and takes back nothing to release; every other reference
-// argument of a function value is lent.
 pub function func_param_own(t: typeinfo.Type, i: i32): boolean {
   if let typeinfo.TypeFunc(fn) = t {
     return typeinfo.fn_own_at(fn, i);
@@ -1315,10 +1044,6 @@ pub function func_result(t: typeinfo.Type): typeinfo.Type {
   return typeinfo.unchecked();
 }
 
-// A closure body's first parameter is the environment it reads its captures
-// out of: the box itself — a bare array of i32-shaped words when the body
-// captures nothing, and otherwise the environment record naming the captures
-// (`semtypes.is_env`).
 pub function closure_env(c: Contract): boolean {
   if (c.params.len() == 0) {
     return false;
@@ -1333,7 +1058,6 @@ pub function env_type(body: string, captures: typeinfo.Type[]): typeinfo.Type {
   return typeinfo.TypeStruct { name: semtypes.env_prefix() + body, args: captures };
 }
 
-// The captures a body's environment holds, in slot order after the address.
 pub function closure_captures(c: Contract): typeinfo.Type[] {
   if (c.params.len() == 0) {
     return [];
@@ -1345,8 +1069,6 @@ function env_word(): typeinfo.Type {
   return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
 }
 
-// The type a closure over `c` hands out: what its body promises minus the
-// environment parameter, which the box supplies rather than the caller.
 pub function closure_type(c: Contract): typeinfo.Type {
   let params: typeinfo.Type[] = [];
   let owns: boolean[] = [];
@@ -1359,8 +1081,6 @@ pub function closure_type(c: Contract): typeinfo.Type {
   return typeinfo.TypeFunc { param_types: params, param_own: typeinfo.own_flags(owns, params), ret_type: c.result, params_known: true };
 }
 
-// The unit planner's three modes. ssaunits reads this module, so the constants
-// are spelled here and that pass's own accessors return them.
 pub function value_mode(): i32 {
   return 1;
 }
@@ -1373,11 +1093,6 @@ pub function counted_mode(): i32 {
   return 3;
 }
 
-// A body's declared mode says what the box it is wrapped in promises: a counted
-// parameter is a CONSUMING slot, and the function type the box hands out has to
-// spell it or the two sides disagree about who releases the argument. A scalar
-// carries no unit, so `typeinfo.own_flags` drops the flag there whichever side
-// built it.
 function consuming_mode(modes: i32[], i: i32, t: typeinfo.Type): boolean {
   if (i >= modes.len()) {
     return false;
@@ -1404,14 +1119,7 @@ function copy_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   return "";
 }
 
-// A narrow signed integer constant carries its value in the instruction's i32
-// immediate, and the physical form pushes it with no mask, so its type's range
-// has to hold HERE rather than be wrapped later. A constant with no such
-// immediate to fit in (text_constant) carries the literal's SOURCE TEXT instead
-// — the form the backends splice straight into an immediate of its own width,
-// and the one the AST lowering already uses for the same literal.
 function integer_constant_error(ins: ssa.SInst, result: typeinfo.Type): string {
-  // The unit value is the constant 0 in an i32-shaped slot, as the AST lowering has it.
   if (is_void(result)) {
     if (ins.imm != 0 || ins.str != "") {
       return "unit constant";
@@ -1427,7 +1135,6 @@ function integer_constant_error(ins: ssa.SInst, result: typeinfo.Type): string {
     }
     return "";
   }
-  // An address past the i32 immediate carries its text (semsource.number).
   if (ins.str != "" && (!is_usize(result) || ins.imm != 0)) {
     return "narrow constant carries text";
   }
@@ -1437,8 +1144,6 @@ function integer_constant_error(ins: ssa.SInst, result: typeinfo.Type): string {
   return "";
 }
 
-// A float constant is a literal the backends splice as its source text, so
-// like a wide integer it carries the text and no immediate.
 function float_constant_error(ins: ssa.SInst): string {
   if (ins.str == "" || ins.imm != 0) {
     return "float constant needs its literal text";
@@ -1537,8 +1242,6 @@ function array_projection_error(ins: ssa.SInst, f: Func, result: typeinfo.Type):
   return "array container type";
 }
 
-// lane_group reports a lane value `t` whose lanes are elements of type
-// `elem`: a read or a `with` of the group of elements from an index.
 pub function lane_group(elem: typeinfo.Type, t: typeinfo.Type): boolean {
   if let typeinfo.TypeLanes(l) = t {
     if let typeinfo.TypeFloat(e) = elem {
@@ -1590,9 +1293,6 @@ function record_construction_error(ins: ssa.SInst, f: Func, result: typeinfo.Typ
   return "";
 }
 
-// One element pushed onto a counted array. The array the caller gets back is
-// the receiver's box when its unit was the only one and a fresh copy
-// otherwise, so the receiver's unit is handed over rather than read.
 function append_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (ins.args.len() != 2) {
     return "append arity";
@@ -1613,10 +1313,6 @@ function append_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   return "append container type";
 }
 
-// One element of a counted array replaced. The array handed back is the
-// receiver's own box when its unit was the only one and a fresh copy
-// otherwise, so the receiver's unit is handed over as an append's is; the
-// index is read, and the value is held by the array handed back.
 function with_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (ins.args.len() != 3) {
     return "with arity";
@@ -1640,8 +1336,6 @@ function with_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   return "with container type";
 }
 
-// A counted container's element count. The receiver is read, not consumed,
-// and the i32 it hands back anchors nothing.
 function length_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (ins.args.len() != 1) {
     return "length arity";
@@ -1750,9 +1444,6 @@ function variant_projection_error(ins: ssa.SInst, f: Func, result: typeinfo.Type
   return "";
 }
 
-// A struct-union's member is its own box, so widening and narrowing are
-// identities between the member's type and the union's. An enum boxes its
-// payload behind the variant's own shape and has neither operation.
 function member_layout(f: Func, t: typeinfo.Type): boolean {
   let at: i32 = semrecords.find_enum(f.enums, t);
   return at >= 0 && f.enums[at].layout == semrecords.layout_member();
@@ -1782,8 +1473,6 @@ function widening_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string 
   return "";
 }
 
-// A widening to dyn keeps the box, whose shape the dispatch reads, so the
-// operand is a record or an enum value.
 function dyn_widening_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (ins.args.len() != 1) {
     return "dyn widening arity";
@@ -1814,8 +1503,6 @@ function dyn_test_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string 
   return "";
 }
 
-// The concrete a downcast names is a record or an enum: the shape the box
-// carries at offset 0.
 function dyn_narrowing_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (ins.args.len() != 1) {
     return "dyn narrowing arity";
@@ -1856,8 +1543,6 @@ function dyn_box_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   return "";
 }
 
-// The primitives a dyn box holds: an integer, a boolean or a float, stored at
-// its own width, or a string.
 pub function boxes_into_dyn(t: typeinfo.Type): boolean {
   if let typeinfo.TypeI32(_) = t {
     return true;
@@ -1889,11 +1574,6 @@ function narrowing_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string
   return "";
 }
 
-// A retag between the two string types, or between arrays of them, hands back
-// the same box, so like a widening it borrows its operand. Owned to view is a
-// borrow of the source's bytes anywhere a view is declared; view to owned is a
-// borrow the producer hands only to a borrowed parameter, which this verifier
-// cannot see, so its rule is the type pair alone.
 function retag_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (ins.args.len() != 1) {
     return "string retag arity";
@@ -1907,16 +1587,6 @@ function retag_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   return "";
 }
 
-// A closure value is one box: the address of the body this function holds a
-// contract for, then the captures. The type it hands out is that contract
-// minus the environment parameter the body reads the captures through.
-//
-// Every capture is a VALUE. The box is released by one decrement with no walk
-// of its slots — there is no per-closure drop helper, and a function type
-// names no capture for one to be derived from — so a reference in a slot
-// would be a unit nothing here owns. The capture COUNT is not checked: the
-// contract records the body's signature, not how many words it reads out of
-// its environment, and the two sides are written by one lift.
 function closure_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (!is_func(result)) {
     return "closure value type";
@@ -1946,10 +1616,6 @@ function closure_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   return "";
 }
 
-// A call through a function value. The callee is operand 0 and its TYPE is the
-// whole contract: no declaration is in hand, so the signature the value
-// carries is what the arguments and the result are held to. The box it names
-// is lent to the body as the environment, never consumed.
 function call_value_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (ins.args.len() == 0) {
     return "indirect call arity";
@@ -2026,11 +1692,6 @@ function variant_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   return variant_projection_error(ins, f, result);
 }
 
-// A window onto a string's bytes. The register backends hand back a box of
-// their own over the SOURCE's bytes, so the result owns a box and borrows the
-// data — it is anchored to its source like any projection, and released by the
-// helper that frees a view's box without touching the bytes. Its type says so:
-// a slice is a view, of an owned string or of another view.
 function slice_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (ins.args.len() != 3) {
     return "slice arity";
@@ -2044,8 +1705,6 @@ function slice_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   return "";
 }
 
-// A range append takes a counted string on the left and answers one, as `+`
-// does; the range is read from either text type.
 function append_range_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (ins.args.len() != 4) {
     return "append range arity";
@@ -2066,8 +1725,6 @@ function arr_helper_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): strin
   return arr_join_error(ins, f, result);
 }
 
-// Both operands and the result are the same non-view array of a scalar
-// element.
 function arr_concat_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (ins.args.len() != 2) {
     return "array concat arity";
@@ -2083,8 +1740,6 @@ function arr_concat_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): strin
   return "array concat result";
 }
 
-// A window has a view type with the source's element type. Physical lowering
-// currently copies its storage; that does not erase its semantic view type.
 function arr_slice_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (ins.args.len() != 3) {
     return "slice arity";
@@ -2106,11 +1761,6 @@ function arr_slice_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string
   return "";
 }
 
-// One byte of a string, handed back as a u8 — the type the checker gives the
-// expression, so a binding or an operator over it needs no reconciliation. The
-// receiver is read the way a length's is, and the result owns nothing and
-// anchors nothing — so unlike a slice this is not a projection, and no rule
-// here has to keep the source alive for it.
 function str_index_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (ins.args.len() != 2) {
     return "string index arity";
@@ -2127,9 +1777,6 @@ function str_index_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string
   return "";
 }
 
-// The builtins this vocabulary admits: a container's length, one element
-// pushed onto an array or replaced in it, a window onto a string, one of its
-// bytes, and the cell and map vocabularies.
 function is_builtin_op(kind: i32): boolean {
   return kind == length() || kind == append() || kind == with() || kind == slice() || kind == str_index()
     || kind == append_range() || kind == str_bytes() || kind == str_byte_view() || kind == arr_slice() || is_arr_helper_op(kind) || is_cell_op(kind) || is_map_op(kind)
@@ -2149,8 +1796,6 @@ pub function is_map_op(kind: i32): boolean {
     || kind == map_keys() || kind == map_values() || kind == map_delete() || kind == map_cleared();
 }
 
-// Both text types expose bytes. The copy operation produces owned storage;
-// the view operation preserves a dependency on the source's bytes.
 function str_bytes_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (ins.args.len() != 1) {
     return "str bytes arity";
@@ -2166,8 +1811,6 @@ function str_bytes_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string
   return "str bytes result";
 }
 
-// The join reads a `string[]` and a separator and answers a fresh string. It
-// keeps neither operand, so the receiver is borrowed as a length's is.
 function arr_join_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (ins.args.len() != 2) {
     return "array join arity";
@@ -2223,11 +1866,6 @@ function builtin_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   return append_error(ins, f, result);
 }
 
-// A cell is the shared one-element box (docs/CELL-TYPE-PLAN.md). Its
-// construction takes the element's unit; a read hands out a unit of the
-// element rather than borrowing the slot, since a write may release what the
-// slot held while the value read is still in hand; a write takes the new
-// element's unit and gives nothing back, so it stands only as a statement.
 function cell_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (ins.kind_tag == cell_new()) {
     return cell_construction_error(ins, f, result);
@@ -2238,10 +1876,6 @@ function cell_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   return cell_write_error(ins, f, result);
 }
 
-// A map cursor. `map_iter` takes the map and answers the cursor typed by its
-// key and value; the other four take the cursor. `has_next` answers a boolean,
-// `key` and `value` answer the columns' element types, and `advance` answers
-// void, so it stands only as a statement.
 function map_iter_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (ins.args.len() != 1) {
     return "map cursor arity";
@@ -2333,12 +1967,6 @@ function cell_write_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): strin
   return "";
 }
 
-// The map is the runtime hash map at the shapes is_supported_map admits.
-// Construction is fresh; an insert takes a unit of the map and of the key,
-// which the key column owns until the map is released, and of the value when
-// that column is counted too, and hands the map back so the caller holds one
-// owner at a time; a lookup borrows the map and the key and answers the value,
-// which it retains when the column is counted; the length borrows the map.
 function map_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (ins.kind_tag == map_new()) {
     return map_construction_error(ins, f, result);
@@ -2370,10 +1998,6 @@ function map_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   return map_get_or_error(ins, f, result);
 }
 
-// A delete borrows the key to find the entry and hands the map back. The runtime removes the entry by moving the
-// last one into the hole and shrinking both columns, and releasing the
-// removed entry's key and value through the columns' releases, so every
-// supported map shape is admitted.
 function map_delete_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (ins.args.len() != 2) {
     return "map delete arity";
@@ -2388,10 +2012,6 @@ function map_delete_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): strin
   return map_operand_error(m, f.values[ins.args[1]], map_value(m));
 }
 
-// A clear is a CONSTRUCTION: this runtime's map box is the two columns with no
-// capacity beside them, so an empty box of the same shape is what clearing
-// produces. It reads nothing from the receiver, which keeps its own unit and
-// is released wherever its last use falls.
 function map_cleared_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (ins.args.len() != 0) {
     return "map cleared arity";
@@ -2402,10 +2022,6 @@ function map_cleared_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): stri
   return "";
 }
 
-// A column snapshot borrows the map and answers an array of that column's
-// element type. Only a column `retained_column` names is admitted: every
-// other element type comes back aliasing the map's own, which no result type
-// here can say.
 function map_column_error(ins: ssa.SInst, f: Func, result: typeinfo.Type, keys: boolean): string {
   if (ins.args.len() != 1) {
     return "map column arity";
@@ -2427,8 +2043,6 @@ function map_column_error(ins: ssa.SInst, f: Func, result: typeinfo.Type, keys: 
   return "";
 }
 
-// A get answers an Option of the value column in a box of its own, which
-// owns one unit of a counted payload.
 function map_get_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (ins.args.len() != 2) {
     return "map get arity";
@@ -2515,8 +2129,6 @@ function map_get_or_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): strin
   return map_operand_error(m, f.values[ins.args[1]], f.values[ins.args[2]]);
 }
 
-// A `str` key column holds an owned copy of each key, so an owned string is
-// the key an insert into one supplies.
 function map_operand_error(m: typeinfo.Type, key: typeinfo.Type, value: typeinfo.Type): string {
   if (!semtypes.equal(map_key(m), key) && !(is_view(map_key(m)) && is_string(key))) {
     return "map key type";
@@ -2533,18 +2145,10 @@ function is_variant_op(kind: i32): boolean {
     || kind == dyn_is() || kind == dyn_as();
 }
 
-// A variant's field, and a narrowing to a variant, exist only while the value
-// is that variant.
 function needs_guard(kind: i32): boolean {
   return kind == variant_get() || kind == variant_as() || kind == dyn_as();
 }
 
-// A contract carrying a type VARIABLE (`typeinfo.TypeErased`) is a TEMPLATE,
-// and the call site is what instantiates it. Binding runs left to right over
-// the arguments and is structural, so a function-typed parameter's own
-// variable slots bind through it; one variable binds one type for the whole
-// contract, and a second position naming it must carry that same type. The
-// instance is a body of its own, produced under the binding and named by it.
 pub struct Binding { ok: boolean, why: string, names: string[], types: typeinfo.Type[] }
 
 pub function unbound(): Binding {
@@ -2583,8 +2187,6 @@ function variable_name(t: typeinfo.Type): string {
   return "";
 }
 
-// A variable binds a concrete type: the instance is produced at exactly that
-// type. Unit is concrete too. Unknowns and template variables bind nothing.
 function bind_variable(b: Binding, name: string, got: typeinfo.Type): Binding {
   if (!semtypes.concrete(got, true)) {
     return unbindable("type variable binds no concrete type");
@@ -2599,9 +2201,6 @@ function bind_variable(b: Binding, name: string, got: typeinfo.Type): Binding {
   return Binding { ...b, names: b.names.append(name), types: b.types.append(got) };
 }
 
-// Binding is structural: a variable inside a function type, a container or a
-// nominal type's arguments binds through it, against the same shape on the
-// argument's side.
 function bind_within(b: Binding, want: typeinfo.Type, got: typeinfo.Type): Binding {
   if let typeinfo.TypeFunc(x) = want {
     if let typeinfo.TypeFunc(y) = got {
@@ -2657,10 +2256,6 @@ function bind_nominal(b: Binding, want: typeinfo.Type, got: typeinfo.Type): Bind
   return b;
 }
 
-// The consuming flags must agree, read against the slot the ARGUMENT actually
-// carries: `own T` at a variable this call binds to a scalar is vacuous, and
-// the scalar body spells no `own` there. At a reference the two must still
-// agree.
 function bind_callable(b: Binding, x: typeinfo.TypeFunc, y: typeinfo.TypeFunc): Binding {
   if (x.params_known != y.params_known || x.param_types.len() != y.param_types.len()) {
     return mismatch();
@@ -2707,10 +2302,6 @@ pub function substitute(t: typeinfo.Type, b: Binding): typeinfo.Type {
   }
   if let typeinfo.TypeFunc(fn) = t {
     let params: typeinfo.Type[] = substitute_list(fn.param_types, b);
-    // The mask is renormalised against the SUBSTITUTED types: a variable
-    // bound to a scalar carries no unit there, so the slot stops being a
-    // consuming one and the instantiated type matches the callable a
-    // scalar body hands out.
     return typeinfo.TypeFunc { ...fn, param_types: params, param_own: typeinfo.own_flags(fn.param_own, params), ret_type: substitute(fn.ret_type, b) };
   }
   if let typeinfo.TypeArray(a) = t {
@@ -2739,9 +2330,6 @@ function substitute_list(ts: typeinfo.Type[], b: Binding): typeinfo.Type[] {
   return out;
 }
 
-// The variables a template's contract spells, in order of first occurrence
-// over its parameters and then its result: the order an instance's name lists
-// their bindings in.
 pub function contract_variables(c: Contract): string[] {
   let out: string[] = [];
   for p in c.params {
@@ -2788,7 +2376,6 @@ function variables_of(ts: typeinfo.Type[], out: string[]): string[] {
   return out;
 }
 
-// filled is `b` with each variable it leaves open taken from `from`.
 pub function filled(b: Binding, from: Binding): Binding {
   let out: Binding = b;
   let i: i32 = 0;
@@ -2810,8 +2397,6 @@ pub function binds_all(b: Binding, vars: string[]): boolean {
   return true;
 }
 
-// An instance's symbol: the template's key, then the type each variable binds
-// in the contract's own order, `$`-separated the way a lifted lambda's is.
 pub function instance_name(key: string, b: Binding, vars: string[]): string {
   let out: string = key;
   for v in vars {
@@ -2820,9 +2405,6 @@ pub function instance_name(key: string, b: Binding, vars: string[]): string {
   return out;
 }
 
-// The contract an instance honours: every variable substituted, and a
-// parameter whose variable bound a scalar carrying no unit, so its declared
-// mode drops to a value's.
 pub function instantiate_contract(c: Contract, b: Binding, vars: string[]): Contract {
   let name: string = instance_name(c.name, b, vars);
   let params: typeinfo.Type[] = [];
@@ -2830,8 +2412,6 @@ pub function instantiate_contract(c: Contract, b: Binding, vars: string[]): Cont
   let i: i32 = 0;
   while (i < c.params.len()) {
     let t: typeinfo.Type = substitute(c.params[i], b);
-    // An instance's environment names the instance, whose address the
-    // box's slot 0 holds.
     if (i == 0 && semtypes.is_env(t)) {
       t = env_type(name, semtypes.env_captures(t));
     }
@@ -2846,13 +2426,6 @@ pub function instantiate_contract(c: Contract, b: Binding, vars: string[]): Cont
   return Contract { name: name, params: params, modes: modes, result: substitute(c.result, b) };
 }
 
-// A symbol-safe spelling of a type, distinguishing the INSTANTIATIONS of one
-// nominal name: `Option[string]` releases a string where `Option[i32]`
-// releases nothing, so the two cannot share a drop helper, and a template's
-// instances are told apart by it. `$` separates the arguments, as it does in
-// a lifted lambda's symbol. A structural type's key starts with one, which no
-// declared name can, so an array of strings and a struct named `arr`
-// instantiated at a string never share a key.
 pub function type_key(t: typeinfo.Type): string {
   if let typeinfo.TypeUnion(u) = t {
     return key_args(u.name, u.args);
@@ -2887,8 +2460,6 @@ pub function type_key(t: typeinfo.Type): string {
   return leaf_key(t);
 }
 
-// Declared generic enums have one physical variant shape per instantiation.
-// Nongeneric declarations retain their existing names and layout identity.
 pub function variant_key(t: typeinfo.Type, name: string): string {
   if let typeinfo.TypeUnion(u) = t {
     if (u.args.len() > 0 && u.name != "Option" && u.name != "Result") {
@@ -2898,9 +2469,6 @@ pub function variant_key(t: typeinfo.Type, name: string): string {
   return name;
 }
 
-// A canonical trait set, `A + b.C` or `Pair[i32, u32]`, spelled in symbol
-// characters: a letter or a digit stands for itself and every other byte,
-// `_` included, is `_` and its two hex digits, so no two sets share a key.
 function trait_set_key(traits: string): string {
   let hex: string = "0123456789abcdef";
   let out: string = "";
@@ -2972,8 +2540,6 @@ function leaf_key(t: typeinfo.Type): string {
   return "bool";
 }
 
-// A produced graph's contracts are instances: every parameter and the result
-// are exact types, and a call is held to them.
 function call_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   let at: i32 = find_contract_in(f.calls, ins.str);
   if (at < 0) {
@@ -3002,9 +2568,6 @@ function call_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   return "";
 }
 
-// Positive metadata captures the legacy pointer-sized paired word. Negative
-// metadata captures zero to three contiguous u64 scalar lanes. Reject malformed
-// metadata before indexing the type table, including the non-negatable minimum.
 function call_capture_valid(f: Func, ins: ssa.SInst): boolean {
   if (ins.imm >= 0) {
     return ins.imm == 0 || ins.imm <= f.values.len() && is_usize(f.values[ins.imm - 1]);
@@ -3035,11 +2598,6 @@ pub function scalar_capture_count(imm: i32): i32 {
   return (0 - imm) % 4;
 }
 
-// The integer operators this vocabulary produces, all of them total: Fern
-// pins every edge rather than trapping (docs/INTEGER-SEMANTICS.md) — `x / 0`
-// is 0, `x % 0` is x, `INT_MIN / -1` wraps, and a shift count is masked to
-// the operand width — so none of these needs a guard or a branch, and each
-// is one machine operation on a value that owns nothing.
 function integer_op(op: string): boolean {
   if (op == "+" || op == "-" || op == "*") {
     return true;
@@ -3057,18 +2615,10 @@ function comparison(op: string): boolean {
   return op == "<" || op == "<=" || op == ">" || op == ">=" || op == "==" || op == "!=";
 }
 
-// The float operators: IEEE arithmetic, which never wraps and never traps.
-// `%` has no float opcode in the stack IR, and the bitwise three and the shifts
-// have no float meaning.
 function float_op(op: string): boolean {
   return op == "+" || op == "-" || op == "*" || op == "/";
 }
 
-// The integer operators and orderings at one width, equality on booleans;
-// string concatenation, a fresh string, and the string comparisons. An
-// operator whose operands carry different integer types has no contract here:
-// the conversion is a cast the source has to write. Operator overloads have
-// none either.
 pub function binary_result(op: string, left: typeinfo.Type, right: typeinfo.Type): typeinfo.Type {
   if (is_usize(left) && semtypes.equal(left, right)) {
     return address_result(op, left);
@@ -3085,7 +2635,6 @@ pub function binary_result(op: string, left: typeinfo.Type, right: typeinfo.Type
   if (is_bool(left) && is_bool(right) && (op == "==" || op == "!=")) {
     return typeinfo.TypeBool { tag: 0 };
   }
-  // Characters support equality and ordering by Unicode scalar value.
   if (is_char(left) && is_char(right) && comparison(op)) {
     return typeinfo.TypeBool { tag: 0 };
   }
@@ -3095,10 +2644,6 @@ pub function binary_result(op: string, left: typeinfo.Type, right: typeinfo.Type
   return typeinfo.unchecked();
 }
 
-// An address takes every integer operator at the pointer width, which each
-// backend resolves. The saturating and checked operators clamp at a width the
-// type names, which the native checker refuses for an address (E009) and this
-// boundary refuses with it.
 function address_result(op: string, t: typeinfo.Type): typeinfo.Type {
   if (saturating(op) || checked_arith(op)) {
     return typeinfo.unchecked();
@@ -3106,8 +2651,6 @@ function address_result(op: string, t: typeinfo.Type): typeinfo.Type {
   return integer_result(op, t);
 }
 
-// A saturating operator clamps to its operand type and a checked one answers
-// an Option of it; both are integer-only (checker E009).
 pub function saturating(op: string): boolean {
   return op == "+|" || op == "-|" || op == "*|" || op == "<<|";
 }
@@ -3139,9 +2682,6 @@ function float_result(op: string, t: typeinfo.Type): typeinfo.Type {
   return typeinfo.unchecked();
 }
 
-// A string `+` is concatenation; every comparison is the runtime's byte-order
-// compare, which orders the two boxes' bytes and is blind to which box holds
-// them.
 function string_result(op: string): typeinfo.Type {
   if (op == "+") {
     return typeinfo.TypeString { tag: 0 };
@@ -3152,7 +2692,6 @@ function string_result(op: string): typeinfo.Type {
   return typeinfo.unchecked();
 }
 
-// Lane arithmetic keeps the lane type; nothing else applies to lane values.
 function lanes_result(op: string, t: typeinfo.Type): typeinfo.Type {
   if (util.has_str(["+", "-", "*", "/"], op)) {
     return t;
@@ -3160,8 +2699,6 @@ function lanes_result(op: string, t: typeinfo.Type): typeinfo.Type {
   return typeinfo.unchecked();
 }
 
-// Negation keeps its operand's type, at either signed width. An unsigned
-// negation never reaches this op: the producer writes it as `0 - x`.
 pub function unary_result(op: string, operand: typeinfo.Type): typeinfo.Type {
   if (op == "-" && (is_i32(operand) || is_i64(operand) || is_float(operand) || is_lanes(operand))) {
     return operand;
@@ -3183,58 +2720,18 @@ function binary_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   return "";
 }
 
-// A conversion between the integer types, between one of the four 32- and
-// 64-bit ones and a float, or between the two float widths. An integer
-// conversion is the destination's own mask or extension, which every width
-// here has. A float conversion is a real instruction either way — a convert
-// into the float, a truncation toward zero out of it, a rounding to single
-// precision — so it is not a reinterpretation of the slot, and only the
-// widths the backends have an opcode for are admitted: the byte has none, and
-// reaches the float through the i32 the source writes.
-// A codepoint converts exactly where an i32 does. char is an integer width
-// carrying a range restriction, and the restriction is the checker's to
-// enforce at the literal rather than the conversion's to refuse; native takes
-// the same line, admitting char to every integer width and to none of the
-// floats (E033).
 function converts_as_integer(t: typeinfo.Type): boolean {
   return is_integer(t) || is_char(t);
 }
 
-// Reading an address back as the box it names is a REINTERPRETATION: the two
-// are the same slot on every backend — the whole register where an address is
-// 64 bits, the i32 on wasm — so the value crosses unchanged and nothing is
-// emitted for it. `k as string`, which core/map's key column hashes and
-// compares, is this direction, and the AST lowering treats it as an ascription
-// for the same reason.
-//
-// The other direction hands out a second name for storage this frame still
-// owns, so the address ANCHORS its source (borrows_storage): without that the
-// planner would drop the box at `s as usize`, its last typed use, while the
-// address went on naming it. An address that leaves the frame outlives the
-// anchor, which is why core/map carries an explicit `__fern_rc_inc` on the one
-// it returns; the anchor covers every read inside the frame.
 function reinterprets(from: typeinfo.Type, to: typeinfo.Type): boolean {
   return is_usize(from) && reference(to) || reference(from) && is_usize(to);
 }
 
-// The address converts to and from every integer width, as native admits it
-// to. Neither direction is one opcode: the pointer width is the whole slot on
-// a register backend and the i32 on wasm, so the conversion is written as the
-// pair that is a no-op on whichever of the two the address already matches —
-// the 64-bit extend or wrap for the narrow width, the pointer-width extend or
-// wrap for the address. A float converts to and from the address in one op
-// each way, `op_f64_to_ptr` and `op_ptr_to_f64`: the u64 forms on a register
-// backend, the u32 forms on wasm.
-// Whether `e as T` names a DESTINATION rather than a conversion. The
-// conversion vocabulary converts to an integer, a char or a float and to
-// nothing else, so any other target is the operand's own type written down —
-// an ascription, which is the identity.
 pub function cast_ascribes(to: typeinfo.Type): boolean {
   return !converts_as_integer(to) && !is_float(to);
 }
 
-// An owned resource handle where a borrow of the same resource is taken: the
-// same i32, lent.
 pub function lends_handle(from: typeinfo.Type, to: typeinfo.Type): boolean {
   if let typeinfo.TypeHandle(fh) = from {
     if let typeinfo.TypeHandle(th) = to {
@@ -3248,7 +2745,6 @@ pub function cast_admits(from: typeinfo.Type, to: typeinfo.Type): boolean {
   if (reinterprets(from, to)) {
     return true;
   }
-  // A stream handle's descriptor read (`r.fd`): the handle IS the i32.
   if (semtypes.is_fd_handle(from) && is_i32(to)) {
     return true;
   }
@@ -3300,8 +2796,6 @@ function unary_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   return "";
 }
 
-// The operators over one scalar slot: the two written ones, and the conversion
-// between the integer types.
 pub function scalar_op(kind: i32): boolean {
   return kind == 9 || kind == 10 || kind == cast();
 }
@@ -3316,10 +2810,6 @@ function scalar_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   return cast_error(ins, f, result);
 }
 
-// Constructions, projections and calls: the operations whose contract is a
-// container's shape rather than a scalar's type.
-// An array, a tuple and a record: the containers whose contract is a shape
-// spelled out beside the value rather than in a declaration table.
 function is_aggregate_op(kind: i32): boolean {
   return kind == array_new() || kind == bytes_new() || kind == array_reserve() || kind == tuple_new() || kind == array_get()
     || kind == tuple_get() || kind == record_new() || kind == record_get();
@@ -3377,9 +2867,6 @@ function composite_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string
   return "unsupported semantic operation";
 }
 
-// A hole is a field of a declared enum's node, whose payload is laid out as a
-// record's: every field sits in a slot of its own, so one index names the hole
-// in whichever variant the node was built as.
 function hole_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (ins.kind_tag == hole_at()) {
     if (ins.args.len() != 1) {
@@ -3410,7 +2897,6 @@ function record_laid(f: Func, t: typeinfo.Type): boolean {
   return at >= 0 && f.enums[at].layout == semrecords.layout_variant();
 }
 
-// Some variant of `t` has a field of type `t` at `index`.
 function holds_own_type(f: Func, t: typeinfo.Type, index: i32): boolean {
   let at: i32 = semrecords.find_enum(f.enums, t);
   if (at < 0 || index < 0) {
@@ -3424,8 +2910,6 @@ function holds_own_type(f: Func, t: typeinfo.Type, index: i32): boolean {
   return false;
 }
 
-// A zero names its type and nothing else: arity 0, and a result the layout
-// tables can size, since the frame holds it in a slot and releases it.
 function zero_error(ins: ssa.SInst, result: typeinfo.Type): string {
   if (ins.args.len() != 0) {
     return "zero arity";
@@ -3460,9 +2944,6 @@ function instruction_error(ins: ssa.SInst, f: Func): string {
   return composite_error(ins, f, result);
 }
 
-// A `-g` line mark (kind 35) stands as a statement: it takes nothing, its
-// result is void, and its line (imm) and column (str) are the position it
-// records.
 function line_error(ins: ssa.SInst, result: typeinfo.Type): string {
   if (ins.args.len() != 0) {
     return "line mark arity";
@@ -3473,13 +2954,6 @@ function line_error(ins: ssa.SInst, result: typeinfo.Type): string {
   return "";
 }
 
-// A function type is one word of code address, and the call through one
-// carries the signature it dispatches by (`ssarc.signature_tag`), so a slot
-// may be any width. A function type inside another is one word too, the
-// environment box every function value is, so a parameter or result of
-// function type is a slot when its own signature is (#10024). A void result is a word like any other: every backend hands one back from
-// a void body, so the call stands in statement position like any void call.
-// A unit parameter is a word too, the constant 0.
 function func_shape_error(fn: typeinfo.TypeFunc): string {
   if (!fn.params_known) {
     return "function type without a signature";
@@ -3505,16 +2979,6 @@ function signature_slot(t: typeinfo.Type): boolean {
   return semtypes.concrete(t, false);
 }
 
-// Where a function value may NOT sit: in a Map's key, reached through any
-// depth of array elements, tuple elements and Map values -- the one slot no
-// release walk reaches yet. A Map's value column of them is admitted: the
-// column is released through `__sem_release_<T>`, which walks each box's
-// captures. An array element and a tuple element are admitted: `ssarc.drop_elements`
-// and `drop_tuple_fields` walk each through `drop_value`, which dispatches a
-// function type to `drop_captures`, and `ssasem.reference` counts a function
-// value, so the container knows it has children to walk. A Cell is not on the
-// list because the checker refuses a Cell whose element can hold a function
-// value (E057).
 pub function nests_func(t: typeinfo.Type): boolean {
   if let typeinfo.TypeArray(a) = t {
     return nests_func(a.elem);
@@ -3546,13 +3010,6 @@ function type_placement_error(t: typeinfo.Type): string {
   return "";
 }
 
-// A function value is a field like any other: the holder takes a unit of it
-// and its release walks it, which `semsource.env_rows` makes possible from a
-// frame that never built the box. What stays refused is a field reaching a
-// function value in a map's key (`nests_func`). A variant's field is released
-// by the same walk (`ssarc.drop_variant_fields`), so it holds one under the
-// same rule. Each schema says which it is when it is made
-// (`semsource.fields_nest_func`).
 function field_placement_error(f: Func): string {
   for record in f.records.list {
     if (record.nests_func) {
@@ -3584,9 +3041,6 @@ function placement_error(f: Func): string {
   return field_placement_error(f);
 }
 
-// The graph's own dimensions, before any type is read off it: one type per
-// value, one per declared parameter, and no closure environment, whose
-// contract this vocabulary has no form for.
 function dimension_error(f: Func): string {
   if (f.graph.nvals < 0 || f.values.len() != f.graph.nvals || f.params.len() != f.graph.nparams) {
     return "semantic type dimensions";
@@ -3615,9 +3069,6 @@ function schema_error(f: Func): string {
   if (!semtypes.concrete(f.result, true)) {
     return "unresolved result type";
   }
-  // A void value is what a call to a void contract defines, and nothing
-  // reads it: every operator and container contract asks for a concrete
-  // operand, so a read refuses there.
   for t in f.values {
     if (!semtypes.concrete(t, true)) {
       return "unresolved value type";
@@ -3642,8 +3093,6 @@ function schema_error(f: Func): string {
   return semrecords.verify(f.records, f.enums);
 }
 
-// Contracts are a finite table keyed by callee name. A void result is the
-// only void a contract may carry; parameters are values.
 function contracts_error(calls: Contract[]): string {
   let i: i32 = 0;
   while (i < calls.len()) {
@@ -3703,19 +3152,12 @@ function operations_error(f: Func): string {
       return why;
     }
   }
-  // Result == parameter index plus unique SSA definitions rules out repeated
-  // parameter indices; exact cardinality therefore proves full coverage.
   if (seen_params != f.params.len()) {
     return "missing parameter definition";
   }
   return guard_error(f);
 }
 
-// The parameters whose storage the views a value holds read, following each
-// view to the storage it projects whatever that storage's type. A literal's
-// bytes are static and read none. Storage of anything else escapes, and so
-// does a call to a callee outside the module or one with an owned result; a
-// module callee whose view anchor is not known yet leaves the answer pending.
 struct ViewSources { params: i32[], escapes: boolean, pending: boolean, seen: boolean[], escape_kind: i32 }
 
 function view_sources(f: Func, defs: ssa.SInst[], anchors: Anchor[], names: string[], v: i32, kind: i32, acc: ViewSources): ViewSources {
@@ -3723,9 +3165,6 @@ function view_sources(f: Func, defs: ssa.SInst[], anchors: Anchor[], names: stri
     return acc;
   }
   let out: ViewSources = ViewSources { ...acc, seen: acc.seen.with(v, true) };
-  // Keep the view being returned distinct from the storage it projects.
-  // A byte view of a str is an array-view escape, even though following
-  // its source subsequently reaches a string view and then owned storage.
   if (kind == 0) {
     if let typeinfo.TypeArray(a) = f.values[v] {
       if (a.view) {
@@ -3746,8 +3185,6 @@ function view_sources(f: Func, defs: ssa.SInst[], anchors: Anchor[], names: stri
   if (d.kind_tag == 5) {
     return out;
   }
-  // A dyn may admit view-bearing alternatives while this particular box
-  // holds none. Its owned storage is not a source of returned views.
   if (d.kind_tag == dyn_up() && d.args.len() == 1 && !holds_view(f, f.values[d.args[0]])) {
     return out;
   }
@@ -3758,8 +3195,6 @@ function view_sources(f: Func, defs: ssa.SInst[], anchors: Anchor[], names: stri
     return out;
   }
   if (d.kind_tag != 8 && gathers_views(d.kind_tag)) {
-    // Reaching an owned construction through a projection reaches this
-    // frame's storage, even when none of its elements contain views.
     if (!holds_view(f, f.values[v])) {
       return ViewSources { ...out, escapes: true, escape_kind: kind };
     }
@@ -3782,8 +3217,6 @@ function view_sources(f: Func, defs: ssa.SInst[], anchors: Anchor[], names: stri
   }
   if (d.kind_tag == call()) {
     if (!anchored(anchors, d.str)) {
-      // Only a view-holding result is ever anchored; an owned one is
-      // this frame's storage however the callee settles.
       if (holds_view(f, f.values[v]) && util.index_of_str(names, d.str) >= 0) {
         return ViewSources { ...out, pending: true };
       }
@@ -3799,12 +3232,6 @@ function view_sources(f: Func, defs: ssa.SInst[], anchors: Anchor[], names: stri
   return ViewSources { ...out, escapes: true, escape_kind: kind };
 }
 
-// The anchor a function's result carries: the parameters its returned views
-// read, none when they read no parameter. `escapes` when one reads storage
-// that is not a parameter's, and `pending` while a callee's anchor is still
-// unknown.
-// escape_kind identifies the escaping view, not an unrelated lowering
-// refusal: 1 for an array view, 2 for a string view, 0 when none is known.
 pub struct ResultAnchor { escapes: boolean, pending: boolean, params: i32[], escape_kind: i32 }
 
 pub function result_anchor(f: Func, anchors: Anchor[], names: string[]): ResultAnchor {
@@ -3819,8 +3246,6 @@ pub function result_anchor(f: Func, anchors: Anchor[], names: string[]): ResultA
   return ResultAnchor { escapes: acc.escapes, pending: !acc.escapes && acc.pending, params: acc.params, escape_kind: acc.escape_kind };
 }
 
-// Every value's defining instruction, indexed by value id; a value no
-// instruction defines keeps the empty sentinel.
 function definitions(f: Func): ssa.SInst[] {
   let none: ssa.SInst = ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
   let out: ssa.SInst[] = [];
@@ -3839,8 +3264,6 @@ function definitions(f: Func): ssa.SInst[] {
   return out;
 }
 
-// The index of the block `target` names, when the edge from `from` is its
-// only way in.
 function sole_successor(f: Func, at: i32[], target: i32, from: i32): i32 {
   if (target < 0 || target >= at.len() || at[target] < 0) {
     return 0 - 1;
@@ -3853,13 +3276,8 @@ function sole_successor(f: Func, at: i32[], target: i32, from: i32): i32 {
   return i;
 }
 
-// held: the variants a test proved the value IS on every way into the block.
-// gone: those a test proved it is NOT.
 struct Known { held: string[], gone: string[] }
 
-// What the tests of `value` have settled on every way into block `bi`. An
-// edge settles nothing unless it is its successor's only way in, and unless
-// that successor dominates `bi`.
 function settled(f: Func, value: i32, bi: i32, g: Guards): Known {
   let held: string[] = [];
   let gone: string[] = [];
@@ -3880,11 +3298,6 @@ function settled(f: Func, value: i32, bi: i32, g: Guards): Known {
   return Known { held: held, gone: gone };
 }
 
-// What the tests of `value` have settled on every way into each block, by
-// position, met over its predecessors. A branch threaded past a join
-// (semthread) enters a block both from below a test and from a path that
-// tested the value earlier, so no one test's edge dominates the block though
-// every way in has passed one.
 function settled_ways(f: Func, value: i32, g: Guards): Known[] {
   let n: i32 = f.graph.blocks.len();
   let known: Known[] = [];
@@ -3913,8 +3326,6 @@ function settled_ways(f: Func, value: i32, g: Guards): Known[] {
   return known;
 }
 
-// What the block at position `i`'s settled predecessors agree on along
-// their edges into it, and whether it has any.
 struct Met { any: boolean, known: Known }
 
 function met_at(f: Func, value: i32, g: Guards, known: Known[], seen: boolean[], i: i32): Met {
@@ -3936,8 +3347,6 @@ function met_at(f: Func, value: i32, g: Guards, known: Known[], seen: boolean[],
   return met;
 }
 
-// `known` past the end of the block at position `pi`, along its edge to the
-// block `target`: what its test of `value`, if it ends in one, settles there.
 function edge_known(f: Func, value: i32, g: Guards, pi: i32, known: Known, target: i32): Known {
   let term: ssa.STerm = f.graph.blocks[pi].term;
   let test: i32 = value_test(g, term, value);
@@ -3954,8 +3363,6 @@ function edge_known(f: Func, value: i32, g: Guards, pi: i32, known: Known, targe
   return known;
 }
 
-// value_test is the variant or dyn test of `value` (or its twin) a two-way
-// branch tests, -1 for any other terminator.
 function value_test(g: Guards, term: ssa.STerm, value: i32): i32 {
   if (term.kind_tag != 3 || term.t == term.f || term.cond < 0 || term.cond >= g.defs.len()) {
     return 0 - 1;
@@ -3985,18 +3392,8 @@ function same_known(a: Known, b: Known): boolean {
     && common(a.gone, b.gone).len() == a.gone.len();
 }
 
-// What a guard check reads of the function: its dominators, the position of
-// each block, the definition of each value, the positions of the blocks
-// whose two-way branch tests a value's variant or dyn shape, ascending, and
-// each value's twin (`twins`).
 struct Guards { dom: ssadeps.Dom, at: i32[], defs: ssa.SInst[], tests: i32[], same: i32[] }
 
-// Each value's twin: one value standing for every read of the same
-// projection of the same box (of one array at the same index), else itself.
-// A value never changes, so two reads of one slot of one box are one value,
-// and a test of either settles both: semsink re-reads a projection where its
-// parent dies, below the test of the first read. The reads it rewrites name the re-read, so a child can
-// have a lower id than its parent.
 function twins(defs: ssa.SInst[]): i32[] {
   let t: Twins = Twins { same: [], kids: [] };
   let v: i32 = 0;
@@ -4012,11 +3409,8 @@ function twins(defs: ssa.SInst[]): i32[] {
   return t.same;
 }
 
-// Each value's twin so far, -1 for one not reached, and each twin's
-// projections that are their own twins.
 struct Twins { same: i32[], kids: i32[][] }
 
-// `t` with `v`'s twin settled, its parent's first.
 function twin_into(defs: ssa.SInst[], own t: Twins, v: i32): Twins {
   if (t.same[v] >= 0) {
     return t;
@@ -4035,8 +3429,6 @@ function twin_into(defs: ssa.SInst[], own t: Twins, v: i32): Twins {
   return Twins { same: t.same.with(v, v), kids: t.kids.with(p, t.kids[p].append(v)) };
 }
 
-// The operands of a projection that can have a twin: its box, and an array
-// read's index; 0 for any other instruction.
 function twin_arity(kind: i32): i32 {
   if (kind == variant_get() || kind == record_get() || kind == tuple_get()) {
     return 1;
@@ -4091,11 +3483,6 @@ function names_has(names: string[], name: string): boolean {
   return false;
 }
 
-// A variant is known outright when a test held for it, and by exclusion when
-// every OTHER variant its enum declares has been refuted, since a value is
-// one of them. The second is what a total match's last arm rests on: it
-// carries no test of its own. The tests whose edges dominate the block are
-// read first, and every way into it only when they fall short.
 function guarded(f: Func, ins: ssa.SInst, bi: i32, g: Guards): boolean {
   if (guarded_by(f, ins, settled(f, ins.args[0], bi, g))) {
     return true;
@@ -4128,9 +3515,6 @@ function guarded_by(f: Func, ins: ssa.SInst, known: Known): boolean {
   return true;
 }
 
-// A variant's field exists only while the value is that variant, so a
-// projection must sit where that is known. A value never changes variant, so
-// what a test settled holds for every later use of the value.
 function guard_error(f: Func): string {
   if (!has_guarded_projection(f)) {
     return "";
@@ -4151,10 +3535,6 @@ function guard_error(f: Func): string {
   return "";
 }
 
-// The operations whose result reads its source's storage, so each borrows that
-// source exactly as a projection does. A widening, a narrowing and a string
-// retag hand back the same box. A map cursor holds a unit of its map, so its
-// key and value reads are projections of the cursor.
 function projects(kind: i32): boolean {
   return kind == 7 || kind == array_get() || kind == tuple_get() || kind == record_get()
     || kind == variant_get() || kind == variant_up() || kind == variant_as()
@@ -4162,9 +3542,6 @@ function projects(kind: i32): boolean {
     || kind == mapiter_key() || kind == mapiter_value();
 }
 
-// An address is the box's own slot read as an integer: it owns nothing and
-// converts nothing, so its type says it anchors nothing while every read
-// through it reads the source's storage.
 function borrows_storage(ins: ssa.SInst, f: Func): boolean {
   if (ins.kind_tag != cast()) {
     return false;
@@ -4172,24 +3549,18 @@ function borrows_storage(ins: ssa.SInst, f: Func): boolean {
   return reference(f.values[ins.args[0]]) && is_usize(f.values[ins.result]);
 }
 
-// The values holding the bytes a value's views read: a view is followed to its
-// source, and a construction or a phi to the sources of its operands. None
-// when it reads none (a literal, a payload-less variant).
 function bytes_roots(f: Func, defs: ssa.SInst[], v: i32, seen: boolean[]): i32[] {
   if (v < 0 || v >= defs.len() || seen[v]) {
     return [];
   }
   let d: ssa.SInst = defs[v];
   let next: boolean[] = seen.with(v, true);
-  // A retag is the same box, whichever way it goes.
   if (d.kind_tag == str_as() && d.args.len() == 1) {
     return bytes_roots(f, defs, d.args[0], next);
   }
   if (!holds_view(f, f.values[v])) {
     return [v];
   }
-  // A dyn widened from a box holding no view, or settled to hold none, reads
-  // no bytes but its own.
   if (d.kind_tag == 5 || settled_viewless(d) || d.kind_tag == dyn_up() && d.args.len() == 1 && !holds_view(f, f.values[d.args[0]])) {
     return [];
   }
@@ -4232,9 +3603,6 @@ function bytes_roots(f: Func, defs: ssa.SInst[], v: i32, seen: boolean[]): i32[]
   return roots;
 }
 
-// A read of a map's value column hands back a unit of the value, whose views
-// still read the bytes the entry's do: the map's, and for `get_or` the
-// default's too.
 function map_read_sources(d: ssa.SInst): i32[] {
   if (d.kind_tag == map_get_or() && d.args.len() == 3) {
     return [d.args[0], d.args[2]];
@@ -4258,9 +3626,6 @@ function union_into(own out: i32[], more: i32[]): i32[] {
   return out;
 }
 
-// A view whose box is a counted string's own — a string retagged, a literal,
-// or a phi of those — carries its bytes in the unit its holder takes, so it
-// anchors nothing.
 function counted_view(f: Func, defs: ssa.SInst[], v: i32, seen: boolean[]): boolean {
   if (v < 0 || v >= defs.len() || seen[v]) {
     return true;
@@ -4284,17 +3649,11 @@ function counted_view(f: Func, defs: ssa.SInst[], v: i32, seen: boolean[]): bool
   return true;
 }
 
-// A phi, a construction (a fresh map and a dyn box included), or an array or
-// map rebuilt around a new element: a value made of its operands, whose views
-// it holds.
 function gathers_views(kind: i32): boolean {
   return kind == 8 || kind == tuple_new() || kind == record_new() || kind == variant_new() || kind == array_new()
     || kind == append() || kind == with() || kind == map_new() || kind == map_insert() || kind == dyn_box();
 }
 
-// A value that gathers views is anchored to the bytes they read, which its own
-// operands' anchors stop short of once it holds them: to every source, when
-// they read more than one, so each stays alive until the value's last read.
 function view_roots(f: Func, parents: i32[][]): i32[][] {
   let defs: ssa.SInst[] = definitions(f);
   let none: boolean[] = __alloc_bool(f.graph.nvals);
@@ -4351,16 +3710,11 @@ function borrow_parents(f: Func): i32[][] {
   return view_roots(f, parents);
 }
 
-// Each value's anchors, transitively and nearest first: a value with one
-// parent has that parent's chain behind it, and one with several has each
-// parent's in turn, a value reached twice listed once. A cycle, which only an
-// unreachable block can form, is refused.
 struct Closure { ok: boolean, dependencies: i32[][] }
 
 function closure(parents: i32[][]): Closure {
   let n: i32 = parents.len();
   let derived: i32[][] = [];
-  // 0 unvisited, 1 on the walk, 2 done.
   let state: i32[] = __alloc_i32(n);
   let i: i32 = 0;
   while (i < n) {
@@ -4435,12 +3789,6 @@ function analyze_parents(f: Func, parents: i32[][]): Analysis {
   return Analysis { ok: true, why: "", parents: parents, dependencies: c.dependencies, flow: flow, uses: uses_of(f), anchored: anchored_of(c.dependencies, f.graph.nvals) };
 }
 
-// The callee names this graph names in a call instruction.
-//
-// `ssarc.bracketed` reads the module's grow table only under these names, so
-// they are the whole of what a body's lowering depends on outside its own
-// graph, plan and modes — which is what `semlower` tests before keeping a body
-// across a second lowering.
 pub function called_names(f: Func): string[] {
   let out: string[] = [];
   for b in f.graph.blocks {
@@ -4462,10 +3810,6 @@ function name_seen(names: string[], name: string): boolean {
   return false;
 }
 
-// Dependencies are derived from typed operations, not accepted as a sidecar
-// assertion. Managed projections borrow their actual container, and a value
-// gathering views borrows the storage they read. Other constructions and phis
-// have no parent: their counted supplies are obligations of the unit pass.
 pub function analyze(f: Func): Analysis {
   let why: string = schema_error(f);
   if (why != "") {
@@ -4478,10 +3822,6 @@ pub function analyze(f: Func): Analysis {
   return analyze_parents(f, borrow_parents(f));
 }
 
-// ---- views merged past their source ----------------------------------------
-
-// A counted copy of view `v` in three fresh values from `first`: an empty
-// string, `v + ""`, and that string retagged as `str`, which anchors nothing.
 pub function view_copy(first: i32, v: i32): ssa.SInst[] {
   return [
     ssa.SInst { kind_tag: 5, result: first, args: [], imm: 0, str: "" },
@@ -4494,24 +3834,8 @@ pub function view_copy_types(): typeinfo.Type[] {
   return [typeinfo.TypeString { tag: 0 }, typeinfo.TypeString { tag: 0 }, typeinfo.TypeString { tag: 1 }];
 }
 
-// One view-holding operand to replace with a copy: made at the end of block
-// `at` when the consumer is a phi reading it on that edge, else just before
-// the consumer.
 pub struct MergeCopy { at: i32, edge: boolean, consumer: i32, slot: i32, value: i32 }
 
-// merge_copies finds the views held by a phi operand whose bytes are held by a
-// value that does not strictly dominate the join, and with_merge_copies copies
-// each. Such an operand outlives its source: the source is defined on that
-// incoming path alone, so nothing at the join can keep it alive. That is a
-// local assigned, in a branch or a loop body, a view of a string declared
-// there, a container built there around one, or a call's result anchored to
-// one. A `str` operand is copied on its edge; a container's views are copied
-// where its construction takes them, so it holds counted strings; a container
-// the body did not build is copied whole (`deep_copy`). A view that is a
-// literal or a retagged string anchors nothing and is not copied. The copy is
-// the one a returned view that outlives its source gets
-// (docs/STR-VIEW-CONTRACT.md §5). Both read a body carrying the module's
-// anchor table, through which a call's roots are found.
 pub function with_merge_copies(f: Func, copies: MergeCopy[]): Func {
   let s: CopySplice = CopySplice { values: f.values, done: [], id: 0, preds: [], insts: [], next_block: next_block_id(f.graph), unfold: false, helpers: [] };
   let made: i32[] = [];
@@ -4551,8 +3875,6 @@ pub function with_merge_copies(f: Func, copies: MergeCopy[]): Func {
   return Func { ...f, values: s.values, calls: with_copy_contracts(f.calls, s.helpers), graph: ssa.SFunc { ...f.graph, blocks: blocks, nvals: s.values.len() } };
 }
 
-// A block's predecessors once each original block's terminator has moved to
-// the last block its copies left it ending in.
 function moved_preds(g: ssa.SFunc, preds: i32[], last: i32[]): i32[] {
   let out: i32[] = [];
   for p in preds {
@@ -4585,8 +3907,6 @@ function next_block_id(g: ssa.SFunc): i32 {
 
 struct Made { s: CopySplice, made: i32[] }
 
-// The copies made at block position `at`: those on its outgoing edges, or
-// those just before the instruction defining `consumer`.
 function copies_at(f: Func, s: CopySplice, made: i32[], copies: MergeCopy[], at: i32, edge: boolean, consumer: i32): Made {
   let ci: i32 = 0;
   while (ci < copies.len()) {
@@ -4613,12 +3933,6 @@ function with_copied_operands(ins: ssa.SInst, copies: MergeCopy[], made: i32[]):
   return ins;
 }
 
-// ---- copying a value that holds views --------------------------------------
-
-// A graph being extended: the finished blocks, the open block's id,
-// predecessors and instructions, and the next free block id.
-// `unfold` builds the next value holding itself inline, as its own copy helper
-// does, rather than calling the helper; `helpers` is the helpers called.
 struct CopySplice { values: typeinfo.Type[], done: ssa.SBlock[], id: i32, preds: i32[], insts: ssa.SInst[], next_block: i32, unfold: boolean, helpers: typeinfo.Type[] }
 
 struct Copied { s: CopySplice, value: i32 }
@@ -4658,12 +3972,6 @@ function i32_type(): typeinfo.Type {
   return typeinfo.TypeI32 { is_char: false, width: 32, unsigned: false, polymorphic: false };
 }
 
-// Whether a value of `t` holds a view anywhere in it. A declared record or
-// enum answers from its schema entry, which the module worked out once
-// (semsource.view_types), so a `str` payload of `enum E { A(str) }` counts as
-// the one in `Option[str]` does. A dyn holds one when a box it can be holding
-// does (`dyns`). A function value holds none: the checker refuses a closure
-// that captures one (E082).
 pub function holds_view(f: Func, t: typeinfo.Type): boolean {
   if let typeinfo.TypeString(st) = t {
     return st.tag == 1;
@@ -4706,11 +4014,6 @@ pub function holds_view(f: Func, t: typeinfo.Type): boolean {
   return false;
 }
 
-// Why a value of `t` cannot be rebuilt holding counted strings in place of
-// its views, or "" when it can: a `str`, and an array, tuple, record, enum,
-// map or dyn of such. A cell is shared storage, which a copy would split.
-// A type that holds itself is copied by a helper calling itself, so its parts
-// are checked once. `open` is the nominal and dyn types being copied around `t`.
 function copy_refusal(f: Func, t: typeinfo.Type, open: typeinfo.Type[]): string {
   if (!holds_view(f, t) || is_view(t)) {
     return "";
@@ -4727,8 +4030,6 @@ function copy_refusal(f: Func, t: typeinfo.Type, open: typeinfo.Type[]): string 
   if (is_map(t)) {
     return map_refusal(f, t, open);
   }
-  // A type holding itself is copied by its helper (copy_helper_func), which
-  // calls itself where the type recurs: its parts are checked on the way in.
   if (has_type(open, t)) {
     return "";
   }
@@ -4778,8 +4079,6 @@ function enum_refusal(f: Func, t: typeinfo.Type, open: typeinfo.Type[]): string 
   return "";
 }
 
-// A map is rebuilt from its two column snapshots, so both must hand back
-// elements the snapshot owns.
 function map_refusal(f: Func, t: typeinfo.Type, open: typeinfo.Type[]): string {
   if (!is_supported_map(t) || !retained_column(map_key(t)) || !retained_column(map_value(t))) {
     return "a map " + typeinfo.spelling(t) + " has a column no snapshot owns";
@@ -4787,8 +4086,6 @@ function map_refusal(f: Func, t: typeinfo.Type, open: typeinfo.Type[]): string {
   return all_copyable(f, [map_key(t), map_value(t)], open);
 }
 
-// A dyn is rebuilt by testing its box for each concrete holding a view, so
-// each must carry a shape a test names.
 function dyn_refusal(f: Func, t: typeinfo.Type, open: typeinfo.Type[]): string {
   for c in dyn_view_concretes(f, t) {
     if (shape_name(f, c) == "") {
@@ -4802,7 +4099,6 @@ function dyn_refusal(f: Func, t: typeinfo.Type, open: typeinfo.Type[]): string {
   return "";
 }
 
-// The concretes a value of dyn type `t` can be holding that hold a view.
 function dyn_view_concretes(f: Func, t: typeinfo.Type): typeinfo.Type[] {
   let out: typeinfo.Type[] = [];
   for row in f.dyns {
@@ -4813,9 +4109,6 @@ function dyn_view_concretes(f: Func, t: typeinfo.Type): typeinfo.Type[] {
   return out;
 }
 
-// The shape `dyn_is` and `dyn_as` name a dyn box of type `c` by: an
-// argument-free record's name, or an enum's whose box carries its variant's
-// shape. "" for any other.
 function shape_name(f: Func, c: typeinfo.Type): string {
   if let typeinfo.TypeStruct(r) = c {
     if (r.args.len() == 0) {
@@ -4831,8 +4124,6 @@ function shape_name(f: Func, c: typeinfo.Type): string {
   return "";
 }
 
-// `v` rebuilt in the open block and any it adds, each view it holds replaced
-// by a counted copy (`view_copy`) and every other part read out of it.
 function deep_copy(f: Func, s: CopySplice, v: i32): Copied {
   let t: typeinfo.Type = s.values[v];
   if (!holds_view(f, t)) {
@@ -4899,7 +4190,6 @@ function copy_tuple(f: Func, s: CopySplice, v: i32, t: typeinfo.Type, elements: 
   return sp_emit(s, tuple_new(), t, parts, 0, "");
 }
 
-// An empty array, then each element copied onto it in a loop.
 function copy_array(f: Func, s: CopySplice, v: i32, t: typeinfo.Type, elem: typeinfo.Type): Copied {
   let owned: typeinfo.Type = typeinfo.TypeArray { elem: elem, view: false };
   let n: Copied = sp_emit(s, length(), i32_type(), [v], 0, "");
@@ -4915,9 +4205,6 @@ function copy_array(f: Func, s: CopySplice, v: i32, t: typeinfo.Type, elem: type
   return copied;
 }
 
-// An empty map, then each entry of the two column snapshots copied into it.
-// The snapshots own their elements, so a view value is a fresh box over the
-// map's bytes until its copy replaces it.
 function copy_map(f: Func, s: CopySplice, v: i32, t: typeinfo.Type): Copied {
   let kt: typeinfo.Type = map_key(t);
   let vt: typeinfo.Type = map_value(t);
@@ -4934,12 +4221,6 @@ function copy_map(f: Func, s: CopySplice, v: i32, t: typeinfo.Type): Copied {
   return loop_leave(l, acc1.s, acc1.value);
 }
 
-// A counted loop accumulating into `acc`, from `acc0`, for `i` below `n`:
-//   pre:    br head
-//   head:   i = phi(0, i + 1); acc = phi(acc0, acc'); brif i < n, body, exit
-//   body:   ...; br head
-// `loop_enter` leaves the body open; `loop_leave` closes it on `acc'` and
-// leaves the exit open, answering `acc`.
 struct CopyLoop { s: CopySplice, pre: i32, head: i32, exit: i32, head_at: i32, i: i32, acc: i32, cond: i32, zero: i32, one: i32, n: i32, acc0: i32 }
 
 function loop_enter(s: CopySplice, n: i32, acc0: i32, t: typeinfo.Type): CopyLoop {
@@ -4987,8 +4268,6 @@ function inserted(blocks: ssa.SBlock[], at: i32, b: ssa.SBlock): ssa.SBlock[] {
   return out;
 }
 
-// Each variant tested in turn, the last known by exclusion, and rebuilt with
-// its fields copied; the rebuilt values meet in a phi.
 function copy_enum(f: Func, s: CopySplice, v: i32, t: typeinfo.Type): Copied {
   let variants: semrecords.Variant[] = f.enums[semrecords.find_enum(f.enums, t)].variants;
   let join: i32 = s.next_block;
@@ -5035,10 +4314,6 @@ function rebuilt_variant(f: Func, s: CopySplice, v: i32, t: typeinfo.Type, varia
   return sp_emit(s, variant_new(), t, parts, 0, variant.name);
 }
 
-// Each concrete holding a view tested in turn and, on a hit, narrowed,
-// copied and widened back; a box that is none of them holds no view and is
-// kept, retagged as settled (`dyn_as` naming no shape). The values meet in a
-// phi.
 function copy_dyn(f: Func, s: CopySplice, v: i32, t: typeinfo.Type): Copied {
   let join: i32 = s.next_block;
   s = sp_blocks(s, 1);
@@ -5067,15 +4342,10 @@ function copy_dyn(f: Func, s: CopySplice, v: i32, t: typeinfo.Type): Copied {
   return Copied { s: CopySplice { ...s, values: s.values.append(t), insts: s.insts.append(phi) }, value: out };
 }
 
-// ---- copying a type that holds itself --------------------------------------
-
-// The function that copies a value of `t`, a type holding itself: an inline
-// copy cannot recurse, so it calls this where `t` recurs.
 pub function copy_helper(t: typeinfo.Type): string {
   return "__fern_copy_" + type_key(t);
 }
 
-// The copy helpers `f` calls, by the type each copies.
 pub function copy_helpers_called(f: Func): typeinfo.Type[] {
   let out: typeinfo.Type[] = [];
   for c in f.calls {
@@ -5086,9 +4356,6 @@ pub function copy_helpers_called(f: Func): typeinfo.Type[] {
   return out;
 }
 
-// copy_helper_func is the copy helper for `t`, over the schemas of `f`, the
-// body that needed it: its borrowed parameter rebuilt as `deep_copy` rebuilds
-// a merged value, each `t` inside it copied by a call to itself.
 pub function copy_helper_func(f: Func, t: typeinfo.Type): Func {
   let param: ssa.SInst = ssa.SInst { kind_tag: 6, result: 0, args: [], imm: 0, str: "" };
   let s: CopySplice = CopySplice { values: [t], done: [], id: 0, preds: [], insts: [param], next_block: 1, unfold: true, helpers: [] };
@@ -5098,8 +4365,6 @@ pub function copy_helper_func(f: Func, t: typeinfo.Type): Func {
   return Func { ...f, graph: graph, values: s.values, params: [t], result: t, calls: with_copy_contracts([], s.helpers), envs: [] };
 }
 
-// Whether a copy of `t` is a call to its helper: `t` holds itself, and is not
-// the value the helper being built unfolds.
 function calls_helper(f: Func, s: CopySplice, t: typeinfo.Type): boolean {
   return !s.unfold && holds_itself(f, t);
 }
@@ -5131,8 +4396,6 @@ function has_type(ts: typeinfo.Type[], t: typeinfo.Type): boolean {
   return false;
 }
 
-// Whether `t` holds a view-holding value of its own type, which a copy would
-// rebuild without end.
 function holds_itself(f: Func, t: typeinfo.Type): boolean {
   if (!holds_view(f, t) || is_view(t)) {
     return false;
@@ -5154,7 +4417,6 @@ function reaches(f: Func, parts: typeinfo.Type[], target: typeinfo.Type, seen: t
   return false;
 }
 
-// The parts of `t` its copy rebuilds, as `deep_copy` descends into them.
 function copy_parts(f: Func, t: typeinfo.Type): typeinfo.Type[] {
   if let typeinfo.TypeArray(a) = t {
     return [a.elem];
@@ -5194,9 +4456,6 @@ function variant_parts(f: Func, t: typeinfo.Type): typeinfo.Type[] {
   return out;
 }
 
-// The view-holding operands to copy, and why one cannot be when an operand
-// holds a view no copy can rebuild (`copy_refusal`). `with_merge_copies` makes
-// each copy with `sp_emit` / `deep_copy` and records its value in `made`.
 pub struct MergePlan { copies: MergeCopy[], why: string }
 
 pub function merge_copies(f: Func): MergePlan {
@@ -5241,9 +4500,6 @@ function copies_slot(copies: MergeCopy[], consumer: i32, slot: i32): boolean {
 
 struct MergeScan { at: i32[], dom: ssadeps.Dom, home: i32[], none: boolean[] }
 
-// The copies that stop `x`, operand `slot` of `consumer`, holding bytes that
-// fail to dominate block position `join`: `x` itself when it is a `str`, else
-// the views its construction takes, through phis and projections.
 function held_copies(f: Func, defs: ssa.SInst[], m: MergeScan, join: i32, consumer: i32, slot: i32, x: i32, seen: boolean[], own plan: MergePlan): MergePlan {
   if (!holds_outlived(f, defs, m, join, x, seen)) {
     return plan;
@@ -5269,7 +4525,6 @@ function held_copies(f: Func, defs: ssa.SInst[], m: MergeScan, join: i32, consum
   return operand_copies(f, defs, m, join, x, next, plan);
 }
 
-// held_copies over each operand of `consumer`.
 function operand_copies(f: Func, defs: ssa.SInst[], m: MergeScan, join: i32, consumer: i32, seen: boolean[], own plan: MergePlan): MergePlan {
   let args: i32[] = defs[consumer].args;
   let j: i32 = 0;
@@ -5280,8 +4535,6 @@ function operand_copies(f: Func, defs: ssa.SInst[], m: MergeScan, join: i32, con
   return plan;
 }
 
-// Whether `x` holds a view a copy would stop reading bytes that fail to
-// dominate `join`.
 function holds_outlived(f: Func, defs: ssa.SInst[], m: MergeScan, join: i32, x: i32, seen: boolean[]): boolean {
   if (x < 0 || x >= defs.len() || seen[x] || !holds_view(f, f.values[x])) {
     return false;
@@ -5306,8 +4559,6 @@ function with_copy(f: Func, defs: ssa.SInst[], m: MergeScan, consumer: i32, slot
   return MergePlan { ...plan, copies: plan.copies.append(MergeCopy { at: at, edge: edge, consumer: consumer, slot: slot, value: x }) };
 }
 
-// Whether some value holding the bytes `v` reads fails to strictly dominate
-// block position `bi`.
 function roots_outlived(f: Func, defs: ssa.SInst[], m: MergeScan, v: i32, bi: i32): boolean {
   for r in bytes_roots(f, defs, v, m.none) {
     let h: i32 = 0 - 1;
@@ -5321,7 +4572,6 @@ function roots_outlived(f: Func, defs: ssa.SInst[], m: MergeScan, v: i32, bi: i3
   return false;
 }
 
-// The block position each value is defined at, -1 for none.
 function defining_positions(f: Func): i32[] {
   let out: i32[] = [];
   for _ in f.values {
@@ -5339,35 +4589,6 @@ function defining_positions(f: Func): i32[] {
   return out;
 }
 
-// ---- self-tail recursion ----------------------------------------------------
-
-// A self-recursive call in tail position reuses its own activation; without
-// this a produced body grew the stack once per iteration and a deep enough
-// recursion took the program's stack out (#9692).
-//
-// The rewrite is on the GRAPH, before the unit planner and the RC lowering see
-// it, and that placement is the point rather than a convenience: a tail call
-// HANDS ITS ARGUMENTS OVER and a jump does not. Only the planner knows which
-// arguments carry a unit, so a rewrite applied after it has planned would
-// leave a transfer planned for a call that is no longer there. Rewritten
-// first, the loop is an ordinary loop and the planner brackets it as one.
-//
-// The shape: the entry block is SPLIT. It keeps its id and its index, because
-// the lowering reads `blocks[0]` as the entry, and becomes an empty block
-// branching to a new HEADER that holds everything it had. The header takes one
-// phi per parameter, merging the incoming argument with the one each tail call
-// passes, and every use of a parameter becomes a use of its phi. Each tail
-// call drops its call instruction and branches to the header.
-//
-// A self-call whose result is a payload of the variant the block returns —
-// `return Cons(h + 1, inc_all(t))` — is a tail call MODULO CONS (#10462). The
-// loop then carries the result built so far as a chain: `r`, the first node,
-// and `h`, the address of the last, whose payload at the hole index holds the
-// zero placeholder the call's result became. A cons block builds its node over
-// a placeholder, fills the hole with it and moves `h` to it; every other return
-// fills the hole with its value and returns the chain. Each node's unit moves
-// exactly once, into the field the previous fill wrote or into `r`, and `h`
-// owns nothing, so the planner sees `r` as one owned phi and `h` as a word.
 pub function tail_recursion(own f: Func, name: string): Func {
   if (name.len() == 0 || f.graph.blocks.len() == 0) {
     return f;
@@ -5392,7 +4613,6 @@ pub function tail_recursion(own f: Func, name: string): Func {
   return spliced(f, kinds, nparams, hole, name);
 }
 
-// Both tail shapes need a call to the function itself.
 function calls_itself(f: Func, name: string): boolean {
   for b in f.graph.blocks {
     for ins in b.insts {
@@ -5412,7 +4632,6 @@ function cons_tail(): i32 {
   return 2;
 }
 
-// Per block: a self-tail call, a tail call modulo cons, or neither.
 function back_kinds(f: Func, name: string, nparams: i32, parents: i32[][], defs: ssa.SInst[]): i32[] {
   let out: i32[] = [];
   for b in f.graph.blocks {
@@ -5427,9 +4646,6 @@ function back_kinds(f: Func, name: string, nparams: i32, parents: i32[][], defs:
   return out;
 }
 
-// The one payload index every cons block puts its call's result at, or -1. A
-// fill writes the node the previous round built without knowing which variant
-// that was, so the index has to be the same in all of them.
 function agreed_hole(f: Func, kinds: i32[], name: string, nparams: i32, parents: i32[][], defs: ssa.SInst[]): i32 {
   if (!record_laid(f, f.result)) {
     return 0 - 1;
@@ -5461,25 +4677,6 @@ function without_cons(kinds: i32[]): i32[] {
   return out;
 }
 
-// An ANCHORED argument crosses the jump only as a counted payload read out of
-// its anchor: the phi it reaches is owned, so the edge retains it before the
-// anchor's release, and the unit keeps the payload whole. A VIEW cannot — the
-// call kept its anchor alive for the callee's frame, the jump re-enters the
-// loop with that anchor dead, and a view's retain is a no-op against the
-// immortal sentinel. The compiler's own `rc_consumed_drop_wired` was that shape: it
-// recurses on `slice_unchecked(t, 0, t.len() - 2)`, a view of the very
-// parameter the argument replaces, and rewriting it corrupted the heap of every
-// compiler built through this path (#9692). An address anchored to its box, and
-// a value holding views, are declined for the same reason; a map's unit is
-// linear and is never retained.
-//
-// This declines the ONE block, not the function: a call that stays a call
-// keeps holding what it holds.
-//
-// A fresh slice whose every anchor is a view PARAMETER does cross: those read
-// the caller's bytes, which outlive the loop, so the jump strands nothing
-// (#9794). The loop owns each round's box, and `spliced` hands the entry edge
-// a box of its own so the phi owns one on every edge.
 function crosses_jump(f: Func, a: i32, parents: i32[][], defs: ssa.SInst[]): boolean {
   if (a < 0 || a >= parents.len() || parents[a].len() == 0) {
     return true;
@@ -5516,10 +4713,6 @@ function args_cross(f: Func, args: i32[], parents: i32[][], defs: ssa.SInst[]): 
   return true;
 }
 
-// The blocks whose last instruction is a self-call the terminator returns.
-// Nothing follows such a call, so its result has no other reader: the block
-// ends there. A void body spells the same shape with a statement call and a
-// valueless return.
 function is_self_tail(f: Func, b: ssa.SBlock, name: string, nparams: i32, parents: i32[][], defs: ssa.SInst[]): boolean {
   if (b.term.kind_tag != 1 || b.insts.len() == 0) {
     return false;
@@ -5537,10 +4730,6 @@ function is_self_tail(f: Func, b: ssa.SBlock, name: string, nparams: i32, parent
   return b.term.value < 0 && is_void(f.result);
 }
 
-// The payload index of a block returning `V(…, self(…), …)`, or -1. The call's
-// result is read by the construction alone, and what runs between the two
-// runs before the rest of the recursion once the call is gone, so it has to
-// be something whose order cannot show (`reorderable`).
 function cons_hole(f: Func, b: ssa.SBlock, name: string, nparams: i32, parents: i32[][], defs: ssa.SInst[]): i32 {
   let n: i32 = b.insts.len();
   if (b.term.kind_tag != 1 || n < 2) {
@@ -5583,8 +4772,6 @@ function cons_hole(f: Func, b: ssa.SBlock, name: string, nparams: i32, parents: 
   return util.index_of_i32(cons.args, c.result);
 }
 
-// Reads of values nothing can change, and operators that cannot stop the
-// program: a division or remainder can trap, so it stays behind the call.
 pub function reorderable(ins: ssa.SInst): boolean {
   let k: i32 = ins.kind_tag;
   if (k == 9) {
@@ -5604,9 +4791,6 @@ function fresh_block_id(f: Func): i32 {
   return top + 1;
 }
 
-// param_phis maps parameter i to the phi that replaces it. The map is over
-// EVERY value, so a rewrite of an instruction's operands is one lookup rather
-// than a search.
 function phi_map(f: Func, nparams: i32): i32[] {
   let map: i32[] = [];
   let v: i32 = 0;
@@ -5654,13 +4838,8 @@ function mapped_ret_term(map: i32[], t: ssa.STerm): ssa.STerm {
   return t;
 }
 
-// What the rewrite has built so far: the value types, the rewritten blocks, and
-// per edge back into the header the block it leaves and the phi operands it
-// passes — the parameters, then the chain and its hole under modulo cons.
 struct Splice { values: typeinfo.Type[], blocks: ssa.SBlock[], backs: i32[], rows: i32[][] }
 
-// The loop's own values under modulo cons: the chain and hole phis, then the
-// empty chain and null hole the entry edge passes.
 struct Chain { r: i32, h: i32, r0: i32, h0: i32 }
 
 function loop_chain(f: Func, nparams: i32): Chain {
@@ -5672,14 +4851,6 @@ function address(): typeinfo.Type {
   return typeinfo.TypeI32 { width: typeinfo.width_ptr(), unsigned: true, is_char: false, polymorphic: false };
 }
 
-// spliced performs the rewrite: the header is block 0's instructions without
-// its parameter definitions, rewritten like any other block, and the phis are
-// assembled once every edge back into it is known.
-//
-// The entry block can BE a tail block — an unconditional self-call, which is
-// how a parameterless event loop is written. Everything it holds moves to the
-// header anyway, so what changes is that the edge that tail contributes comes
-// from the header rather than from the entry.
 function spliced(own f: Func, kinds: i32[], nparams: i32, hole: i32, name: string): Func {
   let map: i32[] = phi_map(f, nparams);
   let header: i32 = fresh_block_id(f);
@@ -5704,9 +4875,6 @@ function spliced(own f: Func, kinds: i32[], nparams: i32, hole: i32, name: strin
     bi = bi + 1;
   }
 
-  // The parameter definitions STAY in the entry block: ssadeps.verify reads a
-  // `param` instruction anywhere else as a malformed graph, and they are also
-  // what the entry edge's phi operands name.
   let entry_insts: ssa.SInst[] = kind_6(entry.insts);
   let firsts: i32[] = [];
   p = 0;
@@ -5746,10 +4914,6 @@ function spliced(own f: Func, kinds: i32[], nparams: i32, hole: i32, name: strin
   return Func { ...f, graph: graph, values: s.values };
 }
 
-// A view parameter some tail call replaces with a fresh slice of the
-// parameters (`crosses_jump`): its phi owns a box on that edge, so the entry
-// edge passes a box of its own, `slice(p, 0, p.len())`, rather than lending
-// the caller's.
 function sliced_on_back_edge(f: Func, rows: i32[][], p: i32): boolean {
   if (!is_view(f.values[p])) {
     return false;
@@ -5768,13 +4932,6 @@ function branch_to(header: i32): ssa.STerm {
   return ssa.STerm { kind_tag: 2, cond: 0, target: header, t: 0, f: 0, value: 0 };
 }
 
-// A tail block loses its call and branches to the header; a cons block keeps
-// its construction over the placeholder its call's result became, links it
-// and branches; under modulo cons every other return fills the hole with its
-// value first. Every block reached FROM the entry is now reached from the
-// header instead, so the entry's id leaves their predecessor lists in the
-// same slot the header takes — the slot is what a phi's operands are parallel
-// to, so it has to be the same one.
 function rewrite_block(own s: Splice, f: Func, b: ssa.SBlock, kind: i32, map: i32[], header: i32, hole: i32, ch: Chain): Splice {
   if (kind == self_tail()) {
     let kept: ssa.SInst[] = [];
@@ -5803,9 +4960,6 @@ function rewrite_block(own s: Splice, f: Func, b: ssa.SBlock, kind: i32, map: i3
   return Splice { ...s, blocks: s.blocks.append(ssa.SBlock { ...b, insts: insts, term: term }) };
 }
 
-// The cons block: the self-call's result becomes the zero placeholder the
-// node is built over, the call's arguments go to the header, and the node is
-// linked into the chain and becomes its hole.
 function linked(own s: Splice, f: Func, b: ssa.SBlock, map: i32[], header: i32, hole: i32, ch: Chain): Splice {
   let cons: ssa.SInst = b.insts[b.insts.len() - 1];
   let placeholder: i32 = cons.args[hole];
@@ -5840,7 +4994,6 @@ function repointed(preds: i32[], from: i32, to: i32): i32[] {
   return out;
 }
 
-// The parameter definitions, and everything else, in their original order.
 function kind_6(insts: ssa.SInst[]): ssa.SInst[] {
   let out: ssa.SInst[] = [];
   for ins in insts {
@@ -5869,12 +5022,6 @@ function rewritten(map: i32[], insts: ssa.SInst[]): ssa.SInst[] {
   return out;
 }
 
-// One phi per parameter, its operands parallel to the header's predecessors:
-// the entry edge carries the parameter itself, each back edge the argument
-// its call passed. A parameter's phi names the call and the slot it stands
-// for, so the ownership inference reads the loop as the recursion it was
-// (`ownership.slot_carried`). Under modulo cons the chain and its hole follow,
-// entering empty.
 function phis(map: i32[], firsts: i32[], rows: i32[][], nparams: i32, hole: i32, ch: Chain, name: string): ssa.SInst[] {
   let out: ssa.SInst[] = [];
   let p: i32 = 0;

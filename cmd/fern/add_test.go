@@ -37,15 +37,12 @@ func TestAddPathDependency(t *testing.T) {
 	if m.Deps["helper"].Path != filepath.FromSlash("../helper") {
 		t.Errorf("helper not added: %+v", m.Deps)
 	}
-	// Existing dep + comment survive.
 	src, _ := os.ReadFile(filepath.Join(dir, manifest.FileName))
 	if !strings.Contains(string(src), "# keep me") || !strings.Contains(string(src), `x = { path = "../x" }`) {
 		t.Errorf("existing content not preserved:\n%s", src)
 	}
 }
 
-// A `[dependencies]` header with a trailing comment is still the table to add
-// to, not a reason to append a second one (#11841).
 func TestAddIntoCommentedTable(t *testing.T) {
 	dir := writeManifest(t, "[package]\nname = \"app\"\n[dependencies]  # deps\nx = { path = \"../x\" }\n")
 	if err := runAdd("helper", "path:../helper", "", dir); err != nil {
@@ -129,7 +126,6 @@ func TestAddBadSpecRejected(t *testing.T) {
 			t.Errorf("spec %q should be rejected", spec)
 		}
 	}
-	// A rejected add leaves the manifest untouched.
 	src, _ := os.ReadFile(filepath.Join(dir, manifest.FileName))
 	if strings.Contains(string(src), "dep") {
 		t.Errorf("rejected add mutated the manifest:\n%s", src)

@@ -1,28 +1,3 @@
-// printenv.fern — GNU-compatible `printenv`.
-//
-//   printenv              every entry, `NAME=VALUE`, in the order the
-//                         process received it
-//   printenv NAME...      each named variable's VALUE, one per operand
-//   -0, --null            end each entry with NUL rather than newline
-//
-// The whole list and a lookup are different questions, and printenv is
-// the utility that shows it: the dump prints the raw entries in the
-// vector's own order, so a name that appears twice — which execve
-// permits and the kernel preserves — appears twice, where a lookup only
-// ever finds the first. That is why this reaches for `environ()` and not
-// a loop of `env()`.
-//
-// Options are scanned in ARGV order (the `+` optstring), so an option
-// after the first operand is an operand: `printenv A -0` asks for a
-// variable named `-0`, does not find one, and exits 1. Every operand
-// that names nothing costs the exit status and nothing else — the ones
-// that do name something are still printed, in order. An operand with an
-// `=` in it names nothing by rule, never by lookup.
-//
-// printenv is one of the utilities whose FAILURE status is 2 rather than
-// 1: a usage error, a `--help` that cannot be written, and a failed
-// write all exit 2. An operand that names nothing is the exception —
-// that is the documented 1.
 import "std/string";
 import "std/array";
 import "std/io_buffered";
@@ -61,11 +36,6 @@ pub function main(): i32 {
     term = "\x00";
   }
   let operands: string[] = g.operands();
-  // Quoted since 9.12, so the output can be sourced by a shell and so
-  // that arbitrary bytes do not reach a terminal raw. `-0` is the
-  // machine-readable form and stays exact; with named VARIABLEs the
-  // output is a value rather than a pair, and only a terminal gets it
-  // quoted.
   let qstyle: i32 = 0;
   let quoted_out: boolean = false;
   if (!zero && (operands.len() == 0 || isatty(1))) {
@@ -88,11 +58,6 @@ pub function main(): i32 {
   } else {
     let k: i32 = 0;
     while (k < operands.len()) {
-      // A name containing `=` names nothing, and printenv says so
-      // rather than letting the lookup answer: `FERN_EQ=a` against an
-      // entry `FERN_EQ=a=b` would otherwise match its first nine bytes
-      // and hand back `b`. POSIX rules the character out of a name, so
-      // the operand is refused before the environment is asked.
       let found: boolean = false;
       if (!operands[k].contains("=")) {
         match (env(operands[k])) {

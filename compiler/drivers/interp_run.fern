@@ -1,11 +1,3 @@
-// compiler/interp_run.fern — stdin-driven driver for
-// interp.fern's tree-walking evaluator. Reads Fern source from
-// stdin, runs lexer + parser + interp.eval_module, and exits
-// with the status main's result maps to (interp.exit_status), or
-// 254 if the program failed. Companion to asm_run.fern
-// (#672+); used by the cross-validation test to assert
-// interp / vm / asm all agree on the same source.
-
 import "../lexer";
 import "../parser";
 import "./rundriver";

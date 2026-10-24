@@ -11,10 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The connection's peer through std/serve's loop, and std/http/forwarded's
-// client found past it: the handler trusts loopback, so a request from this
-// test is believed for one hop and a forged hop left of the one it appends
-// is not. The interpreter and the x86-64 backend.
 func TestForwardedServeInterp(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := writeForwardedServeSource(t)

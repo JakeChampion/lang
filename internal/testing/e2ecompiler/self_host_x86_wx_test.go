@@ -10,8 +10,6 @@ import (
 	"testing"
 )
 
-// Exercise the in-process linker: the asm-through-gcc harness already gets
-// separate mappings from GNU ld and cannot catch wrong data relocations here.
 func TestSelfHostX86WXExecutable(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	if len(cli.runner) != 0 {
@@ -112,8 +110,6 @@ function main(): i32 {
 			t.Fatalf("want SIGSEGV, got %v\n%s", err, out)
 		}
 	}
-	// The headers share code's mapping. This used to overwrite the ELF magic
-	// and exit normally when the whole image was writable and executable.
 	writeSrc := filepath.Join(dir, "write_code.fern")
 	if err := os.WriteFile(writeSrc, []byte(fmt.Sprintf("function main(): i32 { __store_u8(%du64 as usize, 0); return 0; }", code.Vaddr)), 0o644); err != nil {
 		t.Fatal(err)
@@ -121,8 +117,6 @@ function main(): i32 {
 	writeBin := filepath.Join(dir, "write_code")
 	compile(writeSrc, writeBin)
 	assertSegv(writeBin)
-	// Enter a valid exit(0) instruction sequence in the writable segment.
-	// Its bytes are valid; execution must fault because this mapping is NX.
 	image, err := os.ReadFile(bin)
 	if err != nil {
 		t.Fatal(err)

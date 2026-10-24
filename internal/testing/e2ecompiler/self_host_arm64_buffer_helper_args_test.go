@@ -6,11 +6,6 @@ import (
 	"testing"
 )
 
-// Assemble a real VEX instruction inside the emitted program. The arm64
-// build of x86_gas_vex_three used to load the byte into x1 before reading
-// the buffer handle homed there, passing that byte as buf_push_byte's handle.
-// The x86 control and the expected GNU-compatible bytes distinguish this
-// helper-argument regression from a defect in the vector encoder itself.
 func TestSelfHostArm64BufferHelperArguments(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	dir := copySelfHostTree(t)

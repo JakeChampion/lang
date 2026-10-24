@@ -8,14 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostF64I64StructFieldIRX86_64 verifies that structs with f64[] and
-// i64[] fields are admitted to the IR path (leak-safe array fields) and read with
-// the correct 8-byte element width/type. use_v builds V{fs: f64[], is: i64[], n},
-// compares f64 and i64 elements (proving the element typing flows through the
-// struct-field index reads), and returns 1 + 10 + 7 = 18. v is reclaimable, so
-// both arrays AND the box are deep-dropped: main has no arrays, so the count of
-// __fern_arr_dec calls is 3 (fs + is + box), which also proves the module took
-// the IR path (a bail would emit none).
 func TestSelfHostF64I64StructFieldIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

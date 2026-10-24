@@ -1,11 +1,11 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// The sharing hazard for the same shape: the map is still read
-// through the LOCAL after the struct binds it. Both drops run the
-// full chain and the rc==1 guards arbitrate — whichever owner
-// holds the last reference walks, the other only dec's. An
-// over-release here is an underflow, not a number.
+
+
+
+
+
+
+
+
 import "core/map";
 import "std/i32";
 

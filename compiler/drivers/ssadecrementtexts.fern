@@ -62,7 +62,6 @@ function entries(s: string, entry: string, local: string): void {
   check(change(s, entry + ".r:", "__unrelated:\n" + entry + ".r:"), entry, false);
   check(change(s, entry + ".r:", "__renamed_register:"), entry, false);
   check(change(s, entry + ".r:", entry + ".r:; ret"), entry, false);
-  // The unguarded entry is held to the same rules as the register entry.
   check(s + "\n.data\n" + entry + ".u: .quad 0\n", entry, false);
   check(change(s, entry + ".u:", entry + ".u: ret"), entry, false);
   check(change(s, entry + ".u:", ".data\n" + entry + ".u:"), entry, false);
@@ -85,8 +84,6 @@ pub function run(output: string): void {
   for entry in ["__fn___fern_arr_dec", "__fn___fern_str_free"] {
     let original = text.select(output, entry);
     check(output, entry, true);
-    // Selection preserves every body line, including the second nonlocal
-    // entry and the zero/one/free effects that still need semantic checking.
     require(original.lines[0] == "movq 8(%rsp), %rax" && original.register_entry == 1);
     require(original.lines.len() > 20);
     let s = ".text\n" + entry + ":\n" + original.lines.join("\n") + "\n";
@@ -101,8 +98,6 @@ pub function run(output: string): void {
     check(s, "__fn_arbitrary", false);
     let local = if (entry == "__fn___fern_arr_dec") { ".Larrdec_ret" } else { ".Lstrfree_ret" };
     check(change(s, local, ".Lrenamed_decrement_return"), entry, true);
-    // Unknown instructions remain literal unproved text, never a successful
-    // machine certificate. The next checker must refuse them when reachable.
     let unknown = text.select(change(s, "movq 8(%rsp), %rax", "unknown_instruction"), entry);
     require(unknown.error == "" && unknown.lines[0] == "unknown_instruction");
     check(s + "\n.data\n__data: .quad 0\n.text\n__next:\nret\n", entry, true);

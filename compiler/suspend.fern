@@ -1,27 +1,9 @@
-// compiler/suspend.fern — inferred suspension: the classifier and
-// the unwind/rewind pass (docs/NET-P3-SUSPENSION-PLAN.md §3).
-//
-// A function that reaches `__task_park` through direct calls is suspendable.
-// Its body is rewritten so that, when the park unwinds (task mode 1), every
-// frame on the way out saves the locals the rest of the body reads and the
-// index of the call it was at to the task's save area and returns a dummy,
-// and when the scheduler runs the task again (mode 2) every frame restores
-// those locals, skips to that call, and makes it again. The rewrite is the structured one: the block,
-// loop and if skeleton stands, straight-line segments run only in normal
-// mode, an if's condition is routed toward the arm holding the target call
-// while rewinding, and a call site runs in normal mode or when it is the
-// target. It runs on the stack IR the typed lowering produces before the
-// peepholes, where every call is `load_local*` for its arguments, the call,
-// and `store_local` for its result, with nothing else on the operand stack.
 import "./ir";
 import "./irtables";
 import "./ssasem";
 import "./typeinfo";
 import "./util";
 
-// Set is the module's suspendable rows by symbol, and whether an indirect
-// call is a suspension site too (a lifted closure body is suspendable, so a
-// call through a value may reach a park).
 pub struct Set { rows: util.NameIndex, classes: string[], indirect: boolean, on: boolean }
 
 pub function none(): Set {
@@ -29,13 +11,6 @@ pub function none(): Set {
   return Set { rows: util.name_index(no), classes: no, indirect: false, on: false };
 }
 
-// classify marks the rows that reach __task_park: the direct callers of a
-// marked row transitively, never a trampoline (std/async's run_task, which
-// calls the entry it drives); every row with a call through a value whose
-// function type is a marked lifted closure's (or is not known), since that
-// call may reach the closure; and, once any lifted closure is marked, every
-// row with a dyn dispatch. Marking a row can mark a closure that calls it, so
-// the last two repeat until nothing changes.
 pub function classify(keys: string[], funcs: ssasem.Func[]): Set {
   let rows: util.NameIndex = util.name_index(keys);
   let marks: boolean[] = [];
@@ -112,10 +87,6 @@ pub function classify(keys: string[], funcs: ssasem.Func[]): Set {
   return Set { rows: util.name_index(names), classes: classes, indirect: any_closure, on: names.len() > 0 };
 }
 
-// closure_sigs is the function types of the marked lifted closures, read off
-// the values that make them (`made` / `made_sigs`, parallel), spelled as
-// value_sig spells a callee's. A marked closure made nowhere, or made as a
-// value of unknown type, is "": it may be reached through any value.
 function closure_sigs(keys: string[], funcs: ssasem.Func[], closed: boolean[], made: string[], made_sigs: string[]): string[] {
   let out: string[] = [];
   let i: i32 = 0;
@@ -132,8 +103,6 @@ function closure_sigs(keys: string[], funcs: ssasem.Func[], closed: boolean[], m
   return out;
 }
 
-// made_as is the types the closure `key`, lifted from `name`, is made with:
-// [""] when it is made nowhere.
 function made_as(key: string, name: string, made: string[], made_sigs: string[]): string[] {
   let sigs: string[] = [];
   let k: i32 = 0;
@@ -149,8 +118,6 @@ function made_as(key: string, name: string, made: string[], made_sigs: string[])
   return sigs;
 }
 
-// value_sig spells the function type of value args[0], or "" when it is not
-// known.
 function value_sig(f: ssasem.Func, args: i32[]): string {
   if (args.len() == 0 || args[0] >= f.values.len()) {
     return "";
@@ -179,9 +146,6 @@ function sig_of(params: typeinfo.Type[], result: typeinfo.Type): string {
   return s + ") => " + typeinfo.spelling(result);
 }
 
-// calls_through reports whether a call through a value of one of the types
-// in `through` may reach a closure of a type in `sigs`; an unknown type, on
-// either side, may reach any.
 function calls_through(through: string[], sigs: string[]): boolean {
   for t in through {
     if (t == "" || util.has_str(sigs, "") || util.has_str(sigs, t)) {
@@ -191,8 +155,6 @@ function calls_through(through: string[], sigs: string[]): boolean {
   return false;
 }
 
-// The save-area class of a row's result: i64 for a wide integer, f64 for a
-// float, a word for the rest.
 function result_class(funcs: ssasem.Func[], i: i32): string {
   if (i >= funcs.len()) {
     return "w";
@@ -214,8 +176,6 @@ function is_lifted(key: string): boolean {
   return __memchr(key, 36, 0) >= 0;
 }
 
-// `seed` closed over `callers`: a row calling a marked row is marked, a
-// trampoline never.
 function spread(seed: boolean[], callers: i32[][], keys: string[]): boolean[] {
   let marks: boolean[] = seed;
   let work: i32[] = [];
@@ -242,8 +202,6 @@ function spread(seed: boolean[], callers: i32[][], keys: string[]): boolean[] {
   return marks;
 }
 
-// is_site reports whether `o` may suspend: a direct call to a suspendable
-// row or to the park, or, with `indirect`, a call through a value.
 function is_site(o: ir.Op, set: Set): boolean {
   if (o.kind_tag == 149) {
     return o.str == "__task_park" || o.str == "__fern_task_park" || set.rows.has(o.str);
@@ -254,13 +212,6 @@ function is_site(o: ir.Op, set: Set): boolean {
   return false;
 }
 
-// Tx is the rewrite in progress: the ops emitted so far, the segment of
-// normal-mode ops not yet guarded, the two slots the pass adds (the target
-// call index, -1 in normal mode, and the scratch an if's condition is routed
-// through), the per-op tables the structure needs, per open scope the
-// producers of the values held on the operand stack under it (which run
-// again after its end), the classes of the spill slots the pass took, the
-// slot liveness (live_in), and per site so far the slots it saves.
 struct Tx {
   out: ir.Op[],
   seg: ir.Op[],
@@ -276,10 +227,6 @@ struct Tx {
   why: string,
 }
 
-// transform rewrites one suspendable function's body. `r` is the lowering's
-// result before the peepholes. A value held on the operand stack across a
-// call site, a condition or a scope whose producer is not a pure value op is
-// spilled to a slot the pass adds.
 pub function transform(r: irtables.LowerResult, set: Set): irtables.LowerResult {
   let t: Tx = run(r, set);
   if (t.why != "") {
@@ -303,8 +250,6 @@ pub function transform(r: irtables.LowerResult, set: Set): irtables.LowerResult 
 function run(r: irtables.LowerResult, set: Set): Tx {
   let (ops, tmps) = stored_results(r, set);
   let n: i32 = ops.len();
-  // Site numbering: before[i] is how many sites precede op i, so a range of
-  // ops holds the sites numbered before[a] .. before[b] - 1.
   let before: i32[] = [];
   let count: i32 = 0;
   let i: i32 = 0;
@@ -319,7 +264,6 @@ function run(r: irtables.LowerResult, set: Set): Tx {
   if (count == 0) {
     return Tx { ...t, out: ops };
   }
-  // Matching else / end for every scope opener.
   let else_of: i32[] = [];
   let end_of: i32[] = [];
   i = 0;
@@ -381,12 +325,6 @@ function run(r: irtables.LowerResult, set: Set): Tx {
   return Tx { ...t, out: util.append_all(prologue(t, r), t.out) };
 }
 
-// stored_results is the body with every site whose value is used in place —
-// a condition, an operand, an argument — storing it to a slot the pass adds
-// and loading it back, so each site is a call and its result's store, the
-// shape the rewrite resumes at. The second result is the added slots'
-// classes. A site with no known result class is left as it is, for site to
-// refuse.
 function stored_results(r: irtables.LowerResult, set: Set): (ir.Op[], string[]) {
   let none: Tx = Tx { out: [], seg: [], ci: r.n_locals, tc: r.n_locals + 1, before: [], else_of: [], end_of: [], carry: [], tmps: [], live: [], saves: [], why: "" };
   let out: ir.Op[] = [];
@@ -409,7 +347,6 @@ function stored_results(r: irtables.LowerResult, set: Set): (ir.Op[], string[]) 
   return (out, tmps);
 }
 
-// The op index where an if's then-arm ends: its else, or its end.
 function arm_end(t: Tx, at: i32): i32 {
   if (t.else_of[at] >= 0) {
     return t.else_of[at];
@@ -417,16 +354,10 @@ function arm_end(t: Tx, at: i32): i32 {
   return t.end_of[at];
 }
 
-// `ci == -1`, the normal-mode test.
 function normal_test(t: Tx): ir.Op[] {
   return [ir.op_load_local(t.ci), ir.op_const_i32(0 - 1), ir.op_bin("eq", 0, false)];
 }
 
-// flush guards the pending segment: it runs in normal mode only. A br inside
-// it gains the depth the guard adds. A value the segment would leave on the
-// operand stack cannot leave the guard; the callers that open a scope or a
-// group carry such values out first, so one left here is a refusal, unless
-// the segment ends in a terminator, after which nothing reads the stack.
 function flush(t: Tx): Tx {
   if (t.seg.len() == 0) {
     return t;
@@ -447,8 +378,6 @@ function flush(t: Tx): Tx {
   return Tx { ...t, out: out, seg: [] };
 }
 
-// ends_control reports a segment holding a br, return or exit, after which
-// the ops that follow it in the segment are unreachable.
 function ends_control(seg: ir.Op[]): boolean {
   for o in seg {
     if (ir.is_terminator_kind(o.kind_tag)) {
@@ -458,10 +387,6 @@ function ends_control(seg: ir.Op[]): boolean {
   return false;
 }
 
-// The slots a frame saves, in the order they are pushed: the body's own,
-// then the spill slots.
-// The prologue: a rewinding frame takes its call index back from the save
-// area and then the locals that site saved, the others start in normal mode.
 function prologue(t: Tx, r: irtables.LowerResult): ir.Op[] {
   let out: ir.Op[] = [ir.op_call_direct("__fern_task_mode", 0), ir.op_const_i32(2), ir.op_bin("eq", 0, false), ir.op_if(0)];
   out = out.append(ir.op_call_direct("__fern_task_pop_w", 0));
@@ -491,8 +416,6 @@ function prologue(t: Tx, r: irtables.LowerResult): ir.Op[] {
   return out;
 }
 
-// The save-area class of a slot: the lowering's i64 and f64 slot lists for
-// the body's own, the class a spill slot was taken with.
 function slot_class(t: Tx, r: irtables.LowerResult, s: i32): string {
   if (s >= r.n_locals + 2) {
     return t.tmps[s - r.n_locals - 2];
@@ -506,12 +429,6 @@ function slot_class(t: Tx, r: irtables.LowerResult, s: i32): string {
   return "w";
 }
 
-// A site: the call's arguments are the ops at the end of the segment that
-// produce its pops(call) values, each a pure value op since the rewind runs
-// them again, and the ops after the call store its result (group_end). The
-// group runs in normal mode or when it is the target; a call that comes back
-// unwinding saves this frame and returns a dummy. Values the segment holds
-// under the arguments are carried past the group.
 function site(t: Tx, r: irtables.LowerResult, set: Set, ops: ir.Op[], at: i32, k: i32): Tx {
   let call: ir.Op = ops[at];
   let start: i32 = arg_start(t.seg, ir.op_pops(call));
@@ -542,7 +459,6 @@ function site(t: Tx, r: irtables.LowerResult, set: Set, ops: ir.Op[], at: i32, k
   out = out.append(ir.op_const_i32(0 - 1));
   out = out.append(ir.op_store_local(t2.ci));
   out = out.append(ir.op_end());
-  // Unwinding: save what the rewind reads, then this site's index, and leave.
   let saved: i32[] = site_saves(t2, r, at, call, util.append_all(args, c.carried));
   out = util.append_all(out, [ir.op_call_direct("__fern_task_mode", 0), ir.op_const_i32(1), ir.op_bin("eq", 0, false), ir.op_if(0)]);
   out = util.append_all(out, save_ops(t2, r, saved, k));
@@ -552,9 +468,6 @@ function site(t: Tx, r: irtables.LowerResult, set: Set, ops: ir.Op[], at: i32, k
   return Tx { ...t2, out: out, seg: c.carried, saves: t2.saves.append(saved) };
 }
 
-// save_ops puts a suspending site's saved slots and then its index in the
-// task's save area: one reservation, whose address the scratch slot holds,
-// and a word stored for each.
 function save_ops(t: Tx, r: irtables.LowerResult, saved: i32[], k: i32): ir.Op[] {
   let out: ir.Op[] = [ir.op_const_i32(saved.len() + 1), ir.op_call_direct("__fern_task_reserve", 1), ir.op_store_local(t.tc)];
   let i: i32 = 0;
@@ -569,7 +482,6 @@ function save_ops(t: Tx, r: irtables.LowerResult, saved: i32[], k: i32): ir.Op[]
   return util.append_all(out, [ir.op_const_i64(k as i64), ir.op_store_i64(), ir.op_drop()]);
 }
 
-// word_at is the address of word i of the reservation the scratch slot holds.
 function word_at(t: Tx, i: i32): ir.Op[] {
   if (i == 0) {
     return [ir.op_load_local(t.tc)];
@@ -577,7 +489,6 @@ function word_at(t: Tx, i: i32): ir.Op[] {
   return [ir.op_load_local(t.tc), ir.op_const_i32(i * 8), ir.op_bin("add", ir.width_ptr(), true)];
 }
 
-// A save-area word holds a slot of each class as 64 bits.
 function to_word(class: string): ir.Op[] {
   if (class == "f64") {
     return [ir.op_f64_bits()];
@@ -598,9 +509,6 @@ function from_word(class: string): ir.Op[] {
   return [ir.op_int_wrap_ptr()];
 }
 
-// The op past a site's group: the call, its result's store and, for a call
-// to a paired function (sempair), the read of the word beside the result and
-// its store, which nothing may call ahead of; -1 where no store follows.
 function group_end(ops: ir.Op[], at: i32): i32 {
   if (at + 1 >= ops.len() || ops[at + 1].kind_tag != 19 && ops[at + 1].kind_tag != 159) {
     return 0 - 1;
@@ -611,10 +519,6 @@ function group_end(ops: ir.Op[], at: i32): i32 {
   return at + 2;
 }
 
-// site_saves is the slots a site at op `at` saves, ascending: the ones live
-// after its result's store, the ones the call itself reads, and the ones
-// loaded by what the rewind runs again before or after it — its arguments,
-// the values carried past it, and those carried past every open scope.
 function site_saves(t: Tx, r: irtables.LowerResult, at: i32, call: ir.Op, again: ir.Op[]): i32[] {
   let n: i32 = r.n_locals + 2 + t.tmps.len();
   let keep: boolean[] = [];
@@ -653,8 +557,6 @@ function mark_reads(own keep: boolean[], ops: ir.Op[]): boolean[] {
   return keep;
 }
 
-// The slots an op reads are read_count(o) from read_lo(o): a load's one, a
-// dyn dispatch's receiver and arguments.
 function read_lo(o: ir.Op): i32 {
   return o.i32_imm;
 }
@@ -677,9 +579,6 @@ function has_bit(bits: i32[], base: i32, s: i32): boolean {
   return (bits[base + s / 32] & 1 << s % 32) != 0;
 }
 
-// live_in is the body's slot liveness: for op i, from i * words(n_slots),
-// the bit set of the slots some path from op i reads before writing. Entry
-// ops.len() is the exit, where nothing is live.
 function live_in(ops: ir.Op[], else_of: i32[], end_of: i32[], n_slots: i32): i32[] {
   let n: i32 = ops.len();
   let w: i32 = words(n_slots);
@@ -714,7 +613,6 @@ function live_in(ops: ir.Op[], else_of: i32[], end_of: i32[], n_slots: i32): i32
   return live;
 }
 
-// live_word is word `j` of the slots live before `o`, from those live after.
 function live_word(o: ir.Op, j: i32, after: i32): i32 {
   let v: i32 = after;
   if ((o.kind_tag == 19 || o.kind_tag == 20) && o.i32_imm / 32 == j) {
@@ -731,8 +629,6 @@ function live_word(o: ir.Op, j: i32, after: i32): i32 {
   return v;
 }
 
-// Flow is each op's successors: the op control reaches next, and the other
-// one a conditional branch or an if may reach, -1 for none.
 struct Flow { next: i32[], jump: i32[] }
 
 function flow(ops: ir.Op[], else_of: i32[], end_of: i32[]): Flow {
@@ -754,8 +650,6 @@ function flow(ops: ir.Op[], else_of: i32[], end_of: i32[]): Flow {
   return Flow { next: next, jump: jump };
 }
 
-// next_op is where control goes after op `at` falls through or branches;
-// `open` holds the openers of the scopes around it.
 function next_op(ops: ir.Op[], at: i32, open: i32[], end_of: i32[]): i32 {
   let k: i32 = ops[at].kind_tag;
   if (k == 157) {
@@ -770,7 +664,6 @@ function next_op(ops: ir.Op[], at: i32, open: i32[], end_of: i32[]): i32 {
   return at + 1;
 }
 
-// jump_op is a brif's target and an if's else arm or end, -1 for any other.
 function jump_op(ops: ir.Op[], at: i32, open: i32[], else_of: i32[], end_of: i32[]): i32 {
   let k: i32 = ops[at].kind_tag;
   if (k == 158) {
@@ -785,8 +678,6 @@ function jump_op(ops: ir.Op[], at: i32, open: i32[], else_of: i32[], end_of: i32
   return end_of[at];
 }
 
-// branch_target is where a branch `depth` scopes out goes: a loop's head, or
-// past a block's or an if's end; out of every scope is the exit.
 function branch_target(ops: ir.Op[], open: i32[], end_of: i32[], depth: i32, n: i32): i32 {
   if (depth >= open.len()) {
     return n;
@@ -798,17 +689,8 @@ function branch_target(ops: ir.Op[], open: i32[], end_of: i32[], depth: i32, n: 
   return end_of[opener];
 }
 
-// Carried is carry_out's answer: the segment to guard, which now ends with
-// the spills, and the producers that make the held values again afterwards.
 struct Carried { t: Tx, prefix: ir.Op[], carried: ir.Op[] }
 
-// carry_out takes the values the segment holds on the operand stack below
-// index `hi` out of it: a value whose producers are pure value ops, none
-// loading a slot `body` stores, is produced again by the same ops after
-// the guard; any other is stored to a spill slot in the segment and loaded
-// again after. The slot's class is the producer's: a call's result class
-// from the set's table, a local's from the lowering. A producer with no
-// known class is a refusal.
 function carry_out(t: Tx, r: irtables.LowerResult, set: Set, hi: i32, body: ir.Op[]): Carried {
   let held: i32 = height(t.seg, 0, hi);
   let lo: i32 = arg_start(sub_ops(t.seg, 0, hi), held);
@@ -846,9 +728,6 @@ function carry_out(t: Tx, r: irtables.LowerResult, set: Set, hi: i32, body: ir.O
   return Carried { t: t2, prefix: util.append_all(sub_ops(t.seg, 0, lo), spills), carried: carried };
 }
 
-// producer_of is the index in `chain`, ops that leave one value on the
-// operand stack, of the op that pushed it: the chain may hold statements
-// after it (a release and its drop) that take and leave nothing of it.
 function producer_of(chain: ir.Op[]): i32 {
   let stack: i32[] = [];
   let i: i32 = 0;
@@ -869,9 +748,6 @@ function producer_of(chain: ir.Op[]): i32 {
   return stack[stack.len() - 1];
 }
 
-// The spill class of the value an op produces: a local's slot class, a
-// direct call's result class from the set's table, "w" for the pointer the
-// composite and string makers answer, "" when unknown.
 function value_class(t: Tx, r: irtables.LowerResult, set: Set, o: ir.Op): string {
   if (o.kind_tag == 18) {
     return slot_class(t, r, o.i32_imm);
@@ -889,7 +765,6 @@ function value_class(t: Tx, r: irtables.LowerResult, set: Set, o: ir.Op): string
   return "";
 }
 
-// height is the operand stack's net growth over seg[lo..hi).
 function height(seg: ir.Op[], lo: i32, hi: i32): i32 {
   let h: i32 = 0;
   let i: i32 = lo;
@@ -900,9 +775,6 @@ function height(seg: ir.Op[], lo: i32, hi: i32): i32 {
   return h;
 }
 
-// arg_start is the index in `seg` where the ops producing its last `n`
-// values begin, read back from the end by each op's pops and pushes; -1
-// when the segment does not produce them.
 function arg_start(seg: ir.Op[], n: i32): i32 {
   if (n < 0) {
     return 0 - 1;
@@ -949,7 +821,6 @@ function sub_carry(xs: ir.Op[][], n: i32): ir.Op[][] {
   return out;
 }
 
-// stores_slot reports whether any op in `ops` writes local `slot`.
 function stores_slot(ops: ir.Op[], slot: i32): boolean {
   for o in ops {
     if ((o.kind_tag == 19 || o.kind_tag == 20) && o.i32_imm == slot) {
@@ -969,26 +840,17 @@ function dummy(r: irtables.LowerResult): ir.Op {
   return ir.op_const_i32(0);
 }
 
-// An if: its condition, the segment's last value, is taken in normal mode;
-// while rewinding the then-arm is entered when the target lies in it. The
-// values held under the if are produced again after its end.
 function routed_if(t: Tx, r: irtables.LowerResult, set: Set, ops: ir.Op[], at: i32): Tx {
   let t2: Tx = routed_cond(t, r, set, t.before[at + 1], t.before[arm_end(t, at)], sub_ops(ops, at + 1, t.end_of[at]));
   return Tx { ...t2, out: util.append_all(t2.out, [ir.op_load_local(t2.tc), ir.op_if(0)]), seg: [], carry: t2.carry.append(t2.seg) };
 }
 
-// A brif never branches while rewinding. The values held under its
-// condition are produced again after it.
 function routed_brif(t: Tx, r: irtables.LowerResult, set: Set, o: ir.Op): Tx {
   let no: ir.Op[] = [];
   let t2: Tx = routed_cond(t, r, set, 0, 0, no);
   return Tx { ...t2, out: util.append_all(t2.out, [ir.op_load_local(t2.tc), o]) };
 }
 
-// routed_cond stores the condition the segment computes in normal mode, and
-// `lo <= ci < hi` while rewinding, into the scratch slot. The values the
-// segment holds under the condition are carried out of the guard; `body`
-// is what runs before they are produced again.
 function routed_cond(t: Tx, r: irtables.LowerResult, set: Set, lo: i32, hi: i32, body: ir.Op[]): Tx {
   let cstart: i32 = arg_start(t.seg, 1);
   if (cstart < 0) {
@@ -1020,8 +882,6 @@ function routed_cond(t: Tx, r: irtables.LowerResult, set: Set, lo: i32, hi: i32,
   return Tx { ...c.t, out: out, seg: c.carried };
 }
 
-// open_scope guards the segment before a block or loop and keeps the
-// producers of the values held under the scope to run again after its end.
 function open_scope(t: Tx, r: irtables.LowerResult, set: Set, ops: ir.Op[], at: i32): Tx {
   let c: Carried = carry_out(t, r, set, t.seg.len(), sub_ops(ops, at + 1, t.end_of[at]));
   if (c.t.why != "") {
@@ -1031,8 +891,6 @@ function open_scope(t: Tx, r: irtables.LowerResult, set: Set, ops: ir.Op[], at: 
   return Tx { ...t2, carry: t2.carry.append(c.carried) };
 }
 
-// dump_if_asked prints a function's ops to stderr when FERN_SUSPEND_DUMP
-// names it: one line per op with its index, kind, immediate and string.
 pub function dump_if_asked(r: irtables.LowerResult, stage: string): void {
   match (env("FERN_SUSPEND_DUMP")) {
     Some(name) => {

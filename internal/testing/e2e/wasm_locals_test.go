@@ -8,11 +8,6 @@ import (
 	"testing"
 )
 
-// TestWasmManyTemporariesInOneFunction is #12078: the lowering gives every
-// temporary a slot of its own, and before the wasm backend coalesced them each
-// slot was a local, so a long enough function declared more than the 50,000
-// locals wasmtime accepts and the module failed to load. These 1,600
-// statements made about 54,000.
 func TestWasmManyTemporariesInOneFunction(t *testing.T) {
 	const n = 1600
 	var b strings.Builder
@@ -34,12 +29,6 @@ func TestWasmManyTemporariesInOneFunction(t *testing.T) {
 	}
 }
 
-// wasmLocalsProbeSrc puts a value in each position where sharing a local
-// would be wrong if a live range were cut short: carried around a loop, read
-// on a path that skipped its store, live into a nested loop, of each wasm
-// type, and in the consecutive slots a dyn dispatch reads by offset. The
-// functions are @noinline so n stays a runtime value: inlined into main with a
-// constant argument, their loops fold away.
 const wasmLocalsProbeSrc = `import "std/i32";
 import "std/i64";
 import "std/f64";
@@ -143,8 +132,6 @@ function main(): i32 {
 }
 `
 
-// TestWasmLocalsProbeMatchesInterp runs wasmLocalsProbeSrc on wasm and on the
-// interpreter, which has no locals to share, and wants the same output.
 func TestWasmLocalsProbeMatchesInterp(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "probe.fern")
 	if err := os.WriteFile(path, []byte(wasmLocalsProbeSrc), 0o644); err != nil {

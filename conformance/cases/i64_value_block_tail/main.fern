@@ -1,9 +1,9 @@
-// A 64-bit value-block TAIL: an if / match expression that is the value of a
-// block, reached with a statement PRECEDING it. That route (lower_value_block's
-// non-return tail) once emitted wasm the validator rejected — the array
-// literal's ops landed ahead of the branch computing the value, so the store
-// read a slot nothing wrote (#6267). Nothing pinned the shape afterwards, which
-// is why it was possible for the issue's repro to start passing unnoticed.
+
+
+
+
+
+
 enum Pick { Lo, Hi }
 
 function boxed(p: i64): i64[] {
@@ -31,10 +31,10 @@ function main(): i32 {
     if (led_u(9u64) != 30u64) { return 5; }
     if (picked(5i64, Lo) != 11i64) { return 6; }
     if (picked(5i64, Hi) != 110i64) { return 7; }
-    // Above 2^31, which is what makes this a gate. The defect widened the block
-    // value from a TRUNCATED i32, so every assertion above still passed on the
-    // register backends while the answer was silently wrong here — only wasm,
-    // whose validator rejects the mismatched extend outright, failed loudly.
+
+
+
+
     if (led(5000000000i64) != 15000000003i64) { return 8; }
     if (picked(4000000000i64, Lo) != 8000000001i64) { return 9; }
     return 0;

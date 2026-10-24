@@ -126,8 +126,6 @@ function main(): i32 { let o = first(Ok(4294967297i64), Err("payload" + "!")); m
 				if tc.name == "owned-error" || tc.name == "shared-context" || tc.name == "user-owned" || tc.name == "user-shared-context" {
 					assertBalancedCensus(t, stderr)
 				} else {
-					// Scalar variants may be completely eliminated. A census
-					// must still be present and balanced, including at zero.
 					allocs, frees, live := leakSummaryOf(t, tc.name, stderr)
 					if allocs != frees || live != 0 {
 						t.Fatalf("unbalanced census: allocs=%d frees=%d live=%d", allocs, frees, live)
@@ -138,8 +136,6 @@ function main(): i32 { let o = first(Ok(4294967297i64), Err("payload" + "!")); m
 	}
 }
 
-// Lifted partial spellings must retain absent enum arguments even when the
-// receiving scope also substitutes a declaration's type variables.
 func TestSelfHostPartialEnumSubstitution(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -181,8 +177,6 @@ function main(): i32 {
 	}
 }
 
-// Cloned instantiation metadata must follow the module prefix just as the
-// declaration does. Two modules may declare the same local enum/variant names.
 func TestSelfHostPartialEnumModuleContext(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	dir := t.TempDir()

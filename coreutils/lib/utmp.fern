@@ -1,95 +1,7 @@
-// coreutils/lib/utmp.fern — the login-accounting database, as the
-// utilities that read it see it.
-//
-// `logname` needs one entry out of it; `users`, `who` and `pinky` need
-// the whole file, so the record and the scan live here rather than in
-// any one of them.
-//
-// The file is a flat array of fixed-size records with no header, so
-// reading it is a byte offset and a width per field — and the WIDTHS
-// are the whole of the per-system difference. Linux's `struct utmp` and
-// `struct utmpx` are the same record, and everything up to ut_exit is
-// the same on every architecture:
-//
-//   ut_type     i16   @0    what the entry records (see the types below)
-//   ut_pid      i32   @4
-//   ut_line     [32]  @8    the terminal, with no `/dev/` prefix
-//   ut_id       [4]   @40
-//   ut_user     [32]  @44
-//   ut_host     [256] @76
-//   ut_exit           @332  two i16
-//
-// The TAIL is not. glibc sizes ut_session and ut_tv by
-// __WORDSIZE_TIME64_COMPAT32, so that a 32-bit and a 64-bit process on
-// the same machine share one file format. Where that macro is 1 — x86-64,
-// which had a 32-bit predecessor — the two fields keep their 32-bit
-// widths and the record is 384 bytes:
-//
-//   ut_session  i32   @336
-//   ut_tv             @340  two i32: seconds, microseconds
-//   ut_addr_v6  [16]  @348
-//   (reserved)  [20]  @364          384 total
-//
-// Where it is 0 — arm64, which never had one — ut_session is a `long`
-// and ut_tv a real `struct timeval`, and the record is 400 bytes:
-//
-//   ut_session  i64   @336
-//   ut_tv             @344  two i64: seconds, microseconds
-//   ut_addr_v6  [16]  @360
-//   (reserved)  [20]  @376          400 total
-//
-// So the stride and the timestamp's offset and width come from the
-// TARGET, not from the host that compiled this.
-//
-// Darwin's database is /var/run/utmpx, and its records are Libc's
-// `struct utmpx32` whatever the process's word size: 628 bytes, with no
-// ut_exit and no ut_session.
-//
-//   ut_user     [256] @0
-//   ut_id       [4]   @256
-//   ut_line     [32]  @260
-//   ut_pid      i32   @292
-//   ut_type     i16   @296
-//   ut_tv             @300  two i32: seconds, microseconds
-//   ut_host     [256] @308
-//   (reserved)  [64]  @564          628 total
-//
-// The first record is a signature, type 10 with `utmpx-1.00` as its
-// user, and getutxent(3) reads nothing from a file without one. Nor
-// will it read a file whose name does not end in `x`: utmpxname(3)
-// refuses that name, GNU ignores the refusal, and the read goes to the
-// live database instead.
-//
-// A char array is NUL-padded but NOT necessarily NUL-terminated: a name
-// exactly 32 bytes long fills the field, so a reader that stops at the
-// NUL has to stop at the field's end as well.
-//
-// The database is not always there. A container, and any system whose
-// init does not keep one, has no /var/run/utmp at all — and the callers
-// treat that as "nobody is logged in" rather than as an error, which is
-// what GNU does with a file it cannot read.
-//
-// Two rules belong to the record rather than to any one utility, and
-// both are visible in the output of all four:
-//
-//   - A LOGGED-IN user is a `user_process` entry whose ut_user is not
-//     empty. The second half is not redundant — an entry left behind
-//     with its type intact and its name cleared is not a login, and
-//     `users`, `who -q` and `pinky` all skip it while `who` still
-//     prints it as the process it names.
-//   - The name is read with TRAILING SPACES REMOVED, since a system
-//     that pads the field with blanks rather than NULs is one the
-//     record cannot distinguish from one that does not. The line and
-//     the host are NOT trimmed: `who` pads them into columns and
-//     prints what is there.
 import "std/string";
 import "std/array";
 import "./tty";
 
-// The record types this reads. USER_PROCESS is the only one that names
-// a logged-in user; the rest describe the run level, the boot time, an
-// init or login process that has not yet been claimed, and the tail of
-// one that has.
 pub function empty_type(): i32 {
   return 0;
 }
@@ -102,7 +14,6 @@ pub function boot_time(): i32 {
   return 2;
 }
 
-// Darwin numbers the two halves of a clock change the other way round.
 pub function new_time(): i32 {
   if (darwin()) {
     return 4;
@@ -141,9 +52,6 @@ function darwin(): boolean {
   return target_os() == "darwin";
 }
 
-// `__WORDSIZE_TIME64_COMPAT32` is 1 only on an architecture that had a
-// 32-bit predecessor sharing this file format. Of the targets that have a
-// utmp database at all, x86-64 is that one and arm64 is not.
 function time64_compat32(): boolean {
   return target_arch() == "x86-64";
 }
@@ -158,8 +66,6 @@ pub function record_bytes(): i32 {
   return 400;
 }
 
-// ut_tv.tv_sec: an i32 at 340 where the compat layout applies, an i64 at
-// 344 where it does not.
 function sec_at(bs: u8[], off: i32): i64 {
   if (time64_compat32()) {
     return i32_at(bs, off + 340) as i64;
@@ -167,13 +73,8 @@ function sec_at(bs: u8[], off: i32): i64 {
   return i64_at(bs, off + 344);
 }
 
-// One record, reduced to the fields a utility prints or matches on.
 pub struct Entry { kind: i32, pid: i32, line: string, id: string, user: string, host: string, sec: i64, term: i32, exit: i32 }
 
-// The default database. GNU builds against `_PATH_UTMP`, which is
-// /var/run/utmp on Linux — a symlink into /run on any system with a
-// tmpfs /run, so opening the traditional name finds the live file — and
-// `_PATH_UTMPX` on Darwin.
 pub function default_path(): string {
   if (darwin()) {
     return "/var/run/utmpx";
@@ -181,8 +82,6 @@ pub function default_path(): string {
   return "/var/run/utmp";
 }
 
-// The file a read of `path` opens: utmpxname(3)'s rule on Darwin, which
-// takes only a name shorter than MAXPATHLEN that ends in `x`.
 function opened_path(path: string): string {
   if (!darwin() || path.len() > 0 && path.len() < 1024 && path[path.len() - 1] as i32 == 120) {
     return path;
@@ -190,14 +89,10 @@ function opened_path(path: string): string {
   return default_path();
 }
 
-// A little-endian unsigned 16-bit field.
 function u16_at(bs: u8[], off: i32): i32 {
   return bs[off] as i32 + bs[off + 1] as i32 * 256;
 }
 
-// A little-endian SIGNED 16-bit field. ut_exit's two halves are C
-// `short`s and `who -d` prints them with %d, so a wait status with the
-// high bit set is a negative number there.
 function i16_at(bs: u8[], off: i32): i32 {
   let v: i32 = u16_at(bs, off);
   if (v > 32767) {
@@ -206,7 +101,6 @@ function i16_at(bs: u8[], off: i32): i32 {
   return v;
 }
 
-// A little-endian signed 32-bit field.
 function i32_at(bs: u8[], off: i32): i32 {
   let v: i64 = bs[off] as i64 + bs[off + 1] as i64 * (256 as i64) + bs[off + 2] as i64 * (65536 as i64) + bs[off + 3] as i64 * (16777216 as i64);
   if (v > 2147483647 as i64) {
@@ -215,7 +109,6 @@ function i32_at(bs: u8[], off: i32): i32 {
   return v as i32;
 }
 
-// A little-endian signed 64-bit field.
 function i64_at(bs: u8[], off: i32): i64 {
   let v: i64 = 0 as i64;
   let i: i32 = 7;
@@ -226,8 +119,6 @@ function i64_at(bs: u8[], off: i32): i64 {
   return v;
 }
 
-// A NUL-padded fixed-width char field, cut at the first NUL or at the
-// field's end, whichever comes first.
 function field_at(bs: u8[], off: i32, width: i32): string {
   let n: i32 = 0;
   while (n < width && bs[off + n] as i32 != 0) {
@@ -249,8 +140,6 @@ function entry_at(bs: u8[], off: i32): Entry {
   return Entry { kind: u16_at(bs, off + 0), pid: i32_at(bs, off + 4), line: field_at(bs, off + 8, 32), id: field_at(bs, off + 40, 4), user: field_at(bs, off + 44, 32), host: field_at(bs, off + 76, 256), sec: sec_at(bs, off), term: i16_at(bs, off + 332), exit: i16_at(bs, off + 334) };
 }
 
-// Every whole record in `path`, in file order. A missing or unreadable
-// file, and a trailing partial record, are both "no more entries".
 pub function read_all(path: string): Entry[] {
   match (read_all_result(path)) {
     Ok(entries) => {
@@ -263,9 +152,6 @@ pub function read_all(path: string): Entry[] {
   }
 }
 
-// The same read with the failure kept, for the one caller that reports
-// it: `uptime` has no boot time when the database cannot be read, and
-// names the errno of the failed open in that diagnostic.
 pub function read_all_result(path: string): Result[Entry[], IoError] {
   let out: Entry[] = [];
   match (read_file_bytes(opened_path(path))) {
@@ -289,8 +175,6 @@ pub function read_all_result(path: string): Result[Entry[], IoError] {
   }
 }
 
-// Whether a Darwin database opens with the signature record getutxent(3)
-// insists on.
 function signed(bs: u8[]): boolean {
   if (bs.len() < record_bytes() || u16_at(bs, 296) != signature_type()) {
     return false;
@@ -306,13 +190,10 @@ function signed(bs: u8[]): boolean {
   return bs[magic.len()] as i32 == 0;
 }
 
-// Whether an entry records a user who is logged in — the rule all four
-// utilities filter on.
 pub function (e: Entry) is_login(): boolean {
   return e.kind == user_process() && e.user.len() > 0;
 }
 
-// The entry's user name with trailing spaces removed.
 pub function (e: Entry) name(): string {
   let n: i32 = e.user.len();
   while (n > 0 && e.user[n - 1] as i32 == 32) {
@@ -324,7 +205,6 @@ pub function (e: Entry) name(): string {
   return slice_unchecked(e.user, 0, n) + "";
 }
 
-// Every logged-in user's entry in `path`, in file order.
 pub function read_logins(path: string): Entry[] {
   let all: Entry[] = read_all(path);
   let out: Entry[] = [];
@@ -338,10 +218,6 @@ pub function read_logins(path: string): Entry[] {
   return out;
 }
 
-// The device file an entry's ut_line names. A line that is already an
-// absolute path is one, and anything else hangs under /dev — which is
-// how `who` and `pinky` find the terminal whose mode is the message
-// status and whose atime is the idle time.
 pub function device_path(line: string): string {
   if (line.len() > 0 && line[0] as i32 == 47) {
     return line;
@@ -349,16 +225,11 @@ pub function device_path(line: string): string {
   return "/dev/" + line;
 }
 
-// What a terminal's stat says about it: whether it is there at all,
-// whether its group may write to it, and when it was last read.
 pub struct Line { present: boolean, writable: boolean, atime: i64 }
 
 pub function line_info(l: string): Line {
   match (stat(device_path(l))) {
     Ok(st) => {
-      // S_IWGRP is 0o20, which is 16 — the bit `mesg y` sets and `mesg n`
-      // clears. 32 is 0o40, S_IRGRP, and a terminal at the usual 0620 has
-      // one set and the other clear.
       return Line { present: true, writable: (st.mode & 16 as u32) != 0 as u32, atime: st.atime };
     },
     Err(_) => {
@@ -367,10 +238,6 @@ pub function line_info(l: string): Line {
   }
 }
 
-// ttyname(0) minus its `/dev/` prefix — the form ut_line carries, which
-// is what `logname` matches a session against and what `who -m` filters
-// on. Naming the terminal is `lib/tty.fern`; the prefix is the only part
-// of it that belongs to the record.
 pub function terminal_line(): Option[string] {
   match (tty.name_of_stdin()) {
     Some(path) => {
@@ -385,9 +252,6 @@ pub function terminal_line(): Option[string] {
   }
 }
 
-// The user logged in on terminal `line`, as getlogin(3) asks it: the
-// first USER_PROCESS record whose ut_line is that terminal, with a
-// non-empty name. `line` carries no `/dev/` prefix, matching the field.
 pub function user_on_line(path: string, line: string): Option[string] {
   let entries: Entry[] = read_all(path);
   let i: i32 = 0;

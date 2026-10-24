@@ -1,13 +1,13 @@
 import "core/map";
 import "std/i32";
-// An f32 map VALUE column through every crossing: insert, get, get_or's
-// fallback and result, values(), a map literal, a string key's insert, and
-// iteration. Native's SSA backends hold a float as an f64 and wasm types the
-// operand, so each crossing needs its own conversion there (#10398); the
-// self-host's typed path refused the column outright (#10403).
-//
-// It prints its verdict rather than exiting with it, because a WASI component
-// reports every non-zero status as 1.
+
+
+
+
+
+
+
+
 function check(): i32 {
     let m: Map[i32, f32] = map_new(4);
     let i: i32 = 0;

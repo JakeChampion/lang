@@ -1,7 +1,7 @@
 import "std/i32";
 
-// `default` is an ordinary identifier: a variable, a parameter, a field, a
-// function and a method may all be called it (#12708).
+
+
 struct Opts { default: i32 }
 
 function default(): i32 { return 7; }

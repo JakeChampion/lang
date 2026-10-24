@@ -8,22 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/pkg/modload"
 )
 
-// E043's "it has:" list and its did-you-mean must be scoped to the methods
-// THIS receiver can call. A collection namespace is shared across element
-// types — `Array` holds `avg` (i32[] only), `join` (string[] only) and `len`
-// (anything) side by side — so an unfiltered list advertises to an `i32[]`
-// receiver an API it does not have.
-//
-// That is not merely noisy: following one of those names turns the E043 into
-// an E038, which is worse than the original typo, because the reader now
-// believes the method exists.
-//
-// Since #2663 the list also has to get the OTHER direction right. The verbs
-// that are element-polymorphic (`max` / `count` / `sorted_asc` /
-// `take` / `drop` / `reverse` / `distinct`) really do apply to both
-// receivers, so a filter that still keyed them by element type would now be
-// hiding a method that exists. Both kinds of row are checked below.
-
 func e043Message(t *testing.T, src string) string {
 	t.Helper()
 	prog, _, err := modload.LoadSource(src)
@@ -38,8 +22,6 @@ func e043Message(t *testing.T, src string) string {
 }
 
 func TestUnknownMethodListsOnlyApplicableMethods(t *testing.T) {
-	// `std/i32` is imported so the full stdlib Array namespace is registered;
-	// without it the list is just the three builtins and proves nothing.
 	const intRecv = `import "std/i32";
 function main(): i32 {
     let a: i32[] = [3, 1, 2];
@@ -52,17 +34,13 @@ function main(): i32 {
     return n;
 }`
 
-	// Each name is checked in the list it belongs to AND in the one it does
-	// not, so a filter that dropped everything would fail as loudly as one
-	// that dropped nothing.
 	cases := []struct {
 		method   string
-		onInt    bool // applicable to i32[]
-		onString bool // applicable to string[]
+		onInt    bool
+		onString bool
 	}{
 		{"len", true, true},
 		{"append", true, true},
-		// Element-polymorphic since #2663: applicable to BOTH receivers.
 		{"max", true, true},
 		{"count", true, true},
 		{"is_sorted", true, true},
@@ -70,18 +48,12 @@ function main(): i32 {
 		{"drop", true, true},
 		{"reverse", true, true},
 		{"distinct", true, true},
-		// Element-polymorphic, but bounded on traits string does not
-		// implement: `sum` needs `num.Add + num.Zero`, `product`
-		// `num.Mul + num.One`. Listed for i32[] and not for string[],
-		// which takes reading the BOUND — the receiver is `T[]` either way.
 		{"sum", true, false},
 		{"product", true, false},
-		// Genuinely element-specific: integer division / an i32 identity.
 		{"avg", true, false},
 		{"median", true, false},
 		{"cumsum", true, false},
 		{"gcd_all", true, false},
-		// Genuinely element-specific: about strings.
 		{"join", false, true},
 		{"sum_lens", false, true},
 		{"all_starts_with", false, true},
@@ -99,9 +71,6 @@ function main(): i32 {
 	}
 }
 
-// listed reports whether the diagnostic's comma-separated "(it has: …)" list
-// contains exactly this name. Substring matching would not do: `sum` occurs
-// inside `sum_by`, `cumsum` and `sum_lens`.
 func listed(msg, method string) bool {
 	open := strings.Index(msg, "(it has: ")
 	if open < 0 {
@@ -120,9 +89,6 @@ func listed(msg, method string) bool {
 	return false
 }
 
-// The did-you-mean is filtered too. Suggesting a method the receiver cannot
-// call sends the reader to an E038 one compile later, having taught them a
-// method exists when it does not.
 func TestUnknownMethodDoesNotSuggestAnInapplicableMethod(t *testing.T) {
 	msg := e043Message(t, `import "std/i32";
 function main(): i32 {
@@ -135,8 +101,6 @@ function main(): i32 {
 	}
 }
 
-// …and a typo of a method the receiver DOES have is still corrected. The
-// filter must only remove names it can prove inapplicable.
 func TestUnknownMethodStillSuggestsAnApplicableMethod(t *testing.T) {
 	msg := e043Message(t, `import "std/i32";
 function main(): i32 {

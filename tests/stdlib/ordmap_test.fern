@@ -3,13 +3,6 @@ import "std/ordmap" as ordmap;
 import "std/option";
 import "std/i32";
 
-// tests/stdlib/ordmap_test.fern — pure-Fern coverage of std/ordmap, the
-// persistent ordered map (weight-balanced tree). The essential
-// contracts exercised here are STRUCTURAL SHARING (a snapshot taken
-// before an update is unchanged after it, for inserts, removes, and the
-// set algebra), the balance / ordering invariants after every kind of
-// update (`is_valid`), and sorted iteration with rank access. i32 and
-// string keys are both covered.
 function test_new_is_empty(): test.TestOutcome {
   let m: ordmap.OrdMap[i32, i32] = ordmap.ordmap_new();
   if (!m.is_empty() || m.len() != 0) {
@@ -40,9 +33,6 @@ function test_insert_replaces(): test.TestOutcome {
   return test.assert_eq(m.get_or(1, -1), 11);
 }
 
-// Structural sharing: the snapshot keeps its entries while the updated
-// map moves on. The regression guard for an in-place path rewrite
-// leaking into a value another binding still holds.
 function test_insert_is_persistent(): test.TestOutcome {
   let m: ordmap.OrdMap[i32, i32] = ordmap.ordmap_new();
   let i: i32 = 0;
@@ -96,7 +86,6 @@ function test_remove(): test.TestOutcome {
   if (m.contains(1) || !m.contains(3) || !keep.contains(1)) {
     return test.fail("membership after remove");
   }
-  // Removing an absent key is a no-op.
   return test.assert_eq(m.remove(1).len(), 100);
 }
 
@@ -152,7 +141,6 @@ function test_update_map_filter(): test.TestOutcome {
   if (u.get_or(2, -1) != 200 || m.get_or(2, -1) != 2) {
     return test.fail("update");
   }
-  // An absent key takes `f(init)`.
   let a: ordmap.OrdMap[i32, i32] = m.update(9, 7, (v: i32) => v + 1);
   if (a.len() != 5 || a.get_or(9, -1) != 8 || m.contains(9)) {
     return test.fail("update absent");
@@ -181,7 +169,6 @@ function test_set_algebra(): test.TestOutcome {
     b = b.insert(i, 2);
     i = i + 1;
   }
-  // On a key in both, merge takes the other map's value.
   let u: ordmap.OrdMap[i32, i32] = a.merge(b);
   if (u.len() != 750 || !u.is_valid() || u.get_or(300, -1) != 2 || u.get_or(100, -1) != 1 || u.get_or(600, -1) != 2) {
     return test.fail("merge (other wins)");
@@ -194,7 +181,6 @@ function test_set_algebra(): test.TestOutcome {
   if (d.len() != 250 || !d.is_valid() || d.contains(300) || !d.contains(100)) {
     return test.fail("difference");
   }
-  // The operands are untouched.
   return test.assert_true(a.len() == 500 && b.len() == 500);
 }
 
@@ -233,7 +219,6 @@ function test_string_keys(): test.TestOutcome {
 function test_for_each(): test.TestOutcome {
   let m: ordmap.OrdMap[i32, i32] = ordmap.from([(2, 20), (1, 10)]);
   let seen: i32 = 0;
-  // Key order: 1 then 2, so the running total is 110 then 110 * 3 + 220.
   function visit(k: i32, v: i32): void {
     seen = seen * 3 + k * 100 + v;
   }

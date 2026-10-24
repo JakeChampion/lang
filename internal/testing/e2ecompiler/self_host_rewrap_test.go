@@ -8,12 +8,6 @@ import (
 	"testing"
 )
 
-// `(j - i) as i64` wraps the i32 difference and then extends it. The wrap
-// already leaves the register sign-extended, so the extend flows through the
-// lift (ssa_lift.sign_extended32) and the difference is sign-extended once.
-// `f(9, 4, 10)` is 15 and `f(3, 8, 100)`, a negative difference, is 95. The
-// negative case is compared at i64: a zero-extended wrap is off by 2^32, which
-// a truncation to the exit code would discard.
 const rewrapProg = `@noinline function f(j: i32, i: i32, p: i64): i64 { return p + (j - i) as i64; }
 function main(): i32 {
     if (f(3, 8, 100i64) == 95i64) { return f(9, 4, 10i64) as i32; }

@@ -8,11 +8,6 @@ import (
 	"testing"
 )
 
-// A Writer's write builds as a wasm component (#10206). stdout() and stderr()
-// are fds 1 and 2, so the write goes through the same preview2 stream shim
-// print and eprint use. A stderr() Writer selects the stderr framing on its
-// own, with no eprint in the program. Each program must match native's
-// component on stdout, stderr and exit code.
 func TestSelfHostWasmComponentWriter(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping component writer e2e")

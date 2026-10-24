@@ -2,11 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// The large tier rounds a >= 512 KiB block up to native's 3-significant-bit
-// capacity (#9077), so ten live 525,024-byte strings bump 640 KiB each, 6 MiB in
-// all, where the earlier 512-KiB-multiple classes bumped 1 MiB each. The program
-// exits with the MiB the ten concatenations bumped, after checking their total
-// length.
 const largeTierGeometricSrc = `function main(): i32 {
     let unit: string = "abcdefgh";
     let half: string = "";

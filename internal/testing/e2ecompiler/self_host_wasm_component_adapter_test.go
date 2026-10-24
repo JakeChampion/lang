@@ -9,18 +9,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostWasmComponentAdapter exercises the *adapter* route to I/O
-// components. The self-host emits a normal WASI-preview1 *command* core
-// (including fd_write for output); composing that core with the
-// preview1→preview2 adapter via `wasm-tools component new --adapt` yields a
-// wasi:cli/run component that runs under wasmtime with real I/O — no preview2
-// codegen needed.
-//
-// Pipeline: source → wasm_run (preview1 WAT) → emit_binary (preview1 core)
-// → wasm-tools component new --adapt → wasi:cli/run component.
-//
-// (TestSelfHostWasmComponentFull covers the adapter-free no-I/O path; this
-// covers the adapter path, which works for printing / file I/O too.)
 func TestSelfHostWasmComponentAdapter(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -43,8 +31,6 @@ func TestSelfHostWasmComponentAdapter(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
-	// The binary core assembler (read target.wat, emit_binary, print bytes)
-	// — shared with TestSelfHostWasmBinary (asmReadFileDriver).
 	var asmSrc strings.Builder
 	for _, name := range []string{"watbin.fern"} {
 		b, err := os.ReadFile(filepath.Join("../../../compiler", name))
@@ -73,7 +59,6 @@ func TestSelfHostWasmComponentAdapter(t *testing.T) {
 		{"loop-print", "function main(): i32 { let i: i32 = 0; while (i < 3) { print_int(i); i = i + 1; } return 0; }", "012"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			// source → preview1 core WAT → preview1 core binary
 			wat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(tc.source)))
 			if len(wat) == 0 {
 				t.Fatal("preview1 WAT empty")
@@ -98,7 +83,6 @@ func TestSelfHostWasmComponentAdapter(t *testing.T) {
 				t.Fatalf("write core: %v", err)
 			}
 
-			// Compose with the preview1 adapter → a wasi:cli/run component.
 			compPath := filepath.Join(dir, tc.name+".component.wasm")
 			cnew := exec.Command(wasmtools, "component", "new", corePath,
 				"--adapt", "wasi_snapshot_preview1="+adapter, "-o", compPath)
@@ -113,7 +97,6 @@ func TestSelfHostWasmComponentAdapter(t *testing.T) {
 				t.Errorf("component missing wasi:cli/run export:\n%s", pout)
 			}
 
-			// Run the component; assert its stdout.
 			got, err := exec.Command(wasmtime, "run", compPath).Output()
 			if err != nil {
 				t.Fatalf("wasmtime run component: %v", err)

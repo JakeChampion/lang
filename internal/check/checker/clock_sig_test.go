@@ -8,14 +8,11 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// `clock_resolution()` is one i64 of nanoseconds like every other clock
-// builtin, and `clock_set(sec, nsec)` answers a Result[void, IoError] the
-// caller has to look at: the usual answer is EPERM.
 func TestClockBuiltinSignatures(t *testing.T) {
 	cases := []struct {
 		name string
 		src  string
-		want string // "" = must type-check
+		want string
 	}{
 		{"resolution is an i64", `function main(): i32 { let r: i64 = clock_resolution(); if (r > 0) { return 0; } return 1; }`, ""},
 		{"resolution is not a string", `function main(): i32 { let r: string = clock_resolution(); return 0; }`, "i64"},

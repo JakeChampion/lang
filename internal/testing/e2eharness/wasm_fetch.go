@@ -7,9 +7,6 @@ import (
 	"time"
 )
 
-// StartDelayedUpstream listens on a loopback port and answers each
-// connection, after reading the request and waiting delay, with a 200
-// carrying body. It returns the port.
 func StartDelayedUpstream(t *testing.T, body string, delay time.Duration) int {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -37,8 +34,6 @@ func StartDelayedUpstream(t *testing.T, body string, delay time.Duration) int {
 	return ln.Addr().(*net.TCPAddr).Port
 }
 
-// wasmFetchPrelude reads an upstream port from the environment and decodes
-// a body, for the two programs below.
 const wasmFetchPrelude = `import "std/async";
 import "std/fetch";
 import "std/net";
@@ -55,9 +50,6 @@ function loopback(p: i32): net.SocketAddr { return net.socket_addr(net.ipv4_loop
 function text(b: u8[]): string { match (utf8.from_bytes(b)) { Some(t) => { return t; }, None => { return "?"; } } }
 `
 
-// WasmFetchFanoutSource fans two `fetch_future` reads, from the upstreams
-// on PSLOW and PFAST, out through `async.gather` and prints both bodies in
-// input order.
 const WasmFetchFanoutSource = wasmFetchPrelude + `
 function main(): i32 {
     let none: u8[] = [];
@@ -71,8 +63,6 @@ function main(): i32 {
     return 0;
 }`
 
-// WasmRaceFetchSource races two `fetch_future` reads, from the upstreams on
-// PA and PB, through `async.race` and prints the winner's body.
 const WasmRaceFetchSource = wasmFetchPrelude + `
 function main(): i32 {
     let none: u8[] = [];

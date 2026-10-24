@@ -1,11 +1,11 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// A map value read out and back many times, with the map outliving
-// every read (#6561). `m.get(k)` hands back a reference the MAP
-// still owns, so the box reclaim added for the lookup leak must not
-// reach the payload: a string value read 200 times and read once
-// more afterwards is 200 * 28 + 28.
+
+
+
+
+
+
+
+
 import "core/map";
 import "std/string";
 function main(): i32 {

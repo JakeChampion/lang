@@ -152,7 +152,6 @@ function shapes(s: string): void {
     mutation(s, "je .Lstrfree_fused", edge + " .Lstrfree_fused", false);
   }
   mutation(s, "je .Lstrfree_fused", "jz .Lstrfree_fused", true);
-  // The wider load also reads permitted descriptor bytes, which CMP32 ignores.
   let wide = change(s, "movl -4(%rax), %edx", "movq -4(%rax), %rdx");
   require(machine.check(wide), "wide shape load with narrow tag comparisons");
   mutation(wide, fused, "cmpq $1934589965, %rdx", false);

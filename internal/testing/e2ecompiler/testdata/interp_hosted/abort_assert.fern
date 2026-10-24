@@ -1,4 +1,4 @@
-// A failed assert prints its message and exits 1 through the exit builtin.
+
 function main(): i32 {
   print("checking");
   assert(1 == 2);

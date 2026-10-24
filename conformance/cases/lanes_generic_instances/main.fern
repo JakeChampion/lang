@@ -1,5 +1,5 @@
-// One generic function called with a boolean, an f64x2 and an f32x4 gives
-// three instances. Each lane type names its own instance.
+
+
 import "std/f64";
 import "std/i32";
 

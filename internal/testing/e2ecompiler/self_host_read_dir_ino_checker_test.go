@@ -9,9 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// TestSelfHostReadDirInoChecker types read_dir_ino's signature and DirEntry's
-// fields through the self-host checker and native's, which must give the same
-// verdict and code for each program.
 func TestSelfHostReadDirInoChecker(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

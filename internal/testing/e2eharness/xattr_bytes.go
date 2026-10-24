@@ -14,8 +14,6 @@ type XattrBytesFixture struct {
 	Writes map[string]string
 }
 
-// MakeXattrBytesFixture uses host-seeded values, including every byte and
-// malformed UTF-8 classes. The caller also verifies writes through the host.
 func MakeXattrBytesFixture(t *testing.T) XattrBytesFixture {
 	t.Helper()
 	seed := seedXattrBytesValue

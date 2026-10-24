@@ -5,25 +5,6 @@ import (
 	"testing"
 )
 
-// `fip iteration(own state) -> state` over a STRUCT (#9602).
-//
-// This shape was not expressible at all. A field write is E048, whose message
-// names the rebuild `T { ...old, f: v }` as the remedy, and that rebuild was
-// E053 inside a `fip` body — each diagnostic forbidding what the other
-// advised. What was left for a strict `fip` data plane was one array threaded
-// through `.with`, so real state had to be packed into a single array behind
-// hand-written index constants.
-//
-// The checker now admits the constructor SHAPE in every tier because it cannot
-// tell a rebuild that reuses a dead donor's box from one that allocates a
-// fresh box; the IR decides, and a bare `fip` is the allowance-0 case. The
-// checker half is internal/check/checker/fip_test.go and the E068 half is
-// compiler/irfipverify.fern — this is the part neither can state: that
-// the accepted program really does run without touching the allocator.
-//
-// Zero is the whole claim, so the count is what this measures rather than time
-// or bytes: the rebuild's box is recycled, which leaves `__heap_bump_bytes()`
-// flat whether the reuse fired or not.
 const fipStructStateSrc = `import "std/i32";
 import "std/i64";
 
@@ -77,9 +58,6 @@ function main(): i32 {
 `
 
 func TestFipCarriesStructStateWithoutAllocating(t *testing.T) {
-	// 90 means the rebuild stopped reusing its donor and the annotation is
-	// no longer worth making; 91-93 mean the loop computed the wrong thing;
-	// 95 means the counter never moves and 90 passed for the wrong reason.
 	out, code := compileAndRunX86_64(t, fipStructStateSrc)
 	if code != 42 {
 		t.Fatalf("exit %d, want 42 — see the source for what each code names\n%s", code, strings.TrimSpace(out))

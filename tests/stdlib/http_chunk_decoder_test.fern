@@ -1,20 +1,8 @@
 import "std/test";
 import "std/http";
 
-// tests/stdlib/http_chunk_decoder_test.fern — `http.ChunkDecoder`, the
-// chunked body decoded as it arrives (docs/NET-P3-SUSPENSION-PLAN.md
-// §3.9), against the whole-request parser: every fixture fed whole, a
-// byte at a time and in uneven pieces must answer what the parser answers
-// for the same bytes — the decoded data, the trailers, how much lies past
-// the body, or the refusing status — since the decoder is the parser's
-// walk through the parser's own helpers.
-//
-// Run:  fern -interp tests/stdlib/http_chunk_decoder_test.fern
-
 const HEAD: string = "POST /up HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n";
 
-// `walked(body, limits)` — the parser's answer for a request carrying
-// `body` (the chunked bytes and whatever follows them).
 function walked(body: string, limits: http.HttpLimits): string {
   let wire: string = HEAD + body;
   match (http.http_parse_request_framed_from(wire.bytes(), 0, limits, http.http_framed_none())) {
@@ -34,8 +22,6 @@ function walked(body: string, limits: http.HttpLimits): string {
   return "?";
 }
 
-// `decoded(body, piece, limits)` — the decoder's answer for `body` fed
-// `piece` bytes at a time (whole when 0).
 function decoded(body: string, piece: i32, limits: http.HttpLimits): string {
   let bytes: u8[] = body.bytes();
   let d: http.ChunkDecoder = http.chunk_decoder(limits);
@@ -52,7 +38,6 @@ function decoded(body: string, piece: i32, limits: http.HttpLimits): string {
         data = data.concat(got);
       },
       http.ChunkEnd(got, trailers, rest) => {
-        // What the feed answered as past the body, and what was never fed.
         return "ok:" + string_from_bytes_unchecked(data.concat(got)) + "|" + fields(trailers) + "|rest=" + (rest.len() + bytes.len() - end).to_string();
       },
       http.ChunkRefused(status) => {
@@ -87,8 +72,6 @@ function fields(h: HeaderMap): string {
   return out;
 }
 
-// `agree(body, limits)` — the parser's answer when every feeding agrees
-// with it, else the disagreement.
 function agree(body: string, limits: http.HttpLimits): string {
   let want: string = walked(body, limits);
   for piece in [0, 1, 3, 7] {
@@ -166,8 +149,6 @@ function test_a_body_cut_short_is_incomplete(): test.TestOutcome {
 }
 
 function test_data_is_answered_before_its_crlf(): test.TestOutcome {
-  // The decoder passes a chunk's data on as it arrives, without waiting
-  // for the CRLF after it, so a large chunk is never held.
   match (http.chunk_decoder(limits()).feed("5\r\nhel".bytes())) {
     http.ChunkData(next, got) => {
       return test.assert_eq(string_from_bytes_unchecked(got), "hel");

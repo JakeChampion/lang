@@ -6,8 +6,6 @@ import (
 	"testing"
 )
 
-// Exercise the typed pass directly, including boundaries not reachable from
-// array.reduce today. Both its input and output must pass the semantic verifier.
 func TestSelfHostSemanticOptionAdmission(t *testing.T) {
 	const src = `import "./ssa";
 import "./ssasem";

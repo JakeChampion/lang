@@ -8,13 +8,6 @@ import (
 	"testing"
 )
 
-// checkedArrayInferCases instantiate a generic from an argument only the
-// checker can type: a local bound to a builtin's array result, an element of
-// it, a string's byte, or an array built from those. The monomorphisers read the
-// checker's stamp only at a scalar or a string, so each call stayed generic and
-// the typed lowering refused it ("call target has no semantic contract",
-// #11685). Every program runs with the arguments `ab cde`, and its exit code is
-// the interpreter's.
 var checkedArrayInferCases = []struct {
 	name string
 	src  string
@@ -27,8 +20,6 @@ function main(): i32 {
     match (wrap(argv[0])) { Packed(s) => { assert(s == argv[0]); } }
     return argv.len();
 }`, 3},
-	// A `T[]` parameter given the inferred array, directly and through a
-	// generic forwarder whose own `T` stays unresolved until it is cloned.
 	{"array-param", `function last[T](xs: T[]): T { return xs[xs.len() - 1]; }
 function relay[T](xs: T[]): T { return last(xs); }
 function main(): i32 {
@@ -50,8 +41,6 @@ function main(): i32 {
     match (wrap(grid)) { Packed(g) => { return g.len() * 10 + g[2][1].len(); } }
     return 3;
 }`, 32},
-	// The clone must read a u8 element: a byte read from the builder, through
-	// an immutable alias, and an array of string bytes.
 	{"byte-width", `function last[T](xs: T[]): T { return xs[xs.len() - 1]; }
 function main(): i32 {
     let argv = args();
@@ -68,7 +57,6 @@ function main(): i32 {
     if (a != b'a') { return 2; }
     return (b - a) as i32 + 40;
 }`, 44},
-	// A string's byte as the argument, and its borrowed byte view.
 	{"string-byte-index", `function both[T](a: T, b: T): T[] { return [a, b]; }
 function head[T](xs: [T]): T { return xs[0]; }
 function main(): i32 {
@@ -80,7 +68,6 @@ function main(): i32 {
     if (h != b'c') { return 2; }
     return (pair[1] - pair[0]) as i32 + 20;
 }`, 22},
-	// The struct and enum passes key a literal and a constructor the same way.
 	{"struct-and-enum-args", `struct Holder[T] { v: T }
 enum Opt[T] { Has(T), Empty }
 function main(): i32 {

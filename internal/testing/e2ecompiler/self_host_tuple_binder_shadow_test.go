@@ -7,17 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostTupleBinderShadowsModuleDeclX86_64 runs the
-// tuple_binder_shadows_module_decl conformance case through the self-host
-// file-loading modload driver, which runs flatten's mangle pass: every binder
-// a match arm's pattern introduces — a tuple element, a nested tuple element,
-// a variant sub-pattern inside a tuple, a payload sub-pattern, an
-// expression-form arm — shadows a same-named module function, and a binder
-// astwalk.pattern_binders cannot see is mangled into that function (#8607).
-// The self-host parser desugars tuple arms before flatten runs, so this pins
-// the shape at the binder walk's consumer rather than a failure the driver
-// once produced; TestFernFixturesSelfHostX86_64 runs the same case through
-// the whole-program CLI.
 func TestSelfHostTupleBinderShadowsModuleDeclX86_64(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 

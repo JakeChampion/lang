@@ -147,8 +147,6 @@ function selected_uniqueness(arm: boolean): void {
 }
 
 function selected_parameter(arm: boolean, prelude: string, parameter: string): void {
-  // Keep actual selected type/mode metadata from this producer. Replace only
-  // its physical body with the same controlled uniqueness cases used above.
   let mod = parser.parse_module(lexer.tokenize(prelude + "function first(xs: " + parameter + "): i32 { return 0; } function main(): i32 { return 0; }"));
   let g = semlower.program(semlower.driven(mod, "x86-64-linux"));
   require(g.ok, 139);
@@ -169,8 +167,6 @@ function selected_parameter(arm: boolean, prelude: string, parameter: string): v
 }
 
 function selected_dotted(g: ircore.Gated, arm: boolean): void {
-  // Exercise the actual receiver-qualified emitter path, including both
-  // stack and register entries, without rewriting its resulting text.
   let fd = parser.FuncDecl { ...g.im.funcs[0], receiver_type: "Token" };
   let renamed = ircore.Gated { ...g, im: parser.Module { ...g.im, funcs: g.im.funcs.with(0, fd) } };
   for aligned in [false, true] {
@@ -234,8 +230,6 @@ function comparison(g: ircore.Gated, arm: boolean, mode: i32): void {
   if (mode == 1) {
     ops = ops.append(ir.op_bin("not", 32, false));
   }
-  // The else arm divides, which may not run on the path that did not take
-  // it, so the branch stays a branch rather than a select.
   ops = util.append_all(ops, [ir.op_if(0), ir.op_const_i32(7), ir.op_return(), ir.op_else(), ir.op_load_local(1), ir.op_load_local(1), ir.op_bin("div_s", 64, false), ir.op_return(), ir.op_end()]);
   let out = checked(g, irtables.LowerResult { ...g.cache[0], n_params: 2, n_locals: 2, ops: ops }, arm);
   compare_fusion(out.bodies[0], mode);

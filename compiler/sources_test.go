@@ -6,8 +6,6 @@ import (
 	"testing"
 )
 
-// The embedded sources are what `fern` builds the compiler from; the test
-// drivers live in drivers/ and must not ship with them.
 func TestSourcesHoldNoTestDrivers(t *testing.T) {
 	names, err := fs.Glob(Sources, "*")
 	if err != nil {

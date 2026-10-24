@@ -7,20 +7,10 @@ import (
 	"testing"
 )
 
-// TestSelfHostPlatformBuiltinLowers pins the std/serve half of #5686.
-//
-// Every std/serve entry point names the host platform
-// (`(HttpRequest, platform.Host) => HttpResponse`), so the self-host must
-// resolve that type for `__serve_loop` to lower.
-//
-// The probe is the assertion: every function of the std/serve closure must lower,
-// with the serve loop named explicitly so a regression says which one broke.
 func TestSelfHostPlatformBuiltinLowers(t *testing.T) {
 	_, runner, driverBin := buildModloadDriverX86(t)
 
 	progDir := t.TempDir()
-	// Keep nested modules such as std/tls/client in their real import paths.
-	// Flattening only top-level files drops serve's transitive dependencies.
 	copyStdlibTree(t, progDir)
 	bsrc, err := os.ReadFile("../../../compiler/builtins.fern")
 	if err != nil {
@@ -43,8 +33,6 @@ func TestSelfHostPlatformBuiltinLowers(t *testing.T) {
 	}
 }
 
-// probeLineFor returns the eligibility-report line for `fn`, or a not-found
-// marker — the report lists one `name: verdict` line per function.
 func probeLineFor(report, fn string) string {
 	for _, line := range strings.Split(report, "\n") {
 		if strings.HasPrefix(line, fn+":") {

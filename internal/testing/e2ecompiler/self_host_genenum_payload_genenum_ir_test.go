@@ -7,17 +7,6 @@ import (
 	"testing"
 )
 
-// genEnumPayloadGenEnumIRCase is a self-host program where a generic enum's
-// variant payload is ITSELF a generic enum parameterised by the outer type
-// param — `enum E[U] { A(Opt[U]), B }`. When `E[i32]` is monomorphised, the
-// cloned variant `A`'s payload `Opt[U]` substitutes to `Opt[i32]`, which must in
-// turn be mangled to `Opt__i32` and cloned; and a nested `match (o)` on the
-// bound payload must recover `o`'s real type `Opt[i32]` (not the outer arg
-// `i32`). A cloned variant field keeping the un-mangled `Opt[i32]` dangles on
-// the dropped generic `Opt`, and typing the binding as the bare outer arg bails
-// the module.
-// Native handles it, so this closes a goal-1 IR-subset gap. Each exit code is
-// pinned against the native interpreter oracle and kept <= 120.
 type genEnumPayloadGenEnumIRCase struct {
 	name     string
 	src      string
@@ -25,35 +14,30 @@ type genEnumPayloadGenEnumIRCase struct {
 }
 
 var genEnumPayloadGenEnumIRCases = []genEnumPayloadGenEnumIRCase{
-	// the core shape: A(Opt[i32]), extracted through two matches.
 	{"i32_payload", `enum Opt[T] { Sm(T), Nn }
 enum E[U] { A(Opt[U]), B }
 function main(): i32 {
     let e: E[i32] = A(Sm(5));
     match (e) { A(o) => { match (o) { Sm(n) => { return n; }, Nn => { return 0; } } }, B => { return 0; } }
 }`, 5},
-	// string payload, method dispatch on the innermost binding.
 	{"string_payload", `enum Opt[T] { Sm(T), Nn }
 enum E[U] { A(Opt[U]), B }
 function main(): i32 {
     let e: E[string] = A(Sm("hi"));
     match (e) { A(o) => { match (o) { Sm(n) => { return n.len(); }, Nn => { return 0; } } }, B => { return 0; } }
 }`, 2},
-	// the OUTER unit variant `B` (pinned from the annotation).
 	{"outer_unit", `enum Opt[T] { Sm(T), Nn }
 enum E[U] { A(Opt[U]), B }
 function main(): i32 {
     let e: E[i32] = B;
     match (e) { A(o) => { return 1; }, B => { return 8; } }
 }`, 8},
-	// arithmetic on the extracted inner payload.
 	{"inner_arith", `enum Opt[T] { Sm(T), Nn }
 enum E[U] { A(Opt[U]), B }
 function main(): i32 {
     let e: E[i32] = A(Sm(4));
     match (e) { A(o) => { match (o) { Sm(n) => { return n + 1; }, Nn => { return 0; } } }, B => { return 0; } }
 }`, 5},
-	// two distinct instantiations of E (`E[i32]` + `E[string]`) coexisting.
 	{"two_instantiations", `enum Opt[T] { Sm(T), Nn }
 enum E[U] { A(Opt[U]), B }
 function main(): i32 {
@@ -66,8 +50,6 @@ function main(): i32 {
 }`, 5},
 }
 
-// TestSelfHostGenEnumPayloadGenEnumIRX86_64 runs each case through the self-host
-// asm_run driver.
 func TestSelfHostGenEnumPayloadGenEnumIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -101,8 +83,6 @@ func TestSelfHostGenEnumPayloadGenEnumIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostGenEnumPayloadGenEnumWasmIR is the wasm sibling: the enum pass is a
-// target-independent parser pass, so the wasm IR backend gets these for free.
 func TestSelfHostGenEnumPayloadGenEnumWasmIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range genEnumPayloadGenEnumIRCases {

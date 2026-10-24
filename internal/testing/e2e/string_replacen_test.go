@@ -1,11 +1,5 @@
 package e2e
 
-// Differential coverage for std/string `replacen` — `replace` capped at the
-// first n non-overlapping occurrences (`"aaaa".replacen("a","b",2) == "bbaa"`);
-// `n <= 0` returns the input, `n >= count` behaves as `replace`. Mirrors
-// Rust's `str::replacen`. Returns 42 iff every check holds across interp /
-// x86-64 / wasm / arm64.
-
 import "testing"
 
 const stringReplacenProg = `

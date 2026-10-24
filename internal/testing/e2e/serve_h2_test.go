@@ -1,12 +1,3 @@
-// std/serve over HTTP/2 (`Config.with_h2`): a prior-knowledge h2c client
-// (curl) and Go's net/http client negotiating h2 by ALPN under TLS, each
-// making several requests on one connection, with bodies each way, against
-// the interpreter and the native x86-64 build. The handler is the one an
-// HTTP/1.1 server runs; the loop hands a connection that opens with the
-// HTTP/2 preface to std/http/h2. A handler that suspends on an upstream
-// parks per stream: the connection's other streams are answered while it
-// waits, and its answer comes on its stream when the upstream does. File
-// bodies (std/http/static, `http.file`) go out in pieces under the windows.
 package e2e
 
 import (
@@ -165,12 +156,6 @@ function main(): i32 {
 }
 `
 
-// serveH2StateSource is `run_with` under `with_h2()`: a request count
-// threaded through the handler, which only the stateful loop can carry
-// from one request to the next. Both programs read with a 60 s deadline:
-// under the interpreter on a loaded runner a TLS handshake and its first
-// request have outrun the default 10 s, and the loop closed the
-// connection under the client.
 const serveH2StateSource = `import "std/http";
 import "std/platform";
 import "std/serve";
@@ -263,11 +248,6 @@ func TestServeH2X86_64(t *testing.T) {
 	driveFiles(t, runX86Bin(qemu, staticOut), big)
 }
 
-// driveFiles runs static_serve_test.go's checks over prior-knowledge h2c:
-// file bodies, whole, as one range and as a multipart/byteranges body, with
-// their lengths, HEAD and the 304 without one, and the 404 for a file that
-// is not there. The client's windows are 16 KiB per stream and 64 KiB per
-// connection, so the 300 000-byte file goes out paced by them.
 func driveFiles(t *testing.T, cmd *exec.Cmd, big []byte) {
 	t.Helper()
 	addr, _ := e2eharness.StartInheritedServer(t, cmd)
@@ -278,10 +258,6 @@ func driveFiles(t *testing.T, cmd *exec.Cmd, big []byte) {
 	checkStaticPaths(t, addr, tr, 2)
 }
 
-// drivePrefix sends a strict prefix of the HTTP/2 connection preface and
-// half-closes: the loop awaits the rest while the bytes are a prefix, and
-// at EOF it closes the connection, which the client reads as its own EOF
-// within the deadline; a request after it is answered.
 func (w *serveH2World) drivePrefix(t *testing.T, cmd *exec.Cmd) {
 	t.Helper()
 	addr, stderrPath := e2eharness.StartInheritedServer(t, cmd)
@@ -307,8 +283,6 @@ func (w *serveH2World) drivePrefix(t *testing.T, cmd *exec.Cmd) {
 	}
 }
 
-// driveH2C sends prior-knowledge HTTP/2 with curl: two GETs and a POST on
-// one connection, each answered over HTTP/2.
 func (w *serveH2World) driveH2C(t *testing.T, cmd *exec.Cmd) {
 	t.Helper()
 	if _, err := exec.LookPath("curl"); err != nil {
@@ -326,15 +300,12 @@ func (w *serveH2World) driveH2C(t *testing.T, cmd *exec.Cmd) {
 		}
 		return string(out)
 	}
-	// Two GETs in one curl share one connection.
 	if got, want := run(base+"/one", base+"/two"), fmt.Sprintf("hello GET /one %s\n2 200\nhello GET /two %s\n2 200\n", addr, addr); got != want {
 		t.Fatalf("curl over h2c:\n%s\nwant:\n%s", got, want)
 	}
 	if got, want := run("--data-binary", "payload bytes", base+"/echo"), "payload bytes\n2 200\n"; got != want {
 		t.Fatalf("curl POST over h2c:\n%s\nwant:\n%s", got, want)
 	}
-	// The same port serves HTTP/1.1: a produced body's trailers go in the
-	// chunked body's trailer section, the producer's beside the response's.
 	resp, err := (&http.Client{Timeout: 30 * time.Second}).Get(base + "/trailing")
 	if err != nil {
 		t.Fatalf("GET /trailing over HTTP/1.1: %v", err)
@@ -342,9 +313,6 @@ func (w *serveH2World) driveH2C(t *testing.T, cmd *exec.Cmd) {
 	checkTrailing(t, resp, 1)
 }
 
-// checkTrailing reads a /trailing response to its end and checks the body,
-// the producer's trailer (x-parts, the chunks it produced) and the
-// response's own (x-static), under the HTTP major version wanted.
 func checkTrailing(t *testing.T, resp *http.Response, major int) {
 	t.Helper()
 	body, _ := io.ReadAll(resp.Body)
@@ -357,12 +325,6 @@ func checkTrailing(t *testing.T, resp *http.Response, major int) {
 	}
 }
 
-// driveDuplex streams a request body in three parts over one TLS HTTP/2
-// stream and reads each part echoed back before sending the next: the
-// handler's producer reads the body as it arrives and answers as it reads
-// (`stream_bodies`), so a request and its response flow at once, as a
-// gRPC ping-pong does. The native build only: the interpreter hands a body
-// over whole.
 func (w *serveH2World) driveDuplex(t *testing.T, cmd *exec.Cmd) {
 	t.Helper()
 	cmd.Env = append(cmd.Environ(), "H2_CERT="+w.cert, "H2_KEY="+w.key)
@@ -409,11 +371,6 @@ func (w *serveH2World) driveDuplex(t *testing.T, cmd *exec.Cmd) {
 	}
 }
 
-// driveState sends prior-knowledge HTTP/2 with curl to the stateful loop:
-// three GETs on one connection, each answered with the count so far. curl
-// is told to use no proxy: `driveParked` names the fetch upstream as the
-// process's `http_proxy` for the rest of the test, and curl, unlike Go's
-// client, would send loopback through it too.
 func (w *serveH2World) driveState(t *testing.T, cmd *exec.Cmd) {
 	t.Helper()
 	addr, stderrPath := e2eharness.StartInheritedServer(t, cmd)
@@ -429,11 +386,6 @@ func (w *serveH2World) driveState(t *testing.T, cmd *exec.Cmd) {
 	}
 }
 
-// driveTLS negotiates h2 by ALPN with Go's client and runs eight requests
-// at once on the one connection it opens, then an upload. The connection
-// is opened by a first request on its own: with none open, Go's transport
-// dials one per queued request, and eight handshakes at once outrun the
-// read deadline under the interpreter.
 func (w *serveH2World) driveTLS(t *testing.T, cmd *exec.Cmd) {
 	t.Helper()
 	cmd.Env = append(cmd.Environ(), "H2_CERT="+w.cert, "H2_KEY="+w.key)
@@ -451,7 +403,6 @@ func (w *serveH2World) driveTLS(t *testing.T, cmd *exec.Cmd) {
 	if first.ProtoMajor != 2 {
 		t.Fatalf("GET /first: HTTP/%d.%d, want HTTP/2", first.ProtoMajor, first.ProtoMinor)
 	}
-	// RFC 9110 §6.6.1: an origin server with a clock sends Date, over HTTP/2 as over HTTP/1.1.
 	if _, err := http.ParseTime(first.Header.Get("Date")); err != nil {
 		t.Fatalf("GET /first over HTTP/2: Date %q: %v", first.Header.Get("Date"), err)
 	}
@@ -504,17 +455,6 @@ func (w *serveH2World) driveTLS(t *testing.T, cmd *exec.Cmd) {
 	checkTrailing(t, trailing, 2)
 }
 
-// driveShared parks six handlers, each on a request to an HTTP/2 upstream
-// whose /hold answers only once released: under the loop the handlers'
-// fetches to the one origin share one upstream connection, each on a
-// stream of its own (fetch.Shared), so the upstream sees six held requests
-// on one connection; released, every handler answers, and a request after
-// them rides the same connection. The upstream stands for 8.8.8.8, a
-// global address the handlers' route allows, reached through a CONNECT
-// proxy that tunnels to it, with a certificate for that address. The
-// native build only: the interpreter runs a handler's wait as a blocking
-// call, so nothing parks there and each fetch has a connection of its
-// own.
 func (w *serveH2World) driveShared(t *testing.T, cmd *exec.Cmd) {
 	t.Helper()
 	var held, conns atomic.Int64
@@ -591,7 +531,6 @@ func (w *serveH2World) driveShared(t *testing.T, cmd *exec.Cmd) {
 	}
 }
 
-// leafForIP is a certificate under the world's CA for the one address.
 func (w *serveH2World) leafForIP(t *testing.T, ip net.IP) tls.Certificate {
 	t.Helper()
 	key := mustKey(t, "p256")
@@ -612,8 +551,6 @@ func (w *serveH2World) leafForIP(t *testing.T, ip net.IP) tls.Certificate {
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
 }
 
-// serveConnectProxy is a CONNECT proxy on a loopback port that tunnels
-// every request to the loopback port given, whatever target it names.
 func serveConnectProxy(t *testing.T, to int) int {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -658,12 +595,6 @@ func serveConnectProxy(t *testing.T, to int) int {
 	return ln.Addr().(*net.TCPAddr).Port
 }
 
-// driveParked parks four handlers on the upstream's /hold target over one
-// HTTP/2 connection, has a fifth request on the same connection answered
-// while they wait, then releases the upstream and reads the four answers
-// back on their streams. The native build only: the interpreter runs a
-// handler's wait as a blocking call (docs/NET-P3-SUSPENSION-PLAN.md, the
-// interp fallback), so nothing parks there.
 func (w *serveH2World) driveParked(t *testing.T, cmd *exec.Cmd) {
 	t.Helper()
 	up := e2eharness.StartFetchUpstream(t)
@@ -709,7 +640,6 @@ func (w *serveH2World) driveParked(t *testing.T, cmd *exec.Cmd) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	// The connection's other streams are served while the four wait.
 	resp, err := client.Get(base + "/meanwhile")
 	if err != nil {
 		t.Fatalf("GET /meanwhile while four handlers are parked: %v", err)
@@ -724,9 +654,6 @@ func (w *serveH2World) driveParked(t *testing.T, cmd *exec.Cmd) {
 		t.Fatalf("a parked handler answered before the upstream released it: %q %v", a.body, a.err)
 	default:
 	}
-	// A gRPC call with a 50 ms grpc-timeout parks on the same upstream and
-	// is answered with DEADLINE_EXCEEDED when the deadline passes, as a
-	// trailers-only response, the upstream still holding.
 	timed, err := http.NewRequest("POST", base+"/park", nil)
 	if err != nil {
 		t.Fatal(err)

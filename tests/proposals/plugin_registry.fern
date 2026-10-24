@@ -1,36 +1,9 @@
-// tests/proposals/plugin_registry.fern — proposal turn, drawn line 253:
-// "A plugin registry with typed hooks and a deterministic invocation order."
-//
-// Two hook kinds with different signatures — a transform `(string) => string`
-// and a predicate `(string) => boolean` — held in separate arrays, so "typed"
-// means the compiler refuses to run one as the other rather than a tag being
-// checked at run time.
-//
-// The order is the part worth testing. Plugins carry a priority, and ties
-// break by REGISTRATION INDEX, so the order is total and reproducible without
-// depending on names, hashes or map iteration. `test_ties_break_by_registration`
-// is what separates that from a sort that merely looks stable.
-//
-// The other half is closure capture: a hook registered inside a loop must
-// capture that iteration's values, not the last one's. That is the classic
-// way a registry silently applies the same plugin N times, and it is also the
-// shape the compiler itself has historically had trouble with — escaping
-// closures held in arrays.
-//
-// The app writes its report to stderr; stdout carries TAP-13 from
-// std/test, so the file is its own test suite.
-
 import "std/test";
 import "std/i32";
 import "std/string";
 
-// A transform hook. `seq` is the registration index — assigned by the
-// registry, never by the caller, so it is a genuine tiebreak rather than a
-// second priority.
 struct Transform { name: string, prio: i32, seq: i32, run: (string) => string }
 
-// A predicate hook. Same shape, different signature: the type system is what
-// keeps the two from being invoked interchangeably.
 struct Predicate { name: string, prio: i32, seq: i32, test: (string) => boolean }
 
 struct Registry { transforms: Transform[], predicates: Predicate[], next_seq: i32 }
@@ -49,9 +22,6 @@ function add_predicate(r: Registry, name: string, prio: i32, test: (string) => b
   return Registry { ...r, predicates: r.predicates.append(p), next_seq: r.next_seq + 1 };
 }
 
-// Lower priority runs first; equal priorities run in registration order.
-// Insertion sort, so the tiebreak is explicit rather than inherited from
-// whatever a library sort happens to do.
 function ordered_transforms(r: Registry): Transform[] {
   let out: Transform[] = [];
   for i in 0..r.transforms.len() {
@@ -78,7 +48,6 @@ function ordered_transforms(r: Registry): Transform[] {
   return out;
 }
 
-// Apply every transform in order, threading the value through.
 function run_transforms(r: Registry, input: string): string {
   let ts: Transform[] = ordered_transforms(r);
   let s: string = input;
@@ -97,8 +66,6 @@ function transform_names(r: Registry): string[] {
   return out;
 }
 
-// A value passes when EVERY predicate accepts it. Short-circuiting is
-// deliberate and tested: a predicate after a rejection must not run.
 function all_accept(r: Registry, s: string): boolean {
   for i in 0..r.predicates.len() {
     if (!r.predicates[i].test(s)) {
@@ -132,11 +99,6 @@ function join_with(xs: string[], sep: string): string {
   return s;
 }
 
-// ---------------------------------------------------------------- tests
-
-// Ties break by registration index. Three plugins at the same priority must
-// run in the order they were added, and adding a fourth at a lower priority
-// must not disturb their relative order.
 function test_ties_break_by_registration(): test.TestOutcome {
   let r: Registry = registry_new();
   r = add_transform(r, "alpha", 10, (s: string) => s + "A");
@@ -149,8 +111,6 @@ function test_ties_break_by_registration(): test.TestOutcome {
   if (run_transforms(r, "") != "ABC") {
     return test.fail("equal priorities composed to " + run_transforms(r, ""));
   }
-  // A later registration at a LOWER priority jumps the queue without
-  // reordering the rest.
   r = add_transform(r, "first", 1, (s: string) => s + "!");
   if (join_with(transform_names(r), ",") != "first,alpha,beta,gamma") {
     return test.fail("adding a high-priority plugin reordered the others: "
@@ -162,18 +122,13 @@ function test_ties_break_by_registration(): test.TestOutcome {
   return test.pass();
 }
 
-// Order matters, and the test proves it does by using transforms that do not
-// commute. A registry that ran them in any other order gives a different
-// string, so this cannot pass by accident.
 function test_the_order_is_the_composition_order(): test.TestOutcome {
   let r: Registry = registry_new();
   r = add_transform(r, "wrap", 20, (s: string) => "(" + s + ")");
   r = add_transform(r, "shout", 10, (s: string) => s + "!");
-  // shout (10) runs first, then wrap (20): "x" -> "x!" -> "(x!)"
   if (run_transforms(r, "x") != "(x!)") {
     return test.fail("expected (x!), got " + run_transforms(r, "x"));
   }
-  // Swap the priorities and the answer must swap with them.
   let r2: Registry = registry_new();
   r2 = add_transform(r2, "wrap", 10, (s: string) => "(" + s + ")");
   r2 = add_transform(r2, "shout", 20, (s: string) => s + "!");
@@ -183,9 +138,6 @@ function test_the_order_is_the_composition_order(): test.TestOutcome {
   return test.pass();
 }
 
-// THE closure test. A hook registered inside a loop must capture THAT
-// iteration's value. Getting it wrong applies the last iteration's plugin N
-// times, which still produces a plausible string.
 function test_closures_capture_their_own_iteration(): test.TestOutcome {
   let r: Registry = registry_new();
   for i in 0..5 {
@@ -197,8 +149,6 @@ function test_closures_capture_their_own_iteration(): test.TestOutcome {
     return test.fail("loop-registered closures produced \"" + got
       + "\", wanted \"01234\" — each must capture its own iteration");
   }
-  // The same, through an array of closures held across the loop rather
-  // than inside a struct — the escaping-closure-array shape.
   let fs: ((string) => string)[] = [];
   for i in 0..5 {
     let t2: string = "[" + i.to_string() + "]";
@@ -214,8 +164,6 @@ function test_closures_capture_their_own_iteration(): test.TestOutcome {
   return test.pass();
 }
 
-// A closure built by a factory captures the factory's argument, and two
-// closures from the same factory do not share it.
 function suffixer(sfx: string): (string) => string {
   return (s: string): string => s + sfx;
 }
@@ -229,7 +177,6 @@ function test_factories_do_not_share_captures(): test.TestOutcome {
   if (b("x") != "x-b") {
     return test.fail("the second factory closure is wrong: " + b("x"));
   }
-  // …and calling one does not disturb the other.
   if (a("y") != "y-a") {
     return test.fail("the first closure changed after the second ran");
   }
@@ -242,9 +189,6 @@ function test_factories_do_not_share_captures(): test.TestOutcome {
   return test.pass();
 }
 
-// Registration order is total: the same registrations in the same order give
-// the same sequence, every time, and the registry is a value so an earlier
-// snapshot is unaffected by later additions.
 function test_the_order_is_reproducible_and_snapshots_are_stable(): test.TestOutcome {
   let base: Registry = registry_new();
   base = add_transform(base, "one", 5, (s: string) => s + "1");
@@ -259,16 +203,12 @@ function test_the_order_is_reproducible_and_snapshots_are_stable(): test.TestOut
   if (run_transforms(later, "") != "123") {
     return test.fail("the extended registry is " + run_transforms(later, ""));
   }
-  // Asking twice gives the same answer.
   if (join_with(transform_names(later), ",") != join_with(transform_names(later), ",")) {
     return test.fail("ordering is not reproducible");
   }
   return test.pass();
 }
 
-// Predicates are a separate namespace with a separate signature. Removing a
-// transform must not touch them, and every predicate must accept for a value
-// to pass.
 function test_predicates_are_separate_and_conjunctive(): test.TestOutcome {
   let r: Registry = registry_new();
   r = add_predicate(r, "non-empty", 1, (s: string) => s.len() > 0);
@@ -285,7 +225,6 @@ function test_predicates_are_separate_and_conjunctive(): test.TestOutcome {
     return test.fail("a long string passed short");
   }
 
-  // Removing the transform leaves the predicates alone.
   let fewer: Registry = remove_transform(r, "shout");
   if (fewer.transforms.len() != 0) {
     return test.fail("the transform was not removed");
@@ -300,7 +239,6 @@ function test_predicates_are_separate_and_conjunctive(): test.TestOutcome {
   return test.pass();
 }
 
-// Removal takes exactly one, by name, and leaves the rest in order.
 function test_removal_takes_exactly_one(): test.TestOutcome {
   let r: Registry = registry_new();
   r = add_transform(r, "a", 1, (s: string) => s + "a");
@@ -322,7 +260,6 @@ function test_removal_takes_exactly_one(): test.TestOutcome {
   if (run_transforms(twice, "") != "az") {
     return test.fail("removing the second \"dup\": " + run_transforms(twice, ""));
   }
-  // Removing a name that is not there is a no-op, not an error.
   let same: Registry = remove_transform(twice, "absent");
   if (run_transforms(same, "") != "az") {
     return test.fail("removing an absent name changed the registry");
@@ -330,7 +267,6 @@ function test_removal_takes_exactly_one(): test.TestOutcome {
   return test.pass();
 }
 
-// An empty registry is the identity, not a special case.
 function test_an_empty_registry_is_the_identity(): test.TestOutcome {
   let r: Registry = registry_new();
   let inputs: string[] = ["", "x", "hello world"];
@@ -344,8 +280,6 @@ function test_an_empty_registry_is_the_identity(): test.TestOutcome {
   }
   return test.pass();
 }
-
-// ------------------------------------------------------------------ app
 
 function main(): i32 {
   eprint("plugin_registry — typed hooks, deterministic order");

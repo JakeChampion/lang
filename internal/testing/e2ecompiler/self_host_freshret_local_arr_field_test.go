@@ -5,33 +5,11 @@ import (
 	"testing"
 )
 
-// #6758: a struct factory that builds its array field in a LOCAL first —
-// `let xs: i32[] = [k, 8]; return Q { xs: xs, pos: 1 };` — returns a fresh box
-// exactly as a direct array literal in the field would, so every caller's
-// `let q: Q = mkq(i)` must release the box AND its buffer. A miss leaks 88
-// B/iteration on both register backends and 56 on wasm, unbounded.
-//
-// That holds because the local is literal-initialised, only ever self-appended
-// to, and its single escape is the returned literal itself — so the returned
-// box reaches the caller as the sole owner of that buffer.
-//
-// The local may also be seeded by a CALL to a fresh-array producer, which
-// proves the same sole-ownership one call further out; a producer that hands
-// back its own parameter does not, and that is what keeps the caller's buffer
-// safe.
-//
-// The negatives below are the ways that proof can fail, and each must stay
-// DECLINED rather than merely happen to work: a field seeded from a PARAM
-// (freeing it would free the caller's buffer), a field seeded from a producer
-// that returns one, and one local answering for TWO fields (one rc, two field
-// drops — a double free the literal form cannot even express).
 var selfHostFreshRetLocalArrCases = []struct {
 	name string
 	src  string
 	exit int
 }{
-	// The leak gate: two identical churns, bump delta across the second. 8800 B
-	// on the parent commit, under 256 after.
 	{"local-built-array-field", `struct Q { xs: i32[], pos: i32 }
 function mkq(k: i32): Q { let xs: i32[] = [k, 8]; return Q { xs: xs, pos: 1 }; }
 function churn(k: i32): i32 {
@@ -50,8 +28,6 @@ function main(): i32 {
     if (b2 - b1 >= 256) { return 98; }
     return 0;
 }`, 0},
-	// The accumulator spelling — how a producer is normally written. 10400 B on
-	// the parent commit.
 	{"accumulator-producer", `struct Q { xs: i32[], pos: i32 }
 function build(n: i32): Q {
     let xs: i32[] = [];
@@ -75,12 +51,6 @@ function main(): i32 {
     if (b2 - b1 >= 256) { return 98; }
     return 0;
 }`, 0},
-	// The producer-CALL spelling: the field's local is seeded by a call to an
-	// "ARR:" function rather than by a literal. That registry proves exactly what
-	// the literal does one call out — every return is a sole-owned scalar-element
-	// buffer the callee's frame allocated — so the returned box still reaches the
-	// caller as that buffer's only owner. 10400 B over the second churn on the
-	// parent commit (104 B/iteration), 0 after.
 	{"producer-call-array-field", `struct Q { xs: i32[], pos: i32 }
 function mk(n: i32): i32[] { let out: i32[] = []; let i: i32 = 0; while (i < 4) { out = out.append(n + i); i = i + 1; } return out; }
 function mkq(k: i32): Q { let xs: i32[] = mk(k); return Q { xs: xs, pos: 1 }; }
@@ -100,11 +70,6 @@ function main(): i32 {
     if (b2 - b1 >= 256) { return 98; }
     return 0;
 }`, 0},
-	// Negative: the producer HANDS BACK ITS PARAMETER, so its result is the
-	// caller's buffer and not this frame's. It earns no "ARR:" entry, which is
-	// what has to keep the factory declined — crediting it would free `base`
-	// under the loop that keeps reading it. This is the boundary the
-	// producer-call row rests on, so it is carried beside it.
 	{"passthru-producer-declined", `struct Q { xs: i32[], pos: i32 }
 @noinline function passthru(p: i32[]): i32[] { return p; }
 function mkq(p: i32[]): Q { let xs: i32[] = passthru(p); return Q { xs: xs, pos: 1 }; }
@@ -127,10 +92,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// Negative: the field is the caller's own buffer. Crediting the factory here
-	// would have the caller's reclaim free `base`, which the loop keeps reading —
-	// hence the churn array between the reads, so a freed block is really
-	// recycled before `base` is checked (97).
 	{"param-array-field-declined", `struct Q { xs: i32[], pos: i32 }
 function mk_from_param(p: i32[]): Q { return Q { xs: p, pos: 1 }; }
 function work(k: i32): i32 {
@@ -152,13 +113,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// The DIRECT producer-call spelling, the shape #6758's widening stopped one
-	// step short of: `Q { xs: nums_of(k), pos: 1 }`. Binding that same call to a
-	// local first (producer-call-array-field, above) was admitted; writing it
-	// inline was not, so the
-	// caller's binding earned no credit and box + buffer leaked per call. Same
-	// proof, one call further out: the callee is in the "ARR:" registry, so what
-	// it hands over is a buffer it allocated and nothing else names.
 	{"direct-producer-call-array-field", `struct Q { xs: i32[], pos: i32 }
 function nums_of(k: i32): i32[] { let out: i32[] = []; let i: i32 = 0; while (i < 4) { out = out.append(k + i); i = i + 1; } return out; }
 function mkq(k: i32): Q { return Q { xs: nums_of(k), pos: 1 }; }
@@ -178,9 +132,6 @@ function main(): i32 {
     if (b2 - b1 >= 256) { return 98; }
     return 0;
 }`, 0},
-	// The string[] half: the field's ELEMENTS are boxes too, so the callee has
-	// to be proven fresh element-wise rather than merely buffer-wise. Reads
-	// stay on `.len()` so the field keeps its deep free.
 	{"strarr-producer-call-array-field", `struct S { deps: string[], pos: i32 }
 function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
 function deps_of(pre: string): string[] { let out: string[] = []; let i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
@@ -202,13 +153,6 @@ function main(): i32 {
     if (b2 - b1 >= 256) { return 98; }
     return 0;
 }`, 0},
-	// A BORROWED-PARAMETER field, admitted with a retain. The callee's
-	// construction takes a reference, so the caller's array outlives the
-	// struct's drop because the field holds a counted reference rather than
-	// because nothing was freed. Written as a refusal row; it asserts the same
-	// values now, which is what proves the retain balances. A long string is
-	// built between the store and the reads so a wrongly freed block is really
-	// recycled before they run.
 	{"producer-call-param-field-retained", `struct P { deps: string[] }
 function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
 function deps_of(pre: string): string[] { let out: string[] = []; let i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
@@ -236,9 +180,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// A LOCAL shadows the producer's name, so the value reaches the field as a
-	// bare ident aliasing a live array rather than the registered declaration —
-	// admitted with a retain on those terms, not refused.
 	{"producer-name-shadowed-retained", `struct D { deps: string[] }
 function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
 function deps_of(pre: string): string[] { let out: string[] = []; let i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
@@ -263,8 +204,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// Negative: one local, two fields. Both fields name one buffer, so the
-	// struct's release must free it exactly once (99 on a double free).
 	{"one-local-two-fields-declined", `struct Q { xs: i32[], ys: i32[], pos: i32 }
 function mk2(k: i32): Q { let xs: i32[] = [k, 8]; return Q { xs: xs, ys: xs, pos: 1 }; }
 function work(k: i32): i32 {
@@ -286,9 +225,6 @@ function main(): i32 {
 }`, 0},
 }
 
-// TestSelfHostFreshRetLocalArrFieldIRX86_64 — the production x86-64 IR path. The
-// two leak rows exit 98 on the parent commit; the two negatives exit 0 there and
-// here, which is the point of carrying them.
 func TestSelfHostFreshRetLocalArrFieldIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -316,8 +252,6 @@ func TestSelfHostFreshRetLocalArrFieldIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostFreshRetLocalArrFieldIRArm64 — the same cases on arm64, where the
-// leak measured identically (88 B/iteration) before the widening.
 func TestSelfHostFreshRetLocalArrFieldIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

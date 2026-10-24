@@ -9,16 +9,6 @@ import (
 	"testing"
 )
 
-// TestExternImportViaCLI is the end-user gate for bring-your-own WIT
-// (docs/WIT-BRING-YOUR-OWN.md): a program that declares `@import` externs must
-// compile straight through the real `fern -target wasm32-wasi` CLI — not just the
-// test harness — and run under wasmtime. The CLI's legacy composer doesn't
-// know arbitrary WIT imports, so the presence of any extern routes the whole
-// module through the world-driven composer (ComposeFromWorldAuto).
-//
-// The program mixes a scalar extern (get-random-u64) and a composite-result
-// one (get-random-bytes -> u8[]), plus a built-in write, so the world-driven
-// path has to wire all three uniformly.
 func TestExternImportViaCLI(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -56,9 +46,6 @@ function main(): i32 {
 	}
 }
 
-// TestManyWasiCategoriesViaCLI: a program reaching more WASI categories than
-// any fixed wasi:cli/run framing wires (environment, arguments, entropy and the
-// wall clock, over stdout) composes against the fern world (#11019).
 func TestManyWasiCategoriesViaCLI(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {

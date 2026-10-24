@@ -10,14 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// TestSelfHostCheckerPrintsFixes holds `-check`'s `help:` lines — the title
-// of the fix the checker attaches to a diagnostic — to the Go renderer's for
-// each diagnostic the Go checker attaches one to (internal/syntax/diag's
-// Suggestion): E001 for a name read, called or assigned, and for a retired
-// name, and E043 for a literal's field, an access's field or method, a struct
-// pattern's field and a destructuring `let`'s field. A diagnostic with no fix
-// prints none. The span each fix replaces is held by the code-action cases of
-// self_host_lsp_refs_test.go.
 func TestSelfHostCheckerPrintsFixes(t *testing.T) {
 	cli := e2eharness.SelfHostCLI(t)
 	root := e2eharness.SelfHostStdlibRoot(t)
@@ -51,8 +43,6 @@ func TestSelfHostCheckerPrintsFixes(t *testing.T) {
 			for i, l := range lines {
 				if title, found := strings.CutPrefix(l, "    help: "); found {
 					help = append(help, title)
-					// The help line follows the caret, or the `^~~~` span, under
-					// the source line.
 					if i < 2 || !strings.HasPrefix(strings.TrimSpace(lines[i-1]), "^") {
 						t.Errorf("help line %q does not follow a caret:\n%s", l, out)
 					}

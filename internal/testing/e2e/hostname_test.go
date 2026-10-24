@@ -7,9 +7,6 @@ import (
 	"testing"
 )
 
-// hostnameProbeSource prints the node name and exits by whether it matched
-// `want`, so a wrong answer names itself on stdout while the exit code
-// stays the assertion.
 func hostnameProbeSource(want string) string {
 	return fmt.Sprintf(`function main(): i32 {
     let h: string = hostname();
@@ -20,11 +17,6 @@ func hostnameProbeSource(want string) string {
 `, want)
 }
 
-// The expected value comes from the same kernel field the builtin reads:
-// os.Hostname is uname(2)'s nodename on Linux and sysctl kern.hostname on
-// Darwin. A non-empty check would pass a helper that read the wrong
-// utsname field — sysname is "Linux" on every box — so the assertion is
-// the real name.
 func hostHostname(t *testing.T) string {
 	t.Helper()
 	h, err := os.Hostname()
@@ -60,8 +52,6 @@ func TestInterpHostname(t *testing.T) {
 	}
 }
 
-// WASI has no host identity, so the answer there is the empty string —
-// on both previews, and as a value the string runtime can release.
 func TestWasmHostnameIsEmpty(t *testing.T) {
 	const src = `function main(): i32 {
     let h: string = hostname();

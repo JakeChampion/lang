@@ -9,18 +9,10 @@ import (
 	"testing"
 )
 
-// An empty array literal is allocated with room for four elements. On wasm the
-// room has to fit the widest slot a push can use: sized for the 4-byte stride,
-// the first four pushes into an i64[] or f64[] wrote 8-byte slots past the end
-// of the block, over whatever was allocated next (#10461).
-//
-// Each case fills a `[]` to its pre-sized capacity with a neighbouring array
-// allocated right after it, reads both back, then appends in argument position
-// and grows past the capacity.
 type emptyLitElem struct {
 	ty     string
 	vals   [5]string
-	toI32  string // element `e` as an i32
+	toI32  string
 	prefix string
 }
 
@@ -68,8 +60,6 @@ func emptyLitCases() []emptyLitCase {
 	for _, el := range emptyLitElems {
 		cases = append(cases, emptyLitCase{"elem_" + strings.ReplaceAll(el.ty, "[]", "_arr"), emptyLitSource(el)})
 	}
-	// A generic `T[]` built from `[]`: the literal's element type is the type
-	// parameter, so nothing at the literal says the slot is 8 bytes.
 	cases = append(cases, emptyLitCase{"generic_f64_i64", `function rep[T](x: T, n: i32): T[] {
     let out: T[] = [];
     let i: i32 = 0;
@@ -87,7 +77,6 @@ function main(): i32 {
     return (t as i32) + (u as i32) + guard[0] + guard[3] + guard.len() + fs.len() + is.len();
 }
 `})
-	// The empty literal as a struct field.
 	cases = append(cases, emptyLitCase{"struct_field_f64", `struct H { n: i32, xs: f64[] }
 function main(): i32 {
     let h: H = H { n: 1, xs: [] };

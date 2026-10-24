@@ -11,8 +11,6 @@ import (
 	"time"
 )
 
-// Native tcp_pollable is an identity; Wasm must subscribe to the socket and
-// hand back a distinct owned pollable resource through the same scalar ABI.
 func TestSelfHostWasmSemanticTCPPollable(t *testing.T) {
 	for _, tool := range []string{"wasm-tools", "wasmtime"} {
 		if _, err := exec.LookPath(tool); err != nil {

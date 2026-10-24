@@ -6,14 +6,11 @@ import (
 	"testing"
 )
 
-// asmLoadRunStdlibCases call the standard library, so they compile through
-// asm_load_run with the stdlib root rather than asm_run, which loads no
-// imports.
 var asmLoadRunStdlibCases = []struct {
 	name   string
 	src    string
 	want   int
-	stdout string // "" means don't check
+	stdout string
 }{
 	{"map-get-or-string", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(8); m = m.insert(\"a\", 10); let a: i32 = m.get_or(\"a\", 0); let b: i32 = m.get_or(\"missing\", 99); return a + b; }", 109, ""},
 	{"wider-int-as-cast-to-string", "import \"std/u32\";\nimport \"std/u64\";\nfunction main(): i32 { let a: u32 = 99 as u32; let b: u64 = 7 as u64; if (a.to_string() != \"99\") { return 1; } if (b.to_string() != \"7\") { return 2; } return 42; }", 42, ""},
@@ -119,13 +116,9 @@ var asmLoadRunStdlibCases = []struct {
 	{"str-split-trailing-sep", "import \"std/string\";\nfunction main(): i32 { let a = \"a,b,\".split(\",\"); for s in a { write(s); write(\"|\"); } return a.len(); }", 3, "a|b||"},
 	{"str-split-multi-char-sep", "import \"std/string\";\nfunction main(): i32 { let a = \"foo--bar--baz\".split(\"--\"); for s in a { write(s); write(\"|\"); } return a.len(); }", 3, "foo|bar|baz|"},
 	{"str-split-consecutive", "import \"std/string\";\nfunction main(): i32 { let a = \"a,,b\".split(\",\"); for s in a { write(s); write(\"|\"); } return a.len(); }", 3, "a||b|"},
-	// target_os() / target_arch() are folded to the -target's names before the
-	// typed lowering, which has no body for either call.
 	{"target-name-folds", "function main(): i32 { write(target_os()); write(\"|\"); write(target_arch()); if (target_arch() == \"x86-64\") { return 0; } return 1; }", 0, "linux|x86-64"},
 }
 
-// stdlibLoader compiles programs that import the standard library through
-// asm_load_run with the stdlib root.
 type stdlibLoader struct {
 	gcc    string
 	runner []string
@@ -145,7 +138,6 @@ func newStdlibLoader(t *testing.T) *stdlibLoader {
 	return &stdlibLoader{gcc: gcc, runner: runner, mmc: buildSelfHostBin(t, gcc, dir, "drivers/asm_load_run.fern", "mmc"), root: root}
 }
 
-// emit compiles src for x86-64 and returns the assembly.
 func (l *stdlibLoader) emit(t *testing.T, src string, args ...string) string {
 	t.Helper()
 	mainPath := filepath.Join(t.TempDir(), "main.fern")
@@ -155,8 +147,6 @@ func (l *stdlibLoader) emit(t *testing.T, src string, args ...string) string {
 	return string(runDriverFile(t, l.runner, l.mmc, mainPath, append([]string{l.root}, args...)...))
 }
 
-// TestSelfHostAsmLoadRunStdlibX86_64 compiles each case with asm_load_run,
-// links it and checks its exit code and stdout.
 func TestSelfHostAsmLoadRunStdlibX86_64(t *testing.T) {
 	l := newStdlibLoader(t)
 	for _, tc := range asmLoadRunStdlibCases {

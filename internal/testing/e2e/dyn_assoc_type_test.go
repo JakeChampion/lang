@@ -8,15 +8,6 @@ import (
 	"testing"
 )
 
-// A `dyn` object over a trait with a PINNED associated type
-// (`dyn Producer[Item = i32]`, #2691 trait-spine follow-up). Pinning makes the
-// otherwise object-unsafe trait usable as a trait object: the argument is
-// erased at runtime (the vtable is keyed by trait name), and the pin drives
-// only the checker's object-safety + coercion gates and the `Self::Item`
-// projection resolution (so `get(): Self::Item` reads as `get(): i32`). Two
-// concrete types implement Producer with Item = i32; both box into the same
-// `dyn Producer[Item = i32]` and dispatch by concrete type. IntBox.get() = 40,
-// Pair.get() = 1 + 1 = 2; 40 + 2 = 42.
 const dynAssocTypeSrc = `trait Producer {
     type Item;
     function get(self: Self): Self::Item;

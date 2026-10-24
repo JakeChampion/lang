@@ -5,10 +5,6 @@ import (
 	"testing"
 )
 
-// `__str_bytes` and `__raw_data` answer the address of a string's bytes on
-// every target (#10586). A register-backend string box keeps a data pointer in
-// slot 0, but a wasm string is one block, its length and then its bytes at +4,
-// so reading slot 0 there answered the length and every byte read came back 0.
 const strBytesProg = `@noinline function first_byte(s: string): i32 {
     let scratch: usize = __alloc(16);
     let c: i32 = __load_u8(__str_bytes(s, scratch));
@@ -32,7 +28,6 @@ function main(): i32 {
 }
 `
 
-// Every target emits str_data.
 func TestSelfHostStrBytesEveryTarget(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	h.cli = e2eharness.RuntimeCLI(t)

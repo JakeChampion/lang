@@ -1,7 +1,7 @@
-// `Tagged(4)` leaves Box's T unbound, so the array is a Box[never][]. Its
-// element is a constant, built once as a static box, and the static box must
-// carry the shape word a match on that instance tests for: it carried the
-// bare variant name, so the match took the wrong arm.
+
+
+
+
 enum Box[T] { Full(T), Tagged(i32) }
 
 function main(): i32 {

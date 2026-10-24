@@ -9,23 +9,6 @@ import (
 	"testing"
 )
 
-// An integer literal written in a float position — `let x: f64 = 1;` — is an
-// UNSETTLED literal: the destination decides its type. Native resolves that with
-// `settleNumeric`; the self-host had no counterpart (#6654), and the cost landed
-// twice. The checker read the literal as i32 and REJECTED seven ordinary shapes
-// native compiles, and the IR lowerer — which re-infers float-ness bottom-up
-// with no destination hint — emitted an INTEGER constant into the float slot, so
-// the same programs computed WRONG ANSWERS wherever the checker had not already
-// refused them (measured on `1630563`: var-init, return, struct-field and
-// array-literal all came back with the else-branch value).
-//
-// `parser.settle_module` restamps the literal on the AST at the shared parse
-// entry, which is what both sides read — so these cases pin the checker AND the
-// emitted value, on every self-host backend.
-//
-// Each program is written so the answer DIFFERS between a settled and an
-// unsettled literal: the float comparison it ends in is true only when the
-// literal really became a float.
 var numericSettleCases = []struct {
 	name     string
 	src      string
@@ -45,47 +28,28 @@ var numericSettleCases = []struct {
 		`function main(): i32 { let xs: f64[] = [1, 2]; if (xs[1] > 1.5) { return 11; } return 12; }`, 11},
 	{"tuple-literal",
 		`function main(): i32 { let t: (f64, i32) = (1, 2); if (t.0 > 0.5) { return 15; } return 16; }`, 15},
-	// Arithmetic over bare literals settles as a unit — native settles the
-	// operands of `+ - * /` recursively, so this is float division (3.5), not
-	// integer division (3).
 	{"literal-arithmetic",
 		`function main(): i32 { let x: f64 = 7 / 2; if (x > 3.4) { return 17; } return 18; }`, 17},
-	// A negated literal settles through the unary.
 	{"negated-literal",
 		`function main(): i32 { let x: f64 = 0 - 1; if (x < 0.0 - 0.5) { return 19; } return 20; }`, 19},
-	// A value-position if / match is desugared into an immediately-invoked
-	// closure whose return type is read off the arms, so the literal ends up one
-	// level down with no destination to settle against (#6679). Settling fans
-	// into the branches, which is what native's settleFloat does with its
-	// IfExpr / MatchExpr / BlockExpr arms.
 	{"value-if",
 		`function main(): i32 { let x: f64 = if (1 < 2) { 1 } else { 2 }; let y: f64 = x + 0.5; if (y > 1.4) { return 21; } return 22; }`, 21},
-	// The else branch settles too — a fix that only reached the first arm would
-	// pass the row above and fail this one.
 	{"value-if-else-branch",
 		`function main(): i32 { let x: f64 = if (1 > 2) { 1 } else { 3 }; let y: f64 = x + 0.5; if (y > 3.4) { return 23; } return 24; }`, 23},
 	{"value-match",
 		`enum E { A, B } function main(): i32 { let e: E = B; let x: f64 = match (e) { A => 1, B => 3 }; let y: f64 = x + 0.5; if (y > 3.4) { return 25; } return 26; }`, 25},
 	{"value-if-return",
 		`function g(): f64 { return if (1 < 2) { 1 } else { 2 }; } function main(): i32 { if (g() > 0.5) { return 27; } return 28; }`, 27},
-	// An `else if` chain is an else body holding one StmtIf, so the settle
-	// recurses down it.
 	{"value-else-if-chain",
 		`function main(): i32 { let x: f64 = if (1 > 2) { 1 } else if (2 < 3) { 3 } else { 5 }; let y: f64 = x + 0.5; if (y > 3.4) { return 29; } return 30; }`, 29},
-	// A branch with leading statements yields its trailing value (native's
-	// BlockExpr tail).
 	{"value-if-block-tail",
 		`function main(): i32 { let x: f64 = if (1 < 2) { let q: i32 = 7; 1 } else { 2 }; let y: f64 = x + 0.5; if (y > 1.4) { return 31; } return 32; }`, 31},
 	{"value-if-nested",
 		`function main(): i32 { let x: f64 = if (1 < 2) { if (2 < 3) { 1 } else { 2 } } else { 3 }; let y: f64 = x + 0.5; if (y > 1.4) { return 33; } return 34; }`, 33},
-	// Arithmetic over bare literals settles as a unit inside a branch too, so
-	// this is float division (3.5), not integer division (3).
 	{"value-if-arithmetic-arm",
 		`function main(): i32 { let x: f64 = if (1 < 2) { 7 / 2 } else { 1 }; if (x > 3.4) { return 35; } return 36; }`, 35},
 	{"value-if-call-argument",
 		`function g(v: f64): f64 { return v + 0.25; } function main(): i32 { if (g(if (1 < 2) { 1 } else { 2 }) > 1.2) { return 37; } return 38; }`, 37},
-	// A literal beside a concrete float operand reads at that float: native's
-	// settleNumeric runs on a binary's operands before requireFloat.
 	{"binary-operand-f64",
 		`function main(): i32 { let x: f64 = 100.5f64; let y: f64 = x - 100; if (y == 0.5f64) { return 39; } return 40; }`, 39},
 	{"binary-operand-f32",
@@ -96,9 +60,6 @@ var numericSettleCases = []struct {
 		`enum Shape { Circle(f32), Square(f32) } function classify(s: Shape): i32 { match (s) { Circle(r) when r < 2 => { return 1; }, Circle(_) => { return 2; }, Square(_) => { return 3; } } return 0; } function main(): i32 { if (classify(Circle(1.5f32)) != 1) { return 46; } if (classify(Circle(2.5f32)) != 2) { return 47; } return 45; }`, 45},
 }
 
-// numericSettleRejects are the shapes settling must NOT swallow: the literalness
-// is essential, so an i32 VALUE in a float slot stays an error, with the same
-// code native gives it.
 var numericSettleRejects = []struct {
 	name string
 	src  string
@@ -109,19 +70,9 @@ var numericSettleRejects = []struct {
 	{"string-to-f64", `function main(): i32 { let x: f64 = "s"; return 0; }`, "E003"},
 	{"float-to-i32", `function main(): i32 { let x: i32 = 1.5; return 0; }`, "E003"},
 	{"i32-local-argument", `function g(x: f64): i32 { return 0; } function main(): i32 { let a: i32 = 1; return g(a); }`, "E038"},
-	// A binary that ALREADY carries a float is not a candidate: native settles
-	// a binary once, before its float width is known, so the i32 operand draws
-	// E009 rather than being widened under it. checker.fern's own assertion 400
-	// pins this shape, and a settle that recursed unconditionally broke it.
 	{"mixed-binary", `function main(): i32 { let f: f64 = 1 + 2.5; return 0; }`, "E009"},
 	{"mixed-binary-reversed", `function main(): i32 { let f: f64 = 2.5 + 1; return 0; }`, "E009"},
-	// Beside a concrete float, only a literal settles; an i32 value does not.
 	{"binary-i32-local-operand", `function main(): i32 { let n: i32 = 2; let r: f64 = 1.5f64; let s: f64 = r * n; return 0; }`, "E009"},
-	// A value-if branch the settle cannot see the type of (#6679): an i32 VALUE
-	// is not a literal, so the whole if is left unsettled and draws E003 rather
-	// than being widened under the destination. Stamping the closure's return
-	// type alone would have turned this into a miscompile — an i32 arm feeding a
-	// float slot — which is why the settle is all-or-nothing across the branches.
 	{"value-if-i32-local-arm",
 		`function main(): i32 { let n: i32 = 1; let x: f64 = if (1 < 2) { n } else { 2 }; return 0; }`, "E003"},
 	{"value-if-string-arm",
@@ -132,8 +83,6 @@ var numericSettleRejects = []struct {
 		`function main(): i32 { let x: f64 = if (1 < 2) { 1 + 2.5 } else { 1 }; return 0; }`, "E009"},
 }
 
-// TestSelfHostNumericSettleChecker pins the accept side: every case checks clean
-// on the self-host, with the native interpreter as the oracle for the value.
 func TestSelfHostNumericSettleChecker(t *testing.T) {
 	checkerBin, runner, _ := buildCheckerDriverBin(t, "drivers/checker_run.fern", false)
 	for _, tc := range numericSettleCases {
@@ -152,8 +101,6 @@ func TestSelfHostNumericSettleChecker(t *testing.T) {
 	}
 }
 
-// TestSelfHostNumericSettleRejects pins the reject side, so the settle stays
-// literal-shaped rather than becoming a blanket i32→f64 assignability rule.
 func TestSelfHostNumericSettleRejects(t *testing.T) {
 	checkerBin, runner, _ := buildCheckerDriverBin(t, "drivers/checker_run.fern", false)
 	for _, tc := range numericSettleRejects {
@@ -169,8 +116,6 @@ func TestSelfHostNumericSettleRejects(t *testing.T) {
 	}
 }
 
-// TestSelfHostNumericSettleIRX86_64 pins the emitted VALUE on the x86-64 IR
-// path — the half of #6654 that was a wrong answer rather than a refusal.
 func TestSelfHostNumericSettleIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -203,8 +148,6 @@ func TestSelfHostNumericSettleIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostNumericSettleIRWasm is the stack-machine backend's copy: settling
-// happens on the AST, so every backend inherits it, and this proves it.
 func TestSelfHostNumericSettleIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host numeric-settle wasm IR e2e")
@@ -243,8 +186,6 @@ func TestSelfHostNumericSettleIRWasm(t *testing.T) {
 	}
 }
 
-// runSelfHostChecker feeds `src` to a built self-hosted checker binary and
-// returns its exit code plus stderr (the formatted diagnostics).
 func runSelfHostChecker(t *testing.T, bin string, runner []string, src string) (int, string) {
 	t.Helper()
 	var cmd *exec.Cmd

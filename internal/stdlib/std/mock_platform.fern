@@ -1,36 +1,4 @@
-// std/mock_platform — a Platform that records instead of acting, for
-// testing a handler. See docs/PLATFORM-RESEARCH.md Rec §6.
-//
-// A handler can only reach the effects its platform carries, so substituting
-// the platform is the whole test seam: hand `handle` a mock, run it, and read
-// back what it tried to do.
-//
-//     let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
-//     let resp: HttpResponse = handle(req, m);
-//
-//     assert_eq(resp.status, 200);
-//     assert_eq(m.call_count(), 2);
-//     assert_eq(m.calls()[0].name, "log");
-//
-// The recorded calls live in a `Cell[string]`, so a mock handed to a handler
-// and the test's own copy of it share one log: the mock is a value, its log
-// is not. This text log stores one entry per line; `calls()` parses it
-// back into `MockCall` values.
-//
-// What a mocked capability RETURNS is what the test canned for it, or a
-// fixed value: `env_set`, `config_set`, `secret_set`, `now_set`,
-// `elapsed_set`, `random_set`, `http_set`, `file_set`, `dir_set`,
-// `peer_set`, `deadline_set`, `trace_set` and `cancel` record
-// an answer the mock gives from then on; otherwise `now_ms` and
-// `elapsed_ns` answer 0, `env`, `config` and `secret` answer None,
-// `random_i32` answers 0, `log` discards the line, `stat` answers
-// `NotFound`, `peer`, `deadline` and `trace` answer None, `cancelled`
-// answers false,
-// and `http` answers `Err(Connect(ConnectionRefused))` — what a
-// real request gives for a host that is not listening, so a handler that
-// already handles a failed request handles a mocked one. A canned answer is
-// a row of the same log, `canned`, tab, the capability's key, tab, the
-// value, which `calls()` skips and `reset()` keeps.
+// This module provides a platform that records operations for tests.
 
 import "std/string";
 import "std/platform";
@@ -41,15 +9,10 @@ import "std/http/trace";
 import "std/http";
 import "core/int";
 
-// `MockPlatform` — the recording platform. `sink` is its log and its canned
-// answers.
 pub struct MockPlatform { sink: Cell[string] }
 
-// `MockCall` — one recorded call: the capability's name and a summary of its
-// arguments (`log` keeps the message, `http` keeps `METHOD url`).
 pub struct MockCall { name: string, args: string }
 
-// `mock_platform_new()` — a fresh mock with an empty log.
 pub function mock_platform_new(): MockPlatform {
   return MockPlatform { sink: cell_new("") };
 }
@@ -93,8 +56,6 @@ impl platform.Platform for MockPlatform {
     self.record("sleep", d.as_millis().to_string());
   }
 
-  // A mock reaches no socket: the call is logged as `http` with `METHOD url`
-  // and answered with what the test canned for that pair (`http_set`).
   function http(self: MockPlatform, req: fetch.Request): Result[HttpResponse, fetch.FetchError] {
     let summary: string = req.method + " " + req.url;
     self.record("http", summary);
@@ -109,8 +70,6 @@ impl platform.Platform for MockPlatform {
     return Err(fetch.Connect(net.ConnectionRefused));
   }
 
-  // A mock holds no file system: `stat` answers from the files and
-  // directories the test canned (`file_set`, `dir_set`).
   function stat(self: MockPlatform, path: string): Result[FileStat, IoError] {
     self.record("stat", path);
     match (self.canned("file " + path)) {
@@ -181,25 +140,14 @@ impl platform.Platform for MockPlatform {
   }
 }
 
-// `(m: MockPlatform).record(name, args)` — append an entry to the log; each
-// capability calls it, and a test may drive the log directly. An entry is
-// name, tab, args, newline, so a tab or a newline inside `args` splits it,
-// which is why what gets recorded is a summary of the arguments rather than
-// a payload.
 pub function (m: MockPlatform) record(name: string, args: string): void {
   m.sink.set(m.sink.get() + name + "\t" + args + "\n");
 }
 
-// `(m: MockPlatform).can(key, value)` — answer `key` with `value` from now on.
-// The keys are `env NAME`, `config NAME`, `secret NAME`, `now_ms`,
-// `elapsed_ns`, `random_i32` and `http METHOD url`; the setters below spell
-// them. A tab, newline or backslash in the value is escaped into the row.
 pub function (m: MockPlatform) can(key: string, value: string): void {
   m.sink.set(m.sink.get() + "canned\t" + key + "\t" + __canned_escape(value) + "\n");
 }
 
-// `(m: MockPlatform).canned(key)` — the value `.can` recorded for `key`, the
-// last one when several were, or `None`.
 pub function (m: MockPlatform) canned(key: string): Option[string] {
   let found: Option[string] = None;
   let prefix: string = "canned\t" + key + "\t";
@@ -211,88 +159,59 @@ pub function (m: MockPlatform) canned(key: string): Option[string] {
   return found;
 }
 
-// `(m: MockPlatform).env_set(name, value)` — `plat.env(name)` answers
-// `Some(value)` from now on.
 pub function (m: MockPlatform) env_set(name: string, value: string): void {
   m.can("env " + name, value);
 }
 
-// `(m: MockPlatform).config_set(name, value)` — `plat.config(name)` answers
-// `Some(value)` from now on.
 pub function (m: MockPlatform) config_set(name: string, value: string): void {
   m.can("config " + name, value);
 }
 
-// `(m: MockPlatform).secret_set(name, value)` — `plat.secret(name)` answers
-// `Some(value)` from now on. The value is held with the canned answers,
-// which `calls()` never returns.
 pub function (m: MockPlatform) secret_set(name: string, value: string): void {
   m.can("secret " + name, value);
 }
 
-// `(m: MockPlatform).now_set(ms)` — `plat.now_ms()` answers `ms`.
 pub function (m: MockPlatform) now_set(ms: i64): void {
   m.can("now_ms", ms.to_string());
 }
 
-// `(m: MockPlatform).elapsed_set(ns)` — `plat.elapsed_ns()` answers `ns`.
 pub function (m: MockPlatform) elapsed_set(ns: i64): void {
   m.can("elapsed_ns", ns.to_string());
 }
 
-// `(m: MockPlatform).random_set(v)` — `plat.random_i32()` answers `v`.
 pub function (m: MockPlatform) random_set(v: i32): void {
   m.can("random_i32", v.to_string());
 }
 
-// `(m: MockPlatform).http_set(method, url, status, body)` —
-// `plat.http(req)` answers `Ok(resp)` with that status and text body for a
-// request with that method and URL; any other request still answers
-// `Err(Connect(ConnectionRefused))`.
 pub function (m: MockPlatform) http_set(method: string, url: string, status: i32, body: string): void {
   m.can("http " + method + " " + url, status.to_string() + " " + body);
 }
 
-// `(m: MockPlatform).file_set(path, content, mtime)` — `plat.stat(path)`
-// answers a file of `content`'s size last modified at `mtime` (Unix
-// seconds), and `materialize` reads `content` for a file body naming it.
 pub function (m: MockPlatform) file_set(path: string, content: string, mtime: i64): void {
   m.can("file " + path, content);
   m.can("mtime " + path, mtime.to_string());
 }
 
-// `(m: MockPlatform).peer_set(addr)` — `plat.peer()` answers the address
-// `addr` spells (`192.0.2.7:51234`, `[2001:db8::1]:443`) from now on.
 pub function (m: MockPlatform) peer_set(addr: string): void {
   m.can("peer", addr);
 }
 
-// `(m: MockPlatform).deadline_set(at)` — `plat.deadline()` answers
-// `Some(at)` from now on.
 pub function (m: MockPlatform) deadline_set(at: i64): void {
   m.can("deadline", at.to_string());
 }
 
-// `(m: MockPlatform).trace_set(traceparent)` — `plat.trace()` answers the
-// span the `traceparent` value names from now on.
 pub function (m: MockPlatform) trace_set(traceparent: string): void {
   m.can("trace", traceparent);
 }
 
-// `(m: MockPlatform).cancel()` — `plat.cancelled()` answers true from now
-// on.
 pub function (m: MockPlatform) cancel(): void {
   m.can("cancelled", "");
 }
 
-// `(m: MockPlatform).dir_set(path)` — `plat.stat(path)` answers a
-// directory.
 pub function (m: MockPlatform) dir_set(path: string): void {
   m.can("dir " + path, "");
 }
 
-// `(m: MockPlatform).calls()` — the recorded calls, in order; the canned
-// answers sharing the cell are not calls.
 pub function (m: MockPlatform) calls(): MockCall[] {
   let out: MockCall[] = [];
   let log: string = m.sink.get();
@@ -319,14 +238,10 @@ pub function (m: MockPlatform) calls(): MockCall[] {
   return out;
 }
 
-// `(m: MockPlatform).call_count()` — how many calls were recorded.
 pub function (m: MockPlatform) call_count(): i32 {
   return m.calls().len();
 }
 
-// `(m: MockPlatform).reset()` — drop the log, keeping the canned answers.
-// Mutates through the shared cell, so a copy of the mock already handed to a
-// handler keeps recording into the now-empty log rather than into a stale one.
 pub function (m: MockPlatform) reset(): void {
   let kept: string = "";
   for line in m.sink.get().split("\n") {
@@ -337,9 +252,6 @@ pub function (m: MockPlatform) reset(): void {
   m.sink.set(kept);
 }
 
-// `(m: MockPlatform).has_call(name)` — did this effect happen at all?
-// Less precise than indexing `calls()`, and the right question when the
-// test cares that something was reached, not when.
 pub function (m: MockPlatform) has_call(name: string): boolean {
   let cs: MockCall[] = m.calls();
   let i: i32 = 0;
@@ -352,8 +264,6 @@ pub function (m: MockPlatform) has_call(name: string): boolean {
   return false;
 }
 
-// `(m: MockPlatform).find_call(name)` — the first call with this name, for
-// a test that wants its arguments without pinning its position.
 pub function (m: MockPlatform) find_call(name: string): Option[MockCall] {
   let cs: MockCall[] = m.calls();
   let i: i32 = 0;
@@ -408,7 +318,6 @@ function __canned_unescape(v: string): string {
   return out;
 }
 
-// __canned_i64(m, key, fallback) — a canned number, or `fallback`.
 function __canned_i64(m: MockPlatform, key: string, fallback: i64): i64 {
   match (m.canned(key)) {
     Some(v) => {
@@ -443,10 +352,6 @@ function __parse_i64(s: string): i64 {
   return n;
 }
 
-// `(m: MockPlatform).materialize(resp)` — `resp` with a file body read from
-// the files the test canned, as `http.http_materialize` reads one from the
-// disk: a `BodyFile` or `BodyFileRanges` naming a canned file becomes its
-// bytes, and one naming no file, or a range the file does not hold, a 404.
 pub function (m: MockPlatform) materialize(resp: HttpResponse): HttpResponse {
   match (resp.body) {
     BodyFile(path) => {
@@ -491,8 +396,6 @@ function __materialized(m: MockPlatform, resp: HttpResponse, path: string, range
   return http.not_found();
 }
 
-// `__canned_range(content, offset, len)` — `len` bytes of `content` from
-// `offset`, None where it ends before them.
 function __canned_range(content: string, offset: i64, len: i64): Option[u8[]] {
   if (offset + len > content.len() as i64) {
     return None;
@@ -500,16 +403,12 @@ function __canned_range(content: string, offset: i64, len: i64): Option[u8[]] {
   return Some((slice_unchecked(content, offset as i32, (offset + len) as i32) + "").bytes());
 }
 
-// `__file_stat(is_dir, size, mtime)` — what `stat` reports for a canned
-// entry; the fields a mock has no answer for read 0.
 function __file_stat(is_dir: boolean, size: i64, mtime: i64): FileStat {
   let z: i64 = 0 as i64;
   let u: u32 = 0 as u32;
   return FileStat { is_file: !is_dir, is_dir: is_dir, size: size, mode: u, nlink: 1 as u32, uid: u, gid: u, dev: z, rdev: z, ino: z, blksize: z, blocks: z, atime: mtime, atime_nsec: z, mtime: mtime, mtime_nsec: z, ctime: mtime, ctime_nsec: z, btime: mtime, btime_nsec: z };
 }
 
-// `__canned_response(v)` — the canned `STATUS BODY` as a response, 200
-// when the status does not read.
 function __canned_response(v: string): HttpResponse {
   let code: string = v;
   let body: string = "";

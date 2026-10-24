@@ -10,17 +10,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostArm64LinuxBuilds is the main arm64-Linux test: the self-host CLI
-// (compiler/fern.fern, `-target arm64-linux`) emits a runnable static ELF
-// **in-process** — asm_arm64_ir.fern and the SSA backend produce the GAS text
-// and arm64_native + elf.fern assemble + link it, with no `.s` + gcc/ld step.
-// Unlike the darwin path (which can only be executed on a macOS runner), the
-// arm64-Linux output runs on the Linux CI box under qemu-aarch64 — so this
-// EXECUTES each program and checks its exit code.
-//
-// The CLI itself is an x86-64 binary built by the pinned stage0 compiler so it
-// runs on the host; it emits arm64 ELF binaries straight to `-o`, which
-// qemu-aarch64 runs.
 func TestSelfHostArm64LinuxBuilds(t *testing.T) {
 	if _, err := exec.LookPath("qemu-aarch64"); err != nil {
 		t.Skip("qemu-aarch64 not on PATH; skipping arm64-linux self-host e2e")
@@ -34,12 +23,6 @@ func TestSelfHostArm64LinuxBuilds(t *testing.T) {
 	copySelfHostDriver(t, dir, "fern.fern")
 	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
 
-	// wantOut is checked when non-empty. It exists because the `print` case
-	// below compared ONLY the exit code for as long as it existed, so it could
-	// not fail for the reason it was written: #6047 had every printed string
-	// coming out the right length with the wrong bytes ("Hello, Fern!" ->
-	// "eeeeeeeeeeeeF") on this exact path, and this test stayed green through it.
-	// A print case that ignores stdout is not a print case.
 	cases := []struct {
 		name     string
 		src      string
@@ -52,15 +35,9 @@ func TestSelfHostArm64LinuxBuilds(t *testing.T) {
 		{"loop_sum", `function main(): i32 { let s: i32 = 0; let i: i32 = 1; while (i <= 10) { s = s + i; i = i + 1; } return s; }`, 55, ""},
 		{"concat", `function main(): i32 { let s: string = "hello, " + "world!"; return s.len(); }`, 13, ""},
 		{"print", `function main(): i32 { print("hi"); return 0; }`, 0, "hi\n"},
-		// The #6047 shapes: a literal long enough that a stuck source index
-		// repeats a byte visibly, and a runtime-built string (concat, which is
-		// where the base+index `ldrb w0, [x0, x1]` copy loop lives).
 		{"print_literal", `function main(): i32 { print("Hello, Fern!"); return 0; }`, 0, "Hello, Fern!\n"},
 		{"print_concat", `function main(): i32 { let s: string = "Hello, " + "Fern!"; print(s); return 0; }`, 0, "Hello, Fern!\n"},
 		{"index_byte", `function main(): i32 { let s: string = "abcdef"; return (s[3] as i32) - 90; }`, 10, ""},
-		// The string builder assembled IN-PROCESS: __fern_buf_reserve must
-		// encode, and a 108,000-byte build grows the 64 KiB buffer twice
-		// before the take.
 		{"buf_grow", `function main(): i32 {
     let h: usize = buf_new(65536);
     let i: i32 = 0;
@@ -79,11 +56,6 @@ func TestSelfHostArm64LinuxBuilds(t *testing.T) {
 		{"option", `function pick(n: i32): Option[i32] { if (n == 0) { return None; } return Some(n + 1); } function main(): i32 { match (pick(41)) { Some(v) => { return v; }, None => { return 0; } } return 99; }`, 42, ""},
 		{"enum", `enum Shape { Circle(i32), Square(i32) } function area(s: Shape): i32 { match (s) { Circle(r) => { return r*r*3; }, Square(w) => { return w*w; } } } function main(): i32 { return area(Circle(2)) + area(Square(3)); }`, 21, ""},
 		{"floats", `function main(): i32 { let x: f64 = 3.5; let y: f64 = 2.0; let z: f64 = x*y + x/y - x; if (z > 5.0) { return 7; } return 1; }`, 7, ""},
-		// The bit-counting intrinsics: the only shapes that make the arm64
-		// backend emit `rbit` (ctz) or the SIMD pair `cnt`/`addv` (popcount),
-		// and hence the only ones that exercise those encoders in
-		// arm64_native. Zero comes first — it is the input the op definition
-		// pins (clz/ctz of 0 = the operand width).
 		{"bitcount", `function main(): i32 {
     if (__ctz32(0 as u32) != 32) { return 1; }
     if (__ctz64(0 as u64) != 64) { return 2; }
@@ -97,26 +69,12 @@ func TestSelfHostArm64LinuxBuilds(t *testing.T) {
     if (__clz64(1 as u64) != 63) { return 10; }
     return 42;
 }`, 42, ""},
-		// A socket program that allocates NOTHING ELSE. The arm64 emitter puts
-		// the whole native runtime — arena, rc, fs, subprocess AND the socket
-		// helpers — behind one "heap" need, but the socket op sites marked no
-		// need at all, so this shape emitted `bl __fern_tcp_listen` against a
-		// definition that was never written and the in-process assembler
-		// refused the module (#6164). Add a string concat and it compiled,
-		// which is why every existing socket test missed it. No listener is
-		// contacted: socket -> bind -> listen -> close is enough to prove the
-		// helper is present and callable.
 		{"tcp_listen_close_no_alloc", `function main(): i32 {
   let fd: i32 = tcp_listen(0);
   if (fd < 0) { return 1; }
   if (tcp_close(fd) < 0) { return 2; }
   return 42;
 }`, 42, ""},
-		// tcp_local_port is the third socket leaf with no allocation of its own
-		// (it answers out of the scratch buffer), so it is the same #6164 shape
-		// as the case above and gets the same no-other-allocation guard. It is
-		// also what makes the port-0 bind usable: the kernel picks the port and
-		// this reads it back.
 		{"tcp_local_port_no_alloc", `function main(): i32 {
   let fd: i32 = tcp_listen(0);
   if (fd < 0) { return 1; }
@@ -126,11 +84,6 @@ func TestSelfHostArm64LinuxBuilds(t *testing.T) {
   if (port > 65535) { return 4; }
   return 42;
 }`, 42, ""},
-		// A frame past 64 KiB: the semantic lowering gives main one slot per
-		// value, so 8,400 bindings put the last slots' x29-relative offsets
-		// beyond what one movz materialises, and the in-process assembler
-		// refused the `mov x17, #imm` the emitter wrote for them (mov:imm16)
-		// until the high half went in through movk.
 		{"wide_frame", wideFrameSource(8400), 42, ""},
 	}
 
@@ -155,14 +108,6 @@ func TestSelfHostArm64LinuxBuilds(t *testing.T) {
 			if f.Machine != elf.EM_AARCH64 || f.Type != elf.ET_EXEC {
 				t.Fatalf("got machine=%v type=%v, want AARCH64/EXEC", f.Machine, f.Type)
 			}
-			// The compiler must emit a RUNNABLE binary. An os.Chmod here
-			// would mask the self-host CLI writing 0644 where the native one
-			// writes 0755: the harness repairs it quietly, so nothing
-			// gated the mode. That repair is why a hand-run of the same
-			// command exited 1 with no output — indistinguishable from a
-			// program that ran and returned 1, and it cost one investigation
-			// a fabricated reproduction before anyone checked the mode
-			// (#6133). Asserting it here is what checks the fix.
 			fi, err := os.Stat(binPath)
 			if err != nil {
 				t.Fatalf("stat output: %v", err)
@@ -178,8 +123,6 @@ func TestSelfHostArm64LinuxBuilds(t *testing.T) {
 			if code := cmd.ProcessState.ExitCode(); code != c.wantExit {
 				t.Errorf("self-host arm64 %q exit = %d, want %d (stderr: %s)", c.name, code, c.wantExit, se.String())
 			}
-			// Byte-for-byte: #6047 produced output of exactly the right LENGTH,
-			// so a length or prefix check would have passed through it.
 			if c.wantOut != "" && so.String() != c.wantOut {
 				t.Errorf("self-host arm64 %q stdout = %q, want %q", c.name, so.String(), c.wantOut)
 			}
@@ -187,8 +130,6 @@ func TestSelfHostArm64LinuxBuilds(t *testing.T) {
 	}
 }
 
-// wideFrameSource is a main with n integer bindings and a result read from
-// the last two of them, so every slot is live to the frame layout.
 func wideFrameSource(n int) string {
 	var b bytes.Buffer
 	b.WriteString("function main(): i32 {\n")

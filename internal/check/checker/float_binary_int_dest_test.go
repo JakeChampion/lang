@@ -5,8 +5,6 @@ import (
 	"testing"
 )
 
-// A float binary of unsettled literals is a float: an integer destination
-// reports the mismatch rather than settling the binary to its width (#10609).
 func TestFloatLiteralBinaryIsNotSettledToInt(t *testing.T) {
 	cases := []struct {
 		name, src, want string

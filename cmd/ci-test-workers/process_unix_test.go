@@ -43,8 +43,6 @@ func TestCancellationKillsDescendants(t *testing.T) {
 			t.Fatal("cancelled command passed")
 		}
 	case <-time.After(2 * time.Second):
-		// The sleep inherits stdout. Killing only its shell leaves the
-		// pipe open and forces Wait to hit its longer WaitDelay.
 		t.Fatal("descendant kept the output pipe open after cancellation")
 	}
 }

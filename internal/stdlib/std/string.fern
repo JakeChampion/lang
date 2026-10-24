@@ -1,68 +1,18 @@
-// std/string — string receiver methods.
-//
-// No prelude: a file now `import "std/string";` explicitly to
-// bring these methods into scope (docs/PRELUDE-TO-MODULES.md,
-// Phase 5).
-//
-// `==` ON STRINGS IS BYTE EQUALITY. It is not Unicode-aware, and
-// that is deliberate: the same text can be spelled more than one
-// way, so `"é"` as one code point and `"e"` plus a combining
-// acute are equal text that `==` reports as different. Making
-// `==` normalize would put a normalization pass in front of every
-// string-keyed map lookup, which is why Rust, Go, Python, JS, C#
-// and Java all decline to.
-//
-// So reach for `std/unicode`'s `eq_canonical(a, b)` — or normalize
-// once with `nfc(s)` and compare the results — whenever the input
-// is text a human typed or another system sent: SEARCH, DEDUP, and
-// USERNAME or other identity comparison. NFD-shaped text is not
-// exotic; macOS filesystem APIs, some IME and browser input paths,
-// and any client that normalizes differently from the server all
-// produce it. For program-internal keys that never leave the
-// process, `==` is the right tool and the cheaper one.
+// This module provides string methods.
 import "core/int";
 import "core/bigint";
-// std/string's bodies dispatch (i32) byte methods on `s[i]`
-// values — `.to_ascii_upper()`, `.is_ascii_digit()`,
-// `.is_ascii_alpha()`, `.is_ascii_hex_digit()`,
-// `.to_ascii_string()`. Declaring std/i32
-// makes those resolve under no-prelude; modload's stdlib-cycle
-// support handles the std/string ↔ std/i32 back-edge.
 import "std/i32";
-// Plus Array methods on string[] / i32[] values:
-// `.reverse().join(" ")` in reverse_words and `.take(...)`.
 import "std/array";
-// `to_upper` / `to_lower` are Unicode, so they delegate to
-// std/unicode's case tables. This closes a std/string →
-// std/unicode → std/utf8 → std/string cycle, which modload
-// resolves by its load-once dedupe (the same mechanism as the
-// std/i32 back-edge above). Programs that never call a Unicode
-// method never pay for the tables — they are DCE'd.
 import "std/unicode" as unicode;
 
-// `s.is_empty()` is a length-zero shorthand. The IR's len fold
-// resolves `len(s)` to a single i32.load at compile time when
-// `s` is statically known to be a string, so this typically
-// folds to one i32.eqz at the call site.
 pub function (s: string) is_empty(): boolean {
   return s.len() == 0;
 }
 
-// `(s: string) to_string()` — identity on strings. Lets the
-// f-string lexer's blanket `(<expr>).to_string()` desugar work
-// uniformly on every interpolant, regardless of whether the
-// interpolant is already a string. Has no runtime cost: the IR's
-// inliner collapses the call to its operand.
 pub function (s: string) to_string(): string {
   return s;
 }
 
-// `s.repeat(n)` — `n` copies of s concatenated. `n <= 0` returns empty.
-// Built by doubling, so the cost is log₂(n) bulk copies rather than a
-// `.with` per byte (#9974); `out = out + s` per copy would recopy the
-// growing prefix each step (#4379). The length ceiling is `+`'s: a
-// product past i32 wraps negative at the doubling that reaches it, and
-// that concat refuses the allocation size.
 pub function (s: string) repeat(n: i32): string {
   if (n <= 0) {
     return "";
@@ -83,13 +33,7 @@ pub function (s: string) repeat(n: i32): string {
   return out;
 }
 
-// `s.starts_with(prefix)` / `s.ends_with(suffix)` /
-// `s.contains(needle)` / `s.index_of(needle)` —
-// byte-level prefix / suffix / substring scans. UTF-8
-// agnostic: they walk raw bytes, which means a partial-
-// codepoint search will match its byte sequence wherever
-// it appears (same as Go's `strings.Contains`). An empty
-// needle / prefix / suffix matches: true, or `Some(0)`.
+// starts_with returns true when the string starts with `prefix`.
 pub function (s: string) starts_with(prefix: string): boolean {
   let pLen: i32 = prefix.len();
   if (pLen > s.len()) {
@@ -106,10 +50,6 @@ pub function (s: string) ends_with(suffix: string): boolean {
   return __mismatch(s, s.len() - sufLen, suffix, 0, sufLen) == sufLen;
 }
 
-// __substr_eq compares len(needle) bytes starting at
-// `offset` in `s` against `needle` byte-by-byte. The
-// caller has already bounds-checked `offset + nLen <=
-// len(s)`, so this just walks until the first mismatch.
 function __substr_eq(s: string, offset: i32, needle: string, nLen: i32): boolean {
   let i: i32 = 0;
   while (i < nLen) {
@@ -121,16 +61,6 @@ function __substr_eq(s: string, offset: i32, needle: string, nLen: i32): boolean
   return true;
 }
 
-// __str_maxsuf computes the maximal suffix of `x[0..m]` under byte order
-// (`invert == false`) or under the reversed order (`invert == true`), as the
-// pair `(ms, p)`: the maximal suffix starts at `ms + 1` (so `ms` runs from -1
-// for "the whole string"), and `p` is that suffix's period. Half of the
-// critical factorization below; see __str_critical_factorization.
-//
-// This is Crochemore-Perrin's maximal-suffix scan: `j` is the start of the
-// current candidate, `k` the offset being compared within the current period,
-// and `p` the period established so far. Each byte is examined O(1) amortized
-// times, so the whole thing is O(m) with no allocation.
 function __str_maxsuf(x: string, m: i32, invert: boolean, origin: i32, step: i32): (i32, i32) {
   let ms: i32 = 0 - 1;
   let j: i32 = 0;
@@ -165,17 +95,6 @@ function __str_maxsuf(x: string, m: i32, invert: boolean, origin: i32, step: i32
   return (ms, p);
 }
 
-// __str_critical_factorization returns `(crit, period)` — the critical
-// position of `needle[0..m]` and the period of the corresponding maximal
-// suffix. Crochemore-Perrin's theorem says the longer of the two maximal
-// suffixes (under `<` and under `>`) yields a critical factorization, i.e. a
-// split point where the local period equals the global period. That is what
-// lets Two-Way match left and right halves independently and shift by a full
-// period on failure, instead of the naive scan's one byte.
-//
-// The returned `crit + period <= m` (the maximal-suffix loop keeps
-// `j <= m - 1`, and `crit + period` is `j + 1`), so the periodicity probe in
-// __str_two_way reads in bounds.
 function __str_critical_factorization(needle: string, m: i32, origin: i32, step: i32): (i32, i32) {
   if (m < 3) {
     return (m - 1, 1);
@@ -188,8 +107,6 @@ function __str_critical_factorization(needle: string, m: i32, origin: i32, step:
   return (rev.0 + 1, rev.1);
 }
 
-// A factorization period is valid when the prefix through crit repeats at
-// that offset. The factorization guarantees crit + period <= needle.len().
 function __str_is_periodic(needle: string, origin: i32, crit: i32, period: i32, step: i32): boolean {
   let i: i32 = 0;
   while (i < crit) {
@@ -201,21 +118,6 @@ function __str_is_periodic(needle: string, origin: i32, crit: i32, period: i32, 
   return true;
 }
 
-// __str_two_way is the Crochemore-Perrin Two-Way substring search: the
-// leftmost index >= `start` at which `needle[0..m]` occurs in `s[0..sLen]`,
-// or -1. O(sLen + m) time and O(1) space — no allocation, no 256-entry skip
-// table, and no O(n*m) worst case (the naive scan this replaced degraded to
-// exactly that on repetitive text, which is precisely what a compiler's own
-// source, JSON, and log lines look like).
-//
-// Two phases per alignment: match the right half forward from the critical
-// position, then, only if that succeeded, the left half backward. A mismatch
-// in the right half shifts past it; a mismatch in the left half shifts by the
-// needle's period. Callers must pass `m >= 2` and `start >= 0` — the
-// zero-length and single-byte needles are handled by __str_find_from's fast
-// paths, which are both cheaper than setting up a factorization.
-// The origins and step map logical indices into the original strings:
-// (0, 0, 1) scans forward; (sLen - 1, m - 1, -1) scans backward.
 function __str_two_way(s: string, sLen: i32, needle: string, m: i32, start: i32, sOrigin: i32, nOrigin: i32, step: i32): i32 {
   let cf: (i32, i32) = __str_critical_factorization(needle, m, nOrigin, step);
   let crit: i32 = cf.0;
@@ -224,10 +126,6 @@ function __str_two_way(s: string, sLen: i32, needle: string, m: i32, start: i32,
   let j: i32 = start;
 
   if (__str_is_periodic(needle, nOrigin, crit, period, step)) {
-    // Periodic needle ("abcabcabd"): the left half is a suffix of the
-    // stretch one period further in, so after a failed left-half match we
-    // may shift by exactly `period` and remember (`memory`) the prefix
-    // length already known to match, never re-comparing it.
     let memory: i32 = 0;
     while (j <= last) {
       let i: i32 = crit;
@@ -255,8 +153,6 @@ function __str_two_way(s: string, sLen: i32, needle: string, m: i32, start: i32,
     return 0 - 1;
   }
 
-  // Aperiodic needle: no prefix carries over between alignments, so a
-  // left-half mismatch shifts by more than half the needle.
   let shift: i32 = crit;
   if (m - crit > shift) {
     shift = m - crit;
@@ -283,8 +179,6 @@ function __str_two_way(s: string, sLen: i32, needle: string, m: i32, start: i32,
   return 0 - 1;
 }
 
-// A scan for needles of at most four bytes, with at most four comparisons
-// per candidate. Kept separate from the general search dispatcher.
 function __str_find_short(s: string, sLen: i32, needle: string, nLen: i32, from: i32): i32 {
   let i: i32 = from;
   while (i <= sLen - nLen) {
@@ -300,20 +194,6 @@ function __str_find_short(s: string, sLen: i32, needle: string, nLen: i32, from:
   return 0 - 1;
 }
 
-// __str_find_from is THE forward substring-search core: the leftmost index
-// >= `start` of `needle` in `s`, or -1. Every forward scan in this module
-// routes through it, so they all inherit the same linear-time guarantee
-// instead of each spelling its own `i + 1` probe loop.
-//
-// Adaptive dispatch, cheapest applicable path first:
-//   m == 0  -> `start` (the empty needle matches at every gap)
-//   m == 1  -> a single-byte scan, the memchr shape
-//   2 <= m <= 4 -> bounded direct comparisons
-//   m > 4   -> Two-Way
-//
-// The single-byte case matters more than it looks: `split(",")`,
-// `split("\n")`, and the `replace_byte` family are the overwhelmingly common
-// callers, and for them a factorization would be pure overhead.
 function __str_find_from(s: string, sLen: i32, needle: string, nLen: i32, start: i32): i32 {
   let from: i32 = start;
   if (from < 0) {
@@ -328,19 +208,9 @@ function __str_find_from(s: string, sLen: i32, needle: string, nLen: i32, start:
   if (nLen > sLen - from) {
     return 0 - 1;
   }
-  // The single-byte case IS __memchr (docs/ATLAS-PLATFORM-PLAN.md §3), which
-  // the compiler serves with a vector kernel: 32 bytes an iteration on
-  // x86-64 (AVX2) and arm64 (NEON), 16 on wasm (v128).
-  //
-  // `from` is already clamped above and `needle[0]` is always 0..255, so
-  // neither of __memchr's guards can fire here; they exist for direct
-  // callers. It reads the string's own length, which every caller of
-  // __str_find_from passes as `sLen` — checked across all 20 call sites.
   if (nLen == 1) {
     return __memchr(s, needle[0] as i32, from);
   }
-  // At most four comparisons per candidate keeps this path linear and
-  // avoids factorization overhead for short separators and UTF-8 needles.
   if (nLen <= 4) {
     return __str_find_short(s, sLen, needle, nLen, from);
   }
@@ -355,12 +225,10 @@ pub function (s: string) contains(needle: string): boolean {
   return __str_find_from(s, s.len(), needle, nLen, 0) >= 0;
 }
 
-// `s.index_of(needle)` — the byte index of the first occurrence, or None.
 pub function (s: string) index_of(needle: string): Option[i32] {
   return __str_some(__str_index(s, needle));
 }
 
-// __str_index is `index_of` with -1 for absent, for the scans in this module.
 function __str_index(s: string, needle: string): i32 {
   let nLen: i32 = needle.len();
   if (nLen == 0) {
@@ -369,7 +237,6 @@ function __str_index(s: string, needle: string): i32 {
   return __str_find_from(s, s.len(), needle, nLen, 0);
 }
 
-// __str_some is a scan's -1-for-absent index as an Option.
 function __str_some(i: i32): Option[i32] {
   if (i < 0) {
     return None;
@@ -377,39 +244,10 @@ function __str_some(i: i32): Option[i32] {
   return Some(i);
 }
 
-// __str_rfind_budget bounds the naive backward scan below before it escalates
-// to the reverse Two-Way. Expressed as a multiple of the haystack length:
-// the budget caps repeated partial matches before switching to the linear
-// algorithm. Both paths read the original strings and use constant space.
 function __str_rfind_budget(): i32 {
   return 4;
 }
 
-// __str_rfind_from finds the RIGHTMOST occurrence of `needle` in `s`, or -1.
-//
-// Three tiers, because no single strategy is right for all of them:
-//
-//   nLen == 0  the gap at the end -- sLen, matching Python rfind / Go
-//              LastIndex ("an empty needle matches at every gap")
-//   nLen == 1  a backward memchr-shaped byte scan: O(n), no allocation. This
-//              is the overwhelmingly common case ("/", ".", ":") and must not
-//              pay for anything fancier.
-//   else       a naive backward scan under a linear COMPARISON BUDGET; if the
-//              budget is exhausted, restart with the reverse Two-Way, which is
-//              O(n + m) worst case.
-//
-// The third tier is the point. `last_index_of` and friends were a bare
-// backward probe loop, O(n*m) worst case, while the forward `index_of` has
-// been Two-Way and linear since #6179 -- a needle like "aaaa...ab" against
-// "aaaa...a" walked the whole needle at every position (#6196).
-//
-// The reverse Two-Way reads both strings from their last byte to their first:
-// the leftmost match in that order is the rightmost in the original, at
-// index `sLen - r - nLen`. The same factorization and search handle both
-// directions without allocating reversed arrays or borrowed byte views.
-//
-// The budget avoids factorization for a match close to the end. Both paths
-// use O(1) space, and the fallback keeps the worst-case linear bound.
 function __str_rfind_from(s: string, sLen: i32, needle: string, nLen: i32): i32 {
   if (nLen == 0) {
     return sLen;
@@ -417,21 +255,10 @@ function __str_rfind_from(s: string, sLen: i32, needle: string, nLen: i32): i32 
   if (nLen > sLen) {
     return 0 - 1;
   }
-  // The single-byte case IS __rmemchr (docs/ATLAS-PLATFORM-PLAN.md §3.3),
-  // the backward sibling of the kernel __str_find_from routes to above,
-  // served by the same vector kernels walking DOWN.
-  //
-  // `sLen - 1` is the whole string, and it is the right end to pass: this
-  // intrinsic clamps `from` DOWN where __memchr clamps UP, so a caller
-  // wanting everything names the last index rather than 0. `nLen > sLen`
-  // returned above, so sLen >= 1 and that index exists; `needle[0]` is
-  // always 0..255, so neither of __rmemchr's guards can fire here — they
-  // exist for direct callers.
   if (nLen == 1) {
     return __rmemchr(s, needle[0] as i32, sLen - 1);
   }
 
-  // Tier 3a — naive backward scan, metered.
   let spent: i32 = 0;
   let limit: i32 = sLen * __str_rfind_budget() + 16;
   let i: i32 = sLen - nLen;
@@ -456,10 +283,6 @@ function __str_rfind_from(s: string, sLen: i32, needle: string, nLen: i32): i32 
     return 0 - 1;
   }
 
-  // Tier 3b — budget exhausted, so the input is one of the adversarial shapes.
-  // Restart from scratch under the linear algorithm; a partial result cannot
-  // be carried over, because the scan above ran right-to-left and Two-Way
-  // runs left-to-right over the reversal.
   let r: i32 = __str_two_way(s, sLen, needle, nLen, 0, sLen - 1, nLen - 1, 0 - 1);
   if (r < 0) {
     return 0 - 1;
@@ -467,23 +290,10 @@ function __str_rfind_from(s: string, sLen: i32, needle: string, nLen: i32): i32 
   return sLen - r - nLen;
 }
 
-// `s.last_index_of(needle)` — the byte index of the rightmost
-// occurrence, or None. An empty needle is found at len(s), as
-// Python rfind / Go LastIndex have it (it matches at every gap).
-// Linear: see __str_rfind_from for the three tiers.
 pub function (s: string) last_index_of(needle: string): Option[i32] {
   return __str_some(__str_rfind_from(s, s.len(), needle, needle.len()));
 }
 
-// `s.to_ascii_capitalize()` — uppercase the first BYTE, leave
-// the rest unchanged. Non-letter first bytes pass through, and
-// so does a multibyte first code point (its lead byte is >= 0x80,
-// outside A-Z/a-z). For human text use `capitalize`, which is
-// Unicode. Different from `to_ascii_upper` (which folds every
-// ASCII letter) and from Python's str.capitalize (which also
-// LOWERCASES the rest — our version intentionally preserves
-// the tail since the lossy fold is rarely what callers
-// want).
 pub function (s: string) to_ascii_capitalize(): string {
   let n: i32 = s.len();
   if (n == 0) {
@@ -498,17 +308,10 @@ pub function (s: string) to_ascii_capitalize(): string {
   return string_from_bytes_unchecked(buf) + slice_unchecked(s, 1, n);
 }
 
-// `s.capitalize()` — uppercase the first CODE POINT, leave the
-// rest unchanged. `"élan".capitalize()` is `"Élan"`, where the
-// byte-wise `to_ascii_capitalize` leaves `é` alone.
 pub function (s: string) capitalize(): string {
   return unicode.capitalize(s);
 }
 
-// `s.word_count()` — number of whitespace-separated words.
-// Same notion as fields(): runs of any ASCII whitespace
-// count as a single separator, empty pieces dropped. Empty
-// / all-whitespace input returns 0.
 pub function (s: string) word_count(): i32 {
   let n: i32 = s.len();
   let c: i32 = 0;
@@ -528,14 +331,6 @@ pub function (s: string) word_count(): i32 {
   return c;
 }
 
-// `s.escape_html()` — escape the five characters that have
-// special meaning in HTML / XML: & < > " '. Produces a
-// string safe to splice into element bodies and attribute
-// values; matches Go html.EscapeString.
-// put_bytes writes src's bytes into buf starting at pos and returns the buffer;
-// the caller advances pos by src.len(). buf must already have room. Used by the
-// escapers' exact-size second pass so an expanding escape appends in O(len(src))
-// instead of the O(n²) `out = out + esc` that recopied the whole result each byte.
 function put_bytes(buf: u8[], pos: i32, src: string): u8[] {
   let b: u8[] = buf;
   let j: i32 = 0;
@@ -548,17 +343,13 @@ function put_bytes(buf: u8[], pos: i32, src: string): u8[] {
 
 pub function (s: string) escape_html(): string {
   let n: i32 = s.len();
-  // Two passes over one exact-size buffer instead of `out = out + …`, which
-  // recopied the growing result each byte (O(n²) — #4379). Pass 1 sizes the
-  // output (the five metacharacters expand to 4–5 bytes, everything else is
-  // 1:1); pass 2 fills it.
   let total: i32 = 0;
   let i: i32 = 0;
   while (i < n) {
     let b: i32 = s[i] as i32;
-    if (b == 38 || b == 34 || b == 39) {  // &amp; &#34; &#39;
+    if (b == 38 || b == 34 || b == 39) {
       total = total + 5;
-    } else if (b == 60 || b == 62) {  // &lt; &gt;
+    } else if (b == 60 || b == 62) {
       total = total + 4;
     } else {
       total = total + 1;
@@ -570,19 +361,19 @@ pub function (s: string) escape_html(): string {
   i = 0;
   while (i < n) {
     let b: i32 = s[i] as i32;
-    if (b == 38) {  // &
+    if (b == 38) {
       buf = put_bytes(buf, pos, "&amp;");
       pos = pos + 5;
-    } else if (b == 60) {  // <
+    } else if (b == 60) {
       buf = put_bytes(buf, pos, "&lt;");
       pos = pos + 4;
-    } else if (b == 62) {  // >
+    } else if (b == 62) {
       buf = put_bytes(buf, pos, "&gt;");
       pos = pos + 4;
-    } else if (b == 34) {  // "
+    } else if (b == 34) {
       buf = put_bytes(buf, pos, "&#34;");
       pos = pos + 5;
-    } else if (b == 39) {  // '
+    } else if (b == 39) {
       buf = put_bytes(buf, pos, "&#39;");
       pos = pos + 5;
     } else {
@@ -594,10 +385,6 @@ pub function (s: string) escape_html(): string {
   return string_from_bytes_unchecked(buf);
 }
 
-// `s.strip_quotes()` — if s starts and ends with the same
-// quote character (either " or '), return Some(inner).
-// Otherwise None. Useful for parsing config files / CLI
-// flags / JSON strings where quotes are optional.
 pub function (s: string) strip_quotes(): Option[string] {
   let n: i32 = s.len();
   if (n < 2) {
@@ -611,9 +398,6 @@ pub function (s: string) strip_quotes(): Option[string] {
   return None;
 }
 
-// `s.leading_count(b)` — number of leading bytes equal to b.
-// "    hello".leading_count(32) == 4 (count of spaces).
-// Useful for indent detection / column alignment.
 pub function (s: string) leading_count(b: u8): i32 {
   let n: i32 = s.len();
   let i: i32 = 0;
@@ -623,9 +407,6 @@ pub function (s: string) leading_count(b: u8): i32 {
   return i;
 }
 
-// `s.trailing_count(b)` — number of trailing bytes equal to b.
-// "hello   ".trailing_count(32) == 3. Symmetric to
-// leading_count.
 pub function (s: string) trailing_count(b: u8): i32 {
   let n: i32 = s.len();
   let i: i32 = 0;
@@ -635,14 +416,6 @@ pub function (s: string) trailing_count(b: u8): i32 {
   return i;
 }
 
-// `s.hash_fnv32()` — FNV-1a 32-bit hash of the byte content.
-// Non-cryptographic; good for hash-table bucket selection
-// and fingerprinting. Constant-time per input length (no
-// data-dependent branches). Reference: http://www.isthe.com/
-// chongo/tech/comp/fnv/.
-//
-// Returns u32 because the multiply / xor mixing is defined
-// over unsigned arithmetic.
 pub function (s: string) hash_fnv32(): u32 {
   let h: u32 = 2166136261u32;
   let prime: u32 = 16777619u32;
@@ -656,10 +429,6 @@ pub function (s: string) hash_fnv32(): u32 {
   return h;
 }
 
-// `(s: string) hash_djb2()` — Bernstein's djb2 hash. Alternate
-// non-cryptographic hash to FNV-1a; sometimes a better fit
-// for short keys due to the differing mixing. Initial value
-// 5381; multiplier 33. Returns u32.
 pub function (s: string) hash_djb2(): u32 {
   let h: u32 = 5381 as u32;
   let mult: u32 = 33 as u32;
@@ -672,16 +441,8 @@ pub function (s: string) hash_djb2(): u32 {
   return h;
 }
 
-// `s.escape_c()` — C-style escape: backslash + double-quote
-// each become \\ \", and the four whitespace bytes (\n \t
-// \r \0) become their two-char escapes. Other bytes pass
-// through unchanged. Standard shape for emitting source-
-// code-ready string literals.
 pub function (s: string) escape_c(): string {
   let n: i32 = s.len();
-  // Two-pass exact-size buffer (same as escape_html): the six escaped bytes
-  // (\ " \n \t \r \0) each become 2 bytes, everything else passes through 1:1.
-  // Replaces the O(n²) `out = out + …` accumulation (#4379).
   let total: i32 = 0;
   let i: i32 = 0;
   while (i < n) {
@@ -725,22 +486,10 @@ pub function (s: string) escape_c(): string {
   return string_from_bytes_unchecked(buf);
 }
 
-// `(s: string) escape_shell()` — POSIX-shell-safe quoting.
-// Wraps s in single quotes and replaces any interior `'`
-// with the standard close-quote / escaped-single-quote /
-// reopen-quote sequence: `'` → `'\''`. The result can be
-// concatenated into a shell command line without word
-// splitting or substitution.
 pub function (s: string) escape_shell(): string {
   return "'" + s.replace("'", "'\\''") + "'";
 }
 
-// `(s: string) snake_case()` / `kebab_case()` — convert
-// camelCase or PascalCase to lower-case-with-separator
-// names. Inserts an underscore (or hyphen) before each
-// internal capital letter; lowercases everything; leaves
-// existing separators (_, -, space) alone besides the case
-// fold.
 pub function (s: string) snake_case(): string {
   return __case_separator(s, 95);
 }
@@ -751,10 +500,6 @@ pub function (s: string) kebab_case(): string {
 
 function __case_separator(s: string, sep_byte: i32): string {
   let n: i32 = s.len();
-  // Two-pass exact-size buffer (#4379): an internal uppercase emits sep + its
-  // lowercase (2 bytes), every other byte emits 1 (a space becomes the
-  // separator, anything else its lowercase). Replaces the O(n²) `out = out + …`
-  // accumulation that recopied the growing result each byte.
   let total: i32 = 0;
   let i: i32 = 0;
   while (i < n) {
@@ -786,23 +531,6 @@ function __case_separator(s: string, sep_byte: i32): string {
   return string_from_bytes_unchecked(buf);
 }
 
-// `(s: string) camel_case()` / `pascal_case()` — the inverse of
-// `snake_case` / `kebab_case`: fold a separator-delimited name into a
-// medial-capitals identifier. Word boundaries are runs of `_`, `-`, or
-// space (dropped; leading / trailing / consecutive separators collapse);
-// each word is lower-cased and the first letter of every word after the
-// first is upper-cased. `pascal_case` upper-cases the first word's
-// initial too, `camel_case` lower-cases it.
-//
-//   "foo_bar_baz".camel_case()   // "fooBarBaz"
-//   "http-server".pascal_case()  // "HttpServer"
-//   "hello world".camel_case()   // "helloWorld"
-//
-// ASCII-only, and the intended input is separator-delimited (the
-// round-trip partner of `snake_case`): an already-camelCase string has
-// no separators, so its interior case is normalised to lower
-// (`"fooBar".camel_case()` -> `"foobar"`) — pass such names through
-// `snake_case` first if you need to re-fold them.
 pub function (s: string) camel_case(): string {
   return __case_join(s, false);
 }
@@ -813,9 +541,6 @@ pub function (s: string) pascal_case(): string {
 
 function __case_join(s: string, upper_first: boolean): string {
   let n: i32 = s.len();
-  // Two-pass exact-size buffer (#4379): separators (`_` `-` space) are
-  // dropped and every other byte emits exactly one byte, so the output
-  // length is just the count of non-separator bytes.
   let total: i32 = 0;
   let i: i32 = 0;
   while (i < n) {
@@ -827,8 +552,8 @@ function __case_join(s: string, upper_first: boolean): string {
   }
   let buf: u8[] = __alloc_u8(total);
   let pos: i32 = 0;
-  let at_word_start: boolean = true;  // start of string begins a word
-  let emitted_any: boolean = false;  // has any non-separator byte been written
+  let at_word_start: boolean = true;
+  let emitted_any: boolean = false;
   i = 0;
   while (i < n) {
     let b: u8 = s[i];
@@ -839,7 +564,6 @@ function __case_join(s: string, upper_first: boolean): string {
       let out_b: u8 = b.to_ascii_lower();
       if (at_word_start) {
         if (!emitted_any) {
-          // First word's initial: PascalCase upper, camelCase lower.
           if (upper_first) {
             out_b = b.to_ascii_upper();
           }
@@ -857,29 +581,15 @@ function __case_join(s: string, upper_first: boolean): string {
   return string_from_bytes_unchecked(buf);
 }
 
-// `(s: string) slugify()` — turn arbitrary text into a URL slug: lower-
-// case, with every run of non-`[a-z0-9]` bytes collapsed to a single
-// `-` and no leading/trailing hyphen. `"Hello, World! 2024"` →
-// `"hello-world-2024"`, `"  --Foo__Bar--  "` → `"foo-bar"`.
-//
-// Unlike `kebab_case` (which folds camelCase identifiers but keeps
-// punctuation), this is for free-form titles. ASCII-only: any byte
-// outside `[a-z0-9]` after lower-casing — punctuation, whitespace, and
-// non-ASCII/UTF-8 bytes alike — acts as a separator, so accented
-// letters are dropped rather than transliterated. An input with no
-// alphanumerics yields `""`.
 pub function (s: string) slugify(): string {
   let n: i32 = s.len();
   let out: u8[] = [];
-  let pending: boolean = false;  // a separator run is buffered
+  let pending: boolean = false;
   let i: i32 = 0;
   while (i < n) {
     let lc: i32 = s[i].to_ascii_lower() as i32;
     let alnum: boolean = lc >= 97 && lc <= 122 || lc >= 48 && lc <= 57;
     if (alnum) {
-      // Emit the buffered separator only between alphanumerics, so
-      // leading separators (out empty) and trailing ones (never
-      // flushed) are dropped and internal runs collapse to one.
       if (pending && out.len() > 0) {
         out = out.append(45 as u8);
       }
@@ -893,10 +603,6 @@ pub function (s: string) slugify(): string {
   return string_from_bytes_unchecked(out);
 }
 
-// `s.is_valid_identifier()` — true if s matches Fern's /
-// C / JS identifier pattern: starts with a letter or
-// underscore, continues with letters / digits / underscores.
-// Empty string returns false.
 pub function (s: string) is_valid_identifier(): boolean {
   let n: i32 = s.len();
   if (n == 0) {
@@ -916,18 +622,6 @@ pub function (s: string) is_valid_identifier(): boolean {
   return true;
 }
 
-// `s.is_ipv4()` — true if s parses as a dotted-decimal IPv4
-// address: four octets, each 0..255, separated by dots. No
-// leading-zero check; "0.0.0.0" / "255.255.255.255" / common
-// shapes all pass.
-//
-// Octet parse is a manual digit-walk rather than parse_int: it
-// accepts ONLY a run of 1..3 ASCII digits, so a leading sign
-// ("+1" / "-1"), embedded whitespace, or an empty octet is
-// rejected — the strict shape an IPv4 octet needs (parse_int
-// would read "+1" / "-1" as 1). (An earlier version of
-// this note blamed a since-fixed parse_int i64-comparison bug;
-// parse_int("127") returns Some(127) on every backend today.)
 pub function (s: string) is_ipv4(): boolean {
   let parts: string[] = s.split(".");
   if (parts.len() != 4) {
@@ -958,17 +652,6 @@ pub function (s: string) is_ipv4(): boolean {
   return true;
 }
 
-// `s.is_email_like()` — basic syntactic check: exactly one
-// '@' with non-empty local + domain parts, and the domain
-// contains at least one dot. Not RFC 5322 compliant (real
-// email validation needs a parser); useful as a quick
-// sanity check before downstream validation.
-//
-// Tuple fields are bound to locals before passing to `len` —
-// `len(p.0)` directly on a `(string, string)` tuple-field
-// access crashes the arm64 backend (the load folds
-// incorrectly). Binding through `let` is a safe workaround
-// pending a codegen fix.
 pub function (s: string) is_email_like(): boolean {
   match (s.split_once("@")) {
     Some(p) => {
@@ -988,11 +671,6 @@ pub function (s: string) is_email_like(): boolean {
   }
 }
 
-// `s.is_url_like()` — true if s starts with `http://` or
-// `https://` and contains at least one dot after the scheme
-// (so localhost-style "http://nodot" fails). Very loose
-// shape check, like `is_email_like`; defer to a real URL
-// parser when one lands.
 pub function (s: string) is_url_like(): boolean {
   let rest: string = "";
   if (s.starts_with("https://")) {
@@ -1008,10 +686,6 @@ pub function (s: string) is_url_like(): boolean {
   return rest.contains(".");
 }
 
-// `s.is_json_like()` — true if s (after trimming whitespace)
-// starts and ends with matching `{}` or `[]`. Not a real
-// JSON validator — just a fast pre-flight check before
-// attempting a parse. Empty strings return false.
 pub function (s: string) is_json_like(): boolean {
   let t: string = s.trim();
   let n: i32 = t.len();
@@ -1020,18 +694,15 @@ pub function (s: string) is_json_like(): boolean {
   }
   let first: i32 = t[0] as i32;
   let last: i32 = t[n - 1] as i32;
-  if (first == 123 && last == 125) {  // { }
+  if (first == 123 && last == 125) {
     return true;
   }
-  if (first == 91 && last == 93) {  // [ ]
+  if (first == 91 && last == 93) {
     return true;
   }
   return false;
 }
 
-// `s.common_prefix(other)` — longest shared leading
-// substring. Returns "" when the first byte differs or
-// either argument is empty.
 pub function (s: string) common_prefix(other: string): string {
   let n: i32 = s.len();
   let m: i32 = other.len();
@@ -1049,9 +720,6 @@ pub function (s: string) common_prefix(other: string): string {
   return s.take(cap);
 }
 
-// `s.common_suffix(other)` — longest shared trailing
-// substring. Returns "" when no overlap or either side
-// is empty.
 pub function (s: string) common_suffix(other: string): string {
   let n: i32 = s.len();
   let m: i32 = other.len();
@@ -1069,10 +737,6 @@ pub function (s: string) common_suffix(other: string): string {
   return s.drop(n - cap);
 }
 
-// `s.starts_with_any(prefixes)` — true if any entry in
-// prefixes is a prefix of s. Empty prefixes array → false.
-// An empty-string prefix always matches (consistent with
-// `starts_with("")`).
 pub function (s: string) starts_with_any(prefixes: string[]): boolean {
   let n: i32 = prefixes.len();
   let i: i32 = 0;
@@ -1085,8 +749,6 @@ pub function (s: string) starts_with_any(prefixes: string[]): boolean {
   return false;
 }
 
-// `s.ends_with_any(suffixes)` — true if any entry in
-// suffixes is a suffix of s. Empty suffixes array → false.
 pub function (s: string) ends_with_any(suffixes: string[]): boolean {
   let n: i32 = suffixes.len();
   let i: i32 = 0;
@@ -1099,18 +761,10 @@ pub function (s: string) ends_with_any(suffixes: string[]): boolean {
   return false;
 }
 
-// `s.replace_first(old, new)` — replace only the first
-// occurrence of `old` with `new`. Convenience wrapper over
-// `replace_n(old, new, 1)`. Empty `old` is a no-op
-// (matches `replace`'s semantics).
 pub function (s: string) replace_first(old: string, new: string): string {
   return s.replace_n(old, new, 1);
 }
 
-// `s.word_at(i)` — Option[string] of the i-th word in s
-// using whitespace as separator. Multiple consecutive
-// whitespace bytes collapse (driven by `fields()`).
-// Negative indices and indices >= word_count return None.
 pub function (s: string) word_at(i: i32): Option[string] {
   if (i < 0) {
     return None;
@@ -1122,9 +776,6 @@ pub function (s: string) word_at(i: i32): Option[string] {
   return Some(words[i]);
 }
 
-// `s.word_count_min(min_len)` — count of whitespace-
-// delimited words at least `min_len` bytes long.
-// `min_len <= 0` counts every word.
 pub function (s: string) word_count_min(min_len: i32): i32 {
   let words: string[] = s.fields();
   let n: i32 = words.len();
@@ -1139,9 +790,6 @@ pub function (s: string) word_count_min(min_len: i32): i32 {
   return c;
 }
 
-// `s.longest_word()` — Option[string] of the longest
-// whitespace-delimited word. Ties go to the first
-// occurrence. Empty / all-whitespace input → None.
 pub function (s: string) longest_word(): Option[string] {
   let words: string[] = s.fields();
   let n: i32 = words.len();
@@ -1159,12 +807,6 @@ pub function (s: string) longest_word(): Option[string] {
   return Some(best);
 }
 
-// `s.is_quoted()` — true if s has at least 2 bytes and
-// the first and last bytes are matching quote characters
-// (", `, or '). Doesn't validate escaping inside the
-// quotes — purely a shape predicate. Empty / single-char
-// strings return false (need at least an opening and
-// closing quote).
 pub function (s: string) is_quoted(): boolean {
   let n: i32 = s.len();
   if (n < 2) {
@@ -1181,16 +823,12 @@ pub function (s: string) is_quoted(): boolean {
   return false;
 }
 
-// `s.is_kebab_case()` — true if s is non-empty,
-// lowercase / digit / hyphen only, no leading or trailing
-// hyphen, and no consecutive hyphens. Matches the
-// "url-slug" shape kebab-case usually denotes.
 pub function (s: string) is_kebab_case(): boolean {
   let n: i32 = s.len();
   if (n == 0) {
     return false;
   }
-  if (s[0] == 45 || s[n - 1] == 45) {  // leading/trailing -
+  if (s[0] == 45 || s[n - 1] == 45) {
     return false;
   }
   let i: i32 = 0;
@@ -1212,15 +850,12 @@ pub function (s: string) is_kebab_case(): boolean {
   return true;
 }
 
-// `s.is_snake_case()` — true if s is non-empty,
-// lowercase / digit / underscore only, no leading or
-// trailing underscore, and no consecutive underscores.
 pub function (s: string) is_snake_case(): boolean {
   let n: i32 = s.len();
   if (n == 0) {
     return false;
   }
-  if (s[0] == 95 || s[n - 1] == 95) {  // leading/trailing _
+  if (s[0] == 95 || s[n - 1] == 95) {
     return false;
   }
   let i: i32 = 0;
@@ -1242,14 +877,6 @@ pub function (s: string) is_snake_case(): boolean {
   return true;
 }
 
-// `s.is_camel_case()` / `is_pascal_case()` — case-shape predicates
-// for the two medial-capitals conventions, the classifiers that pair
-// with the `camel_case` / `pascal_case` producers (#5070). True when s
-// is non-empty and every byte is an ASCII letter or digit (any
-// separator — `_`, `-`, space — or other punctuation makes it false),
-// and the first byte has the right case: lowercase for camelCase,
-// uppercase for PascalCase. A single all-lowercase word (`"foo"`) is
-// valid camelCase, mirroring how `is_snake_case` accepts a single word.
 pub function (s: string) is_camel_case(): boolean {
   return __is_medial_caps(s, false);
 }
@@ -1265,11 +892,11 @@ function __is_medial_caps(s: string, upper_first: boolean): boolean {
   }
   let f: i32 = s[0] as i32;
   if (upper_first) {
-    if (!(f >= 65 && f <= 90)) {  // PascalCase starts A-Z
+    if (!(f >= 65 && f <= 90)) {
       return false;
     }
   } else {
-    if (!(f >= 97 && f <= 122)) {  // camelCase starts a-z
+    if (!(f >= 97 && f <= 122)) {
       return false;
     }
   }
@@ -1277,7 +904,7 @@ function __is_medial_caps(s: string, upper_first: boolean): boolean {
   while (i < n) {
     let b: i32 = s[i] as i32;
     let ok: boolean = b >= 97 && b <= 122 || b >= 65 && b <= 90 || b >= 48 && b <= 57;
-    if (!ok) {  // letters and digits only — no separators
+    if (!ok) {
       return false;
     }
     i = i + 1;
@@ -1285,20 +912,12 @@ function __is_medial_caps(s: string, upper_first: boolean): boolean {
   return true;
 }
 
-// `s.shift_byte(delta)` — Caesar-style byte shift: each
-// byte += delta, wrapping at 256. Negative deltas are
-// supported. Useful for simple obfuscation / toy ciphers;
-// don't rely on it for security.
-// The result is owned bytes; validate with utf8.from_bytes to obtain text.
 pub function (s: string) shift_byte(delta: i32): u8[] {
   let n: i32 = s.len();
   let buf: u8[] = __alloc_u8(n);
   let i: i32 = 0;
   while (i < n) {
     let b: i32 = s[i] as i32 + delta;
-    // Normalise into 0..255 with two mods (handles
-    // negative deltas correctly — `(-1) % 256 == -1`
-    // in i32, hence the second add).
     b = (b % 256 + 256) % 256;
     buf = buf.with(i, b as u8);
     i = i + 1;
@@ -1306,10 +925,6 @@ pub function (s: string) shift_byte(delta: i32): u8[] {
   return buf;
 }
 
-// Character sets compare Unicode scalar values, without normalization.
-// Each ill-formed maximal subpart compares as U+FFFD in either input;
-// retained units keep their original bytes, without lossy replacement.
-// Plain i32/string -> boolean, without closures, for the self-host surface.
 function __char_in_set(cp: i32, set: string): boolean {
   let j: i32 = 0;
   let setLen: i32 = set.len();
@@ -1323,9 +938,6 @@ function __char_in_set(cp: i32, set: string): boolean {
   return false;
 }
 
-// `s.without_chars(set)` removes each Unicode scalar present in set.
-// Empty set leaves s unchanged; retained characters keep their original bytes.
-// Ill-formed maximal subparts compare as U+FFFD; this does not validate s.
 pub function (s: string) without_chars(set: string): string {
   let n: i32 = s.len();
   if (n == 0) {
@@ -1358,9 +970,6 @@ pub function (s: string) without_chars(set: string): string {
   return string_from_bytes_unchecked(out);
 }
 
-// `s.contains_only(set)` is true when every Unicode scalar in s is in set.
-// Empty s returns true, including when set is empty.
-// Ill-formed maximal subparts in either input compare as U+FFFD.
 pub function (s: string) contains_only(set: string): boolean {
   let n: i32 = s.len();
   if (n == 0) {
@@ -1380,9 +989,6 @@ pub function (s: string) contains_only(set: string): boolean {
   return true;
 }
 
-// `s.count_chars_in(set)` counts Unicode scalars of s present in set.
-// Repeated characters in set do not count a character more than once.
-// Each ill-formed maximal subpart in either input compares as U+FFFD.
 pub function (s: string) count_chars_in(set: string): i32 {
   let n: i32 = s.len();
   if (n == 0 || set.len() == 0) {
@@ -1400,20 +1006,12 @@ pub function (s: string) count_chars_in(set: string): i32 {
   return c;
 }
 
-// `s.split_at(i)` — split s into two parts at byte index i,
-// snapped BACKWARD to a char boundary when i lands inside a
-// code point (#5634, D9), so neither part ever holds a split
-// character and the parts always concatenate back to s.
-// Negative i clamps to 0; i >= len(s) puts everything in the
-// first part. Returns a (string, string) tuple.
 pub function (s: string) split_at(i: i32): (string, string) {
   let n: i32 = s.len();
   let k: i32 = __floor_boundary(s, i);
   return (slice_unchecked(s, 0, k).to_owned(), slice_unchecked(s, k, n).to_owned());
 }
 
-// `s.replace_byte(from, to)` returns owned bytes with each byte equal to
-// from replaced by to. Use replace(old, new) for text.
 pub function (s: string) replace_byte(from: u8, to: u8): u8[] {
   let n: i32 = s.len();
   let buf: u8[] = __alloc_u8(n);
@@ -1430,10 +1028,6 @@ pub function (s: string) replace_byte(from: u8, to: u8): u8[] {
   return buf;
 }
 
-// `s.to_acronym()` — first byte of each whitespace-
-// separated token, uppercased and concatenated. "hello
-// world" → "HW". Empty / all-whitespace input → "".
-// ASCII upper-fold only.
 pub function (s: string) to_acronym(): string {
   let toks: string[] = s.fields();
   let n: i32 = toks.len();
@@ -1450,13 +1044,6 @@ pub function (s: string) to_acronym(): string {
   return out;
 }
 
-// `s.to_ascii_title_case()` — uppercase the first byte of every
-// space-separated word, leave the rest untouched. Splits
-// on the literal ' ' byte (preserves multi-space gaps as
-// trailing spaces on the previous word the way Go's
-// `strings.Title` does). ASCII-only; "FOX" stays "FOX".
-// `title_case` is the Unicode version, and it also breaks on
-// tabs and newlines rather than the space byte alone.
 pub function (s: string) to_ascii_title_case(): string {
   let n: i32 = s.len();
   if (n == 0) {
@@ -1478,19 +1065,10 @@ pub function (s: string) to_ascii_title_case(): string {
   return string_from_bytes_unchecked(buf);
 }
 
-// `s.title_case()` — uppercase the first code point of every
-// whitespace-separated word, leave the rest of each word alone
-// (so "FOX" stays "FOX"). `"élan vital".title_case()` is
-// `"Élan Vital"`. Word breaks are any Unicode whitespace, so a
-// tab-separated string titles here but not under
-// `to_ascii_title_case`, which breaks on the space byte only.
 pub function (s: string) title_case(): string {
   return unicode.title_case(s);
 }
 
-// `s.lines_non_empty()` — like `lines()` but drops empty
-// entries. Useful for parsing text that uses blank lines
-// as separators where you don't care about them.
 pub function (s: string) lines_non_empty(): string[] {
   let raw: string[] = s.lines();
   let n: i32 = raw.len();
@@ -1505,27 +1083,6 @@ pub function (s: string) lines_non_empty(): string[] {
   return out;
 }
 
-// === Whole-string character-class predicates ===
-//
-// `is_numeric()` / `is_alpha_only()` / `is_alnum_only()` are
-// UNICODE: true iff every CODE POINT is in the class, so
-// `"Ελλάδα".is_alpha_only()` and `"٤٢".is_numeric()` are true.
-// Each has an `is_ascii_*` twin that tests every BYTE against
-// the ASCII class instead, for known-ASCII input and for
-// protocol tokens.
-//
-// `is_ascii_only()` has no Unicode counterpart by definition —
-// it asks whether the string is confined to ASCII — so it keeps
-// its name and its byte-wise implementation.
-//
-// Empty strings return true for is_ascii_only (no non-ASCII
-// bytes) and false for the numeric / alpha variants (vacuously
-// empty doesn't qualify as a numeric or alphabetic word —
-// matches Python str isdigit / isalpha conventions).
-//
-// Suffix `_only` says "every character", not "some character";
-// it no longer disambiguates from the byte-receiver methods,
-// which carry `ascii` in their names since #5629.
 pub function (s: string) is_ascii_only(): boolean {
   let n: i32 = s.len();
   let i: i32 = 0;
@@ -1595,10 +1152,6 @@ pub function (s: string) is_alnum_only(): boolean {
   return unicode.is_alnum_only(s);
 }
 
-// `s.is_int()` — true if s parses as a decimal integer
-// (optional leading `+` / `-`, then one-or-more digits).
-// Doesn't check for i32 overflow — `s.parse_int()` is the
-// validating + parsing form.
 pub function (s: string) is_int(): boolean {
   let n: i32 = s.len();
   if (n == 0) {
@@ -1620,11 +1173,6 @@ pub function (s: string) is_int(): boolean {
   return true;
 }
 
-// `s.is_float()` — true if s looks like a decimal float:
-// optional sign, digits, optional `.digits`. No exponent
-// form (`1e10`) — that's a follow-up. Pure-int strings are
-// also accepted (5 → true). Used as a quick "looks numeric"
-// check before invoking parse_float.
 pub function (s: string) is_float(): boolean {
   let n: i32 = s.len();
   if (n == 0) {
@@ -1652,18 +1200,10 @@ pub function (s: string) is_float(): boolean {
   return any_digits && i == n;
 }
 
-// `s.wrap(prefix, suffix)` — concatenate prefix + s +
-// suffix. Saves the multi-+ call site when wrapping a value
-// in brackets / quotes / tags. `"x".wrap("[", "]")` →
-// `"[x]"`.
 pub function (s: string) wrap(prefix: string, suffix: string): string {
   return prefix + s + suffix;
 }
 
-// `s.is_blank()` — true if s is empty or contains only ASCII
-// whitespace. Differs from is_empty by also matching strings
-// of pure tabs / spaces / newlines. Useful for "skip blank
-// lines" passes.
 pub function (s: string) is_blank(): boolean {
   let n: i32 = s.len();
   let i: i32 = 0;
@@ -1676,10 +1216,6 @@ pub function (s: string) is_blank(): boolean {
   return true;
 }
 
-// `s.is_hex_string()` — every byte is a hex digit (case-
-// insensitive). Empty string returns false (mirrors the
-// is_numeric / is_alpha_only conventions). Useful for
-// validating user-supplied hex hashes / hex-color values.
 pub function (s: string) is_hex_string(): boolean {
   let n: i32 = s.len();
   if (n == 0) {
@@ -1695,22 +1231,12 @@ pub function (s: string) is_hex_string(): boolean {
   return true;
 }
 
-// `s.indent(prefix)` — prepend prefix to every line of s.
-// Empty lines get the prefix too (matches Python textwrap
-// indent's default; the predicate-gated variant is a
-// follow-up). Lines are determined by '\n'; CRLF input
-// gets prefix between the CR and the LF only on the first
-// line and after each '\n', which matches the bytewise
-// model.
 pub function (s: string) indent(prefix: string): string {
   let n: i32 = s.len();
   if (n == 0) {
     return "";
   }
   let pl: i32 = prefix.len();
-  // Two-pass exact-size buffer (#4379): the output is the input plus one prefix
-  // at the start and after every NON-final newline. Replaces the O(n²)
-  // `out = out + …` that recopied the growing result each byte.
   let nl: i32 = 0;
   let i: i32 = 0;
   while (i < n) {
@@ -1736,17 +1262,8 @@ pub function (s: string) indent(prefix: string): string {
   return string_from_bytes_unchecked(buf);
 }
 
-// `s.dedent()` — remove the longest common leading-whitespace prefix
-// (spaces / tabs) shared by every non-blank line, the inverse of
-// `indent` and Python's `textwrap.dedent`. Lines that are entirely
-// whitespace (or empty) are normalised to `""` and don't constrain the
-// common prefix, so a blank indented line in a here-doc doesn't defeat
-// the dedent. Because the prefix is matched byte-for-byte, a line
-// indented with a tab and one indented with spaces share no prefix (as
-// in Python). Lines are split on `\n`.
 pub function (s: string) dedent(): string {
   let lines: string[] = s.split("\n");
-  // First pass: the common leading-whitespace prefix over non-blank lines.
   let common: string = "";
   let have_common: boolean = false;
   let i: i32 = 0;
@@ -1756,7 +1273,7 @@ pub function (s: string) dedent(): string {
     while (ws < line.len() && (line[ws] == 32 || line[ws] == 9)) {
       ws = ws + 1;
     }
-    if (ws < line.len()) {  // has non-whitespace content
+    if (ws < line.len()) {
       let lead: string = slice_unchecked(line, 0, ws) + "";
       if (!have_common) {
         common = lead;
@@ -1775,7 +1292,6 @@ pub function (s: string) dedent(): string {
     }
     i = i + 1;
   }
-  // Second pass: strip `common` from each line; blank lines → "".
   let clen: i32 = common.len();
   let out: string[] = [];
   let j: i32 = 0;
@@ -1785,7 +1301,7 @@ pub function (s: string) dedent(): string {
     while (wsj < ln.len() && (ln[wsj] == 32 || ln[wsj] == 9)) {
       wsj = wsj + 1;
     }
-    if (wsj == ln.len()) {  // whitespace-only or empty
+    if (wsj == ln.len()) {
       out = out.append("");
     } else {
       out = out.append(slice_unchecked(ln, clen, ln.len()) + "");
@@ -1795,19 +1311,6 @@ pub function (s: string) dedent(): string {
   return out.join("\n");
 }
 
-// The trim family returns `str` (#4813 producer flip, slice P1): the
-// declared type says "this is a view of the receiver's bytes" even though
-// the native/wasm backends still COPY today (the asm-IR path is already
-// zero-copy, #4294). Consumers read/pass it freely (borrowed positions)
-// and materialise with .to_owned() to store it in an owning sink; E065
-// governs escapes. The backend zero-copy convergence is slice P3.
-//
-// to_owned materialises an OWNED `string` from a borrowed `str` view
-// (#4813): `str` shares the `string` method surface, so a view receiver
-// dispatches here. `s + ""` is a fresh-owned producer on EVERY backend and
-// path -- unlike slicing, which is a zero-copy immortal view on the asm-IR
-// path (#4294) and would hand back another view instead of a copy. On an
-// already-owned `string` receiver it is a plain (cheap) copy.
 pub function (s: string) to_owned(): string {
   return s + "";
 }
@@ -1831,10 +1334,6 @@ pub function (s: string) trim(): string {
   return slice_unchecked(s, low, high) + "";
 }
 
-// `s.trim_start()` / `trim_end()` — one-sided whitespace
-// strip. The bare `trim` already covers both ends; these
-// are the asymmetric variants useful for trimming a
-// prompt prefix without eating trailing data, or vice versa.
 pub function (s: string) trim_start(): string {
   let n: i32 = s.len();
   let i: i32 = 0;
@@ -1853,10 +1352,6 @@ pub function (s: string) trim_end(): string {
   return slice_unchecked(s, 0, end) + "";
 }
 
-// `s.rstrip_newline()` — strip a single trailing newline.
-// Removes "\n" or "\r\n" (the CRLF pair) but stops there —
-// runs of multiple newlines are preserved beyond the first
-// strip. Use trim_end for full whitespace strip.
 pub function (s: string) rstrip_newline(): string {
   let n: i32 = s.len();
   if (n == 0) {
@@ -1871,9 +1366,6 @@ pub function (s: string) rstrip_newline(): string {
   return s;
 }
 
-// `s.trim_chars(chars)` strips Unicode scalars present in chars from both
-// ends. Empty chars is a no-op. Combining marks are separate scalars.
-// Ill-formed maximal subparts compare as U+FFFD; retained bytes are unchanged.
 pub function (s: string) trim_chars(chars: string): string {
   let n: i32 = s.len();
   if (chars.len() == 0) {
@@ -1898,10 +1390,6 @@ pub function (s: string) trim_chars(chars: string): string {
   return slice_unchecked(s, low, high) + "";
 }
 
-// `s.trim_start_chars(chars)` / `s.trim_end_chars(chars)` —
-// one-sided variants of trim_chars. Strip Unicode scalars in `chars`
-// from the start / end only.
-// Ill-formed maximal subparts compare as U+FFFD; retained bytes are unchanged.
 pub function (s: string) trim_start_chars(chars: string): string {
   let n: i32 = s.len();
   if (chars.len() == 0) {
@@ -1918,7 +1406,6 @@ pub function (s: string) trim_start_chars(chars: string): string {
   return slice_unchecked(s, i, n) + "";
 }
 
-// As trim_start_chars, using the same maximal-subpart units from the end.
 pub function (s: string) trim_end_chars(chars: string): string {
   let n: i32 = s.len();
   if (chars.len() == 0) {
@@ -1935,9 +1422,6 @@ pub function (s: string) trim_end_chars(chars: string): string {
   return slice_unchecked(s, 0, end) + "";
 }
 
-// `s.starts_with_ci(prefix)` / `s.ends_with_ci(suffix)` —
-// ASCII case-insensitive variants of starts_with / ends_with.
-// Folds A-Z to a-z per byte.
 pub function (s: string) starts_with_ci(prefix: string): boolean {
   let sLen: i32 = s.len();
   let pLen: i32 = prefix.len();
@@ -1971,35 +1455,22 @@ pub function (s: string) ends_with_ci(suffix: string): boolean {
   return true;
 }
 
-// `s.bytes()` — returns a fresh `u8[]` whose contents are
-// independently owned. Use `s.as_bytes()` (slice form) when
-// you don't need ownership; that's the zero-copy companion.
 pub function (s: string) bytes(): u8[] {
   let n: i32 = s.len();
   let out: u8[] = __alloc_u8(n);
   let data: usize = __str_bytes(s, 0 as usize);
   if (data == 0 as usize) {
-    // Inline strings have no stable address. Copy their bytes directly;
-    // the backend decides which values use inline storage.
     let i: i32 = 0;
     while (i < n) {
       out = out.with(i, s[i]);
       i = i + 1;
     }
   } else {
-    // Assumes a `u8[]` value is its packed data pointer. The compiler never
-    // compiles this body: `.bytes()` is an intrinsic there.
     __memcpy(out as usize, data, n);
   }
   return out;
 }
 
-// __string_case_fold drives `to_ascii_lower` / `to_ascii_upper`.
-// Allocates a fresh `u8[]` of the same length, byte-by-byte
-// remaps any A..A+25 source range to dstBase..dstBase+25,
-// passes everything else through. Non-ASCII bytes (>= 0x80)
-// always fall outside the [srcBase, srcBase+26) check, so
-// UTF-8 multibyte sequences pass through unchanged.
 function __string_case_fold(s: string, srcBase: i32, dstBase: i32): string {
   let n: i32 = s.len();
   let buf: u8[] = __alloc_u8(n);
@@ -2015,57 +1486,14 @@ function __string_case_fold(s: string, srcBase: i32, dstBase: i32): string {
   return string_from_bytes_unchecked(buf);
 }
 
-// `s.to_ascii_lower()` / `s.to_ascii_upper()` — the ASCII fast path,
-// the string-shaped twins of the byte-level `(b: i32) to_ascii_upper()`.
-// Only `A-Z` / `a-z` are remapped; every other byte passes through
-// UNCHANGED, including every byte of a multibyte UTF-8 sequence (they are
-// all >= 0x80, outside the folded range). So the result is always valid
-// UTF-8 — non-ASCII text is left alone, not corrupted:
-//
-//     "café".to_ascii_upper()  == "CAFé"     // é survives, is not uppercased
-//     "CAFÉ".to_ascii_lower()  == "cafÉ"
-//
-// Reach for these when the input is known-ASCII (a protocol token, a
-// header name, a file extension) and the byte fold is exactly what you
-// mean. For human text use `to_upper` / `to_lower`, which are
-// Unicode-correct.
 pub function (s: string) to_ascii_lower(): string {
-  return __string_case_fold(s, 65, 97);  // A-Z → a-z
+  return __string_case_fold(s, 65, 97);
 }
 
 pub function (s: string) to_ascii_upper(): string {
-  return __string_case_fold(s, 97, 65);  // a-z → A-Z
+  return __string_case_fold(s, 97, 65);
 }
 
-// `s.to_lower()` / `s.to_upper()` — Unicode case mapping over every code
-// point, not a byte fold:
-//
-//     "café".to_upper()  == "CAFÉ"
-//     "ΣΟΦΟΣ".to_lower() == "σοφος"
-//     "ΑΒΓ".to_lower()   == "αβγ"
-//
-// Pure-ASCII input never touches a table — `std/unicode` fast-paths it to
-// the same byte fold `to_ascii_upper` does — so the common case costs a
-// scan, not a binary search.
-//
-// FULL mapping: one code point may become SEVERAL — `"ß".to_upper()` is
-// `"SS"`, `"ﬁ".to_upper()` is `"FI"`. The context-sensitive Greek rule is
-// applied too, so a word-final `Σ` lowercases to `ς` and a medial one to
-// `σ` (`"ΣΟΦΟΣ".to_lower()` is `"σοφος"`). Locale-independent by design:
-// no Turkish dotless-i tailoring, so `"I".to_lower()` is `"i"` in every
-// locale.
-//
-// Two consequences of decoding rather than folding bytes, both of which
-// `to_ascii_*` does NOT share:
-//   - Length is not preserved, in either direction. A code point can
-//     change width (`İ` U+0130 is 2 bytes, its lowercase `i̇` is 3) and
-//     an expansion adds code points outright. Note the two are
-//     independent: `ß` → `SS` doubles the code points while leaving the
-//     byte length at 2.
-//   - `string` is never validity-checked, and a malformed byte decodes to
-//     U+FFFD — so these NORMALISE invalid UTF-8 rather than passing it
-//     through. If you are folding bytes that may not be UTF-8 (a protocol
-//     frame, a filename) and need them back unchanged, use `to_ascii_*`.
 pub function (s: string) to_lower(): string {
   return unicode.to_lower(s);
 }
@@ -2074,21 +1502,15 @@ pub function (s: string) to_upper(): string {
   return unicode.to_upper(s);
 }
 
-// `s.to_ascii_swap_case()` — toggle the case of every ASCII letter: `A-Z`
-// become `a-z` and vice versa, everything else (digits, punctuation,
-// non-ASCII bytes) passes through unchanged. ASCII-only like
-// `to_ascii_upper` / `to_ascii_lower`; `swap_case` is the Unicode
-// version. Its own inverse:
-// `s.to_ascii_swap_case().to_ascii_swap_case() == s`.
 pub function (s: string) to_ascii_swap_case(): string {
   let n: i32 = s.len();
   let buf: u8[] = __alloc_u8(n);
   let i: i32 = 0;
   while (i < n) {
     let b: i32 = s[i] as i32;
-    if (b >= 65 && b <= 90) {  // A-Z → a-z
+    if (b >= 65 && b <= 90) {
       b = b + 32;
-    } else if (b >= 97 && b <= 122) {  // a-z → A-Z
+    } else if (b >= 97 && b <= 122) {
       b = b - 32;
     }
     buf = buf.with(i, b as u8);
@@ -2097,27 +1519,10 @@ pub function (s: string) to_ascii_swap_case(): string {
   return string_from_bytes_unchecked(buf);
 }
 
-// `s.swap_case()` — toggle the case of every code point: uppercase
-// becomes lowercase and vice versa, caseless code points (digits,
-// punctuation, CJK) pass through. `"Élan".swap_case()` is `"éLAN"`,
-// where the byte fold leaves `É` alone. Its own inverse for any string
-// whose code points round-trip under simple mapping.
 pub function (s: string) swap_case(): string {
   return unicode.swap_case(s);
 }
 
-// `s.split(sep)` — splits on every non-overlapping
-// occurrence of sep. Empty pieces around adjacent
-// separators are preserved (`",a,b,".split(",")` →
-// `["", "a", "b", ""]`). An empty separator splits into
-// CHARACTERS — one string per codepoint, the same units
-// `chars()` yields, so no piece is ever half a multibyte
-// sequence. (`to_array()` is the same scalar split.) Result
-// is built incrementally via `__array_append_string`.
-//
-// Every piece in this family — split, splitn, chunks, lines, fields,
-// to_array — is materialised with `+ ""`: a bare slice is a view of `s`,
-// and the array holding it outlives `s`.
 pub function (s: string) split(sep: string): string[] {
   let n: i32 = s.len();
   let sepLen: i32 = sep.len();
@@ -2135,11 +1540,6 @@ pub function (s: string) split(sep: string): string[] {
   return out.append(slice_unchecked(s, start, n) + "");
 }
 
-// `s.rsplit(sep)` — like `split`, but the pieces come out in reverse
-// order, as if the string were scanned from the end
-// (`"a.b.c".rsplit(".")` is `["c", "b", "a"]`). Mirrors Rust's
-// `str::rsplit`; for a symmetric separator it is `split` reversed. Pairs
-// with `rsplit_once` (the first split from the end) already in this module.
 pub function (s: string) rsplit(sep: string): string[] {
   let fwd: string[] = s.split(sep);
   let out: string[] = [];
@@ -2151,11 +1551,6 @@ pub function (s: string) rsplit(sep: string): string[] {
   return out;
 }
 
-// `s.splitn(sep, n)` — like split but caps the result at n
-// pieces; the last piece carries the unsplit tail. n <= 0
-// returns the empty array; n == 1 returns [s] unchanged.
-// Useful for "first token, rest" parsing — HTTP request
-// lines, URL scheme separation, header `key: value`.
 pub function (s: string) splitn(sep: string, n: i32): string[] {
   let out: string[] = [];
   if (n <= 0) {
@@ -2165,14 +1560,10 @@ pub function (s: string) splitn(sep: string, n: i32): string[] {
     return out.append(s);
   }
   let sepLen: i32 = sep.len();
-  // Hoist sLen / i / start to function scope — wasm rejects
-  // sibling-scope duplicate locals. `i` belongs to the empty-sep
-  // branch, `start` to the separator scan.
   let sLen: i32 = s.len();
   let i: i32 = 0;
   let start: i32 = 0;
   if (sepLen == 0) {
-    // Match split's empty-sep behaviour: one piece per codepoint.
     while (i < sLen && out.len() < n - 1) {
       let step: i32 = __utf8_step(s, i, sLen);
       out = out.append(slice_unchecked(s, i, i + step) + "");
@@ -2189,13 +1580,6 @@ pub function (s: string) splitn(sep: string, n: i32): string[] {
   return out.append(slice_unchecked(s, start, sLen) + "");
 }
 
-// `s.rsplitn(sep, n)` — `splitn` scanning from the END: at most `n` pieces,
-// the pieces in reverse order, and it is the FIRST (leftmost) piece that
-// carries the unsplit head. `"a.b.c.d".rsplitn(".", 2)` is `["d", "a.b.c"]`;
-// `n == 1` is `[s]`; `n <= 0` is empty. Mirrors Rust's `str::rsplitn` and
-// pairs with `splitn` / `rsplit` / `rsplit_once`. Useful for "last field,
-// and everything before it" parsing (a filename's extension, the final path
-// segment).
 pub function (s: string) rsplitn(sep: string, n: i32): string[] {
   let out: string[] = [];
   if (n <= 0) {
@@ -2203,7 +1587,6 @@ pub function (s: string) rsplitn(sep: string, n: i32): string[] {
   }
   let fwd: string[] = s.split(sep);
   let k: i32 = fwd.len();
-  // Fewer pieces than the cap: nothing to keep unsplit, so it is `rsplit`.
   if (k <= n) {
     let a: i32 = k - 1;
     while (a >= 0) {
@@ -2212,7 +1595,6 @@ pub function (s: string) rsplitn(sep: string, n: i32): string[] {
     }
     return out;
   }
-  // Emit the last n-1 pieces (reversed), then join the remaining head.
   let i: i32 = k - 1;
   while (i >= k - (n - 1)) {
     out = out.append(fwd[i]);
@@ -2227,9 +1609,6 @@ pub function (s: string) rsplitn(sep: string, n: i32): string[] {
   return out.append(head);
 }
 
-// `s.first()` / `s.last()` — first / last byte as Option[u8].
-// None on empty. Convenience over `s.at(0)` / `s.at(len(s) - 1)`
-// — the indices are easy to mis-write.
 pub function (s: string) first(): Option[u8] {
   if (s.len() == 0) {
     return None;
@@ -2245,10 +1624,6 @@ pub function (s: string) last(): Option[u8] {
   return Some(s[n - 1]);
 }
 
-// __floor_boundary / __ceil_boundary — clamp i to [0, len] and
-// snap it to the nearest char boundary (backward / forward).
-// The probe (`byte < 128 || byte >= 192`) is inlined because
-// std/utf8 imports this module.
 function __floor_boundary(s: string, i: i32): i32 {
   let n: i32 = s.len();
   let k: i32 = i;
@@ -2287,13 +1662,6 @@ function __ceil_boundary(s: string, i: i32): i32 {
   return k;
 }
 
-// `s.take(n)` / `s.drop(n)` — prefix and suffix with bounds
-// clamping, and a byte count landing inside a code point snaps
-// BACKWARD to the boundary (#5634, D9) — so neither half ever
-// splits a character, and `s.take(n) + s.drop(n) == s` holds for
-// every n. take(big) returns the whole string; drop(big) returns
-// empty; a negative count is treated as 0. On boundary counts —
-// hence all ASCII — both are exactly the old byte slices.
 pub function (s: string) take(n: i32): string {
   if (n <= 0) {
     return "";
@@ -2316,13 +1684,6 @@ pub function (s: string) drop(n: i32): string {
   return slice_unchecked(s, __floor_boundary(s, n), sLen) + "";
 }
 
-// `s.slice_snap(a, b)` — total byte slicing that cannot split a
-// UTF-8 code point (#5634, D9): both bounds are clamped to
-// [0, s.len()] and then snapped INWARD to char boundaries (`a`
-// forward, `b` backward), so the result never includes bytes
-// outside [a:b) and is identical to `s[a:b]` whenever both
-// indices already sit on boundaries — hence on all ASCII input.
-// An inverted or snapped-empty range returns "".
 pub function (s: string) slice_snap(a: i32, b: i32): string {
   let lo: i32 = __ceil_boundary(s, a);
   let hi: i32 = __floor_boundary(s, b);
@@ -2332,15 +1693,6 @@ pub function (s: string) slice_snap(a: i32, b: i32): string {
   return slice_unchecked(s, lo, hi) + "";
 }
 
-// `s.chunks(size)` — split into consecutive chunks of at most
-// `size` bytes, with each cut snapped BACKWARD to a char
-// boundary so no chunk ends in a split code point (#5634, D9).
-// A chunk grows past `size` only when a single code point is
-// wider than the whole window (size < 4), which guarantees
-// progress. The last chunk may be shorter; on ASCII every chunk
-// is exactly `size` bytes. size <= 0 returns an array containing
-// just s (or empty if s is empty). Useful for base64
-// line-wrapping, hex-dump formatting, paged output.
 pub function (s: string) chunks(size: i32): string[] {
   let sLen: i32 = s.len();
   let out: string[] = [];
@@ -2367,21 +1719,6 @@ pub function (s: string) chunks(size: i32): string[] {
   return out;
 }
 
-// `s.lines()` — splits on '\n', strips a trailing '\r' from
-// each line (so CRLF is treated as LF), and drops the trailing
-// empty line that a final '\n' would otherwise produce. Matches
-// Python's `str.splitlines()` and Go's `bufio.Scanner` with
-// `ScanLines`:
-//
-//   "a\nb\nc"   → ["a", "b", "c"]
-//   "a\nb\n"    → ["a", "b"]            (trailing '\n' eaten)
-//   "a\r\nb"    → ["a", "b"]            (CR stripped)
-//   "\n"        → [""]                  (one empty line)
-//   ""          → []                    (no lines at all)
-//
-// O(n) single-pass byte walk; uses index-of-byte (s[i]) and
-// substring slicing rather than the per-byte `s[i:i+1] == "\n"`
-// pattern, so the inner loop allocates nothing.
 pub function (s: string) lines(): string[] {
   let n: i32 = s.len();
   let out: string[] = [];
@@ -2405,9 +1742,6 @@ pub function (s: string) lines(): string[] {
       i = i + 1;
     }
   }
-  // Trailing chunk (no final '\n'): emit only when non-empty.
-  // start == n means the input ended with '\n' and we DON'T
-  // want a phantom empty line.
   if (start < n) {
     let endTail: i32 = n;
     if (endTail > start) {
@@ -2420,16 +1754,6 @@ pub function (s: string) lines(): string[] {
   return out;
 }
 
-// `s.fields()` — split on runs of ASCII whitespace, dropping
-// empty pieces. Differs from `split(" ")` which preserves
-// adjacent-separator empties and only matches the single
-// space byte. Whitespace classifier matches the trim() one
-// (space / tab / CR / LF / VT / FF). Result is the run of
-// non-empty fields in order. Empty / all-whitespace input
-// returns an empty array.
-//
-// Matches Go strings.Fields, Roc Str.split (whitespace
-// flavour), Python str.split() (no-arg).
 pub function (s: string) fields(): string[] {
   let n: i32 = s.len();
   let out: string[] = [];
@@ -2450,32 +1774,14 @@ pub function (s: string) fields(): string[] {
   return out;
 }
 
-// `s.case_fold()` — `s` mapped to a form for caseless comparison.
-// Folding is a THIRD operation, not a synonym for lowercasing:
-// `"ß".case_fold()` is `"ss"` where `to_lower` leaves `ß` alone,
-// and `ſ` (LATIN SMALL LETTER LONG S) folds to `s`. The result is
-// for COMPARISON, not display — it is not guaranteed to be
-// readable or to round-trip.
 pub function (s: string) case_fold(): string {
   return unicode.case_fold(s);
 }
 
-// `s.eq_ignore_case(other)` — caseless equality under full Unicode
-// case folding, so `"ß".eq_ignore_case("ss")` is true and
-// `"STRASSE".eq_ignore_case("straße")` is true. This is what you
-// want for comparing human text; `eq_ignore_ascii_case` is what you
-// want for a protocol token. Pure-ASCII operands allocate nothing.
 pub function (s: string) eq_ignore_case(other: string): boolean {
   return unicode.eq_ignore_case(s, other);
 }
 
-// `s.eq_ignore_ascii_case(other)` — equality with ASCII A-Z
-// folded to a-z on both sides. Non-ASCII bytes (>= 0x80) only
-// match byte-exact — multibyte UTF-8 sequences and Unicode
-// case folding aren't handled. Standard shape for HTTP header
-// keys ("Content-Type" vs "content-type") where the fold is
-// strictly ASCII per RFC 7230. Unlike `eq_ignore_case`, this
-// never allocates and never consults a table.
 pub function (s: string) eq_ignore_ascii_case(other: string): boolean {
   let n: i32 = s.len();
   if (n != other.len()) {
@@ -2485,7 +1791,6 @@ pub function (s: string) eq_ignore_ascii_case(other: string): boolean {
   while (i < n) {
     let a: i32 = s[i] as i32;
     let b: i32 = other[i] as i32;
-    // Fold A-Z (65..90) into a-z (97..122) by setting bit 5.
     if (a >= 65 && a <= 90) {
       a = a + 32;
     }
@@ -2500,10 +1805,6 @@ pub function (s: string) eq_ignore_ascii_case(other: string): boolean {
   return true;
 }
 
-// `s.cmp_ignore_ascii_case(other)` — `s.cmp(other)`'s byte order with ASCII
-// A-Z folded to a-z on both sides: -1, 0 or 1. For a case-insensitive
-// `cmp.sort_by`. Folds byte by byte rather than lowering both strings, which
-// would allocate twice per comparison inside a sort.
 pub function (s: string) cmp_ignore_ascii_case(other: string): i32 {
   let n: i32 = s.len();
   let m: i32 = other.len();
@@ -2532,10 +1833,6 @@ pub function (s: string) cmp_ignore_ascii_case(other: string): i32 {
   return 0;
 }
 
-// `s.strip_prefix(p)` — Some(rest) if s starts with p, None
-// otherwise. The Some payload is s[len(p):], a fresh string
-// (string slicing allocates). Companion to starts_with that ALSO gives you
-// the trailing chunk in a single call.
 pub function (s: string) strip_prefix(prefix: string): Option[string] {
   if (!s.starts_with(prefix)) {
     return None;
@@ -2543,8 +1840,6 @@ pub function (s: string) strip_prefix(prefix: string): Option[string] {
   return Some(slice_unchecked(s, prefix.len(), s.len()).to_owned());
 }
 
-// `s.strip_suffix(s)` — Some(head) if s ends with the suffix.
-// Symmetric to strip_prefix; returns s[0:len(s)-len(suffix)].
 pub function (s: string) strip_suffix(suffix: string): Option[string] {
   if (!s.ends_with(suffix)) {
     return None;
@@ -2553,11 +1848,6 @@ pub function (s: string) strip_suffix(suffix: string): Option[string] {
   return Some(slice_unchecked(s, 0, k).to_owned());
 }
 
-// `s.remove_prefix(prefix)` / `s.remove_suffix(suffix)` —
-// like strip_prefix / strip_suffix but return s unchanged
-// when the prefix / suffix doesn't match, instead of
-// Option. Avoids the match boilerplate when the unchanged
-// value is the right fallback.
 pub function (s: string) remove_prefix(prefix: string): string {
   if (!s.starts_with(prefix)) {
     return s;
@@ -2573,10 +1863,6 @@ pub function (s: string) remove_suffix(suffix: string): string {
   return slice_unchecked(s, 0, k) + "";
 }
 
-// `__fill_lead_len(b)` — the byte length of the UTF-8 character a lead
-// byte opens. A continuation byte in lead position is not a character
-// start, so it counts as one byte and the fill stays byte-for-byte what
-// it used to be.
 function __fill_lead_len(b: i32): i32 {
   if (b < 128) {
     return 1;
@@ -2593,18 +1879,6 @@ function __fill_lead_len(b: i32): i32 {
   return 1;
 }
 
-// `__fill_bytes(ch, need)` — up to `need` bytes of `ch`'s FIRST
-// character, repeated whole.
-//
-// The padding functions used to repeat `ch[0]`, a single BYTE, so a
-// multibyte fill emitted a fragment of one: `"a".pad_start(4, 'é')`
-// wrote three copies of 0xC3 and handed back a `string` that was not
-// valid UTF-8 (#5634). A fill that does not divide `need` now leaves
-// the remainder unfilled instead — the result can be up to one
-// character short of `n`, which is the correct answer when the field
-// width is counted in bytes and the fill is not one byte wide.
-// Single-byte fills, which is every caller in this repo, are
-// unchanged: the character length is 1 and `need` is filled exactly.
 function __fill_bytes(ch: string, need: i32): u8[] {
   let clen: i32 = __fill_lead_len(ch[0] as i32);
   if (clen > ch.len()) {
@@ -2620,24 +1894,11 @@ function __fill_bytes(ch: string, need: i32): u8[] {
   return buf;
 }
 
-// `s.pad_start(n, ch)` / `s.pad_end(n, ch)` — left- and right-
-// pad the string with `ch` so the result is n bytes long.
-// Already-long strings pass through unchanged. Standard
-// alignment shape for tables, hex dumps, fixed-width column
-// output.
-//
-// The fill is one character, repeated whole. A
-// multibyte fill that does not divide the padding leaves the
-// remainder unfilled rather than splitting a character — see
-// __fill_bytes.
 pub function (s: string) pad_start(n: i32, ch: char): string {
   let sl: i32 = s.len();
   if (sl >= n) {
     return s;
   }
-  // Result is exactly n bytes; fill one buffer (O(n)) instead of the
-  // `pad = pad + ch[0:1]` loop, which recopied the growing pad each
-  // step (O(need²) — the #4379 hot path). `need` fill bytes, then s.
   let fill: u8[] = __fill_bytes(string_from_codepoint(ch), n - sl);
   let fl: i32 = fill.len();
   let buf: u8[] = __alloc_u8(fl + sl);
@@ -2659,8 +1920,6 @@ pub function (s: string) pad_end(n: i32, ch: char): string {
   if (sl >= n) {
     return s;
   }
-  // Result is exactly n bytes; fill one buffer (O(n)). s, then `need`
-  // fill bytes.
   let fill: u8[] = __fill_bytes(string_from_codepoint(ch), n - sl);
   let fl: i32 = fill.len();
   let buf: u8[] = __alloc_u8(sl + fl);
@@ -2677,18 +1936,12 @@ pub function (s: string) pad_end(n: i32, ch: char): string {
   return string_from_bytes_unchecked(buf);
 }
 
-// `s.zfill(width)` — left-pad a NUMERIC string with `'0'` to at least `width`
-// bytes, keeping a leading sign in front of the zeros: `"-42".zfill(5)` is
-// `"-0042"`, not `pad_start`'s `"00-42"`. `'+'` is preserved the same way.
-// Already-`width`-long (or longer) strings pass through unchanged, and the sign
-// counts toward `width` (Python's `str.zfill`). The formatting shape for
-// fixed-width signed numbers — ledgers, zero-padded ids, timestamps.
 pub function (s: string) zfill(width: i32): string {
   let sl: i32 = s.len();
   if (sl >= width) {
     return s;
   }
-  let has_sign: boolean = sl > 0 && (s[0] == 45 || s[0] == 43);  // '-' or '+'
+  let has_sign: boolean = sl > 0 && (s[0] == 45 || s[0] == 43);
   let need: i32 = width - sl;
   let buf: u8[] = __alloc_u8(width);
   let pos: i32 = 0;
@@ -2699,7 +1952,7 @@ pub function (s: string) zfill(width: i32): string {
     body_start = 1;
   }
   let z: i32 = 0;
-  while (z < need) {  // '0'
+  while (z < need) {
     buf = buf.with(pos, 48 as u8);
     pos = pos + 1;
     z = z + 1;
@@ -2713,11 +1966,6 @@ pub function (s: string) zfill(width: i32): string {
   return string_from_bytes_unchecked(buf);
 }
 
-// `s.split_once(sep)` — splits at the FIRST occurrence of
-// sep, returning Some((head, tail)). The separator is dropped
-// from the output. Returns None when sep doesn't appear or
-// sep is empty. Useful for "key=value", "name:port",
-// "scheme://rest" patterns where you only want one split.
 pub function (s: string) split_once(sep: string): Option[(string, string)] {
   if (sep.len() == 0) {
     return None;
@@ -2731,12 +1979,6 @@ pub function (s: string) split_once(sep: string): Option[(string, string)] {
   return Some((slice_unchecked(s, 0, hit).to_owned(), slice_unchecked(s, hit + sLen, n).to_owned()));
 }
 
-// `s.partition(sep)` — split at the FIRST occurrence of `sep` into the
-// three-tuple `(head, sep, tail)`, KEEPING the separator in the middle (unlike
-// `split_once`, which drops it). When `sep` is absent (or empty), returns
-// `(s, "", "")` — the whole string in the first slot, matching Python's
-// `str.partition`. Useful when you need to preserve/inspect the delimiter, or
-// to reconstruct the original by concatenation.
 pub function (s: string) partition(sep: string): (string, string, string) {
   if (sep.len() == 0) {
     return (s.to_owned(), "", "");
@@ -2750,11 +1992,6 @@ pub function (s: string) partition(sep: string): (string, string, string) {
   return (slice_unchecked(s, 0, hit).to_owned(), sep.to_owned(), slice_unchecked(s, hit + sLen, n).to_owned());
 }
 
-// `s.rpartition(sep)` — the LAST-occurrence mirror of `partition`: split at the
-// FINAL occurrence into `(head, sep, tail)`, keeping the separator. When `sep`
-// is absent (or empty), returns `("", "", s)` — the whole string in the LAST
-// slot (Python's `str.rpartition` convention, the mirror of `partition`'s
-// first-slot fallback).
 pub function (s: string) rpartition(sep: string): (string, string, string) {
   if (sep.len() == 0) {
     return ("", "", s.to_owned());
@@ -2768,12 +2005,6 @@ pub function (s: string) rpartition(sep: string): (string, string, string) {
   return (slice_unchecked(s, 0, i).to_owned(), sep.to_owned(), slice_unchecked(s, i + sLen, n).to_owned());
 }
 
-// `s.rsplit_once(sep)` — the LAST-occurrence mirror of `split_once`: splits
-// at the FINAL occurrence of `sep`, returning `Some((head, tail))` with the
-// separator dropped. `None` when `sep` doesn't appear or is empty. Where
-// `split_once("a.b.c", ".")` gives `("a", "b.c")`, `rsplit_once` gives
-// `("a.b", "c")` — the shape you want for splitting off a file extension, the
-// last path segment, or a trailing `:port`.
 pub function (s: string) rsplit_once(sep: string): Option[(string, string)] {
   if (sep.len() == 0) {
     return None;
@@ -2787,10 +2018,6 @@ pub function (s: string) rsplit_once(sep: string): Option[(string, string)] {
   return Some((slice_unchecked(s, 0, i).to_owned(), slice_unchecked(s, i + sLen, n).to_owned()));
 }
 
-// `s.trim_start_matches(sub)` / `s.trim_end_matches(sub)` —
-// peel sub off the beginning / end as many times as it
-// appears, contiguously. Symmetric with the regular trim()
-// that strips whitespace.
 pub function (s: string) trim_start_matches(sub: string): string {
   if (sub.len() == 0) {
     return s;
@@ -2817,10 +2044,6 @@ pub function (s: string) trim_end_matches(sub: string): string {
   return slice_unchecked(s, 0, end) + "";
 }
 
-// `s.contains_ci(needle)` / `index_of_ci(needle)` — case-
-// insensitive ASCII versions of `contains` / `index_of`.
-// Folds A-Z to a-z on both sides per byte. Multibyte UTF-8
-// matches only as exact bytes (no Unicode case folding).
 pub function (s: string) contains_ci(needle: string): boolean {
   return __str_index_ci(s, needle) >= 0;
 }
@@ -2859,11 +2082,6 @@ function __str_index_ci(s: string, needle: string): i32 {
   return 0 - 1;
 }
 
-// `s.pad_start_str(width, fill)` / `pad_end_str(width, fill)` repeat the
-// whole fill string within a byte-width budget. The final partial fill
-// ends at a Unicode scalar boundary, so the result may be shorter than
-// width. Existing content is never truncated. Empty fill is a no-op.
-// `pad_start` / `pad_end` instead repeat only the first character of fill.
 pub function (s: string) pad_start_str(width: i32, fill: string): string {
   let sLen: i32 = s.len();
   if (sLen >= width || fill.len() == 0) {
@@ -2894,12 +2112,6 @@ pub function (s: string) pad_end_str(width: i32, fill: string): string {
   return s + pad;
 }
 
-// `s.center(width, ch)` — center s within a width-byte field,
-// padding equally on both sides with `ch`. Odd-padding splits
-// leave the extra byte on the right. The fill is one character,
-// repeated whole (see __fill_bytes), so a multibyte
-// fill is never split. Already-long strings pass through
-// unchanged.
 pub function (s: string) center(width: i32, ch: char): string {
   let sLen: i32 = s.len();
   if (sLen >= width) {
@@ -2911,24 +2123,11 @@ pub function (s: string) center(width: i32, ch: char): string {
   return string_from_bytes_unchecked(__fill_bytes(string_from_codepoint(ch), lpad)) + s + string_from_bytes_unchecked(__fill_bytes(string_from_codepoint(ch), rpad));
 }
 
-// `s.reverse_words()` — split on ASCII whitespace, reverse
-// the resulting word list, join with a single space. Drops
-// the original whitespace structure (multiple spaces / tabs
-// / newlines all collapse to single ' '). Empty input
-// returns "".
 pub function (s: string) reverse_words(): string {
   let words: string[] = s.fields();
   return words.reverse().join(" ");
 }
 
-// `s.truncate(n, ellipsis)` — if len(s) > n, return at most
-// (n - len(ellipsis)) leading bytes followed by `ellipsis`,
-// with the cut snapped BACKWARD to a char boundary so the kept
-// prefix never ends in a split code point (#5634, D9) — the
-// result can therefore be a few bytes shorter than n, never
-// longer. If len(s) <= n, return s unchanged. If n is smaller
-// than the ellipsis itself, just hard-truncate s to (at most) n
-// bytes. A non-positive cap yields "".
 pub function (s: string) truncate(n: i32, ellipsis: string): string {
   if (n <= 0) {
     return "";
@@ -2944,14 +2143,6 @@ pub function (s: string) truncate(n: i32, ellipsis: string): string {
   return s.slice_snap(0, n - eLen) + ellipsis;
 }
 
-// `s.ellipsis(n)` — fit s into n bytes, marking truncation
-// with "...". When len(s) <= n, returns s unchanged.
-// Otherwise: if n >= 3, return at most the first (n-3) bytes —
-// the cut snapped backward to a char boundary (#5634, D9) —
-// followed by "..." (so an n=3 cap on a long string is just
-// "..." — different from `truncate(3, "...")` which would
-// hard-truncate the source). If n < 3, return the first n
-// bytes of "..." as a degenerate placeholder.
 pub function (s: string) ellipsis(n: i32): string {
   if (s.len() <= n) {
     return s;
@@ -2968,10 +2159,6 @@ pub function (s: string) ellipsis(n: i32): string {
   return s.slice_snap(0, n - 3) + "...";
 }
 
-// `s.first_line()` — Option[string] containing the prefix
-// up to (but not including) the first '\n'. Returns None
-// for the empty string. If there's no newline, returns
-// Some(s).
 pub function (s: string) first_line(): Option[string] {
   if (s.len() == 0) {
     return None;
@@ -2983,11 +2170,6 @@ pub function (s: string) first_line(): Option[string] {
   return Some(slice_unchecked(s, 0, idx).to_owned());
 }
 
-// `s.at(i)` — bounds-checked byte access. Returns Some(byte)
-// for in-range i or None if i is out of [0, len). Counterpart
-// to `s[i]` which traps on OOB; useful in tokeniser loops
-// where the end check would otherwise need an explicit bounds
-// guard at every step.
 pub function (s: string) at(i: i32): Option[u8] {
   if (i < 0 || i >= s.len()) {
     return None;
@@ -2995,14 +2177,10 @@ pub function (s: string) at(i: i32): Option[u8] {
   return Some(s[i]);
 }
 
-// `s.to_array()` returns one string per Unicode scalar, like split("").
-// Use bytes() or as_bytes() for bytes, and chars() for char values.
 pub function (s: string) to_array(): string[] {
   return __split_scalars(s);
 }
 
-// Scalar splitting has no separator search. Keep its implementation shared
-// without making to_array retain the general split machinery.
 function __split_scalars(s: string): string[] {
   let n: i32 = s.len();
   let out: string[] = [];
@@ -3015,41 +2193,15 @@ function __split_scalars(s: string): string[] {
   return out;
 }
 
-// --- UTF-8 codepoint layer -------------------------------------------------
-//
-// Strings are byte-indexed; `bytes()` exposes those bytes. These decode/encode
-// the UTF-8 content as Unicode scalar values (`char`), the eager-array form
-// the roadmap asks for (#4416 ROADMAP #6). Ill-formed input never throws: a
-// malformed lead, a truncated or bad continuation, an overlong encoding, a
-// UTF-16 surrogate (U+D800..U+DFFF), or a value past U+10FFFF decodes to
-// U+FFFD (the Unicode replacement character) and the scan resumes, so
-// `chars()` is total.
-//
-// HOW MANY U+FFFDs an ill-formed run costs is the part implementations
-// disagree on, so this stdlib pins it: one per MAXIMAL SUBPART (Unicode
-// 15.0 §3.9), the recommended practice WHATWG's UTF-8 decoder
-// implements. Bytes that could still have begun a valid sequence are
-// consumed as one unit; the byte that broke it starts the next. So
-// `F0 9F 98` at end-of-input is ONE U+FFFD (a truncated emoji), while
-// `ED A0 80` is THREE (`A0` is not a legal continuation of `ED`, so `ED`
-// stands alone and the two orphaned continuation bytes follow).
-// std/utf8's `codepoints` / `codepoint_count` walk with the same rule and
-// agree byte-for-byte; the strict `utf8.utf8_decode_at` is the other
-// layer — it reports ill-formed input as `None` rather than substituting.
-// `__utf8_is_cont(b)` — is byte `b` a UTF-8 continuation byte (0x80..0xBF)?
 function __utf8_is_cont(b: i32): boolean {
   return b >= 128 && b < 192;
 }
 
-// `__utf8_expect(b0)` — how many bytes the lead `b0` announces: 1 for
-// ASCII, 2/3/4 for a well-formed lead, 0 for a byte that can never start
-// a sequence (0x80..0xBF continuation, 0xC0/0xC1 — only ever overlong —
-// and 0xF5..0xFF, past U+10FFFF).
 function __utf8_expect(b0: i32): i32 {
   if (b0 < 128) {
     return 1;
   }
-  if (b0 < 194) {  // 0x80..0xC1
+  if (b0 < 194) {
     return 0;
   }
   if (b0 < 224) {
@@ -3061,50 +2213,33 @@ function __utf8_expect(b0: i32): i32 {
   if (b0 < 245) {
     return 4;
   }
-  return 0;  // 0xF5..0xFF
+  return 0;
 }
 
-// `__utf8_cont_lo(b0)` / `__utf8_cont_hi(b0)` — the range the FIRST
-// continuation byte after lead `b0` may take (Unicode Table 3-7). E0 and
-// F0 raise the floor so an overlong encoding is rejected at the second
-// byte; ED lowers the ceiling to exclude the UTF-16 surrogates and F4
-// lowers it to cap the value at U+10FFFF. Every other lead takes the
-// full 0x80..0xBF, as does every continuation after the first.
 function __utf8_cont_lo(b0: i32): i32 {
-  if (b0 == 224) {  // E0: A0..BF
+  if (b0 == 224) {
     return 160;
   }
-  if (b0 == 240) {  // F0: 90..BF
+  if (b0 == 240) {
     return 144;
   }
   return 128;
 }
 
 function __utf8_cont_hi(b0: i32): i32 {
-  if (b0 == 237) {  // ED: 80..9F
+  if (b0 == 237) {
     return 159;
   }
-  if (b0 == 244) {  // F4: 80..8F
+  if (b0 == 244) {
     return 143;
   }
   return 191;
 }
 
-// `__utf8_step(s, i, n)` — bytes the unit starting at `i` consumes: the
-// length of the encoded codepoint when the sequence is well-formed, and
-// otherwise the MAXIMAL SUBPART of the ill-formed sequence (Unicode 15.0
-// §3.9, "U+FFFD Substitution of Maximal Subparts" — the recommended
-// practice WHATWG's UTF-8 decoder implements). That means the bytes that
-// still could have begun a valid sequence are consumed together and cost
-// ONE U+FFFD, while the byte that broke it is left for the next step:
-// `F1 80 62` is two units (`F1 80` then `b`), not three.
-//
-// `pub` because std/utf8's lossy walkers step with this too — one rule
-// for "how many bytes is the next character" across the whole stdlib.
 pub function __utf8_step(s: string, i: i32, n: i32): i32 {
   let b0: i32 = s[i] as i32;
   let want: i32 = __utf8_expect(b0);
-  if (want <= 1) {  // ASCII, or a byte that cannot lead
+  if (want <= 1) {
     return 1;
   }
   if (i + 1 >= n) {
@@ -3116,10 +2251,10 @@ pub function __utf8_step(s: string, i: i32, n: i32): i32 {
   }
   let k: i32 = 2;
   while (k < want) {
-    if (i + k >= n) {  // truncated
+    if (i + k >= n) {
       return k;
     }
-    if (!__utf8_is_cont(s[i + k] as i32)) {  // broken tail
+    if (!__utf8_is_cont(s[i + k] as i32)) {
       return k;
     }
     k = k + 1;
@@ -3127,9 +2262,6 @@ pub function __utf8_step(s: string, i: i32, n: i32): i32 {
   return want;
 }
 
-// Previous maximal-subpart start before a positive forward-unit boundary.
-// A unit spans at most four bytes. Bound the backward probe so repeated
-// trimming stays linear even for long runs of stray continuation bytes.
 function __utf8_prev_unit(s: string, end: i32): i32 {
   let start: i32 = end - 1;
   while (start > 0 && end - start < 4 && __utf8_is_cont(s[start] as i32)) {
@@ -3138,17 +2270,9 @@ function __utf8_prev_unit(s: string, end: i32): i32 {
   if (start + __utf8_step(s, start, end) == end) {
     return start;
   }
-  // A lead that cannot consume through end leaves the final byte as its
-  // own unit. This includes stray tails after a complete valid sequence.
   return end - 1;
 }
 
-// `__utf8_decode_at(s, i, step)` — the scalar value of the unit at `i`
-// whose width `__utf8_step` measured. A step shorter than the lead
-// announces is a maximal subpart, so it decodes to U+FFFD (65533); a
-// step equal to it is well-formed by construction — `__utf8_step`'s
-// lead-specific continuation range has already excluded the overlong,
-// surrogate and out-of-range forms, so there is nothing left to re-check.
 function __utf8_decode_at(s: string, i: i32, step: i32): i32 {
   let b0: i32 = s[i] as i32;
   if (b0 < 128) {
@@ -3166,12 +2290,6 @@ function __utf8_decode_at(s: string, i: i32, step: i32): i32 {
   return (b0 & 7) << 18 | (s[i + 1] as i32 & 63) << 12 | (s[i + 2] as i32 & 63) << 6 | s[i + 3] as i32 & 63;
 }
 
-// `s.chars()` — decode the UTF-8 content to Unicode scalar values, one
-// `char` per codepoint (one U+FFFD per ill-formed maximal subpart; see
-// the layer note).
-// This is the codepoint layer, matching what `chars` means in Rust, Swift
-// and Go's `[]rune`: iterating it never splits a multibyte sequence. For
-// the byte layer reach for `bytes()` or `as_bytes()`.
 pub function (s: string) chars(): char[] {
   let n: i32 = s.len();
   let out: char[] = [];
@@ -3184,11 +2302,6 @@ pub function (s: string) chars(): char[] {
   return out;
 }
 
-// `s.codepoint_count()` — number of Unicode codepoints in the UTF-8
-// content, without materialising the array. Equal to `chars().len()` and
-// to `utf8.codepoint_count(s)` — all three advance by `__utf8_step`, so
-// ill-formed input costs one U+FFFD per maximal subpart in each. This is
-// the "length in characters" a byte `len()` can't give for non-ASCII text.
 pub function (s: string) codepoint_count(): i32 {
   let n: i32 = s.len();
   let count: i32 = 0;
@@ -3200,9 +2313,6 @@ pub function (s: string) codepoint_count(): i32 {
   return count;
 }
 
-// `__utf8_encoded_len(c)` — bytes a (already-sanitised) codepoint `c`
-// occupies in UTF-8: 1/2/3/4 across the ASCII / 2-byte / BMP / astral
-// boundaries.
 function __utf8_encoded_len(c: i32): i32 {
   if (c < 128) {
     return 1;
@@ -3216,9 +2326,6 @@ function __utf8_encoded_len(c: i32): i32 {
   return 4;
 }
 
-// `__utf8_sanitise(c)` — map a value that is negative, past U+10FFFF, or a
-// UTF-16 surrogate to U+FFFD; pass every other scalar through. Keeps the
-// encoders total, mirroring the decoder's substitution policy.
 function __utf8_sanitise(c: i32): i32 {
   if (c < 0 || c > 1114111 || c >= 55296 && c <= 57343) {
     return 65533;
@@ -3226,9 +2333,6 @@ function __utf8_sanitise(c: i32): i32 {
   return c;
 }
 
-// `__utf8_put(buf, pos, c)` — write the UTF-8 bytes of sanitised codepoint
-// `c` at `pos`, returning the (possibly grown) buffer. Caller sizes `buf`
-// via `__utf8_encoded_len` and advances `pos` by the same.
 function __utf8_put(buf_in: u8[], pos: i32, c: i32): u8[] {
   let buf: u8[] = buf_in;
   if (c < 128) {
@@ -3249,9 +2353,6 @@ function __utf8_put(buf_in: u8[], pos: i32, c: i32): u8[] {
   return buf;
 }
 
-// `string_from_codepoint(cp)` — the single-codepoint UTF-8 string for
-// scalar `cp` (out-of-range / surrogate → U+FFFD). The inverse of indexing
-// `chars()`; the way to build non-ASCII text from a numeric scalar.
 pub function string_from_codepoint(ch: char): string {
   let c: i32 = __utf8_sanitise(ch as i32);
   let buf: u8[] = __alloc_u8(__utf8_encoded_len(c));
@@ -3259,11 +2360,6 @@ pub function string_from_codepoint(ch: char): string {
   return string_from_bytes_unchecked(buf);
 }
 
-// `string_from_codepoints(cps)` — UTF-8 string for a codepoint array (each
-// sanitised as in `string_from_codepoint`). Round-trips with `chars()`
-// for well-formed input: `string_from_codepoints(s.chars())` re-encodes
-// `s` (ill-formed runs collapse to U+FFFD). Two-pass exact-size buffer, no
-// O(n²) concatenation.
 pub function string_from_codepoints(cps: char[]): string {
   let m: i32 = cps.len();
   let total: i32 = 0;
@@ -3284,9 +2380,6 @@ pub function string_from_codepoints(cps: char[]): string {
   return string_from_bytes_unchecked(buf);
 }
 
-// `s.reverse_bytes()` returns owned bytes in reverse order. Reversing the
-// bytes of a multibyte scalar is not text; use unicode.reverse_graphemes
-// to reverse text, or utf8.from_bytes to validate the byte result explicitly.
 pub function (s: string) reverse_bytes(): u8[] {
   let n: i32 = s.len();
   let buf: u8[] = __alloc_u8(n);
@@ -3298,9 +2391,6 @@ pub function (s: string) reverse_bytes(): u8[] {
   return buf;
 }
 
-// `s.count(sub)` — number of non-overlapping occurrences of
-// sub in s. Empty needle returns 0 to avoid infinite-loop
-// surprises; behaviour mirrors Rust str::matches().count().
 pub function (s: string) count(sub: string): i32 {
   if (sub.len() == 0) {
     return 0;
@@ -3316,12 +2406,6 @@ pub function (s: string) count(sub: string): i32 {
   return c;
 }
 
-// `s.find_all(sub)` — the start indices of every NON-overlapping occurrence
-// of `sub`, in ascending order (the positions `count` tallies). After a match
-// the scan resumes past it, so `"aaaa".find_all("aa")` is `[0, 2]`, not
-// `[0, 1, 2]`. Empty needle or no match → `[]`; the returned length always
-// equals `s.count(sub)`. Useful for highlighting / span extraction where you
-// need the positions, not just how many.
 pub function (s: string) find_all(sub: string): i32[] {
   let out: i32[] = [];
   if (sub.len() == 0) {
@@ -3337,21 +2421,11 @@ pub function (s: string) find_all(sub: string): i32[] {
   return out;
 }
 
-// `(s: string) count_matches(sub)` — how many non-overlapping occurrences
-// of `sub` are in `s` (`"aaaa".count_matches("aa") == 2`, counting from the
-// left). The same scan as `find_all` but without allocating the positions
-// array, so it is the cheap answer when you only need the tally. An empty
-// `sub` counts 0. Mirrors Rust's `s.matches(pat).count()`.
 pub function (s: string) count_matches(sub: string): i32 {
   let subLen: i32 = sub.len();
   if (subLen == 0) {
     return 0;
   }
-  // The single-byte case IS __count_byte, and it is the overwhelmingly
-  // common one. Non-overlapping and every-occurrence agree at length 1, so
-  // this is the same answer in one pass where the loop below pays a
-  // __str_find_from call per hit. Mirrors the `nLen == 1` tier
-  // __str_find_from itself keeps for __memchr.
   if (subLen == 1) {
     return __count_byte(s, sub[0] as i32);
   }
@@ -3365,24 +2439,10 @@ pub function (s: string) count_matches(sub: string): i32 {
   return count;
 }
 
-// `s.count_byte(b)` — number of bytes equal to b. O(n)
-// single-pass; cheaper than count(byte.to_ascii_string())
-// when the needle is known to be a single byte.
-//
-// This IS __count_byte (docs/ATLAS-PLATFORM-PLAN.md §3.3, fourth kernel), and
-// the adoption is total rather than a tier: unlike its three siblings there is
-// no cursor to clamp and no needle length to test, so there is no shape the
-// intrinsic answers differently. A byte outside 0..255 counts 0 in both, which
-// is the correct answer rather than a sentinel, so the guard the intrinsic
-// keeps for direct callers is unreachable from here.
 pub function (s: string) count_byte(b: u8): i32 {
   return __count_byte(s, b as i32);
 }
 
-// `s.replace_n(old, new, n)` — like replace() but caps at
-// the first n occurrences. Useful when only the leading
-// substitutions are interesting (e.g. unquoting the first
-// few escapes, masking PII while keeping later context).
 pub function (s: string) replace_n(old: string, new: string, n: i32): string {
   let sLen: i32 = s.len();
   let oLen: i32 = old.len();
@@ -3402,15 +2462,10 @@ pub function (s: string) replace_n(old: string, new: string, n: i32): string {
   return out + slice_unchecked(s, start, sLen);
 }
 
-// `s.remove_all(needle)` — replace every occurrence of
-// needle with empty. Sugar for `replace(needle, "")`.
 pub function (s: string) remove_all(needle: string): string {
   return s.replace(needle, "");
 }
 
-// `s.before(sep)` — substring before the first occurrence
-// of sep. Returns s unchanged if sep not present, "" if
-// s starts with sep. Doesn't include sep in the result.
 pub function (s: string) before(sep: string): string {
   let idx: i32 = __str_index(s, sep);
   if (idx < 0) {
@@ -3419,9 +2474,6 @@ pub function (s: string) before(sep: string): string {
   return slice_unchecked(s, 0, idx) + "";
 }
 
-// `s.after(sep)` — substring after the first occurrence
-// of sep. Returns "" if sep not present, s unchanged if sep
-// is empty. Doesn't include sep in the result.
 pub function (s: string) after(sep: string): string {
   if (sep.len() == 0) {
     return s;
@@ -3433,11 +2485,6 @@ pub function (s: string) after(sep: string): string {
   return slice_unchecked(s, idx + sep.len(), s.len()) + "";
 }
 
-// `s.between(start, end)` — Some(substring) for the content
-// between the first start and the first end AFTER that start.
-// None if either marker is missing (or empty). Useful for
-// extracting tag bodies, parenthesised content, brace-
-// delimited fields.
 pub function (s: string) between(start: string, end: string): Option[string] {
   if (start.len() == 0 || end.len() == 0) {
     return None;
@@ -3459,10 +2506,6 @@ pub function (s: string) between(start: string, end: string): Option[string] {
   return None;
 }
 
-// `s.line_count()` — number of lines in s. Empty string
-// returns 0; lines are separated by '\n'. A trailing newline
-// is NOT counted as an extra empty line (matches Go's
-// bufio.Scanner ScanLines + lines() prelude function).
 pub function (s: string) line_count(): i32 {
   let n: i32 = s.len();
   if (n == 0) {
@@ -3476,24 +2519,18 @@ pub function (s: string) line_count(): i32 {
     }
     i = i + 1;
   }
-  // No trailing newline → there's still a final line.
   if (s[n - 1] != 10) {
     c = c + 1;
   }
   return c;
 }
 
-// `s.repeat_with_sep(n, sep)` — like repeat() but with sep
-// between every pair. `"x".repeat_with_sep(3, ", ")` →
-// "x, x, x". n <= 0 returns empty.
 pub function (s: string) repeat_with_sep(n: i32, sep: string): string {
   if (n <= 0) {
     return "";
   }
   let sl: i32 = s.len();
   let pl: i32 = sep.len();
-  // n copies of s + (n-1) separators — a known size, so fill one
-  // buffer (O(total)) instead of the O(total²) `out = out + sep + s`.
   let total: i32 = sl * n + pl * (n - 1);
   if (total == 0) {
     return "";
@@ -3521,17 +2558,6 @@ pub function (s: string) repeat_with_sep(n: i32, sep: string): string {
   return string_from_bytes_unchecked(buf);
 }
 
-// `s.replace(old, new)` — substitutes every
-// non-overlapping occurrence of `old` with `new`.
-// Empty `old` is a no-op (returns the source unchanged)
-// to match the JS / Go conventions and avoid the
-// "insert N copies" pathology.
-//
-// Two passes over a single exact-size buffer (O(n)) rather than the
-// `out = out + s[start:i] + new` chain, which recopied the whole
-// prefix on every match (O(n²) — the #4379 hot path). Pass 1 counts
-// the non-overlapping matches to size the result exactly
-// (n + matches·(len(new) − len(old))); pass 2 fills it.
 pub function (s: string) replace(old: string, new: string): string {
   let n: i32 = s.len();
   let oLen: i32 = old.len();
@@ -3571,7 +2597,6 @@ pub function (s: string) replace(old: string, new: string): string {
     i = hit + oLen;
     hit = __str_find_from(s, n, old, oLen, i);
   }
-  // Tail after the last match.
   while (i < n) {
     buf = buf.with(pos, s[i] as u8);
     pos = pos + 1;
@@ -3580,12 +2605,6 @@ pub function (s: string) replace(old: string, new: string): string {
   return string_from_bytes_unchecked(buf);
 }
 
-// `(s: string) replacen(old, new, n)` — like `replace`, but stops after
-// the first `n` non-overlapping occurrences of `old`; the rest are left
-// as-is (`"aaaa".replacen("a", "b", 2) == "bbaa"`). `n <= 0` returns `s`
-// unchanged, `n >= count` behaves as `replace`. Mirrors Rust's
-// `str::replacen`. Copies whole runs between matches rather than
-// byte-by-byte, and appends the tail once.
 pub function (s: string) replacen(old: string, new: string, n: i32): string {
   let oLen: i32 = old.len();
   if (n <= 0 || oLen == 0) {
@@ -3605,11 +2624,6 @@ pub function (s: string) replacen(old: string, new: string, n: i32): string {
   return out + slice_unchecked(s, run_start, slen);
 }
 
-// `(s: string) parse_bool()` — accepts the canonical
-// truthy / falsy spellings: "true" / "1" → Some(true),
-// "false" / "0" → Some(false). Anything else returns None
-// (no implicit lowercasing — callers stop their own
-// canonicalisation at the boundary). Empty string is None.
 pub function (s: string) parse_bool(): Option[boolean] {
   if (s == "true" || s == "1") {
     return Some(true);
@@ -3620,18 +2634,10 @@ pub function (s: string) parse_bool(): Option[boolean] {
   return None;
 }
 
-// `(s: string) is_http_safe_method()` — true for GET / HEAD
-// / OPTIONS / TRACE (RFC 9110 section 9.2.1). Safe methods
-// don't mutate state; ETag caching / replay logic depends on
-// the distinction.
 pub function (s: string) is_http_safe_method(): boolean {
   return s == "GET" || s == "HEAD" || s == "OPTIONS" || s == "TRACE";
 }
 
-// `(s: string) is_http_idempotent_method()` — true for any
-// safe method plus PUT / DELETE. Idempotent methods can be
-// safely retried after a network error without doubling
-// the effect.
 pub function (s: string) is_http_idempotent_method(): boolean {
   if (s.is_http_safe_method()) {
     return true;
@@ -3639,12 +2645,6 @@ pub function (s: string) is_http_idempotent_method(): boolean {
   return s == "PUT" || s == "DELETE";
 }
 
-// `s.parse_int()` — decimal i32 parser. Optional leading `-`;
-// rejects empty input, lone `-`, any non-digit character,
-// embedded whitespace, and out-of-range values
-// (`-2^31..=2^31-1`). Internal accumulator is i64 so the
-// bound check is exact. Returns `None` on failure, `Some(v)`
-// on success.
 pub function (s: string) parse_int(): Option[i32] {
   let n: i32 = s.len();
   if (n == 0) {
@@ -3653,7 +2653,7 @@ pub function (s: string) parse_int(): Option[i32] {
 
   let i: i32 = 0;
   let neg: boolean = false;
-  if (s[0] == 45) {  // '-'
+  if (s[0] == 45) {
     if (n == 1) {
       return None;
     }
@@ -3664,34 +2664,29 @@ pub function (s: string) parse_int(): Option[i32] {
   let acc: i64 = 0;
   while (i < n) {
     let b: i32 = s[i] as i32;
-    if (b < 48 || b > 57) {  // not 0..9
+    if (b < 48 || b > 57) {
       return None;
     }
     acc = acc * 10 + (b - 48) as i64;
-    if (acc >= 4294967296) {  // > u32 max — never fits i32
+    if (acc >= 4294967296) {
       return None;
     }
     i = i + 1;
   }
 
   if (neg) {
-    if (acc > 2147483648) {  // < i32 min
+    if (acc > 2147483648) {
       return None;
     }
     let v: i64 = 0 - acc;
     return Some(v as i32);
   }
-  if (acc > 2147483647) {  // > i32 max
+  if (acc > 2147483647) {
     return None;
   }
   return Some(acc as i32);
 }
 
-// `s.parse_int_or(fallback)` — parse a decimal integer, returning
-// `fallback` when `s` isn't a valid integer (the `parse_int` cases
-// that yield `None`). Saves the `match parse_int { Some => v, None
-// => default }` boilerplate at every CLI flag-operand site
-// (`head -n N`, `seq STEP`, `fold -w N`, …).
 pub function (s: string) parse_int_or(fallback: i32): i32 {
   match (s.parse_int()) {
     Some(v) => {
@@ -3703,8 +2698,6 @@ pub function (s: string) parse_int_or(fallback: i32): i32 {
   }
 }
 
-// `s.parse_hex_int()` / `s.parse_bin_int()` — sugar for
-// parse_int_radix(s, 16) / parse_int_radix(s, 2).
 pub function (s: string) parse_hex_int(): Option[i32] {
   return int.parse_int_radix(s, 16);
 }
@@ -3713,54 +2706,11 @@ pub function (s: string) parse_bin_int(): Option[i32] {
   return int.parse_int_radix(s, 2);
 }
 
-// `s.parse_int_radix(base)` — parse an i32 in an arbitrary `base` (2..36),
-// digits `0-9a-z` (case-insensitive), with an optional leading `+`/`-`. The
-// general form behind `parse_int` (base 10) / `parse_hex_int` (16) /
-// `parse_bin_int` (2) — reach for it to read base-36 ids, octal (`base 8`), or
-// any other radix. `None` on an out-of-range base, empty input, a lone sign, or
-// any digit `>= base`.
 pub function (s: string) parse_int_radix(base: i32): Option[i32] {
   return int.parse_int_radix(s, base);
 }
 
-// --- correctly-rounded decimal → f64 (#5566) ------------------------
-// The exact fallback's arbitrary-precision arithmetic is `core/bigint`.
-//
-// This used to be a private base-2^32 bignum inlined here, because
-// std/string cannot import std/f64 (float → std/i32 → std/string would
-// cycle) and there was nowhere else for it to live. core/bigint imports
-// NOTHING precisely so that this module can use it, so the six `__bn_*`
-// helpers are gone rather than wrapped.
-//
-// The migration is not only a de-dup. The private helpers had no scaling
-// primitives, so `__cmp_big` reached its scale factors by ITERATING a
-// multiply-by-small: p separate passes over the limbs to multiply by
-// 10^p, and b passes to multiply by 2^b. core/bigint has both directly —
-// `mul_pow10` folds nine decimal digits per pass (10^9 is the largest
-// power of ten below 2^32, so each partial product still fits a limb
-// slot) and `shl` is a single pass regardless of the shift. That matters
-// because this is the hot loop: __decimal_to_f64 calls __cmp_big up to
-// twice per refinement step, under a 4000-iteration guard.
-//
-// Measured **0.50s -> 0.025s, ~20x** on x86-64 (400 parses of two exact
-// midpoints, three runs each, spread under 2%).
-//
-// BENCHMARKING THIS PATH NEEDS CARE, and the first attempt at the figure
-// above got 2ms on both sides because it never reached the fallback at
-// all. Eisel-Lemire decides almost everything; `_el_parse` only bails
-// when the input has MORE significant digits than fit a u64 *and* the
-// truncated significand is genuinely ambiguous (both ends of the
-// truncation interval must not agree). Ordinary long inputs like
-// "1234...e-320" are decided by the fast path. What forces the fallback
-// is an exact midpoint between two adjacent doubles — e.g.
-// 1 + 2^-53 = 1.00000000000000011102230246251565404236316680908203125,
-// or the same construction down in the subnormal range, which also
-// drives |p| large enough for the scaling loops to dominate.
 function __bn_of_digits(s: string): bigint.BigInt {
-  // `s` carries only significant digits by __decimal_to_f64's contract,
-  // and the empty string is handled before any caller reaches here — so
-  // the None arm is unreachable. It returns zero rather than trapping to
-  // keep the documented `"" is 0` behaviour total.
   match (bigint.parse(s)) {
     Some(v) => {
       return v;
@@ -3771,8 +2721,6 @@ function __bn_of_digits(s: string): bigint.BigInt {
   }
 }
 
-// compare  Ldig * 10^p  vs  V * 2^b  → -1 / 0 / 1 (cross-multiply, no
-// fractions). Ldig is a bignum; V fits an i64.
 function __cmp_big(Ldig: bigint.BigInt, p: i32, V: i64, b: i32): i32 {
   let L: bigint.BigInt = Ldig;
   let R: bigint.BigInt = bigint.from_i64(V);
@@ -3791,8 +2739,6 @@ function __cmp_big(Ldig: bigint.BigInt, p: i32, V: i64, b: i32): i32 {
   return L.cmp(R);
 }
 
-// IEEE-754 f64 = sig * 2^bexp, sig in [2^52, 2^53) for normals (or the
-// raw fraction for subnormals). These decode the fields of a bit pattern.
 function __f64_sig(bits: i64): i64 {
   let e11: i64 = bits >> 52 & 2047;
   let frac: i64 = bits & 4503599627370495;
@@ -3810,29 +2756,18 @@ function __f64_bexp(bits: i64): i32 {
   return (e11 - 1075) as i32;
 }
 
-// `(dig as integer) * 10^k` → the positive f64 NEAREST that value,
-// round-half-to-even. `dig` carries only significant digits (no sign /
-// point / leading / trailing zeros); "" is 0. A cheap f64 estimate seeds
-// the answer, then exact bignum comparison against the two neighbouring
-// ULP midpoints steps to — and pins the tie at — the correctly-rounded
-// bit pattern. Neighbours come from ±1 on the bit pattern, so the ULP-
-// spacing changes at powers of two and the subnormal boundary are handled
-// automatically (IEEE bit patterns are monotone in magnitude).
 function __decimal_to_f64(dig: string, k: i32): f64 {
   let dl: i32 = dig.len();
   if (dl == 0) {
     return 0.0;
   }
-  let mag: i32 = dl + k;  // ~ floor(log10(value)) + 1
-  if (mag > 310) {  // clearly overflows → +Inf
+  let mag: i32 = dl + k;
+  if (mag > 310) {
     return 1.0 / 0.0;
   }
-  if (mag < 0 - 330) {  // clearly underflows → 0
+  if (mag < 0 - 330) {
     return 0.0;
   }
-  // Seed: m0 = first <=15 digits (exact, < 2^53); Clinger's exact path
-  // (single mul/div by an exact 10^e) when |e0| <= 22, else a drifting
-  // estimate the refinement below corrects.
   let take: i32 = dl;
   if (take > 15) {
     take = 15;
@@ -3874,16 +2809,14 @@ function __decimal_to_f64(dig: string, k: i32): f64 {
       ee = ee + 1;
     }
   }
-  let INF: i64 = 9218868437227405312;  // 0x7FF0000000000000
+  let INF: i64 = 9218868437227405312;
   let bits: i64 = f64_bits(v);
-  if (bits < 1) {  // estimate underflowed → smallest subnormal
+  if (bits < 1) {
     bits = 1;
   }
-  if (bits >= INF) {  // estimate overflowed → max finite
+  if (bits >= INF) {
     bits = INF - 1;
   }
-  // Ld = 2 * mantissa: the midpoint tests compare 2*value against the
-  // (integer) sum of two adjacent f64s.
   let Ld: bigint.BigInt = __bn_of_digits(dig).shl(1);
   let guard: i32 = 0;
   while (guard < 4000) {
@@ -3898,9 +2831,9 @@ function __decimal_to_f64(dig: string, k: i32): f64 {
       emin = eu;
     }
     let msum_up: i64 = (s << e - emin) + (su << eu - emin);
-    let cu: i32 = __cmp_big(Ld, k, msum_up, emin);  // sign of (2*value - (v + v_up))
+    let cu: i32 = __cmp_big(Ld, k, msum_up, emin);
     if (cu > 0) {
-      if (up >= INF) {  // rounds up past max finite → +Inf
+      if (up >= INF) {
         return f64_from_bits(INF);
       }
       bits = up;
@@ -3919,8 +2852,6 @@ function __decimal_to_f64(dig: string, k: i32): f64 {
       if (cd < 0) {
         bits = dn;
       } else {
-        // mid_dn <= value <= mid_up: `bits` is nearest. Exact ties
-        // (value on a midpoint) round to the even significand.
         if (cu == 0 && (s & 1) == 1) {
           bits = up;
         } else if (cd == 0 && (s & 1) == 1) {
@@ -3933,21 +2864,9 @@ function __decimal_to_f64(dig: string, k: i32): f64 {
   return f64_from_bits(bits);
 }
 
-// Eisel-Lemire: the fast path for decimal → binary64 (#6161 follow-on).
-//
-// `__decimal_to_f64` below is exact but slow: it seeds a float estimate and
-// then refines it against big-integer midpoint comparisons, scaling a bignum
-// by 10^k and 2^e on every iteration. Eisel-Lemire replaces that with a table
-// lookup and one 128-bit multiply, and — by the Mushtak-Lemire result — is
-// PROVABLY exact whenever the significand fits in 64 bits (at most 19 decimal
-// digits). Longer inputs are truncated to 19 digits and computed twice, once
-// with the truncated significand and once with it incremented; agreeing
-// answers are exact, and only a disagreement falls back to the slow path.
-// Measured over 9.5M inputs, 0.026% fall back.
-
 // BEGIN GENERATED EISEL-LEMIRE TABLE (cmd/floattablegen) — do not edit by hand.
-// Eisel-Lemire 128-bit power-of-five table: q = -342..308 (651 entries),
-// the high 64 bits of each, then the low.
+// The table covers powers of five from -342 through 308 with 651 entries.
+// Each entry stores the high 64 bits before the low 64 bits.
 const EL_POW5: u64[] = [
   0xeef453d6923bd65au64, 0x113faa2906a13b3fu64,
   0x9558b4661b6565f8u64, 0x4ac7ca59a424c507u64,
@@ -4604,25 +3523,18 @@ const EL_POW5: u64[] = [
 
 // END GENERATED EISEL-LEMIRE TABLE
 
-// floor(log2(10^q)) + 63, the magic-multiply approximation, exact over
-// q in [-342, 308].
 function _el_log2_pow10(q: i32): i32 {
   return (217706 * q >> 16) + 63;
 }
 
-// _el_compute returns the binary64 bits of w * 10^q: the 11-bit exponent field
-// above the 52-bit stored mantissa.
 function _el_compute(w: u64, q: i32): u64 {
-  if (w == 0 as u64 || q < 0 - 342) {  // zero
+  if (w == 0 as u64 || q < 0 - 342) {
     return 0 as u64;
   }
-  if (q > 308) {  // +Inf
+  if (q > 308) {
     return 9218868437227405312 as u64;
   }
 
-  // The 128-bit product of the normalised significand with 5^q, taking the
-  // low table word only when the leading bits are too close to call (the low
-  // 9 bits all set).
   let lz: i32 = __clz64(w);
   let x: u64 = w << lz as u64;
   let at: i32 = (q + 342) * 2;
@@ -4636,25 +3548,19 @@ function _el_compute(w: u64, q: i32): u64 {
     }
   }
   let upperbit: i32 = (hi >> 63 as u64) as i32;
-  let shift: i32 = upperbit + 9;  // upperbit + 64 - 52 - 3
+  let shift: i32 = upperbit + 9;
   let mant: u64 = hi >> shift as u64;
   let pow2: i32 = _el_log2_pow10(q) + upperbit - lz + 1023;
 
   if (pow2 <= 0) {
-    // Subnormal, or below the smallest one.
     if (1 - pow2 >= 64) {
       return 0 as u64;
     }
     mant = mant >> (1 - pow2) as u64;
     mant = mant + (mant & 1 as u64);
-    // A carry into bit 52 is the exponent field's 1: rounding up lifted the
-    // value into the normal range.
     return mant >> 1 as u64;
   }
 
-  // A tie can only occur where 5^q fits in one 64-bit word; there `lo <= 1`
-  // means the bits dropped by the shift were all zero, so the value sits
-  // exactly on a midpoint and round-half-to-even applies.
   if (lo <= 1 as u64 && q >= 0 - 4 && q <= 23 && (mant & 3 as u64) == 1 as u64) {
     if (mant << shift as u64 == hi) {
       mant = mant - (mant & 1 as u64);
@@ -4662,22 +3568,19 @@ function _el_compute(w: u64, q: i32): u64 {
   }
   mant = mant + (mant & 1 as u64);
   mant = mant >> 1 as u64;
-  if (mant >= 9007199254740992 as u64) {  // carried out of 53 bits
+  if (mant >= 9007199254740992 as u64) {
     mant = 4503599627370496 as u64;
     pow2 = pow2 + 1;
   }
-  if (pow2 >= 2047) {  // overflowed to +Inf
+  if (pow2 >= 2047) {
     return 9218868437227405312 as u64;
   }
   return pow2 as u64 << 52 as u64 | mant & 4503599627370495 as u64;
 }
 
-// _el_parse is the fast path for `dig * 10^k`, with `dig` already stripped of
-// leading and trailing zeros. Returns the bits when the answer is proven
-// exact, or -1 when the caller must use __decimal_to_f64.
 function _el_parse(dig: string, k: i32): i64 {
   let nd: i32 = dig.len();
-  if (nd == 0) {  // value is zero
+  if (nd == 0) {
     return 0;
   }
   let take: i32 = nd;
@@ -4690,37 +3593,22 @@ function _el_parse(dig: string, k: i32): i64 {
     w = w * (10 as u64) + (dig[i] as i32 - 48) as u64;
     i = i + 1;
   }
-  // Dropped digits only shift the exponent; they never change `w`.
   let q: i32 = k + (nd - take);
   let r: u64 = _el_compute(w, q);
-  // Truncated: the true significand lies in (w, w+1). If both ends give the
-  // same double, every value between them does too.
   if (nd > take && _el_compute(w + 1 as u64, q) != r) {
     return 0 - 1;
   }
   return r as i64;
 }
 
-// `s.parse_float()` — decimal f64 parser (f64 is the language's
-// primary float, #5363). Grammar:
-//   [-]<digits>[.<digits>][(e|E)[+-]?<digits>]
-// At least one of integer or fraction digits required; trailing
-// garbage rejected. The result is the correctly-rounded
-// (round-half-to-even) nearest f64 — bit-exact with strconv (#5566).
-//
-// Up to 19 significant digits are gathered into a u64 as they are scanned
-// and go straight to Eisel-Lemire, allocating nothing. A number with a
-// nonzero digit past the 19th takes `__parse_float_exact`.
 pub function (s: string) parse_float(): Option[f64] {
   let n: i32 = s.len();
   let i: i32 = 0;
   let neg: boolean = false;
-  if (n > 0 && s[0] == 45) {  // '-'
+  if (n > 0 && s[0] == 45) {
     neg = true;
     i = 1;
   }
-  // w holds the significant digits read so far, kept of them; a digit past
-  // the 19th only moves the exponent (shift), unless it is nonzero (lost).
   let w: u64 = 0 as u64;
   let kept: i32 = 0;
   let shift: i32 = 0;
@@ -4731,7 +3619,7 @@ pub function (s: string) parse_float(): Option[f64] {
   let in_frac: boolean = false;
   while (i < n) {
     b = s[i] as i32;
-    if (b == 46 && !in_frac) {  // '.'
+    if (b == 46 && !in_frac) {
       in_frac = true;
       i = i + 1;
       continue;
@@ -4758,7 +3646,7 @@ pub function (s: string) parse_float(): Option[f64] {
     return None;
   }
   let eexp: i32 = 0;
-  if (i < n && (s[i] == 101 || s[i] == 69)) {  // 'e' / 'E'
+  if (i < n && (s[i] == 101 || s[i] == 69)) {
     i = i + 1;
     let exp_neg: boolean = false;
     if (i < n && (s[i] == 43 || s[i] == 45)) {
@@ -4783,7 +3671,7 @@ pub function (s: string) parse_float(): Option[f64] {
       eexp = 0 - eexp;
     }
   }
-  if (i < n) {  // trailing garbage
+  if (i < n) {
     return None;
   }
   if (lost) {
@@ -4791,8 +3679,6 @@ pub function (s: string) parse_float(): Option[f64] {
   }
   let v: f64 = 0.0;
   if (kept > 0) {
-    // Trailing zeros go to the exponent, giving Eisel-Lemire the same
-    // (w, q) as the exact path's stripped digits.
     let q: i32 = eexp - fraclen + shift;
     while (w % (10 as u64) == 0 as u64) {
       w = w / (10 as u64);
@@ -4806,9 +3692,6 @@ pub function (s: string) parse_float(): Option[f64] {
   return Some(v);
 }
 
-// __parse_float_exact is parse_float for a number with more than 19
-// significant digits: every digit goes into a decimal string, which
-// Eisel-Lemire decides when it can and `__decimal_to_f64` otherwise.
 function __parse_float_exact(s: string): Option[f64] {
   let n: i32 = s.len();
   if (n == 0) {
@@ -4817,7 +3700,7 @@ function __parse_float_exact(s: string): Option[f64] {
 
   let i: i32 = 0;
   let neg: boolean = false;
-  if (s[0] == 45) {  // '-'
+  if (s[0] == 45) {
     if (n == 1) {
       return None;
     }
@@ -4825,15 +3708,10 @@ function __parse_float_exact(s: string): Option[f64] {
     i = 1;
   }
 
-  // Collect every integer + fraction digit into one buffer; the base-10
-  // exponent tracks the decimal point and the literal exponent.
   let db: u8[] = [];
   let fraclen: i32 = 0;
   let saw_int: boolean = false;
   let saw_frac: boolean = false;
-  // Single `b` reused across the integer / fraction / exponent inner
-  // loops — declaring the same name in multiple inner scopes triggers a
-  // duplicate-local collision in the wasm emitter.
   let b: i32 = 0;
 
   while (i < n) {
@@ -4846,7 +3724,7 @@ function __parse_float_exact(s: string): Option[f64] {
     i = i + 1;
   }
 
-  if (i < n && s[i] == 46) {  // '.'
+  if (i < n && s[i] == 46) {
     i = i + 1;
     while (i < n) {
       b = s[i] as i32;
@@ -4865,12 +3743,12 @@ function __parse_float_exact(s: string): Option[f64] {
   }
 
   let eexp: i32 = 0;
-  if (i < n && (s[i] == 101 || s[i] == 69)) {  // 'e' / 'E'
+  if (i < n && (s[i] == 101 || s[i] == 69)) {
     i = i + 1;
     let exp_neg: boolean = false;
-    if (i < n && s[i] == 43) {  // '+'
+    if (i < n && s[i] == 43) {
       i = i + 1;
-    } else if (i < n && s[i] == 45) {  // '-'
+    } else if (i < n && s[i] == 45) {
       exp_neg = true;
       i = i + 1;
     }
@@ -4897,13 +3775,10 @@ function __parse_float_exact(s: string): Option[f64] {
     }
   }
 
-  if (i < n) {  // trailing garbage
+  if (i < n) {
     return None;
   }
 
-  // value = (db as integer) * 10^(eexp - fraclen). Strip leading zeros
-  // (no value change) and trailing zeros (each bumps the exponent) so
-  // the bignum stays small and `dig` is canonical.
   let m: i32 = db.len();
   let lo: i32 = 0;
   while (lo < m && db[lo] == 48) {
@@ -4925,8 +3800,6 @@ function __parse_float_exact(s: string): Option[f64] {
     dig = string_from_bytes_unchecked(out);
   }
 
-  // Eisel-Lemire decides almost every input with one 128-bit multiply;
-  // __decimal_to_f64 is the exact fallback for the rest.
   let bits: i64 = _el_parse(dig, k);
   let v: f64 = 0.0;
   if (bits >= 0) {
@@ -4940,8 +3813,7 @@ function __parse_float_exact(s: string): Option[f64] {
   return Some(v);
 }
 
-// `repeat_char(ch, n)` repeats a Unicode scalar n times. Nonpositive n
-// returns empty. Use a byte array when the repeated value is a raw byte.
+// repeat_char repeats `ch` a total of `n` times. A nonpositive count returns an empty string.
 pub function repeat_char(ch: char, n: i32): string {
   if (n <= 0) {
     return "";
@@ -4949,16 +3821,10 @@ pub function repeat_char(ch: char, n: i32): string {
   return string_from_codepoint(ch).repeat(n);
 }
 
-// `__is_ascii_ws(b)` — true for SP / TAB / LF / CR / VT / FF
-// byte values. Internal helper used by trim() / fields() /
-// is_blank() and by std/i32's is_ascii_white_space method.
 pub function __is_ascii_ws(b: i32): boolean {
   return b == 32 || b >= 9 && b <= 13;
 }
 
-// `s.replace_at(i, new)` replaces the scalar at byte offset i with the first
-// scalar of new, or removes it when new is empty. An out-of-range offset or
-// an offset inside a scalar leaves s unchanged.
 pub function (s: string) replace_at(i: i32, new: string): string {
   let n: i32 = s.len();
   if (i < 0 || i >= n) {
@@ -4975,8 +3841,6 @@ pub function (s: string) replace_at(i: i32, new: string): string {
   return slice_unchecked(s, 0, i) + slice_unchecked(new, 0, width) + slice_unchecked(s, end, n);
 }
 
-// `s.without_byte(b)` returns owned bytes with every byte equal to b removed.
-// Use replace(old, "") or without_chars(set) for text.
 pub function (s: string) without_byte(b: u8): u8[] {
   let n: i32 = s.len();
   let buf: u8[] = __alloc_u8(n);
@@ -4998,11 +3862,6 @@ pub function (s: string) without_byte(b: u8): u8[] {
   return out;
 }
 
-// `s.repeat_to(target)` — concatenate copies of s until the
-// result reaches at least `target` bytes, then truncate at the
-// last full copy that fits. Empty s or target <= 0 → "". The
-// truncate-not-overrun shape matches a common "fill to width
-// without exceeding" pattern.
 pub function (s: string) repeat_to(target: i32): string {
   let sLen: i32 = s.len();
   if (sLen == 0 || target <= 0) {

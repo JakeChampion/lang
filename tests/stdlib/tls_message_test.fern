@@ -4,11 +4,6 @@ import "std/hex";
 import "std/codec";
 import "std/tls/message";
 
-// tests/stdlib/tls_message_test.fern — std/tls/message against the
-// handshake messages of RFC 8448 §3: each decodes and re-encodes to the
-// same bytes, its fields read back, the ClientHello is rebuilt from the
-// extension encoders, and every refusal has a case.
-
 function client_hello(): u8[] {
   return __codec_bytes(hex.decode("010000c00303cb34ecb1e78163ba1c38c6dacb196a6dffa21a8d9912ec18a2ef6283024dece7000006130113031302010000910000000b0009000006736572766572ff01000100000a00140012001d0017001800190100010101020103010400230000003300260024001d002099381de560e4bd43d23d8e435a7dbafeb3c06e51c13cae4d5413691e529aaf2c002b0003020304000d0020001e040305030603020308040805080604010501060102010402050206020202002d00020101001c00024001"));
 }
@@ -45,7 +40,6 @@ function one(b: u8[]): message.Raw {
   return message.Raw { kind: b[0] as i32, bytes: b };
 }
 
-// raw frames a body with its header.
 function raw(kind: i32, body: string): message.Raw {
   let b: u8[] = __codec_bytes(hex.decode(body));
   let out: u8[] = [kind as u8, (b.len() >> 16 & 255) as u8, (b.len() >> 8 & 255) as u8, (b.len() & 255) as u8];
@@ -310,8 +304,6 @@ function test_server_flight_fields(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
-// The trace's ClientHello rebuilt from the encoders, with the three
-// extensions TLS 1.3 does not read written raw.
 function test_build_client_hello(): test.TestOutcome {
   let share: message.KeyShareEntry = message.KeyShareEntry { group: 0x001d, key: __codec_bytes(hex.decode("99381de560e4bd43d23d8e435a7dbafeb3c06e51c13cae4d5413691e529aaf2c")) };
   let exts: message.Extension[] = [
@@ -329,10 +321,6 @@ function test_build_client_hello(): test.TestOutcome {
   return test.assert_eq(hex.encode(message.encode(message.ClientHelloMsg(h))), hex.encode(client_hello()));
 }
 
-// pre_shared_key both ways: an offer of two identities round-trips, the
-// binders vector's length is what the binder transcript leaves out, the
-// server's choice round-trips, and an offer whose binders do not match its
-// identities is refused.
 function test_pre_shared_key(): test.TestOutcome {
   let offer: message.OfferedPsks = message.OfferedPsks { identities: [message.PskIdentity { identity: "t1".bytes(), obfuscated_age: 0x01020304 as u32 }, message.PskIdentity { identity: "ticket-2".bytes(), obfuscated_age: 7 as u32 }], binders: [__codec_bytes(hex.decode("3add4fb2d8fdf822a0ca3cf7678ef5e88dae990141c5924d57bb6fa31b9e5f9d")), __codec_bytes(hex.decode("00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"))] };
   let e: message.Extension = message.ext_pre_shared_key(offer);
@@ -431,7 +419,6 @@ function split_refusal(b: string): string {
   return "";
 }
 
-// A bad header is refused before its body arrives.
 function test_split_refusals(): test.TestOutcome {
   if (split_refusal("03000004") != "tls message: unknown handshake message type 3") {
     return test.fail("unknown type");
@@ -442,18 +429,15 @@ function test_split_refusals(): test.TestOutcome {
   if (split_refusal("0b040001") != "tls message: a type 11 message of 262145 bytes is over the limit") {
     return test.fail("too large a Certificate");
   }
-  // A Certificate of exactly 2^18 bytes is waited for.
   return test.assert_eq(split_refusal("0b040000"), "accepted");
 }
 
 function test_refusals(): test.TestOutcome {
   let ch: u8[] = client_hello();
   let n: i32 = ch.len();
-  // One byte short of what the header claims.
   if (refusal(message.decode(message.Raw { kind: 1, bytes: ch.take(n - 1) })) != "tls message: malformed ClientHello extensions") {
     return test.fail("truncated");
   }
-  // One byte past the extensions, the header grown to cover it.
   let long: u8[] = cat(ch.with(3, ch[3] + 1 as u8), [0 as u8]);
   if (refusal(message.decode(one(long))) != "tls message: malformed ClientHello") {
     return test.fail("trailing byte");
@@ -461,8 +445,6 @@ function test_refusals(): test.TestOutcome {
   if (refusal(message.decode(one(ch.with(4, 3 as u8).with(5, 1 as u8)))) != "tls message: legacy_version 769 is not TLS 1.2's") {
     return test.fail("legacy_version");
   }
-  // The single compression method, after the header, version, random,
-  // empty session id, three suites and its own count, made 1.
   if (refusal(message.decode(one(ch.with(48, 1 as u8)))) != "tls message: illegal legacy_compression_methods") {
     return test.fail("compression");
   }
@@ -515,7 +497,6 @@ function main(): i32 {
   return r.finish();
 }
 
-// Decode a valid fixture. Report a malformed fixture before the test exits.
 function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
   match (value) {
     Ok(bytes) => {

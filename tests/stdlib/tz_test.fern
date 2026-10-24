@@ -2,14 +2,6 @@ import "std/test";
 import "std/tz";
 import "std/option";
 
-// tests/stdlib/tz_test.fern — std/tz without a clock and without the
-// host's zoneinfo: POSIX rules evaluated at the instants on either side of
-// their transitions, a TZif v2 file built here byte by byte, and the
-// malformed inputs that must parse to nothing rather than to an
-// allocation of what the header claims.
-
-// 2024-03-10 07:00:00 UTC is 02:00 EST, the US spring-forward instant;
-// 2024-11-03 06:00:00 UTC is 02:00 EDT, the fall-back instant.
 function us_rule(): tz.Zone {
   return tz.zone_from_tz("EST5EDT,M3.2.0,M11.1.0");
 }
@@ -44,10 +36,6 @@ function test_rule_fall_back(): test.TestOutcome {
   return test.assert_eq(z.offset_at(1730613600i64), 0 - 18000);
 }
 
-// Southern hemisphere: DST spans the new year, and the end rule names a
-// 03:00 transition. 2024-04-06 16:00 UTC is 03:00 AEDT on Sunday the 7th,
-// the fall-back; 2024-10-05 16:00 UTC is 02:00 AEST on Sunday the 6th,
-// the spring-forward.
 function test_rule_southern_hemisphere(): test.TestOutcome {
   let z: tz.Zone = tz.zone_from_tz("AEST-10AEDT,M10.1.0,M4.1.0/3");
   if (z.offset_at(1712419200i64 - 1i64) != 39600) {
@@ -62,7 +50,6 @@ function test_rule_southern_hemisphere(): test.TestOutcome {
   return test.assert_eq(z.offset_at(1728144000i64), 39600);
 }
 
-// A quoted designation with a non-hour offset, and no DST at all.
 function test_rule_quoted_fixed(): test.TestOutcome {
   let z: tz.Zone = tz.zone_from_tz("<+0545>-5:45");
   if (z.offset_at(0i64) != 20700) {
@@ -74,9 +61,6 @@ function test_rule_quoted_fixed(): test.TestOutcome {
   return test.assert_eq(z.abbrev_at(0i64), "+0545");
 }
 
-// A rule time is not an offset: it runs to 167 hours either way rather
-// than clamping at 24. Jerusalem moves on the fourth Thursday of March at
-// 26:00, which in 2026 is 02:00 on Friday the 27th, 00:00 UTC.
 function test_rule_time_past_24_hours(): test.TestOutcome {
   let z: tz.Zone = tz.zone_from_tz("IST-2IDT,M3.4.4/26,M10.5.0");
   if (z.offset_at(1774569600i64 - 1i64) != 7200) {
@@ -85,9 +69,6 @@ function test_rule_time_past_24_hours(): test.TestOutcome {
   return test.assert_eq(z.offset_at(1774569600i64), 10800);
 }
 
-// Nuuk's footer moves at -1:00 on the last Sunday of March: in 2400,
-// past every table, that is 23:00 on Saturday the 25th, 01:00 UTC on the
-// 26th. Read through the embedded zone, so the host's tzset is not asked.
 function test_rule_time_negative(): test.TestOutcome {
   match (tz.iana_zone("America/Nuuk")) {
     Some(z) => {
@@ -104,12 +85,9 @@ function test_rule_time_negative(): test.TestOutcome {
 
 function test_rule_time_past_167_hours_refused(): test.TestOutcome {
   let r: tz.Rule = tz.parse_posix("IST-2IDT,M3.4.4/168,M10.5.0");
-  // The dates fall back to the POSIX default, the second Sunday of March.
   return test.assert_eq(r.start.week, 2);
 }
 
-// The embedded table: a zone by IANA name on every target, an alias
-// sharing its zone's record, and a name the release does not have.
 function test_iana_zone_london(): test.TestOutcome {
   match (tz.iana_zone("Europe/London")) {
     Some(z) => {
@@ -125,7 +103,6 @@ function test_iana_zone_london(): test.TestOutcome {
 }
 
 function test_iana_zone_far_future(): test.TestOutcome {
-  // 2400-07-01 00:00 UTC, centuries past the table: the POSIX rule answers.
   match (tz.iana_zone("US/Pacific")) {
     Some(z) => {
       return test.assert_eq(z.abbrev_at(13585190400i64), "PDT");
@@ -143,7 +120,6 @@ function test_iana_zone_unknown(): test.TestOutcome {
   return test.assert_eq(tz.iana_zone("UTC;Europe/London").is_some(), false);
 }
 
-// The bridge to std/time: the fixed offset valid at the instant.
 function test_at_is_the_offset_then(): test.TestOutcome {
   let z: tz.Zone = us_rule();
   let summer: TimeZone = z.at(1720000000i64);
@@ -153,8 +129,6 @@ function test_at_is_the_offset_then(): test.TestOutcome {
   }
   return test.assert_eq(winter.offset_seconds, 0 - 18000);
 }
-
-// ---- a TZif v2 file, built here ------------------------------------------
 
 function push_be32(own out: u8[], v: i64): u8[] {
   let u: i64 = v;
@@ -186,7 +160,6 @@ function push_bytes(own out: u8[], s: string): u8[] {
   return out;
 }
 
-// One header: magic, version, 15 reserved bytes, the six counts.
 function push_header(own out: u8[], version: u8, timecnt: i32, typecnt: i32, charcnt: i32): u8[] {
   out = push_bytes(out, "TZif");
   out = out.append(version);
@@ -204,7 +177,6 @@ function push_header(own out: u8[], version: u8, timecnt: i32, typecnt: i32, cha
   return out;
 }
 
-// A local-time type record: utoff, isdst, designation index.
 function push_type(own out: u8[], utoff: i64, isdst: u8, desig: u8): u8[] {
   out = push_be32(out, utoff);
   out = out.append(isdst);
@@ -212,7 +184,6 @@ function push_type(own out: u8[], utoff: i64, isdst: u8, desig: u8): u8[] {
   return out;
 }
 
-// The designation table: "AAA" at 0 and "BBB" at 4, each NUL-terminated.
 function push_designations(own out: u8[]): u8[] {
   out = push_bytes(out, "AAA");
   out = out.append(0 as u8);
@@ -221,12 +192,6 @@ function push_designations(own out: u8[]): u8[] {
   return out;
 }
 
-// Two types and two transitions: at 1,000,000 from "AAA" (+1h) to "BBB"
-// (+2h, DST) and at 3,000,000 back to "AAA"; past the table a footer rule
-// says +3h. The v1 block carries a 32-bit table that must be ignored in
-// favour of the 64-bit one, so its first transition sits at 2,000,000: a
-// reader on the v1 table answers "AAA" at 1,999,999 where the v2 table
-// says "BBB".
 function fixture(): u8[] {
   let out: u8[] = [];
   out = push_header(out, 50 as u8, 2, 2, 8);
@@ -269,8 +234,6 @@ function test_tzif_before_and_after_transition(): test.TestOutcome {
   }
 }
 
-// The v1 table's first transition is at 2,000,000; a reader on the 64-bit
-// table is already in the second type at 1,999,999.
 function test_tzif_reads_the_64_bit_table(): test.TestOutcome {
   match (tz.parse_tzif(fixture())) {
     Some(z) => {
@@ -282,9 +245,6 @@ function test_tzif_reads_the_64_bit_table(): test.TestOutcome {
   }
 }
 
-// Past the last transition the footer rule answers. The table's last entry
-// is +1h; the footer says +3h, so an instant far past the table shows the
-// footer was read and parsed.
 function test_tzif_footer_governs_the_future(): test.TestOutcome {
   match (tz.parse_tzif(fixture())) {
     Some(z) => {
@@ -317,8 +277,6 @@ function test_tzif_truncated_is_refused(): test.TestOutcome {
   }
 }
 
-// A header claiming two billion transitions in a 60-byte file: refused by
-// the length check, not allocated.
 function test_tzif_absurd_count_is_refused(): test.TestOutcome {
   let out: u8[] = [];
   out = push_bytes(out, "TZif");

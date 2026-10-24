@@ -10,15 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/pkg/pkgcache"
 )
 
-// runFetch implements `fern -fetch [START]`: locate the manifest
-// governing START (a fern.toml, a directory, or any file inside the
-// package), then download + verify + unpack every url+hash dependency
-// reachable through it — url deps of the root manifest, of its path
-// dependencies' manifests, and of already-fetched url dependencies'
-// manifests (transitively). Every archive is verified against its
-// manifest-declared sha256 before unpacking (pkgcache.Fetch); a
-// mismatch fails the whole run. This command is the package manager's
-// ONLY network access; the compiler itself never fetches.
 func runFetch(start string) error {
 	st, err := os.Stat(start)
 	dir := start
@@ -35,7 +26,7 @@ func runFetch(start string) error {
 	if root == nil {
 		return fmt.Errorf("fetch: no %s governs %s", manifest.FileName, dir)
 	}
-	seen := map[string]bool{} // manifest dirs walked
+	seen := map[string]bool{}
 	fetched := 0
 	var walk func(m *manifest.Manifest) error
 	walk = func(m *manifest.Manifest) error {
@@ -44,9 +35,6 @@ func runFetch(start string) error {
 		}
 		seen[m.Dir] = true
 		for name, d := range m.Deps {
-			// Workspace-member deps are in-tree; versioned deps resolve
-			// through fern.lock (fetched from the lock below), not the
-			// manifest walk.
 			if d.Workspace || d.Version != "" {
 				continue
 			}
@@ -83,9 +71,6 @@ func runFetch(start string) error {
 	if err := walk(root); err != nil {
 		return err
 	}
-	// Versioned deps: fetch every url-sourced version pinned in fern.lock,
-	// so a committed lock builds offline on a fresh machine without
-	// re-running resolution.
 	locked, err := mvs.ReadLock(root.Dir)
 	if err != nil {
 		return err

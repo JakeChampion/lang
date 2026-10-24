@@ -7,50 +7,26 @@ import (
 	"testing"
 )
 
-// arrRetMethodRecvCases consume an array-returning user METHOD's result in
-// expression position — `h.get().len()`, `h.get()[i].field`, `for x in
-// h.get()` — without binding it to a local first.
-//
-// The result must read as the array, not as its element type: for a
-// STRUCT-element array, resolving `.len()` against the element struct P emits
-// `Inner.len`, a symbol nothing declares (#7627). A struct-array element
-// indexed straight off the method result (`h.get()[0].k`) must likewise take
-// the method's element type. The `string[]`, `i32[]` and `E[]` element kinds
-// are controls.
-//
-// They run under FERN_STRICT_IR=1 (#6602) so a bail names its site rather than
-// surfacing as a module-level refusal.
 var arrRetMethodRecvCases = []struct {
 	name string
 	src  string
 	exit int
 }{
-	// The #7627 repro: the shape that emitted `Inner.len`.
 	{"struct-arr-method-len", structArrPrelude + `function main(): i32 { let h: Holder = mkh(); return h.get().len(); }`, 2},
 	{"struct-arr-method-index-field", structArrPrelude + `function main(): i32 { let h: Holder = mkh(); return h.get()[0].k; }`, 3},
 	{"struct-arr-method-index-nested-len", structArrPrelude + `function main(): i32 { let h: Holder = mkh(); return h.get()[1].ys.len(); }`, 1},
 	{"struct-arr-method-foreach", structArrPrelude + `function main(): i32 { let h: Holder = mkh(); let t: i32 = 0; for x in h.get() { t = t + x.k; } return t; }`, 7},
-	// Binding to an annotated local first was the documented workaround, and
-	// it went down a different path — it must keep working.
 	{"struct-arr-method-bound-first", structArrPrelude + `function main(): i32 { let h: Holder = mkh(); let tmp: Inner[] = h.get(); return tmp.len(); }`, 2},
 
-	// Sibling element kinds: clean before the fix, and still clean after.
 	{"enum-arr-method-len", `enum Col { R, G } struct EH { es: Col[] } function (h: EH) get(): Col[] { return h.es; } function main(): i32 { let h: EH = EH { es: [Col.R, Col.G] }; return h.get().len(); }`, 2},
 	{"strarr-method-len", strArrPrelude + `function main(): i32 { let h: SH = SH { ss: ["a", "b", "c"] }; return h.get().len(); }`, 3},
 	{"strarr-method-elem-len", strArrPrelude + `function main(): i32 { let h: SH = SH { ss: ["abcd", "b"] }; return h.get()[0].len(); }`, 4},
 	{"i32arr-method-len", i32ArrPrelude + `function main(): i32 { let h: IH = IH { xs: [7, 8] }; return h.get().len(); }`, 2},
 	{"i32arr-method-index", i32ArrPrelude + `function main(): i32 { let h: IH = IH { xs: [7, 8] }; return h.get()[1]; }`, 8},
 
-	// Control: the same reads off a free FUNCTION's array result.
 	{"free-fn-arr-ret-len", freeFnArrPrelude + `function main(): i32 { return mk().len(); }`, 2},
 	{"free-fn-arr-ret-index-field", freeFnArrPrelude + `function main(): i32 { return mk()[1].k; }`, 4},
 
-	// Reading a method result as an array drives RC decisions, so getting it wrong
-	// risks an over-release rather than a wrong answer. Each of these calls the
-	// method repeatedly against a struct rebuilt every round; a stray release
-	// shows up as an underflow, not as a bad exit code. (The unbound result
-	// still strands its retain — that is #7259, a leak on this same shape and
-	// on the free-fn limb alike, and it is not what these pin.)
 	{"struct-arr-loop-no-underflow", structArrPrelude + `function main(): i32 { let i: i32 = 0; while (i < 30) { let h: Holder = mkh(); if (h.get().len() != 2) { return 90; } i = i + 1; } return __rc_underflow_count(); }`, 0},
 	{"struct-arr-index-loop-no-underflow", structArrPrelude + `function main(): i32 { let i: i32 = 0; while (i < 30) { let h: Holder = mkh(); if (h.get()[1].k != 4) { return 90; } i = i + 1; } return __rc_underflow_count(); }`, 0},
 	{"struct-arr-foreach-loop-no-underflow", structArrPrelude + `function main(): i32 { let i: i32 = 0; while (i < 30) { let h: Holder = mkh(); let t: i32 = 0; for x in h.get() { t = t + x.k; } if (t != 7) { return 90; } i = i + 1; } return __rc_underflow_count(); }`, 0},
@@ -66,7 +42,6 @@ const (
 	freeFnArrPrelude = `struct Inner2 { k: i32 } function mk(): Inner2[] { return [Inner2 { k: 3 }, Inner2 { k: 4 }]; } `
 )
 
-// TestSelfHostArrRetMethodRecvIRX86_64 — the x86-64 IR path.
 func TestSelfHostArrRetMethodRecvIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -91,7 +66,6 @@ func TestSelfHostArrRetMethodRecvIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostArrRetMethodRecvIRArm64 — the arm64 IR path.
 func TestSelfHostArrRetMethodRecvIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -112,9 +86,6 @@ func TestSelfHostArrRetMethodRecvIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostArrRetMethodRecvIRWasm — the wasm IR path. Its arrays carry no rc
-// header, so it is the leg where a misplaced rc touch corrupts a neighbouring
-// allocation rather than a refcount.
 func TestSelfHostArrRetMethodRecvIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host array-returning-method receiver wasm IR e2e")

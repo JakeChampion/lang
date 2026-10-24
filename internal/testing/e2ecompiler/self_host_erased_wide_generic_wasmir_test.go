@@ -8,14 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostErasedWideGenericWasm pins the wasm side of the erased-generic
-// 64-bit widening (#5464): a module passing a 64-bit or f64 value through a
-// bare-typevar (erased-generic) PASS-THROUGH fn (`ident[T](x: T): T`) LOWERS
-// on the wasm IR path. The erased param/return/locals are typed i64 — the
-// uniform 8-byte slot the register backends give every value — and the caller
-// coerces its arg/result at the boundary (f64 <-> i64 reinterpret,
-// i32/pointer <-> i64 extend/wrap), so the module validates and computes the
-// right value under wasmtime.
 func TestSelfHostErasedWideGenericWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping erased-wide generic wasm e2e")

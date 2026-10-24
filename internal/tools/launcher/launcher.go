@@ -1,6 +1,3 @@
-// Package launcher hands a compile to the self-host compiler. `fern` keeps
-// the parser, checker and interpreter in Go, for the oracle; every `-target`
-// compile is the self-host's (docs/NATIVE-RETIREMENT.md, step 6).
 package launcher
 
 import (
@@ -15,13 +12,8 @@ import (
 	"github.com/jakechampion/lang/internal/stdlib"
 )
 
-// EnvCompiler names the self-host compiler explicitly.
 const EnvCompiler = "FERN_SELFHOST"
 
-// Compiler is the self-host compiler binary: $FERN_SELFHOST when set, else
-// `fern-selfhost` beside the running `fern` when it was built from the sources
-// this `fern` embeds (current), else the one this `fern` builds from them
-// (built).
 func Compiler() (string, error) {
 	if p := os.Getenv(EnvCompiler); p != "" {
 		if _, err := os.Stat(p); err != nil {
@@ -43,10 +35,6 @@ func Compiler() (string, error) {
 	return p, nil
 }
 
-// StdlibRoot is a directory holding the stdlib this `fern` embeds, the
-// trailing argument the self-host compiler takes. It is written once per
-// content under the user cache directory, so a rebuilt `fern` with a changed
-// stdlib gets its own copy.
 func StdlibRoot() (string, error) {
 	src := stdlibFS()
 	files, sum, err := stdlibFiles(src)
@@ -88,8 +76,6 @@ func StdlibRoot() (string, error) {
 	if err := os.WriteFile(filepath.Join(tmp, ".complete"), nil, 0o644); err != nil {
 		return "", err
 	}
-	// A concurrent fern may have written the same content first; either copy
-	// serves.
 	if err := os.Rename(tmp, dir); err != nil {
 		if _, serr := os.Stat(filepath.Join(dir, ".complete")); serr != nil {
 			return "", err
@@ -100,8 +86,6 @@ func StdlibRoot() (string, error) {
 
 func stdlibFS() fs.FS { return stdlib.FS() }
 
-// stdlibFiles lists the embedded stdlib's files in order, with a hash of
-// their names and contents.
 func stdlibFiles(src fs.FS) ([]string, string, error) {
 	var files []string
 	err := fs.WalkDir(src, ".", func(p string, d fs.DirEntry, err error) error {

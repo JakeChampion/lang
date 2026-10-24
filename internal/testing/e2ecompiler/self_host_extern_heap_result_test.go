@@ -11,18 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestSelfHostExternHeapResultCustomProvider gates the `@import` result shapes
-// whose payload the host materialises in guest memory and the wrapper copies
-// into a Fern value (docs/WIT-BRING-YOUR-OWN.md): an `Option[string]`
-// (option<string>), a `Result[u8[], i32]` (result<list<u8>, u32>), a variant
-// with a string-payload arm beside unit arms (`variant { get, post,
-// other(string) }`), a `(string, string)[]` (list<tuple<string, string>>), and
-// an Option / Result result alongside string parameters (result<_, u32> from
-// `append(f, name, value)`) — the five a wasi:http handler reads its request
-// and writes its response through. A hand-written provider component
-// implements the interface; the self-host program's core is composed against
-// a world importing it and linked with wasm-tools compose, then run under
-// wasmtime.
 func TestSelfHostExternHeapResultCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -61,9 +49,6 @@ func TestSelfHostExternHeapResultCustomProvider(t *testing.T) {
   append: func(f: u32, name: string, value: string) -> result<_, u32>;
 }`
 	write("provwit/src.wit", "package local:test@0.1.0;\n"+iface+"\nworld provider { export src; }\n")
-	// The provider: every result goes through a return area its bump
-	// allocator hands out 8-aligned (the canonical ABI reads the area at the
-	// type's alignment). Strings live in its data section.
 	write("prov_core.wat", `(module
   (memory (export "memory") 1)
   (data (i32.const 32) "/hello")

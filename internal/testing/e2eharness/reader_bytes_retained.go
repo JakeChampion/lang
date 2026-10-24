@@ -2,12 +2,9 @@ package e2eharness
 
 import "fmt"
 
-// ReaderBytesRetainedProgram keeps every chunk alive while later reads reuse
-// scratch storage. slotBytes describes the target array representation.
 func ReaderBytesRetainedProgram(request, slotBytes, reads int, sanitize bool) string {
 	bound := fmt.Sprintf("if (growth > %d as i64 * 4 as i64 * 65536 as i64) { return 6; }", slotBytes)
 	if sanitize {
-		// Quarantine intentionally prevents scratch reuse.
 		bound = ""
 	}
 	return fmt.Sprintf(`function main(): i32 {

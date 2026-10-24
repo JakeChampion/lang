@@ -53,8 +53,6 @@ func TestSelfHostByteCopyNativeRuntime(t *testing.T) {
 	}
 }
 
-// The generated bodies are ordinary declarations here, outside the compiler's
-// private runtime symbol namespace and its stack-call ownership contracts.
 func byteCopyStandalone(source string) string {
 	return strings.ReplaceAll(source, "__fern_bytes_", "test_bytes_")
 }

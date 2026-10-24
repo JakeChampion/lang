@@ -8,7 +8,6 @@ import (
 	"testing"
 )
 
-// headFile writes `content` under `dir` as `name` and returns its path.
 func headFile(t *testing.T, dir, name, content string) string {
 	t.Helper()
 	p := filepath.Join(dir, name)
@@ -22,27 +21,14 @@ func init() {
 	registerCorpus("head", headCases)
 }
 
-// headCases is head(1)'s corpus.
-//
-// The counts are the interesting half: `-n` / `-c` take glibc's
-// strtoumax plus gnulib's multiplier suffixes, a leading minus turns the
-// count into an elision, and the ceiling on an elided BYTE count is
-// off_t rather than uintmax_t — a difference visible only at
-// 2**63 - 1. The other half is the obsolete `-NUM[bkmclqvz]` form, which
-// is argv[1] or nothing: every other digit in an option position is
-// `invalid trailing option`.
 func headCases(t *testing.T) []invocation {
 	dir := t.TempDir()
-	// Twenty short lines: long enough for every count in the corpus,
-	// short enough to diff by eye when one fails.
 	var b strings.Builder
 	for i := 1; i <= 20; i++ {
 		b.WriteString(itoa(i))
 		b.WriteByte('\n')
 	}
 	s20 := headFile(t, dir, "s20", b.String())
-	// 400 lines / 1492 bytes: bigger than the 512- and 1024-byte
-	// obsolete multipliers, so `-1b` and `-1k` are distinguishable.
 	b.Reset()
 	for i := 1; i <= 400; i++ {
 		b.WriteString(itoa(i))
@@ -54,38 +40,20 @@ func headCases(t *testing.T) []invocation {
 	nul := headFile(t, dir, "nul", "a\x00b\x00c\x00")
 	spaced := headFile(t, dir, "f name", "x\n")
 	quoted := headFile(t, dir, "f'n", "x\n")
-	// A name that is not valid UTF-8: it reaches the header and the
-	// diagnostics as bytes, so nothing may re-encode it.
 	raw := rawByteFile(t, dir, "x\n")
 	missing := filepath.Join(dir, "nosuch")
-	// A directory: open(2) succeeds and read(2) fails EISDIR, which is
-	// the only way this corpus reaches a read error.
 	if err := os.Mkdir(filepath.Join(dir, "d"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	d := filepath.Join(dir, "d")
-	// Output larger than one stdout block, so a write failure is met
-	// while streaming (`error writing 'standard output'`) rather than
-	// at the final flush (`write error`).
 	big := headFile(t, dir, "big", strings.Repeat("0123456789\n", 5000))
-	// A tail elision seeks only over a regular file bigger than one
-	// block, so every seekable case needs a fixture past 4 KiB; these
-	// run to ~34 KiB, which is several of head's 64 KiB reads' worth of
-	// lines short of one, so the backward walk starts on a partial
-	// block.
 	seekText := seqLines(5000)
 	seek := headFile(t, dir, "seek", seekText)
 	seekNonl := headFile(t, dir, "seeknonl", seekText[:len(seekText)-1])
 	seekNul := headFile(t, dir, "seeknul", strings.ReplaceAll(seekText, "\n", "\x00"))
-	// One line longer than a read block, so the terminator that ends it
-	// and the terminator before it cannot be in the same chunk: the
-	// streaming elision has to remember what it is already holding.
-	// `---presume-input-pipe` over a regular file is what makes the
-	// reads full and the case deterministic.
 	straddle := headFile(t, dir, "straddle", strings.Repeat("a", 99999)+"\n"+strings.Repeat("b", 10)+"\n")
 
 	return []invocation{
-		// Defaults and the two counts.
 		{name: "default ten lines", args: []string{s20}},
 		{name: "n with a space", args: []string{"-n", "3", s20}},
 		{name: "n glued", args: []string{"-n3", s20}},
@@ -105,7 +73,6 @@ func headCases(t *testing.T) []invocation {
 		{name: "bytes then lines", args: []string{"-c", "3", "-n", "2", s20}},
 		{name: "lines then bytes", args: []string{"-n", "2", "-c", "3", s20}},
 
-		// Elision: all but the last N.
 		{name: "elide lines", args: []string{"-n", "-3", s20}},
 		{name: "elide zero lines", args: []string{"-n", "-0", s20}},
 		{name: "elide bytes", args: []string{"-c", "-5", s20}},
@@ -114,8 +81,6 @@ func headCases(t *testing.T) []invocation {
 		{name: "elide more bytes than there are", args: []string{"-c", "-1000", s20}},
 		{name: "elide from an empty file", args: []string{"-n", "-5", empty}},
 		{name: "elide bytes from an empty file", args: []string{"-c", "-5", empty}},
-		// A final line with no terminator is a line, so it can be the
-		// one elided.
 		{name: "elide the unterminated tail", args: []string{"-n", "-1", nonl}},
 		{name: "elide two with an unterminated tail", args: []string{"-n", "-2", nonl}},
 		{name: "elide all with an unterminated tail", args: []string{"-n", "-3", nonl}},
@@ -123,10 +88,6 @@ func headCases(t *testing.T) []invocation {
 		{name: "elide across a large file", args: []string{"-n", "-4", s400}},
 		{name: "elide bytes across a large file", args: []string{"-c", "-4", s400}},
 
-		// The seekable elision: a regular file bigger than one block is
-		// read backwards from its end instead of streamed forward, and
-		// anything that cannot seek falls back to the streaming path
-		// these cases share their answers with.
 		{name: "seekable elide lines", args: []string{"-n", "-3", seek}},
 		{name: "seekable elide bytes", args: []string{"-c", "-3", seek}},
 		{name: "seekable elide a whole block of lines", args: []string{"-n", "-2000", seek}},
@@ -149,26 +110,19 @@ func headCases(t *testing.T) []invocation {
 		{name: "seekable file with headers", args: []string{"-n", "-3", seek, seekNonl}},
 		{name: "seekable file then a pipe", args: []string{"-n", "-3", seek, "-"}, stdin: "p\nq\nr\ns\n"},
 		{name: "pipe then a seekable file", args: []string{"-c", "-3", "-", seek}, stdin: "abcdef"},
-		// The same file streamed instead of seeked: a pipe, and a
-		// regular file the seek is refused on.
 		{name: "piped elide falls back to streaming", args: []string{"-n", "-3"}, stdin: seekText},
 		{name: "piped elide bytes falls back to streaming", args: []string{"-c", "-3"}, stdin: seekText},
 		{name: "presumed pipe elides by streaming", args: []string{"---presume-input-pipe", "-n", "-3", seek}},
 		{name: "presumed pipe elides bytes by streaming", args: []string{"---presume-input-pipe", "-c", "-3", seek}},
 		{name: "presumed pipe across a line longer than a read block", args: []string{"---presume-input-pipe", "-n", "-2"}, stdinPath: straddle},
 		{name: "presumed pipe inside a line longer than a read block", args: []string{"---presume-input-pipe", "-n", "-1"}, stdinPath: straddle},
-		// stdin is a regular file here, so it seeks like an operand.
 		{name: "seekable stdin elide lines", args: []string{"-n", "-3"}, stdinPath: seek},
 		{name: "seekable stdin elide bytes", args: []string{"-c", "-3"}, stdinPath: seek},
-		// The second `-` reads on from where the first stopped, which
-		// is the one thing the seekable path has to leave behind it.
 		{name: "seekable stdin twice", args: []string{"-n", "-3", "-", "-"}, stdinPath: seek},
 		{name: "seekable stdin twice by bytes", args: []string{"-c", "-3", "-", "-"}, stdinPath: seek},
 		{name: "seekable stdin twice elided whole", args: []string{"-n", "-99999", "-", "-"}, stdinPath: seek},
-		// A character device reports no usable size, so it streams.
 		{name: "elide from a character device", args: []string{"-c", "-1", "/dev/null"}},
 
-		// Multiplier suffixes.
 		{name: "b is 512", args: []string{"-c", "1b", s400}},
 		{name: "k is 1024", args: []string{"-c", "1k", s400}},
 		{name: "K is 1024", args: []string{"-c", "1K", s400}},
@@ -181,8 +135,6 @@ func headCases(t *testing.T) []invocation {
 		{name: "Ki without B is not a suffix", args: []string{"-n", "1Ki", s20}},
 		{name: "Y overflows", args: []string{"-n", "1Y", s20}},
 
-		// Malformed and out-of-range counts: one line, exit 1, and NO
-		// `Try …` line.
 		{name: "not a number", args: []string{"-n", "x", s20}},
 		{name: "trailing garbage", args: []string{"-n", "1x", s20}},
 		{name: "hex is not accepted", args: []string{"-n", "0x10", s20}},
@@ -203,15 +155,12 @@ func headCases(t *testing.T) []invocation {
 		{name: "past uintmax bytes", args: []string{"-c", "18446744073709551616", s20}},
 		{name: "elide uintmax lines", args: []string{"-n", "-18446744073709551615", s20}},
 		{name: "elide past uintmax lines", args: []string{"-n", "-18446744073709551616", s20}},
-		// The one place the two ceilings differ: an elided byte count is
-		// an offset, so off_t bounds it.
 		{name: "elide off_t max bytes", args: []string{"-c", "-9223372036854775807", s20}},
 		{name: "elide past off_t max bytes", args: []string{"-c", "-9223372036854775808", s20}},
 		{name: "elide uintmax bytes", args: []string{"-c", "-18446744073709551615", s20}},
 		{name: "past off_t max bytes is fine unelided", args: []string{"-c", "9223372036854775808", s20}},
 		{name: "elide off_t max lines", args: []string{"-n", "-9223372036854775808", s20}},
 
-		// Headers.
 		{name: "two files get headers", args: []string{"-n", "2", s20, s20}},
 		{name: "three files", args: []string{"-n", "2", s20, s20, s20}},
 		{name: "verbose forces a header", args: []string{"-v", "-n", "1", s20}},
@@ -225,7 +174,6 @@ func headCases(t *testing.T) []invocation {
 		{name: "verbose on an empty file", args: []string{"-v", empty}},
 		{name: "header for stdin", args: []string{"-n", "2", "-", s20}, stdin: "p\nq\nr\n"},
 
-		// Operands.
 		{name: "no operand reads stdin", stdin: "a\nb\nc\n"},
 		{name: "lone dash is stdin", args: []string{"-"}, stdin: "a\nb\n"},
 		{name: "dashdash alone", args: []string{"--"}, stdin: "a\nb\n"},
@@ -245,15 +193,12 @@ func headCases(t *testing.T) []invocation {
 		{name: "missing name with a quote", args: []string{filepath.Join(dir, "no'such")}},
 		{name: "missing name that is not valid UTF-8", args: []string{filepath.Join(dir, "no\xffsuch")}},
 
-		// A directory: the open succeeds, the read fails EISDIR, and the
-		// header is already out when the diagnostic lands.
 		{name: "directory", args: []string{d}},
 		{name: "directory then a file", args: []string{"-n", "3", d, s20}},
 		{name: "directory with a zero count", args: []string{"-n", "0", d}},
 		{name: "directory with a zero byte count", args: []string{"-c", "0", d}},
 		{name: "directory elided", args: []string{"-n", "-1", d}},
 
-		// -z: NUL line terminator. The headers keep their newline.
 		{name: "zero terminated", args: []string{"-z", "-n", "2", nul}},
 		{name: "zero terminated long", args: []string{"--zero-terminated", "-n", "2", nul}},
 		{name: "zero terminated prefix", args: []string{"--zero", "-n", "2", nul}},
@@ -262,8 +207,6 @@ func headCases(t *testing.T) []invocation {
 		{name: "zero terminated elision", args: []string{"-z", "-n", "-1", nul}},
 		{name: "newline is not a terminator under -z", args: []string{"-z", "-n", "1", s20}},
 
-		// The obsolete -NUM form: argv[1] only, and its suffix letters
-		// each re-derive the count from the digits.
 		{name: "obsolete count", args: []string{"-3", s20}},
 		{name: "obsolete zero", args: []string{"-0", s20}},
 		{name: "obsolete two digits", args: []string{"-12", s20}},
@@ -288,8 +231,6 @@ func headCases(t *testing.T) []invocation {
 		{name: "obsolete with two files", args: []string{"-5", s20, s20}},
 		{name: "obsolete overflow", args: []string{"-9999999999999999999999", s20}},
 		{name: "obsolete past uintmax", args: []string{"-18446744073709551616", s20}},
-		// Anywhere but argv[1] a digit is an option byte, and there are
-		// no digit options.
 		{name: "obsolete bad suffix", args: []string{"-5x", s20}},
 		{name: "obsolete bad suffix after a good one", args: []string{"-5cx", s20}},
 		{name: "obsolete bad suffix after a multiplier", args: []string{"-1kx", s400}},
@@ -303,7 +244,6 @@ func headCases(t *testing.T) []invocation {
 		{name: "digit inside a cluster", args: []string{"-q5", s20}},
 		{name: "sign is not the obsolete form", args: []string{"-+5", s20}},
 
-		// getopt: the messages, the prefix rule, the hidden option.
 		{name: "invalid short option", args: []string{"-x"}},
 		{name: "invalid short option in a cluster", args: []string{"-qx", s20}},
 		{name: "unrecognized long option", args: []string{"--foo"}},
@@ -314,9 +254,6 @@ func headCases(t *testing.T) []invocation {
 		{name: "flag rejects a glued value", args: []string{"--verbose=x", s20}},
 		{name: "help rejects a glued value", args: []string{"--help=x"}},
 		{name: "version rejects a glued value", args: []string{"--version=x"}},
-		// The empty long name is a prefix of every option, so glibc
-		// calls it ambiguous and lists them all — including the hidden
-		// `---presume-input-pipe`.
 		{name: "empty long name is ambiguous", args: []string{"--=x"}},
 		{name: "v is ambiguous between verbose and version", args: []string{"--v", s20}},
 		{name: "unique prefix lines", args: []string{"--li", "3", s20}},
@@ -328,22 +265,16 @@ func headCases(t *testing.T) []invocation {
 		{name: "hidden option does not match without its dash", args: []string{"--p", s20}},
 		{name: "hidden option prefix without its dash", args: []string{"--presume", s20}},
 		{name: "hidden option changes nothing", args: []string{"---presume-input-pipe", "-n", "-3", s20}},
-		// POSIXLY_CORRECT ends the option scan at the first operand.
 		{name: "posix operand then option", args: []string{s20, "-n", "1"}, env: []string{"POSIXLY_CORRECT=1"}},
 		{name: "posix option before the operand", args: []string{"-n", "1", s20}, env: []string{"POSIXLY_CORRECT=1"}},
 
-		// Write failures. Under one block the failure is only found at
-		// the final flush, which is close_stdout's wording; over one
-		// block it is met mid-stream, which is head's own.
 		{name: "stdout closed", args: []string{"-n", "1", s20}, stdout: stdoutClosed},
 		{name: "stdout full", args: []string{"-n", "1", s20}, stdout: stdoutFull},
 		{name: "stdout closed with a large output", args: []string{"-n", "5000", big}, stdout: stdoutClosed},
 		{name: "stdout full with a large output", args: []string{"-n", "5000", big}, stdout: stdoutFull},
-		// Nothing is written, so a closed stdout is not an error at all.
 		{name: "stdout closed with nothing to write", args: []string{"-n", "0", s20}, stdout: stdoutClosed},
 		{name: "stdout closed with a missing file", args: []string{missing}, stdout: stdoutClosed},
 
-		// stdin.
 		{name: "stdin lines", args: []string{"-n", "2"}, stdin: "1\n2\n3\n4\n"},
 		{name: "stdin bytes", args: []string{"-c", "3"}, stdin: "12345"},
 		{name: "stdin elide lines", args: []string{"-n", "-2"}, stdin: "1\n2\n3\n4\n"},
@@ -357,8 +288,6 @@ func headCases(t *testing.T) []invocation {
 	}
 }
 
-// itoa is strconv.Itoa without the import, for the fixture builders here
-// and the pty slave's path in pty_test.go.
 func itoa(n int) string {
 	if n == 0 {
 		return "0"
@@ -377,20 +306,8 @@ func TestHeadParity(t *testing.T) {
 	requireParity(t, "head", headCases(t))
 }
 
-// TestHeadSeekableMatchesStreaming holds the seekable tail elision to the
-// streaming one, which is the same input read the other way round.
-//
-// Four spellings of one invocation have to agree byte for byte: the file
-// as an operand and the file on stdin both seek, a pipe carrying the same
-// bytes streams, and `---presume-input-pipe` streams the operand's own
-// descriptor. The corpus pins each of those to GNU case by case; this
-// sweeps every count against every fixture instead, which is where an
-// off-by-one in the backward scan lives — one a corpus can only catch on
-// a count someone thought to write down.
 func TestHeadSeekableMatchesStreaming(t *testing.T) {
 	bin := fernBin(t, "head")
-	// Each fixture is past one block, so the seekable path is taken:
-	// under that, both spellings stream and the comparison is vacuous.
 	fixtures := map[string]string{
 		"lines":            seqLines(5000),
 		"unterminated":     strings.TrimSuffix(seqLines(5000), "\n"),
@@ -400,7 +317,6 @@ func TestHeadSeekableMatchesStreaming(t *testing.T) {
 		"block boundary":   strings.Repeat("y", 65535) + "\n" + strings.Repeat("z", 65535) + "\n",
 		"nul records":      strings.ReplaceAll(seqLines(5000), "\n", "\x00"),
 	}
-	// Counts around the read block, around the file, and past both.
 	counts := []string{"0", "1", "2", "3", "9", "4999", "5000", "5001", "65535", "65536", "65537", "18446744073709551615"}
 	dir := t.TempDir()
 	for name, content := range fixtures {

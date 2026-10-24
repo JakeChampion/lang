@@ -2,12 +2,6 @@ package e2eharness
 
 import "fmt"
 
-// FetchTaskProgram runs a fetch inside a task (docs/NET-P3-SUSPENSION-PLAN.md
-// §4, slice 4): the task's `fetch.send` to the upstream's /slow target parks
-// at each socket wait, and while it is parked the program's own loop, the
-// scheduler, fetches /plain outside any task and then waits on the task's
-// wait set itself. The plain answer arriving before the slow one is the
-// overlap a serve worker gets from a suspended handler.
 func FetchTaskProgram(port int) string {
 	return fmt.Sprintf(`import "std/async";
 import "std/fetch";
@@ -65,6 +59,4 @@ function main(): i32 {
 `, port)
 }
 
-// FetchTaskWant is the output under the self-host compiler: the task parks
-// inside the fetch, and the plain fetch runs while it is parked.
 const FetchTaskWant = "slow 200 parked yes plain first yes\n"

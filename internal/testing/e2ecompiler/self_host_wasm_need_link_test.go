@@ -8,12 +8,6 @@ import (
 	"testing"
 )
 
-// wasmNeedLinkDriver emits, for every op need the wasm backend recognises
-// (wasm_ir.need_ops), a preview1 command module whose needs are what
-// needs_of records for a unit holding that one op and nothing else, over a
-// unit text holding only an empty main. Each module is printed behind a
-// `=== need: <op>` line for the test to validate on its own; an op needs_of
-// does not record for its own unit is reported behind `=== unrecorded:`.
 const wasmNeedLinkDriver = `import "./asmcore";
 import "./ir";
 import "./irtables";
@@ -45,13 +39,6 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostWasmEveryNeedLinksAlone is the completeness test for the
-// wasm emit's need gates (#10856): a module that needs exactly one op must
-// validate, so a helper that calls another helper or an import its own need
-// does not gate fails here, naming the op, rather than as an unknown
-// function in whichever program first reaches that op on its own.
-// $__fern_build_io_error's gate, needs_io_error, is a hand-kept list of the
-// fs ops and had drifted twice before this test existed.
 func TestSelfHostWasmEveryNeedLinksAlone(t *testing.T) {
 	validate, err := exec.LookPath("wasm-tools")
 	if err != nil {

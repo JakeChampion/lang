@@ -1,16 +1,3 @@
-// The Fern two-fetch server the net-nightly lane loads, P3's exit case
-// (docs/NET-P3-SUSPENSION-PLAN.md §1): a worker per core, as the hyper
-// server beside it has a thread per core, whose handler makes two
-// requests in turn to an upstream through `plat.http`, so every
-// connection the load generator holds has a handler parked on the
-// upstream most of the time, and each loop's multiplexing is what the
-// throughput and the p99 measure. scripts/net-bench builds it with the
-// self-host compiler, whose suspension pass is what lets the handler park;
-// the Go compiler's blocking fallback would serve the connections in turn.
-// The upstream is reached through the forward proxy `http_proxy` names,
-// since a handler's fetch refuses a loopback address and the upstream is
-// on one. The caps are lifted for the load generator, one client holding
-// thousands of connections, each with a handler in flight.
 import "std/http";
 import "std/serve";
 import "std/platform";

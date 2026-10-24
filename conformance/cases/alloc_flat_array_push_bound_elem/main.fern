@@ -1,26 +1,26 @@
 // spec: AL-01
-//
-// Pushing a value that was BOUND to a local first — `let v = …;
-// xs = xs.append(v)` — must cost the same fresh memory as pushing the
-// identical value inline. It did not: the element took a retain (the
-// same `needsRcIncOnAlias` one an array literal's elements take) AND an
-// escape taint, and the taint suppressed the release that would have
-// balanced the retain, so one box per push was stranded.
-//
-// Both shapes here reach the buffer by different routes. The direct one
-// leaked 320 B a round in a loop. The nested one — the push sitting in a
-// struct literal's field, which is how an immutable accumulator threads
-// through a loop — survived a fix to the direct shape, because the move
-// analysis only ever looked one level into the statement.
-//
-// The straight-line half is the one that pins the cause: `build_ordered`
-// and `build_swapped` differ ONLY in the order of two adjacent, mutually
-// independent declarations, and that alone decided whether the push
-// leaked (the exit sweep runs in declaration order, and the element's
-// flat dec landing after the buffer's deep drop never reaches zero).
-//
-// The case prints the SHAPE, never a byte count — see
-// docs/ALLOCATION-OBSERVABLE.md.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import "std/i32";
 import "std/i64";
 
@@ -49,7 +49,7 @@ function nested(n: i32): i32 {
     return total;
 }
 
-// Array declared BEFORE the element.
+
 function build_ordered(k: i32): i32 {
     let vals: Val[] = [];
     let v: Val = Val { kind: k, kids: [k] };
@@ -57,7 +57,7 @@ function build_ordered(k: i32): i32 {
     return vals.len();
 }
 
-// The same two declarations, swapped. Nothing else differs.
+
 function build_swapped(k: i32): i32 {
     let v: Val = Val { kind: k, kids: [k] };
     let vals: Val[] = [];
@@ -82,7 +82,7 @@ function main(): i32 {
 
     print(x.to_string());
     print(y.to_string());
-    // Twice the work must not cost more fresh memory.
+
     if ((b2 - b1) > (b1 - b0)) { print("grows"); } else { print("flat"); }
     return 0;
 }

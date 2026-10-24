@@ -9,15 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/ast"
 )
 
-// A trait's default body is mangled in the module that DECLARES the
-// trait. The checker deep-clones that body into every impl, so a name
-// left bare here would be resolved wherever the impl was written: the
-// body could not reach its own module's helpers, and an implementing
-// module declaring the same name would capture the call (#8484).
-
-// identNames collects every Ident name reachable from a block — a call
-// to `f()` is a Call whose Callee is an Ident — so a test can assert
-// which form of a name survived the rewrite.
 func identNames(b *ast.Block) map[string]bool {
 	out := map[string]bool{}
 	for _, s := range b.Stmts {
@@ -31,7 +22,6 @@ func identNames(b *ast.Block) map[string]bool {
 	return out
 }
 
-// loadProg runs the full modload pipeline on an entry file.
 func loadProg(t *testing.T, entry string) *ast.Program {
 	t.Helper()
 	prog, _, err := modload.Load(entry)
@@ -81,15 +71,11 @@ function main(): i32 { let r: R = R { n: 1 }; return r.greet(); }`,
 		t.Fatal("greet has no default body")
 	}
 	names := identNames(body)
-	// Both helpers — exported and private alike — resolve to lib's
-	// mangled names. The private one is an intra-module reference, so
-	// `pub` is irrelevant to the rewrite.
 	for _, want := range []string{"lib__pub_helper", "lib__priv_helper"} {
 		if !names[want] {
 			t.Errorf("default body should call %q; names present: %v", want, names)
 		}
 	}
-	// The bare forms would resolve in whichever module wrote the impl.
 	for _, bad := range []string{"pub_helper", "priv_helper"} {
 		if names[bad] {
 			t.Errorf("default body still carries the bare name %q — the impl's module would capture it", bad)
@@ -97,9 +83,6 @@ function main(): i32 { let r: R = R { n: 1 }; return r.greet(); }`,
 	}
 }
 
-// A trait implemented in the same module that declares it still works:
-// the default body mangles to that module's own prefix, which is what
-// the module's helpers were renamed to.
 func TestTraitDefaultBodySameModuleImpl(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
 		"lib.fern": `pub function h(): i32 { return 41; }
@@ -127,9 +110,6 @@ function main(): i32 { let s: lib.S = lib.S { v: 1 }; return s.greet(); }`,
 	}
 }
 
-// The entry module keeps its bare names (its mangle prefix is empty),
-// so a trait declared there resolves against the flat program exactly
-// as before.
 func TestTraitDefaultBodyEntryModuleKeepsBareNames(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
 		"main.fern": `function h(): i32 { return 41; }
@@ -156,9 +136,6 @@ function main(): i32 { let r: R = R { n: 1 }; return r.greet(); }`,
 	}
 }
 
-// A qualified reference inside a default body (`other.f()`) rewrites to
-// the imported module's mangled name, so the body reaches a module the
-// implementer need never have imported.
 func TestTraitDefaultBodyQualifiedImportRewrites(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
 		"deep.fern": `pub function d(): i32 { return 41; }`,

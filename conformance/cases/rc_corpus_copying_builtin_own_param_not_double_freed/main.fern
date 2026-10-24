@@ -1,11 +1,11 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// The own-param interlock: inferParamCountedRetain skips `own`
-// parameters before any classifier runs, and ownedByCalleeAt
-// suppresses the caller-side stash — so a copying use inside
-// an own callee must not become a second release of the same
-// temp.
+
+
+
+
+
+
+
+
 @noinline
 function mk(pad: string, i: i32): string { return pad + "0123456789abcdef"; }
 

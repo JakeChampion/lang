@@ -1,14 +1,14 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// The `.with` half of the superseded-field move: `x = S { ...x, f:
-// x.f.with(i, v) }` (and the return form, and a method receiver)
-// hands the field to __fern_arr_cow_inplace at the box's own count,
-// so a unique box rewrites its buffer in place and its emptied slot
-// no-ops at the overwrite drop; a shared box retains, and the copy
-// leaves the alias's view intact. Value-checked through an alias, a
-// borrowed caller-side box, and the rebuild loop a streaming hasher's
-// pending block is written as.
+
+
+
+
+
+
+
+
+
+
+
 struct H { buf: u8[], n: i32, tag: i32 }
 function push(own h: H, b: u8): H {
     return H { ...h, buf: h.buf.with(h.n, b), n: h.n + 1 };

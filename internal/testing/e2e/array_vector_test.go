@@ -2,12 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/array.dot_f64 / norm_f64 — the dot product and
-// the Euclidean (L2) norm. Both return a plain f64 (no Option), so they lower
-// on all four backends including wasmbin. dot runs to the shorter length on a
-// length mismatch; norm is sqrt(dot(self,self)). Returns 42 iff every check
-// holds across interp / x86-64 / wasm / arm64; each leg skips itself when its
-// toolchain is absent.
 const arrayVectorProg = `
 import "std/array" as array;
 function approx(a: f64, b: f64): boolean { let d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.0001; }

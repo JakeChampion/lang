@@ -1,105 +1,14 @@
-// std/async — structured-concurrency combinators over `Future[T]`.
-//
-// This is the SUPPORTED async surface (docs/ASYNC-REDESIGN.md). It
-// replaces the `concurrent { … }` / `await` / `race` keyword surface
-// (a parser-side CPS transform) with plain library functions over one
-// abstraction — a `Future[T]`, a not-yet-ready value of type `T`. The
-// concurrency points are explicit (you call `gather` / `race`), the
-// model is colorless (no function coloring, no compiler transform),
-// and it has a real wasm path (it drives the universal `poll`
-// builtin, not stackful green threads).
-//
-// PORTABILITY: every combinator compiles and runs on all backends.
-//   * `Ready(v)` futures resolve immediately everywhere — so a fan-out
-//     of ready futures (the unit-test shape) works on interp / wasm /
-//     native alike.
-//   * `Pending(fd, resume)` futures resolve when `fd` is readable,
-//     driven by the `poll` builtin: poll(2) / ppoll(2) on native, a set
-//     over the handles' descriptors on the interpreter, wasi:io/poll on
-//     wasm (component-model-async via `@import async` is folded in later —
-//     docs/ASYNC-REDESIGN.md PR5).
-//
-// Generic over `T`: the compiler monomorphizes, so
-// `gather` over `Future[string]` (response bodies) is a first-class
-// case, not a hand-duplicated `…Str` twin. This is the shape that
-// drops the i32-throughout restriction of the old `std/task` runtime.
+// This module combines futures with structured concurrency.
 
 import "core/int";
 import "std/string";
 import "std/time";
 
-// A pending computation yielding a value of type `T`.
-//
-//   Ready(value)         — already resolved with this value.
-//   Pending(fd, resume)  — suspended until `fd` is readable; the
-//                          driver calls `resume(fd)` to get the next
-//                          Future (typically a non-blocking read that
-//                          returns `Ready(...)`). Multi-step I/O
-//                          chains by returning another `Pending`.
-//
-// A combinator that abandons a pending future (a `race` loser, a
-// `with_deadline` straggler, what `gather` holds when its wait fails) drops
-// its token and then calls `resume(cancelled())` once: a continuation handed
-// `cancelled()` releases what it holds, a socket above all, and returns
-// `Ready` without waiting. A wait there could rewind a task into the
-// cancellation and run its release twice, and a close is not idempotent.
 pub enum Future[T] {
   Ready(T),
   Pending(i32, (i32) => Future[T]),
 }
 
-// Driver — the waiting seam (docs/DST-PLATFORM-BRIEF.md). Everything
-// nondeterministic the combinators and the serve loop do funnels through
-// these primitives; substituting them (std/sim) makes gather / race /
-// with_deadline and a reactor loop fully deterministic on every backend,
-// including the interpreter.
-//
-// The first four are the one-shot waits: `poll_ready(toks, timeout_ms)`
-// returns the index of the first ready token, a hung-up, failed or closed
-// one included, or -1 when none became ready, the contract of the `poll`
-// builtin.
-//
-// The rest are the reactor (#9853): a readiness set that outlives one
-// wait. `watch(fd, interest)` registers a descriptor for the interest bits
-// (1 readable, 2 writable; 4 exclusive, so that of several processes
-// watching one descriptor a readiness wakes one rather than all, epoll's
-// EPOLLEXCLUSIVE, and nothing elsewhere; 8 with 1, read through
-// `recv_into`, which lets an io_uring receive into buffers of its own ahead
-// of the reads, and nothing elsewhere) or changes them, `unwatch(fd)`
-// drops it, with what the driver received for it and nobody read, and
-// `wait(max, timeout_ms)` is the (fd, readiness) pairs of up to `max`
-// ready descriptors, readiness 1 readable, 2 writable and 4 an error or
-// hang-up: empty on the timeout (-1 waits without one) and on an error.
-// `wait_into(events, timeout_ms)` is the same wait written into an array the
-// caller keeps, so a loop that waits again and again allocates nothing: the
-// pairs fill `events` from the start, as many as it has room for, and when
-// fewer arrive the pair after the last has readiness -1 (`ready_pairs`
-// counts them). `wait` is `wait_into` over a fresh array. A
-// host may report readiness spuriously, so a reader reads until -EAGAIN;
-// a descriptor is unwatched before it is closed. `watch_signal(sig)` makes
-// a signal a readiness event, reported as the pair (-sig, 1) and no longer
-// ending the process (signalfd behind a blocked signal on Linux, kqueue's
-// EVFILT_SIGNAL behind an ignored one on Darwin; -ENOTSUP on wasm, which
-// has no signals), and `unwatch_signal(sig)` restores its default.
-// `watch_parent()` reports the exit of the process's parent the way a
-// watched SIGTERM is reported, as (-15, 1): -ESRCH when the parent is
-// already gone, -ENOTSUP on wasm. Linux delivers it as SIGTERM
-// (PR_SET_PDEATHSIG), Darwin as kqueue's EVFILT_PROC. A parent that dies
-// before the call is caught by finding the process reparented to init, so a
-// subreaper other than init hides that early death on Linux.
-// `recv_into(fd, buf)` reads `fd` into `buf` as `tcp_recv_into` does, the
-// driver's received bytes first: every read of a descriptor watched with
-// interest 8 goes through it, until a short read, before the descriptor is
-// unwatched.
-// `send_zc(fd, data, from)` writes `data[from:]` to `fd` without copying
-// it into the kernel: a slot, or -EOPNOTSUPP where the driver has no
-// zero-copy send (every driver but an io_uring's), -EAGAIN when it has none
-// free. The write completes later. The descriptor is reported writable once
-// `zc_result(slot)` answers the bytes written or -errno; it is -EINPROGRESS
-// until then. `data` must stay alive and unchanged until
-// `zc_notified(slot)`, when the kernel is done with its pages, and
-// `zc_release(slot)` then frees the slot.
-// `close()` releases the set.
 pub trait Driver {
   function poll_ready(self: Self, toks: i32[], timeout_ms: i32): i32;
   function now_ns(self: Self): i64;
@@ -107,15 +16,9 @@ pub trait Driver {
   function drop_token(self: Self, tok: i32): i32;
   function watch(self: Self, fd: i32, interest: i32): i32;
   function unwatch(self: Self, fd: i32): i32;
-  // Whether `watch` honours ONESHOT, so a descriptor watched that way
-  // reports once and needs no `unwatch` after it fired.
   function oneshot(self: Self): boolean {
     return false;
   }
-  // Whether a `watch` without ONESHOT outlives the wait that made it,
-  // reporting the descriptor on every wait it is ready for until it is
-  // unwatched or closed (level-triggered), so a scheduler may honour KEEP
-  // and WATCHED.
   function keeps(self: Self): boolean {
     return false;
   }
@@ -145,8 +48,6 @@ pub trait Driver {
   function close(self: Self): i32;
 }
 
-// event_room(max) — an events array for `wait_into` with room for `max`
-// pairs and none in it yet.
 pub function event_room(max: i32): i32[] {
   let events: i32[] = [];
   while (events.len() < max * 2) {
@@ -155,8 +56,6 @@ pub function event_room(max: i32): i32[] {
   return end_pairs(events, 0);
 }
 
-// ready_pairs(events) — how many (fd, readiness) pairs `wait_into` left at
-// the start of `events`.
 pub function ready_pairs(events: i32[]): i32 {
   let n: i32 = 0;
   while (n * 2 + 1 < events.len() && events[n * 2 + 1] >= 0) {
@@ -165,7 +64,6 @@ pub function ready_pairs(events: i32[]): i32 {
   return n;
 }
 
-// end_pairs(events, n) — `events` with its pairs ending after the first `n`.
 pub function end_pairs(own events: i32[], n: i32): i32[] {
   if (n * 2 + 1 < events.len()) {
     return events.with(n * 2 + 1, -1);
@@ -173,42 +71,18 @@ pub function end_pairs(own events: i32[], n: i32): i32[] {
   return events;
 }
 
-// RealDriver — the production Driver: each wait is exactly the builtin
-// the combinator loops used to call directly (poll(2) / ppoll(2) on
-// native, wasi:io/poll on wasm, a set over the handles on interp), and the reactor
-// is the `reactor_*` floor (epoll, kqueue, a table of wasi pollables),
-// made on the first watch so a driver that only polls costs nothing.
-// `signals` is the watched signals as rows `sig:descriptor;`, the
-// descriptor being what the floor answered for the watch and wants back
-// for the unwatch. `ring` is the io_uring set (`ring_*`) a driver asked for
-// it uses in the reactor's place, -1 when it has none.
 pub struct RealDriver { reactor: Cell[i32], signals: Cell[string], ring: Cell[i64] }
 
-// ONESHOT, or'd into a `watch`'s interest, reports the descriptor once and
-// then holds it disarmed until it is watched again, on a driver whose
-// `oneshot` says so; elsewhere it is ignored.
 pub const ONESHOT: i32 = 16;
 
-// KEEP and WATCHED, or'd into a `wait_any` interest by the owner of a
-// descriptor that waits on it many times (a pooled connection's reads):
-// KEEP asks the scheduler to watch the descriptor level-triggered and leave
-// it watched when the wait ends, and WATCHED says a KEEP wait already did,
-// so this wait needs no watch and no unwatch. The owner keeps the
-// registration's state (which descriptors it has said KEEP for) and must
-// unwatch or close the descriptor itself. Both are honoured only by a
-// scheduler on a driver whose `keeps` says so; everywhere else they are
-// stripped and the wait is an ordinary one.
 pub const KEEP: i32 = 32;
 
 pub const WATCHED: i32 = 64;
 
-// `interest_bits(interest)` — the readiness interest of a `wait_any` pair
-// without KEEP and WATCHED.
 pub function interest_bits(interest: i32): i32 {
   return interest & 31;
 }
 
-// __eintr() — the errno a wait a signal interrupted fails with.
 function __eintr(): i32 {
   if (target_os() == "wasi") {
     return 27;
@@ -216,16 +90,10 @@ function __eintr(): i32 {
   return 4;
 }
 
-// real_driver() — the Driver the public combinators run on.
 pub function real_driver(): RealDriver {
   return RealDriver { reactor: cell_new(-1), signals: cell_new(""), ring: cell_new(-(1 as i64)) };
 }
 
-// real_driver_io_uring() — a driver whose readiness set is an io_uring
-// (docs/NET-P7-IO-URING-PLAN.md), made now: where the ring cannot be had
-// (a kernel without one or without the 6.1 setup flags, a seccomp profile
-// refusing it, Darwin, wasm, the interpreter) it is `real_driver()` for
-// the whole of its life.
 pub function real_driver_io_uring(): RealDriver {
   let d: RealDriver = real_driver();
   let ring: i64 = __ring_new(1024);
@@ -235,9 +103,6 @@ pub function real_driver_io_uring(): RealDriver {
   return d;
 }
 
-// The io_uring builtins are Linux's. On every other target the driver never
-// has a ring, these answer as a ring that is not there does, and the calls
-// are not in the program.
 function __ring_new(entries: i32): i64 {
   if (target_os() == "linux" || target_os() == "android") {
     return ring_new(entries);
@@ -273,13 +138,10 @@ function __ring_send_zc(ring: i64, fd: i32, data: u8[], from: i32): i32 {
   return 0 - 9;
 }
 
-// `.io_uring()` — whether the driver waits on an io_uring.
 pub function (d: RealDriver) io_uring(): boolean {
   return d.ring.get() >= 0 as i64;
 }
 
-// __real_ctl(d, op, fd, arg) — the floor's control op on the driver's set,
-// the reactor made on first use when there is no ring.
 function __real_ctl(d: RealDriver, op: i32, fd: i32, arg: i32): i32 {
   let ring: i64 = d.ring.get();
   if (ring >= 0 as i64) {
@@ -292,7 +154,6 @@ function __real_ctl(d: RealDriver, op: i32, fd: i32, arg: i32): i32 {
   return reactor_ctl(r, op, fd, arg);
 }
 
-// __real_wait(d, events, timeout_ms) — one wait on the driver's set.
 function __real_wait(d: RealDriver, events: i32[], timeout_ms: i32): i32 {
   let ring: i64 = d.ring.get();
   if (ring >= 0 as i64) {
@@ -301,7 +162,6 @@ function __real_wait(d: RealDriver, events: i32[], timeout_ms: i32): i32 {
   return reactor_wait(__real_reactor(d), events, timeout_ms);
 }
 
-// The descriptor a watched signal's row holds, -1 when it is not watched.
 function __real_signal_fd(d: RealDriver, sig: i32): i32 {
   for row in d.signals.get().split(";") {
     let parts: string[] = row.split(":");
@@ -331,9 +191,6 @@ function __real_reactor(d: RealDriver): i32 {
   return r;
 }
 
-// `.handle()` — the driver's reactor as the opaque handle a `platform.Host`
-// carries (`handle`), made on first use like `watch` makes it; negative
-// when the target has no reactor.
 pub function (d: RealDriver) handle(): i32 {
   let ring: i64 = d.ring.get();
   if (ring >= 0 as i64) {
@@ -343,8 +200,6 @@ pub function (d: RealDriver) handle(): i32 {
 }
 
 impl Driver for RealDriver {
-  // Under a task the wait parks on the tokens, so gather / race /
-  // with_deadline inside a handler park the handler (§8 of ASYNC.md).
   function poll_ready(self: RealDriver, toks: i32[], timeout_ms: i32): i32 {
     if (__task_cur() != 0) {
       return park_tokens(toks, timeout_ms);
@@ -366,8 +221,6 @@ impl Driver for RealDriver {
   function oneshot(self: RealDriver): boolean {
     return self.ring.get() < 0 as i64 && target_os() != "wasi" && target_os() != "wasi-http";
   }
-  // epoll and kqueue registrations are level-triggered and stay until
-  // unwatched or closed; a ring's poll is armed per wait.
   function keeps(self: RealDriver): boolean {
     return self.ring.get() < 0 as i64 && target_os() != "wasi" && target_os() != "wasi-http";
   }
@@ -381,9 +234,6 @@ impl Driver for RealDriver {
     if (self.ring.get() < 0 as i64 && __real_reactor(self) < 0 || events.len() < 2) {
       return end_pairs(events, 0);
     }
-    // A wait a signal interrupted is waited again for what is left of the
-    // timeout: epoll_wait fails with EINTR after a stop and continue even
-    // with no handler installed.
     let deadline: i64 = monotonic_ns() + timeout_ms as i64 * (1000000 as i64);
     let n: i32 = __real_wait(self, events, timeout_ms);
     while (n == 0 - __eintr()) {
@@ -473,7 +323,6 @@ impl Driver for RealDriver {
   }
 }
 
-// __all_ready(fs) — true once no future is still pending.
 function __all_ready[T](fs: Future[T][]): boolean {
   let i: i32 = 0;
   while (i < fs.len()) {
@@ -488,20 +337,10 @@ function __all_ready[T](fs: Future[T][]): boolean {
   return true;
 }
 
-// gather(fs, on_incomplete) — await ALL futures, returning their
-// values in input order. The canonical edge fan-out: issue N outbound
-// fetches, take every result (cache + primary). All pending futures'
-// fds are in flight simultaneously, so their I/O overlaps on one
-// thread. A future that never resolves (a poll error) is cancelled and lands
-// `on_incomplete` in its slot — generic `T` has no default,
-// so the caller supplies the fallback (matching the realities of a
-// blocking poll, which otherwise always makes progress).
 pub function gather[T](fs_in: Future[T][], on_incomplete: T): T[] {
   return gather_on(real_driver(), fs_in, on_incomplete);
 }
 
-// gather_on(drv, fs, on_incomplete) — gather with the waits routed
-// through an explicit Driver (std/sim substitutes a virtual one).
 pub function gather_on[D: Driver, T](drv: D, fs_in: Future[T][], on_incomplete: T): T[] {
   let fs: Future[T][] = fs_in;
   while (true) {
@@ -550,14 +389,6 @@ pub function gather_on[D: Driver, T](drv: D, fs_in: Future[T][], on_incomplete: 
   return out;
 }
 
-// __drop_losers(fs, winner) — cancel every still-Pending future EXCEPT
-// `winner` (whose own continuation already consumed its token). Its token is
-// dropped first: on wasm a Pending's token is a wasi:io/poll pollable that is
-// a CHILD of its socket, and wasmtime traps with "resource has children" at
-// teardown if the socket goes first. `wasm_pollable_drop` is a no-op on
-// native/interp. Then `resume(cancelled())` runs once, so the continuation
-// closes what it holds, and the token of a Pending it hands back is dropped
-// too. Pass `winner = -1` to cancel every Pending future.
 function __drop_losers[D: Driver, T](drv: D, fs: Future[T][], winner: i32): i32 {
   let i: i32 = 0;
   while (i < fs.len()) {
@@ -580,20 +411,10 @@ function __drop_losers[D: Driver, T](drv: D, fs: Future[T][], winner: i32): i32 
   return 0;
 }
 
-// race(fs, none_val) — await the FIRST future to resolve, returning
-// `(winnerIndex, value)`. Happy-eyeballs: fan out to N upstreams, take
-// the fastest answer, abandon the rest. The losers are cancelled
-// (`__drop_losers`): each token is dropped, so wasm doesn't trap on an
-// abandoned pollable, and each continuation is resumed with `cancelled()`
-// so it closes its socket. An already-`Ready` future wins
-// immediately (lowest index). Returns `(-1, none_val)` only if no future
-// can make progress (poll error / no pending fds).
 pub function race[T](fs_in: Future[T][], none_val: T): (i32, T) {
   return race_on(real_driver(), fs_in, none_val);
 }
 
-// race_on(drv, fs, none_val) — race with the waits routed through an
-// explicit Driver (std/sim substitutes a virtual one).
 pub function race_on[D: Driver, T](drv: D, fs_in: Future[T][], none_val: T): (i32, T) {
   let fs: Future[T][] = fs_in;
   let j: i32 = 0;
@@ -651,21 +472,10 @@ pub function race_on[D: Driver, T](drv: D, fs_in: Future[T][], none_val: T): (i3
   return (-1, none_val);
 }
 
-// with_deadline(deadline, fs) — await ALL futures, but bound the whole
-// fan-out by `deadline` of wall-clock time, returning an `Option[T]` per future:
-// `Some(value)` for one that resolved in time, `None` for one abandoned
-// at the deadline. (None — rather than a caller-supplied sentinel —
-// because a timed-out slot must be distinguishable from a real result
-// that happens to equal the sentinel, e.g. an empty body.) This is
-// happy-eyeballs with an SLA: fan out to
-// N upstreams, take whatever answers in time, cancel the rest.
 pub function with_deadline[T](deadline: Duration, fs_in: Future[T][]): Option[T][] {
   return with_deadline_on(real_driver(), deadline, fs_in);
 }
 
-// with_deadline_on(drv, deadline, fs) — with_deadline with the clock and
-// the waits routed through an explicit Driver (std/sim substitutes a
-// virtual one, making the deadline exact instead of wall-clock).
 pub function with_deadline_on[D: Driver, T](drv: D, deadline: Duration, fs_in: Future[T][]): Option[T][] {
   let fs: Future[T][] = fs_in;
   let start_ns: i64 = drv.now_ns();
@@ -696,11 +506,6 @@ pub function with_deadline_on[D: Driver, T](drv: D, deadline: Duration, fs_in: F
     if (remaining_ms <= 0) {
       remaining_ms = 1;
     }
-    // Bound the wait on EVERY backend: native poll(2) honors `remaining_ms`
-    // and the appended timer is -1 (ignored); wasm `poll` ignores its
-    // timeout arg, so the real timer pollable in the set is what fires at
-    // the deadline. A `ready` of `nfds` (the timer's slot) = deadline hit.
-    // wasm_timer_pollable is -1 on native/interp, which poll skips.
     let nfds: i32 = fds.len();
     let timer: i32 = drv.timer(remaining_ns);
     let pollset: i32[] = fds.append(timer);
@@ -722,10 +527,7 @@ pub function with_deadline_on[D: Driver, T](drv: D, deadline: Duration, fs_in: F
       }
     }
   }
-  // Cancel every future that timed out (still Pending).
   let dd: i32 = __drop_losers(drv, fs, -1);
-  // Some(v) for a future that resolved in time; None for one that timed out
-  // (no sentinel ambiguity — an empty/zero result is distinct from absent).
   let out: Option[T][] = [];
   let k: i32 = 0;
   while (k < fs.len()) {
@@ -742,27 +544,12 @@ pub function with_deadline_on[D: Driver, T](drv: D, deadline: Duration, fs_in: F
   return out;
 }
 
-// Tasks (docs/NET-P3-SUSPENSION-PLAN.md §3.4). A Task runs an entry under a
-// scheduler: `task_start` runs it until it returns or parks on a wait,
-// `task_resume` runs a parked task on from its park with the word the
-// scheduler read, and `task_cancel` runs it on with every later wait
-// answering `cancelled()`. A function reaches the park through `wait_any`,
-// which blocks instead when no task is current, so the same code runs under
-// a scheduler and in a plain program. The compiler lowers the functions
-// that reach a park to resumable form; the interpreter keeps the blocking
-// fallback, where a task always runs to completion.
 pub enum TaskStatus[T] { Done(T), Suspended(Wait), Cancelled }
 
-// `Wait` — what a parked task waits for, as its scheduler reads it: the
-// (fd, interest) pairs of `wait_any`'s set, and the milliseconds it gave
-// (-1 for no bound). The scheduler watches each pair and resumes the task
-// with the index of the pair that became ready, or -1 at the timeout.
 pub struct Wait { task: i32, set: i32[], timeout_ms: i32 }
 
 pub struct Task[T] { id: i32, entry: () => T }
 
-// `cancelled()` — what `suspend` answers in a cancelled task, on every wait
-// from the cancellation on.
 pub function cancelled(): i32 {
   return 0 - 2;
 }
@@ -775,13 +562,6 @@ pub function task_start[T](t: Task[T]): TaskStatus[T] {
   return run_task(t, 0);
 }
 
-// `parks()` — whether a wait inside a task parks the task for its
-// scheduler to resume, or blocks in place: the interpreter runs every task
-// to its end (the blocking fallback above), so a loop that would hand a
-// task a body it must park for asks this first. A probe: a task that
-// reports whether it ran as a task.
-// `in_task()` — whether a task is current: a wait here parks it, where a
-// wait outside any task blocks.
 pub function in_task(): boolean {
   return __task_cur() != 0;
 }
@@ -801,36 +581,25 @@ pub function parks(): boolean {
   return false;
 }
 
-// `task_resume(t, ready)` — the parked task runs on, its `suspend`
-// answering `ready`.
 pub function task_resume[T](t: Task[T], ready: i32): TaskStatus[T] {
   __task_set_ready(t.id, ready);
   return run_task(t, 2);
 }
 
-// `task_cancel(t)` — the parked task runs on to its end with every wait
-// answering `cancelled()`, and cannot park again.
 pub function task_cancel[T](t: Task[T]): TaskStatus[T] {
   __task_set_cancelled(t.id);
   let st: TaskStatus[T] = run_task(t, 2);
   return Cancelled;
 }
 
-// `task_cancelled()` — whether the task running this code was cancelled:
-// every wait from then on answers `cancelled()`, so a caller that went on
-// after one swallowed the answer asks here. False outside any task.
 pub function task_cancelled(): boolean {
   return __task_cancelled() != 0;
 }
 
-// `task_free(t)` — hand the task's record back once it is done.
 pub function task_free[T](t: Task[T]): void {
   __task_free(t.id);
 }
 
-// The trampoline: the compiler's suspend pass knows it by name as the frame a
-// park unwinds to, so it is never spliced into a caller, where its entry
-// call would read as a park of the caller's own.
 @noinline
 function run_task[T](t: Task[T], mode: i32): TaskStatus[T] {
   __task_enter(t.id, mode);
@@ -842,17 +611,8 @@ function run_task[T](t: Task[T], mode: i32): TaskStatus[T] {
   return Done(v);
 }
 
-// A two-argument call run as a task with nothing built for it until it
-// parks: `call_start` runs `f(a, b)` under a fresh task record, so a call
-// that returns at once costs no closure, no `Task` and no `Call`. One that
-// parks is held as a `Call` (`call_of`), which `call_resume` and
-// `call_cancel` run on through the same trampoline `call_start` used, so the
-// frames the park saved are the frames the resume rewinds.
 pub struct Call[A, B, T] { id: i32, f: (A, B) => T, a: A, b: B }
 
-// `call_start(f, a, b)` — `f(a, b)` run as a task: `Done(v)` with the
-// record already freed, or `Suspended(w)` with the record kept, named by
-// `w.task`, for `call_of`.
 pub function call_start[A, B, T](f: (A, B) => T, a: A, b: B): TaskStatus[T] {
   let id: i32 = __task_new();
   match (run_task_call(id, f, a, b, 0)) {
@@ -870,35 +630,25 @@ pub function call_start[A, B, T](f: (A, B) => T, a: A, b: B): TaskStatus[T] {
   return Cancelled;
 }
 
-// `call_of(w, f, a, b)` — the parked call `w` came from, held for its
-// resume.
 pub function call_of[A, B, T](w: Wait, f: (A, B) => T, a: A, b: B): Call[A, B, T] {
   return Call { id: w.task, f: f, a: a, b: b };
 }
 
-// `call_resume(c, ready)` — the parked call runs on, its `suspend`
-// answering `ready`.
 pub function call_resume[A, B, T](c: Call[A, B, T], ready: i32): TaskStatus[T] {
   __task_set_ready(c.id, ready);
   return run_task_call(c.id, c.f, c.a, c.b, 2);
 }
 
-// `call_cancel(c)` — the parked call runs on to its end with every wait
-// answering `cancelled()`, and cannot park again.
 pub function call_cancel[A, B, T](c: Call[A, B, T]): TaskStatus[T] {
   __task_set_cancelled(c.id);
   let st: TaskStatus[T] = run_task_call(c.id, c.f, c.a, c.b, 2);
   return Cancelled;
 }
 
-// `call_free(c)` — hand the call's record back once it is done.
 pub function call_free[A, B, T](c: Call[A, B, T]): void {
   __task_free(c.id);
 }
 
-// The trampoline for a `Call`, `run_task` with the call's parts: the
-// suspension classifier knows a trampoline by the `run_task` prefix, so the
-// park unwinds to here and no further.
 @noinline
 function run_task_call[A, B, T](id: i32, f: (A, B) => T, a: A, b: B, mode: i32): TaskStatus[T] {
   __task_enter(id, mode);
@@ -910,10 +660,6 @@ function run_task_call[A, B, T](id: i32, f: (A, B) => T, a: A, b: B, mode: i32):
   return Done(v);
 }
 
-// park_tokens(toks, timeout_ms) — a driver's `poll_ready` under a task:
-// parks on every token that is a descriptor, readable, and maps the answer
-// back to the token's index; a token of -1 (the native timer slot) has no
-// pair. The answer is `cancelled()` in a cancelled task.
 pub function park_tokens(toks: i32[], timeout_ms: i32): i32 {
   let set: i32[] = [];
   let idxs: i32[] = [];
@@ -926,8 +672,6 @@ pub function park_tokens(toks: i32[], timeout_ms: i32): i32 {
     }
     i = i + 1;
   }
-  // poll_ready calls this only with a current task. Park directly: the
-  // blocking wait_any fallback would also pull native reactors into wasm.
   let r: i32 = __task_park(set, timeout_ms);
   if (r < 0) {
     return r;
@@ -935,22 +679,6 @@ pub function park_tokens(toks: i32[], timeout_ms: i32): i32 {
   return idxs[r];
 }
 
-// ---- Task combinators ------------------------------------------------
-//
-// `gather_tasks`, `race_tasks` and `with_deadline_tasks` run their entries
-// as tasks and drive them together: a child that parks hands back its wait,
-// the combinator parks on the union of the children's waits, and resumes
-// the child whose pair became ready, or every child whose bound passed. A
-// child the combinator is finished with while it is still parked is
-// cancelled, not abandoned: `task_cancel` runs it on with every wait
-// answering `cancelled()`, so it leaves through its own exit paths and its
-// `defer`s. The calling task being cancelled cancels every child the same
-// way. With no task current the combinator's own wait blocks, and under
-// the blocking fallback each entry runs to its end inside `task_start`, so
-// the entries run one after another in order.
-
-// A child of a combinator: its task, where it stands, and when its wait is
-// due as monotonic nanoseconds, `__no_due()` with no bound.
 struct __Child[T] { task: Task[T], st: TaskStatus[T], due: i64 }
 
 function __no_due(): i64 {
@@ -998,7 +726,6 @@ function __children_parked[T](kids: __Child[T][]): boolean {
   return false;
 }
 
-// The lowest index of a child that is done, -1 with none.
 function __children_done[T](kids: __Child[T][]): i32 {
   let i: i32 = 0;
   while (i < kids.len()) {
@@ -1025,7 +752,6 @@ function __children_due[T](kids: __Child[T][]): i64 {
   return due;
 }
 
-// Milliseconds from `now` to `due`, rounded up; -1 for no bound.
 function __ms_until(due: i64, now: i64): i32 {
   if (due >= __no_due()) {
     return 0 - 1;
@@ -1046,8 +772,6 @@ function __child_resume[T](kids: __Child[T][], i: i32, word: i32): __Child[T][] 
   return kids.with(i, __Child { task: k.task, st: st, due: __child_due(st, monotonic_ns()) });
 }
 
-// Every child still parked is cancelled: it runs on to its end with its
-// waits answering `cancelled()`.
 function __children_cancel[T](kids: __Child[T][]): __Child[T][] {
   let out: __Child[T][] = [];
   for k in kids {
@@ -1074,8 +798,6 @@ function __children_free[T](kids: __Child[T][]): i32 {
   return 0;
 }
 
-// The union of the parked children's waits as one set, with the child and
-// the pair within its set that each pair of the union came from.
 struct __Union { set: i32[], owner: i32[], at: i32[] }
 
 function __children_union[T](kids: __Child[T][]): __Union {
@@ -1099,7 +821,6 @@ function __children_union[T](kids: __Child[T][]): __Union {
   return u;
 }
 
-// Every child whose bound has passed runs on with -1, the timeout answer.
 function __children_expire[T](kids_in: __Child[T][], now: i64): __Child[T][] {
   let kids: __Child[T][] = kids_in;
   let i: i32 = 0;
@@ -1112,10 +833,6 @@ function __children_expire[T](kids_in: __Child[T][], now: i64): __Child[T][] {
   return kids;
 }
 
-// __children_drive(kids, until_ns, first) runs the children on until none
-// is parked, until one is done when `first`, or until `until_ns`
-// (monotonic, `__no_due()` for none) passes; the children still parked at
-// that point, or when the calling task is cancelled, are cancelled.
 function __children_drive[T](kids_in: __Child[T][], until_ns: i64, first: boolean): __Child[T][] {
   let kids: __Child[T][] = kids_in;
   while (__children_parked(kids) && !(first && __children_done(kids) >= 0)) {
@@ -1142,9 +859,6 @@ function __children_drive[T](kids_in: __Child[T][], until_ns: i64, first: boolea
   return kids;
 }
 
-// `gather_tasks(entries, on_incomplete)` — run every entry as a task and
-// answer their results in input order; a child that could not finish (the
-// calling task was cancelled) lands `on_incomplete` in its slot.
 pub function gather_tasks[T](entries: (() => T)[], on_incomplete: T): T[] {
   let kids: __Child[T][] = __children_drive(__children_start(entries), __no_due(), false);
   let out: T[] = [];
@@ -1165,9 +879,6 @@ pub function gather_tasks[T](entries: (() => T)[], on_incomplete: T): T[] {
   return out;
 }
 
-// `race_tasks(entries, none_val)` — run every entry as a task and answer
-// `(index, value)` of the first to finish; the rest are cancelled. Answers
-// `(-1, none_val)` when none finishes (the calling task was cancelled).
 pub function race_tasks[T](entries: (() => T)[], none_val: T): (i32, T) {
   let kids: __Child[T][] = __children_drive(__children_start(entries), __no_due(), true);
   let won: i32 = __children_done(kids);
@@ -1186,9 +897,6 @@ pub function race_tasks[T](entries: (() => T)[], none_val: T): (i32, T) {
   return (won, v);
 }
 
-// `with_deadline_tasks(deadline, entries)` — run every entry as a task and
-// answer `Some(value)` for each that finishes inside `deadline`, `None` for
-// each cancelled at it.
 pub function with_deadline_tasks[T](deadline: Duration, entries: (() => T)[]): Option[T][] {
   let kids: __Child[T][] = __children_drive(__children_start(entries), monotonic_ns() + deadline.as_nanos(), false);
   let out: Option[T][] = [];
@@ -1209,14 +917,6 @@ pub function with_deadline_tasks[T](deadline: Duration, entries: (() => T)[]): O
   return out;
 }
 
-// `wait_any(set, timeout_ms)` — wait for any of the (fd, interest) pairs in
-// `set`, interest 1 readable and 2 writable as `Driver.wait` reports them:
-// the index of the first pair that became ready, -1 once `timeout_ms`
-// passed (-1 waits without a bound), and `cancelled()` in a cancelled
-// task. Under a scheduler the task parks and the scheduler's word is the
-// answer; with no task current the wait blocks here, an empty set under a
-// bound napping for it. On wasm an fd is a socket handle, subscribed for
-// the wait.
 pub function wait_any(set: i32[], timeout_ms: i32): i32 {
   if (__task_cur() != 0) {
     return __task_park(set, timeout_ms);
@@ -1242,11 +942,6 @@ pub function wait_any(set: i32[], timeout_ms: i32): i32 {
   return __wait_watched(set, n, timeout_ms);
 }
 
-// A read-only set waits in one `poll`, the socket subscriptions dropped
-// after it. wasm's poll ignores its timeout, so a bound is a timer
-// pollable in the set that fires at the deadline; on native and the
-// interpreter that token is -1, which poll skips, and the timeout itself
-// bounds the wait.
 function __wait_readable(set: i32[], n: i32, timeout_ms: i32): i32 {
   let toks: i32[] = [];
   let i: i32 = 0;
@@ -1274,8 +969,6 @@ function __wait_readable(set: i32[], n: i32, timeout_ms: i32): i32 {
   return 0 - 1;
 }
 
-// A set with a write interest waits on a reactor made for the call, each
-// pair watched with its interest and unwatched after.
 function __wait_watched(set: i32[], n: i32, timeout_ms: i32): i32 {
   let drv: RealDriver = real_driver();
   let i: i32 = 0;

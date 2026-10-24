@@ -9,21 +9,6 @@ import (
 	"testing"
 )
 
-// #4372 (stream half): the streaming-I/O WRITE surface must lower on the self-host
-// IR paths. The read half (stdin / Reader.read_chunk / Reader.close) already
-// lowered; stdout() / stderr() and Writer.write had no lowering, so a program using
-// them bailed to the legacy AST backend and failed to link. This drives a program
-// that writes to stdout and stderr through their Writers (fds 1 / 2) and captures
-// the stdout bytes — proving stdout()/stderr() (i32 fd constants), Writer.write
-// (the __fern_writer_write runtime helper) and Writer.close (the shared close)
-// lower on the IR path.
-//
-// The program uses NATIVE's signature throughout: `Writer.write(s)` answers
-// `Result[void, IoError]` — Ok once every byte is out — not the byte count the
-// self-host used to hand back (#7926). So the bytes that reached stdout are what
-// this asserts; the count is not recoverable from either compiler's signature, and
-// the native-shaped `match (w.write(s))` below is exactly the program that used to
-// bail the module for want of an Option type to recover.
 const writerStdoutProg = `function main(): i32 {
     let w: Writer = stdout();
     match (w.write("hello writer\n")) { Err(_) => { return 1; }, Ok(_) => {} }
@@ -34,18 +19,6 @@ const writerStdoutProg = `function main(): i32 {
     return 0;
 }`
 
-// writerErrProg is the OTHER arm: a failing write answers Some(IoError) carrying
-// a real variant rather than a bare -errno. Writing to a Writer whose fd is
-// already closed is EBADF (9), which __fern_io_error classifies as Other; a
-// write has no path to report, so the Other payload is the empty string the
-// helper hands the classifier. Exit 5
-// therefore says the Option box, the variant box and its path string are all
-// well-formed.
-//
-// Pinned to exit 5 on both register targets. `fern -interp` is NOT an oracle
-// here: it models a Writer as a registry entry rather than a raw fd, so writing
-// to a closed one is a hard interpreter error instead of an EBADF. Neither is
-// the wasm target, whose preview2 component holds a resource handle and traps.
 const writerErrProg = `function main(): i32 {
     match (open_writer("` + writerErrPath + `")) {
         Ok(w) => {
@@ -65,9 +38,6 @@ const writerErrProg = `function main(): i32 {
     return 0;
 }`
 
-// The closed-fd probe writes (and never reads) one file. An absolute path under
-// /tmp works under qemu-user too, where filesystem syscalls pass through to the
-// host.
 const writerErrPath = "/tmp/fern-selfhost-writer-closed-probe.txt"
 
 func TestSelfHostWriterIRX86_64(t *testing.T) {
@@ -86,8 +56,6 @@ func TestSelfHostWriterIRX86_64(t *testing.T) {
 	if len(asm) == 0 {
 		t.Fatal("self-host compiler emitted 0 bytes for the Writer program")
 	}
-	// The write is a CALL to the Fern runtime helper (#7926), not the inline
-	// write(2) syscall it used to be — the helper is what boxes the Option.
 	if !bytes.Contains(asm, []byte("call __fn___fern_writer_write")) {
 		t.Error("writer asm has no `call __fn___fern_writer_write` (#7926)")
 	}
@@ -99,7 +67,7 @@ func TestSelfHostWriterIRX86_64(t *testing.T) {
 	} else {
 		cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
 	}
-	out, _ := cmd.Output() // stdout only; stderr goes elsewhere
+	out, _ := cmd.Output()
 	code := cmd.ProcessState.ExitCode()
 
 	if !strings.Contains(string(out), "hello writer") {
@@ -129,14 +97,6 @@ func TestSelfHostWriterIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostWriterIRArm64 is the ARM64 counterpart: the same two programs
-// through asm_ir_run -target arm64-linux, assembled with the aarch64 cross-gcc and
-// run under qemu-aarch64. Both backends lower Writer.write to the SAME Fern
-// runtime helper now (#7926) — it replaced an inline write(2) on each — so both
-// need pinning, and the arm64 branch carries the stack-ABI `__fn___` prefix.
-//
-// SKIPs cleanly when the aarch64 cross-toolchain / qemu-aarch64 aren't installed
-// (see arm64Tooling); CI provides them.
 func TestSelfHostWriterIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

@@ -1,12 +1,12 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// `x = y` where y is written again before anything reads it moves y
-// into x and empties y's slot (computeOverwriteMoves). Strings,
-// arrays and structs; the write inside both arms of an if/else; an
-// early return between the move and the write, where the exit sweep
-// meets the emptied slot; and a break between them, which leaves the
-// copy retained.
+
+
+
+
+
+
+
+
+
 struct P { tag: string, n: i32 }
 function strs(k: string): i32 {
     let a: string = "s" + k;

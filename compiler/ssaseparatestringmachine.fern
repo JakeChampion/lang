@@ -1,15 +1,8 @@
-// Supplied-text separate-buffer string count-one effects under explicit memory permissions.
-// No public decoded/arithmetic record is accepted as an effect certificate.
 import "./ssacapacityisa" as isa;
 import "./ssastringvalue" as value;
 import "./ssacapacitymachine" as capacity;
 import "./ssalargepushmachine" as large;
 
-// Half kinds: invalid, numeric, original GPR, S+offset, outer return,
-// arbitrary original cell, P+offset, small freelist, old head, inner return,
-// large freelist, buffer, heap base, heap end, negative length, remainder shape.
-// The private remainder shape is any unsigned32 value except BOX, FUSED and
-// GROW.
 struct Half { kind: i32, identity: i32, part: i32, number: value.Value }
 
 struct Word { low: Half, high: Half }
@@ -296,8 +289,6 @@ function shape_comparison(r: value.Interval, w: Word, op: isa.Op): Flags {
   if (op.immediate != 1112494674 && op.immediate != 1934589965 && op.immediate != 1196576599) {
     return unknown_flags();
   }
-  // Tag inequality proves only ZF=0. The remainder spans both sides of each
-  // tag, including signed-negative shapes: CF, SF and signed order are unknown.
   let different = value.Comparison { less: -1, equal: 0, less_equal: -1 };
   return Flags { order: different, signed: different, sign: -1 };
 }
@@ -584,12 +575,6 @@ function in_program(p: isa.ArrayProgram, pc: i32): boolean {
   return pc >= 0 && pc < p.ops.len();
 }
 
-// The `.u` entry is reached on the register path with the entry state, apart
-// from the flags of the floor test it skips and the scratch registers the
-// body may clobber, the argument excepted. Those go back to their entry
-// values and the flags are forgotten, so the rest of the walk is the walk
-// from `.u`, which the caller enters having tested the floor, and proves the
-// body for every value a prefix could leave in a scratch register.
 function unguarded(s: State, original: State, r: value.Interval): State {
   let regs = s.regs;
   let i = 0;
@@ -649,18 +634,6 @@ function path(p: isa.ArrayProgram, r: value.Interval, register_entry: boolean, f
   return false;
 }
 
-// Preconditions: canonical aligned disjoint descriptor P-8..P+15, stack
-// S-40..S+15, ordered heap-bound globals, small slot3, and derived buffer slot.
-// The W=3 small buffer slot aliases slot3 exactly; all other slots are disjoint.
-// P>=65536, RC1 and any32-bit shape except BOX1112494674/FUSED1934589965/
-// GROW1196576599.
-// Buffer B is writable/aligned/disjoint only for inside-heap
-// positive signed lengths; other families grant no buffer access. Descriptor
-// metadata, outer RET/argument and heap globals are read-only. Header, scratch,
-// selected slots and permitted buffer word are writable. Actual allocation,
-// immutable metadata validity, linked identity/permissions, caller credits and
-// freelist integrity remain explicit unproved obligations. Oversized buffer
-// no-recycle is not a free. Both entries consume original RET and end at S+8.
 pub function check(output: string): boolean {
   let p = isa.string_program(output);
   if (p.error != "" || p.register_entry < 0 || p.unguarded_entry < 0 || !capacity.check(output) || !large.check(output)) {

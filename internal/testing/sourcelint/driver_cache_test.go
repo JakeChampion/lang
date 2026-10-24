@@ -11,22 +11,7 @@ import (
 
 const driverCacheAction = "./.github/actions/selfhost-driver-cache"
 
-// The stage0 compiler builds a self-host driver in 90-300 s, and a job that
-// builds its drivers from nothing is that many minutes before its first test.
-// .github/actions/selfhost-driver-cache carries the drivers between runs.
-// This pins, over EVERY workflow rather than a list of them: that each job
-// whose tests can build drivers restores the cache; that the jobs saving it
-// are exactly the ones named below, one per runner OS and arch, with the
-// matrix guard that picks the saving leg; and that the action keys the cache
-// on everything the harness keys a driver on — a key missing one of those
-// inputs would hand a job a driver built from other sources, and the tests
-// would pass against the wrong compiler.
 func TestDriverBuildingJobsRestoreTheDriverCache(t *testing.T) {
-	// The savers: workflow file and job id, with the substring the job's
-	// `save:` expression must carry. A matrix job counts once however many
-	// legs it has, so the guard is what says which leg saves; without it an
-	// inverted guard (every x86 leg saving, no ARM64 leg) leaves this test
-	// green while two jobs race for one key and another is never written.
 	savers := map[string]string{
 		"test-e2e-selfhost.yml/driver-sizes": `save: "true"`,
 		"test-e2e-selfhost.yml/test":         "matrix.host == 'aarch64' && matrix.shard == 0 && 'true'",
@@ -34,10 +19,6 @@ func TestDriverBuildingJobsRestoreTheDriverCache(t *testing.T) {
 	}
 	seenSavers := map[string]bool{}
 	header := regexp.MustCompile(`(?m)^  ([A-Za-z0-9_-]+):\s*$`)
-	// A command starting with `go test` or `gotestsum` that names an e2e
-	// package within its next lines, a matrix row handing one to such a
-	// command, or the action that compiles the e2e test binaries. A path
-	// quoted in an echo or a comment is not a test run.
 	runsE2E := regexp.MustCompile(`(?m)^\s*(run: )?(go test|gotestsum)\b[\s\S]{0,400}?internal/testing/e2e|pkg: \./internal/testing/e2e|build-e2e-binaries`)
 	checked := 0
 	for _, file := range workflowFiles(t) {
@@ -54,9 +35,6 @@ func TestDriverBuildingJobsRestoreTheDriverCache(t *testing.T) {
 				end = idx[n+1][0]
 			}
 			job := body[m[0]:end]
-			// A job builds drivers when it runs the e2e packages (or their
-			// prebuilt binaries) with the self-host sources present. The lanes
-			// that delete those sources right after checkout cannot build one.
 			if !runsE2E.MatchString(job) || strings.Contains(job, "drop-selfhost-sources") {
 				continue
 			}

@@ -4,15 +4,6 @@ import (
 	"testing"
 )
 
-// `m.remove(k)` removes a key; `m.contains(k)` beforehand reports whether it was there.
-//
-// Each case deletes the middle key of three and then reads all three back, so
-// a botched shift shows up as a wrong digit rather than a crash:
-//
-//	173 = a:1 kept * 100 + b: MISSING so the 7 default * 10 + c:3 kept
-//
-// 80 and 81 are the `existed` flag in each direction — a delete that reports
-// nothing removed, and a miss that claims it removed something.
 const (
 	mapDelStrSrc = `import "core/map";
 function main(): i32 {
@@ -42,9 +33,6 @@ function main(): i32 {
     return n.get_or(10, 0) * 100 + n.get_or(20, 7) * 10 + n.get_or(30, 0);
 }
 `
-	// The struct key is the case that matters most: it is the only one that
-	// reaches the derived `__fn_K__eq` through a runtime code address, which
-	// is what the `eqfn: i32` parameter exists for.
 	mapDelStructSrc = `import "core/map";
 import "core/cmp";
 @derive(cmp.Eq, cmp.Hash)
@@ -74,8 +62,6 @@ func mapDelCases() []struct{ name, src string } {
 
 const mapDelFailFmt = "%s exited %d, want 173 (80=delete reported nothing removed, 81=a miss claimed a removal, other=the shift moved the wrong element)"
 
-// TestSelfHostMapDeleteFernIRX86_64 runs each key kind on x86-64. 173 is the
-// interpreter's answer for all three, taken as the oracle.
 func TestSelfHostMapDeleteFernIRX86_64(t *testing.T) {
 	cli := newStrictCLI(t)
 	for _, tc := range mapDelCases() {
@@ -87,7 +73,6 @@ func TestSelfHostMapDeleteFernIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostMapDeleteFernIRArm64 is the same three programs under qemu.
 func TestSelfHostMapDeleteFernIRArm64(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
 	cli := newStrictCLI(t)

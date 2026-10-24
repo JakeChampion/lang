@@ -7,7 +7,6 @@ import (
 	"testing"
 )
 
-// tacFile writes `content` under `dir` as `name` and returns its path.
 func tacFile(t *testing.T, dir, name, content string) string {
 	t.Helper()
 	p := filepath.Join(dir, name)
@@ -21,26 +20,6 @@ func init() {
 	registerCorpus("tac", tacCases)
 }
 
-// tacCases is tac(1)'s corpus.
-//
-// Three things carry most of it. The separator is ATTACHED to the record
-// it ends, so a file whose last record has none is printed with none and
-// `-b` moves the attachment to the record that FOLLOWS. `-r` reads the
-// separator in glibc's syntax 0 — Emacs, because tac never calls
-// re_set_syntax — where `+` and `?` are bare operators, `\+` and `\?`
-// and `\{m,n\}` are the plain characters, `[:alpha:]` is six ordinary
-// bracket members, `.` skips a newline, and `^` and `$` anchor at one.
-// And the input is read BACKWARDS in 8 KiB blocks that double whenever a
-// record outgrows one, which the sizes below straddle: the block is not
-// a free choice, since a directory answers lseek(SEEK_END) with
-// LLONG_MAX and the read that follows fails EINVAL for the offset
-// overflow at 8 KiB where a larger block would reach the descriptor and
-// say EISDIR.
-//
-// The write failures are the fourth: tac never checks an fwrite, so
-// whether stdout's failure is reported as `write error: <strerror>` or a
-// bare `write error` is decided by which bytes glibc still had pending
-// when fclose ran, and the sizes here are on both sides of that.
 func tacCases(t *testing.T) []invocation {
 	dir := t.TempDir()
 	abc := tacFile(t, dir, "abc", "a\nb\nc\n")
@@ -56,13 +35,7 @@ func tacCases(t *testing.T) []invocation {
 	digits := tacFile(t, dir, "digits", "a1b22c333d")
 	spaced := tacFile(t, dir, "f name", "x\ny\n")
 	quoted := tacFile(t, dir, "f'n", "x\ny\n")
-	// A name that is not valid UTF-8: it reaches the diagnostics as
-	// bytes, so nothing may re-encode it. Some filesystems refuse to
-	// create it at all — APFS rejects a name that is not valid UTF-8 with
-	// EILSEQ — and there the case has no subject rather than a failure,
-	// so it drops out and the rest of the parity run stands.
 	raw := rawByteFile(t, dir, "x\ny\n")
-	// Content that is not valid UTF-8 either side of a separator.
 	rawc := tacFile(t, dir, "rawc", "\xff\xfe\n\xfd\n")
 	missing := filepath.Join(dir, "nosuch")
 	if err := os.Mkdir(filepath.Join(dir, "d"), 0o755); err != nil {
@@ -70,8 +43,6 @@ func tacCases(t *testing.T) []invocation {
 	}
 	d := filepath.Join(dir, "d")
 
-	// Sizes around the 8 KiB block: the first read is of `size % 8192`
-	// bytes and every one after it walks a whole block backwards.
 	lines := func(n int) string {
 		var b strings.Builder
 		for i := 1; i <= n; i++ {
@@ -89,23 +60,15 @@ func tacCases(t *testing.T) []invocation {
 	b8193 := fill("b8193", 8193)
 	b16385 := fill("b16385", 16385)
 	b40000 := fill("b40000", 40000)
-	// One record longer than the initial block, so the buffer doubles.
 	long := tacFile(t, dir, "long", strings.Repeat("q", 100000)+"\nab\n")
-	// No separator anywhere: the whole file is one record and every
-	// block is read before a byte is written.
 	nosep := tacFile(t, dir, "nosep", strings.Repeat("z", 20000))
 
-	// Output sizes on both sides of where glibc's 4 KiB stdout buffer
-	// leaves bytes pending at fclose. 4000 and 12000 end with a partial
-	// buffer (`write error: <strerror>`); 4096 and 13192 do not (a bare
-	// `write error`).
 	w4000 := tacFile(t, dir, "w4000", strings.Repeat("0123456789\n", 400)[:4000])
 	w4096 := tacFile(t, dir, "w4096", strings.Repeat("0123456789\n", 400)[:4096])
 	w12000 := tacFile(t, dir, "w12000", strings.Repeat("0123456789\n", 1100)[:12000])
 	w13192 := tacFile(t, dir, "w13192", strings.Repeat("0123456789\n", 1300)[:13192])
 
 	cases := []invocation{
-		// The default separator, attached after its record.
 		{name: "three lines", args: []string{abc}},
 		{name: "unterminated last line", args: []string{nonl}},
 		{name: "one line", args: []string{one}},
@@ -116,7 +79,6 @@ func tacCases(t *testing.T) []invocation {
 		{name: "carriage returns are not separators", args: []string{crlf}},
 		{name: "content that is not valid UTF-8", args: []string{rawc}},
 
-		// -b: the separator is attached before its record.
 		{name: "before", args: []string{"-b", abc}},
 		{name: "before unterminated", args: []string{"-b", nonl}},
 		{name: "before empty", args: []string{"-b", empty}},
@@ -126,7 +88,6 @@ func tacCases(t *testing.T) []invocation {
 		{name: "before by prefix", args: []string{"--be", abc}},
 		{name: "before twice", args: []string{"-b", "-b", abc}},
 
-		// -s: another separator.
 		{name: "one-byte separator", args: []string{"-s", "x", xs}},
 		{name: "two-byte separator", args: []string{"-s", "xx", xs}},
 		{name: "separator that is not there", args: []string{"-s", "Q", xs}},
@@ -145,7 +106,6 @@ func tacCases(t *testing.T) []invocation {
 		{name: "separator that looks like dashdash", args: []string{"-s", "--", xs}},
 		{name: "separator that looks like an option", args: []string{"-s", "-b", xs}},
 
-		// -r: the separator is a regular expression, in glibc's syntax 0.
 		{name: "regex literal", args: []string{"-r", "-s", "x", xs}},
 		{name: "regex star", args: []string{"-r", "-s", "x*", xs}},
 		{name: "regex plus is bare", args: []string{"-r", "-s", "x+", xs}},
@@ -155,8 +115,6 @@ func tacCases(t *testing.T) []invocation {
 		{name: "intervals are literal braces", args: []string{"-r", "-s", "x\\{1,2\\}", xs}},
 		{name: "alternation is backslashed", args: []string{"-r", "-s", "1\\|22", digits}},
 		{name: "bare bar is a literal", args: []string{"-r", "-s", "1|22", digits}},
-		// The backward scan tests each start against one literal per
-		// branch, so a branch without one has to turn that test off.
 		{name: "alternation matching neither branch", args: []string{"-r", "-s", "zz\\|qq", xs}},
 		{name: "alternation of unequal literals", args: []string{"-r", "-s", "xx\\|b", xs}},
 		{name: "alternation with a class branch", args: []string{"-r", "-s", "zz\\|[0-9]", digits}},
@@ -191,8 +149,6 @@ func tacCases(t *testing.T) []invocation {
 		{name: "clustered before and regex", args: []string{"-br", "-s", "x+", xs}},
 		{name: "clustered flags with a glued separator", args: []string{"-brs", "x", xs}},
 
-		// The separator a regular expression may not be, and the ones
-		// that are not regular expressions at all.
 		{name: "empty regex separator", args: []string{"-r", "-s", "", abc}},
 		{name: "unmatched group", args: []string{"-r", "-s", "a\\(", abc}},
 		{name: "unmatched close", args: []string{"-r", "-s", "a\\)", abc}},
@@ -201,8 +157,6 @@ func tacCases(t *testing.T) []invocation {
 		{name: "backreference to nothing", args: []string{"-r", "-s", "\\1", abc}},
 		{name: "invalid range", args: []string{"-r", "-s", "[z-a]", abc}},
 
-		// Blocks: the read walks backwards 8 KiB at a time and doubles
-		// when a record does not fit.
 		{name: "one byte under a block", args: []string{b8191}},
 		{name: "exactly one block", args: []string{b8192}},
 		{name: "one byte over a block", args: []string{b8193}},
@@ -218,11 +172,8 @@ func tacCases(t *testing.T) []invocation {
 		{name: "two-byte separator across blocks", args: []string{"-s", "55", b16385}},
 		{name: "separator across blocks, before", args: []string{"-b", "-s", "5", b40000}},
 
-		// Operands.
 		{name: "two files", args: []string{abc, abc}},
 		{name: "three files", args: []string{abc, nonl, empty}},
-		// The output buffer carries ACROSS operands, so a second file
-		// starts mid-block whenever the first did not end on one.
 		{name: "two files that straddle the output block", args: []string{w12000, b8191}},
 		{name: "two files that fill the output block exactly", args: []string{w4096, b16385}},
 		{name: "two files, separator before", args: []string{"-b", w4000, b8193}},
@@ -237,7 +188,6 @@ func tacCases(t *testing.T) []invocation {
 		{name: "name with a space", args: []string{spaced}},
 		{name: "name with a quote", args: []string{quoted}},
 
-		// Operands that cannot be read.
 		{name: "missing file", args: []string{missing}},
 		{name: "missing file then a good one", args: []string{missing, abc}},
 		{name: "good file then a missing one", args: []string{abc, missing}},
@@ -246,14 +196,11 @@ func tacCases(t *testing.T) []invocation {
 		{name: "missing name that needs quoting", args: []string{filepath.Join(dir, "no such")}},
 		{name: "missing name with a quote", args: []string{filepath.Join(dir, "no'such")}},
 		{name: "missing name that is not valid UTF-8", args: []string{filepath.Join(dir, "no\xffsuch")}},
-		// A directory: the open succeeds, lseek answers LLONG_MAX and
-		// the read at LLONG_MAX - LLONG_MAX % 8192 fails EINVAL.
 		{name: "directory", args: []string{d}},
 		{name: "directory then a file", args: []string{d, abc}},
 		{name: "file then a directory", args: []string{abc, d}},
 		{name: "directory with a regex separator", args: []string{"-r", "-s", "x", d}},
 
-		// getopt: the messages, the prefix rule, the ambiguity list.
 		{name: "invalid short option", args: []string{"-x"}},
 		{name: "invalid short option in a cluster", args: []string{"-bx", abc}},
 		{name: "unrecognized long option", args: []string{"--foo"}},
@@ -267,16 +214,12 @@ func tacCases(t *testing.T) []invocation {
 		{name: "empty long name is ambiguous", args: []string{"--=x"}},
 		{name: "bare dashes", args: []string{"---", abc}},
 		{name: "uppercase is not an option", args: []string{"-B", abc}},
-		// The option scan permutes, and POSIXLY_CORRECT stops it at the
-		// first operand.
 		{name: "option after the operand", args: []string{abc, "-b"}},
 		{name: "posix operand then option", args: []string{abc, "-b"}, env: []string{"POSIXLY_CORRECT=1"}},
 		{name: "posix option before the operand", args: []string{"-b", abc}, env: []string{"POSIXLY_CORRECT=1"}},
 		{name: "posix separator after the operand", args: []string{xs, "-s", "x"}, env: []string{"POSIXLY_CORRECT=1"}},
 		{name: "posix dashdash then an option-looking name", args: []string{"--", "-b"}, env: []string{"POSIXLY_CORRECT=1"}},
 
-		// stdin, which never seeks here: the harness always hands the
-		// child a pipe, so every one of these is the held-stream path.
 		{name: "stdin unterminated", stdin: "a\nb"},
 		{name: "stdin empty", stdin: ""},
 		{name: "stdin one newline", stdin: "\n"},
@@ -288,7 +231,6 @@ func tacCases(t *testing.T) []invocation {
 		{name: "stdin with a record that outgrows the block", stdin: strings.Repeat("q", 100000) + "\nab\n"},
 		{name: "stdin that is not valid UTF-8", stdin: "\xff\xfe\n\xfd\n"},
 
-		// Write failures. Which wording GNU gives depends on the size.
 		{name: "stdout closed", args: []string{abc}, stdout: stdoutClosed},
 		{name: "stdout full", args: []string{abc}, stdout: stdoutFull},
 		{name: "stdout closed with nothing to write", args: []string{empty}, stdout: stdoutClosed},

@@ -8,18 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostMethodEnumScrutineeIRX86_64 pins a method call that returns a
-// generic enum used DIRECTLY as a match scrutinee: `match (s.find(k)) { … }`.
-// The monomorphiser recovers a match scrutinee's generic-enum instantiation
-// (to rewrite the arm patterns to the concrete `Variant__<key>` names) from
-// the scrutinee expression's type — but me_scrutinee_type's ExprCall arm only
-// handled a FREE-function callee, so a METHOD-call scrutinee resolved "" and
-// the arms stayed un-mangled against the concrete enum: the match read the
-// wrong variant and returned the wrong arm (0 instead of 42). me_scrutinee_
-// type now resolves a method call's return type from the receiver's type +
-// the method's declared return, so these shapes lower on the IR path (.Lssa_
-// witness) with the native value. Free-function scrutinees and var-bound
-// method results already worked; kept as regressions.
 func TestSelfHostMethodEnumScrutineeIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -37,24 +25,18 @@ func TestSelfHostMethodEnumScrutineeIRX86_64(t *testing.T) {
 		src  string
 		want int
 	}{
-		// Method returning a generic enum, matched directly (the bug).
 		{"method-generic-enum-scrutinee",
 			`enum Opt[T] { Non, Has(T) } struct S { n: i32 } function (s: S) find(k: i32): Opt[i32] { if (k == s.n) { return Has(s.n * 2); } return Non; } function main(): i32 { let s: S = S { n: 21 }; match (s.find(21)) { Has(v) => { return v; }, Non => { return 0; } } }`,
 			42},
-		// Same shape but both branches carry a payload (no bare unit variant) —
-		// isolates the scrutinee-type recovery from the unit-variant path.
 		{"method-scrutinee-both-payload",
 			`enum Opt[T] { Non, Has(T) } struct S { n: i32 } function (s: S) find(k: i32): Opt[i32] { if (k == s.n) { return Has(s.n * 2); } return Has(0); } function main(): i32 { let s: S = S { n: 21 }; match (s.find(21)) { Has(v) => { return v; }, Non => { return 0; } } }`,
 			42},
-		// String-payload generic enum from a method, struct-literal receiver.
 		{"method-string-payload-scrutinee",
 			`enum Opt[T] { Non, Has(T) } struct S { n: i32 } function (s: S) find(k: i32): Opt[string] { if (k == s.n) { return Has("hi"); } return Non; } function main(): i32 { match (S { n: 5 }.find(5)) { Has(v) => { return v.len() + 40; }, Non => { return 0; } } }`,
 			42},
-		// Regression: free-function-returning-generic-enum scrutinee (worked).
 		{"free-fn-generic-enum-scrutinee",
 			`enum Opt[T] { Non, Has(T) } function find(k: i32, n: i32): Opt[i32] { if (k == n) { return Has(n * 2); } return Non; } function main(): i32 { match (find(21, 21)) { Has(v) => { return v; }, Non => { return 0; } } }`,
 			42},
-		// Regression: method result var-bound then matched (worked).
 		{"method-result-var-bound",
 			`enum Opt[T] { Non, Has(T) } struct S { n: i32 } function (s: S) find(k: i32): Opt[i32] { if (k == s.n) { return Has(s.n * 2); } return Non; } function main(): i32 { let s: S = S { n: 21 }; let r: Opt[i32] = s.find(21); match (r) { Has(v) => { return v; }, Non => { return 0; } } }`,
 			42},

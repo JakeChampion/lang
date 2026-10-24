@@ -1,45 +1,11 @@
-// std/tls/ktls — Linux's TLS record layer under a session's socket: once a
-// session is offloaded (server.Session.offload, client.Session.offload) the
-// kernel seals what is written to the socket and opens what is read from
-// it, so application data is plain bytes on the descriptor and a file can
-// go out by sendfile.
-//
-//   match (sess.offload()) {
-//     Some(o) => {
-//       match (ktls.attach(fd, o.keys)) {
-//         ktls.Kernel => { sess = o.session; },   // the kernel's records now
-//         ktls.Unchanged => {},                    // no kernel TLS: keep sealing here
-//         ktls.Broken(errno) => { ... }            // the socket is lost
-//       }
-//     },
-//     None => {}
-//   }
-//
-// The other records still pass through the session: an alert, a KeyUpdate
-// or a ticket arrives as one `Opened` whose content the session takes
-// framed (`framed`), and the records a session writes once offloaded
-// are framed in the clear for `send_records` to hand over with their type.
-// A KeyUpdate's new keys are in the step's `rekeyed`, for `install`; a
-// kernel before 6.14 refuses a second key in a direction, so there a
-// KeyUpdate ends the connection. The kernel takes the suites std/tls
-// negotiates (AES-128-GCM, AES-256-GCM and ChaCha20-Poly1305); without the
-// `tls` module, or on a target with no kernel TLS (Darwin, wasm), nothing
-// changes and the session keeps its own records.
+// This module configures kernel TLS for TCP sockets.
 
 import "std/async";
 import "std/time";
 import "std/tls/handshake";
 
-// Attached — what `attach` did: Kernel when the kernel took both
-// directions, Unchanged when it took neither, and Broken with the errno
-// when it took the receive direction and refused the other, which leaves
-// the socket with no usable record layer.
 pub enum Attached { Kernel, Unchanged, Broken(i32) }
 
-// attach hands an offloaded session's socket to the kernel's record layer
-// with the keys the offload gave. Before the receive key is installed the
-// layer passes bytes through, so a refusal up to that point leaves the
-// socket as it was.
 pub function attach(fd: i32, keys: handshake.KernelKeys): Attached {
   let none: u8[] = [];
   if (__ktls(fd, 1, 0, none) < 0) {
@@ -55,8 +21,6 @@ pub function attach(fd: i32, keys: handshake.KernelKeys): Attached {
   return Kernel;
 }
 
-// install gives the kernel the keys a KeyUpdate set, in each direction that
-// has one: 0, or -errno.
 pub function install(fd: i32, keys: handshake.KernelKeys): i32 {
   if (keys.receive.len() > 0) {
     let r: i32 = __ktls(fd, 3, 0, keys.receive);
@@ -73,9 +37,6 @@ pub function install(fd: i32, keys: handshake.KernelKeys): i32 {
   return 0;
 }
 
-// send_records writes the plaintext records an offloaded session framed:
-// application data as plain bytes, the others with their content type, for
-// the kernel to seal. 0, or -errno.
 pub function send_records(fd: i32, framed: [u8]): i32 {
   let at: i32 = 0;
   while (framed.len() - at >= 5) {
@@ -111,13 +72,8 @@ function __send_all(fd: i32, data: u8[]): i32 {
   return 0;
 }
 
-// Read — one read off an offloaded socket: a record's content type and
-// content, the end of the stream, the wait passed first, the wait was
-// cancelled, or the errno the read failed with (EBADMSG for a record that
-// did not open).
 pub enum Read { Opened(i32, u8[]), StreamEnded, NothingYet, WaitCancelled, ReadFailed(i32) }
 
-// recv waits at most `wait` for the next record and reads its content.
 pub function recv(fd: i32, wait: Duration): Read {
   let wait_ms: i32 = wait.as_millis() as i32;
   if (wait_ms < 1) {
@@ -134,8 +90,6 @@ pub function recv(fd: i32, wait: Duration): Read {
   return read_now(fd);
 }
 
-// read_now reads the next record's content without waiting: Waited when
-// none has arrived (EAGAIN on a non-blocking socket).
 pub function read_now(fd: i32): Read {
   let buf: u8[] = __alloc_u8(16385);
   let r: i32 = __ktls(fd, 5, 0, buf);
@@ -153,7 +107,6 @@ pub function read_now(fd: i32): Read {
   return Read.Opened(t, __copy(buf[0:n]));
 }
 
-// framed is a record read off the socket as a session's `read` takes it.
 pub function framed(t: i32, content: [u8]): u8[] {
   let out: u8[] = [t as u8, 3 as u8, 3 as u8, (content.len() >> 8) as u8, (content.len() & 255) as u8];
   for b in content {
@@ -162,16 +115,11 @@ pub function framed(t: i32, content: [u8]): u8[] {
   return out;
 }
 
-// alert sends a fatal alert of `code` as the kernel's record, before the
-// socket is closed on a failure the kernel found (bad_record_mac, 20, for
-// a record that did not open).
 pub function alert(fd: i32, code: i32): void {
   let body: u8[] = [2 as u8, code as u8];
   __ktls(fd, 4, 21, body);
 }
 
-// __ktls is tcp_ktls where the kernel has a TLS record layer, Linux's. On
-// every other target it answers ENOSYS and the call is not in the program.
 function __ktls(fd: i32, op: i32, arg: i32, data: u8[]): i32 {
   if (target_os() == "linux" || target_os() == "android") {
     return tcp_ktls(fd, op, arg, data);

@@ -7,15 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostArrayBoundsIR pins the array-bounds contract
-// (docs/ARRAY-BOUNDS.md) on the self-host x86-64 IR path: an out-of-range
-// index — read or write, over-large or negative — ABORTS with exit 134 and
-// never returns a garbage value. The IR emit checks the index against the
-// length prefix (data[0]) with a single unsigned compare and branches to the
-// shared __fern_oob_abort (exit 134).
-//
-// In-range indexing (every case's "ok" leg) is unaffected — the sum probe
-// walks the array and returns a real value.
 func TestSelfHostArrayBoundsIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -35,13 +26,8 @@ func TestSelfHostArrayBoundsIR(t *testing.T) {
 			`function main(): i32 { let a: i32[] = [1, 2, 3]; return a[3]; }`, 134},
 		{"write-past-end",
 			`function main(): i32 { let a: i32[] = [1, 2, 3]; a = a.with(5, 9); return a[0]; }`, 134},
-		// In-range: every element read + a write, no abort. 10+20+30 -> exit 60.
 		{"in-range-ok",
 			`function main(): i32 { let a: i32[] = [10, 20, 30]; a = a.with(1, 20); let s: i32 = 0; let i: i32 = 0; while (i < 3) { s = s + a[i]; i = i + 1; } return s; }`, 60},
-		// STRING index, the same contract one op over (#8454). op_str_index
-		// emitted a bare `movzbl (%rax,%rcx)` with no compare, so the
-		// self-host read past the end while the native tier aborted. The
-		// index goes through a call so nothing folds it to a constant.
 		{"str-read-past-end",
 			`function idx(): i32 { return 5; }
 function main(): i32 { let s: string = "abc"; return s[idx()] as i32; }`, 134},
@@ -51,7 +37,6 @@ function main(): i32 { let s: string = "abc"; return s[idx()] as i32; }`, 134},
 		{"str-read-negative",
 			`function idx(): i32 { return 0 - 1; }
 function main(): i32 { let s: string = "abc"; return s[idx()] as i32; }`, 134},
-		// In-range: 'a' + 'c' -> 97 + 99 -> exit 196.
 		{"str-in-range-ok",
 			`function idx(i: i32): i32 { return i; }
 function main(): i32 { let s: string = "abc"; return (s[idx(0)] as i32) + (s[idx(2)] as i32); }`, 196},
@@ -91,11 +76,6 @@ function main(): i32 { let s: string = "abc"; return (s[idx(0)] as i32) + (s[idx
 	}
 }
 
-// TestSelfHostArrayBoundsIRArm64 — CI-gated arm64 counterpart of
-// TestSelfHostArrayBoundsIR. The self-host arm64 IR emitter (asm_arm64_ir.fern
-// kind_tag 88/89) now bounds-checks arr_get / arr_set the same way as x86-64:
-// an unsigned cmp of the index against the length prefix (`ldr x2, [x0]`) and a
-// `b.hs __fern_oob_abort` (exit 134). Verified end-to-end under qemu.
 func TestSelfHostArrayBoundsIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -116,7 +96,6 @@ func TestSelfHostArrayBoundsIRArm64(t *testing.T) {
 			`function main(): i32 { let a: i32[] = [1, 2, 3]; a = a.with(5, 9); return a[0]; }`, 134},
 		{"in-range-ok",
 			`function main(): i32 { let a: i32[] = [10, 20, 30]; a = a.with(1, 20); let s: i32 = 0; let i: i32 = 0; while (i < 3) { s = s + a[i]; i = i + 1; } return s; }`, 60},
-		// STRING index, the arm64 half of #8454.
 		{"str-read-past-end",
 			`function idx(): i32 { return 5; }
 function main(): i32 { let s: string = "abc"; return s[idx()] as i32; }`, 134},

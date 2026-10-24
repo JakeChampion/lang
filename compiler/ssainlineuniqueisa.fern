@@ -1,5 +1,3 @@
-// A deliberately small instruction language for independent uniqueness proofs.
-// Registers are decoded by ISA spelling, without importing either emitter.
 import "./util";
 import "std/string";
 
@@ -35,7 +33,6 @@ pub function reg(name: string, arm: boolean, width: i32): i32 {
   return -1;
 }
 
-// Split commas only outside an address expression. Reject malformed nesting.
 function operands(text: string): string[] {
   let out: string[] = [];
   let depth = 0;

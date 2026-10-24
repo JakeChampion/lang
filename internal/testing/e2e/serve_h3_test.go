@@ -19,23 +19,8 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// std/serve with `Config.with_h3` (docs/NET-P8-HTTP3-PLAN.md slice 7): the
-// server answers HTTP/3 on a UDP socket beside its TCP listener, and names
-// it in Alt-Svc on every TCP response. A client built on std/http/h3q
-// sends ten requests at once on one connection: one answered at once, an
-// upload, one whose handler parks, a chunked body with trailers, a chunked
-// body larger than a producer may leave unacknowledged, and HEAD requests
-// for a whole body and two chunk producers, plus 204/304 chunked responses. Go's
-// net/http checks the Alt-Svc header over TCP. The server runs under the
-// interpreter and natively on x86-64; the client is native. The
-// interpreter seals and opens every packet in interpreted AES-GCM, so it
-// gets a smaller upload and a stream under the producer's cap.
 func TestServeH3Interp(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	// Pure interpreted TLS can spend more than the production default's
-	// 10-second receive window doing crypto before this positive protocol
-	// check begins. Give this fixture a bounded 60 seconds; the native case
-	// and deadline/slow-client gates keep the production defaults.
 	w := newServeH3WorldWithConfig(t, "serve.Config { ...serve.config(), recv_deadline: time.duration_seconds(60 as i64) }")
 	w.drive(t, exec.Command(bin, "-interp", w.src), 20000, 4)
 }
@@ -164,8 +149,6 @@ function main(): i32 {
 }
 `
 
-// The client: ten requests at once on one HTTP/3 connection, each answer
-// printed in the order asked once all are in, then a close.
 const serveH3ClientSource = `import "std/net";
 import "std/quic/conn";
 import "std/http/h3";
@@ -314,8 +297,6 @@ function main(): i32 {
 }
 `
 
-// serveH3Want is what the client prints for an upload of `upload` bytes
-// and a stream of `chunks` 8192-byte chunks.
 func serveH3Want(upload, chunks int) string {
 	return fmt.Sprintf(`GET /hello -> 200 hello /hello
 POST /upload -> 200 got %d

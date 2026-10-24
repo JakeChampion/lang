@@ -1,18 +1,9 @@
-// Structured layout of a reducible control-flow graph: every natural loop is
-// a contiguous span headed by its header, nested loops are contiguous inside
-// their parent, and everything else is in a forward order. Stack-IR emitters
-// need exactly this to place `loop` and `block` labels.
 import "./ssa";
 import "./ssadeps";
 import "./util";
 
-// order holds block POSITIONS (indices into f.blocks) in emission order.
-// loop_end[i] is the last order index of the loop headed at order index i,
-// or -1 when order[i] heads no loop. Only reachable blocks are laid out.
 pub struct Layout { ok: boolean, order: i32[], loop_end: i32[] }
 
-// at maps a block id to its position (-1 for an id no block carries); succ
-// lists each position's successor positions.
 struct Loops { n: i32, header: boolean[], members: boolean[], at: i32[], succ: i32[][] }
 
 function positions(f: ssa.SFunc): i32[] {
@@ -62,10 +53,7 @@ function successor_table(f: ssa.SFunc, at: i32[]): i32[][] {
   return out;
 }
 
-// The natural loop of a back edge: the header plus every block that reaches
-// the edge's source without passing through the header.
 function absorb(f: ssa.SFunc, own l: Loops, h: i32, u: i32, reachable: boolean[]): Loops {
-  // The work stack keeps its storage: `sp` is its depth.
   let work: i32[] = [u];
   let sp: i32 = 1;
   while (sp > 0) {
@@ -112,11 +100,6 @@ function find_loops(f: ssa.SFunc, reachable: boolean[], dom: ssadeps.Dom): Loops
   return l;
 }
 
-// A region is one loop body (or the whole function). Inner loops collapse to
-// their headers while the region is ordered, then expand in place.
-// representatives maps every position to the lowest outermost header whose loop
-// holds it, else to itself, once per region: the ordering below asks for it once
-// per edge per round.
 function representatives(l: Loops, list: i32[], root: i32): i32[] {
   let out: i32[] = __alloc_i32(l.n);
   let x: i32 = 0;
@@ -164,8 +147,6 @@ function pending_edges(l: Loops, region: boolean[], list: i32[], root: i32, reps
   return pending;
 }
 
-// Members lists the region's blocks by representative: those of `r` are
-// `list[start[r]]` up to `list[start[r + 1]]`.
 struct Members { start: i32[], list: i32[] }
 
 function members_by_rep(l: Loops, list: i32[], reps: i32[]): Members {
@@ -188,12 +169,6 @@ function members_by_rep(l: Loops, list: i32[], reps: i32[]): Members {
   return Members { start: start, list: out };
 }
 
-// Ready counts, per representative, the edges into it from other
-// representatives not yet placed; `floor` is a position below which no
-// representative is ready, kept so the position-order fallback scans on
-// from where it last found one rather than from zero. A representative
-// stays ready once it is until it is placed, so the floor only moves back
-// when a release brings a lower one to zero.
 struct Ready { pending: i32[], floor: i32 }
 
 function release(l: Loops, region: boolean[], root: i32, chosen: i32, own ready: Ready, reps: i32[], members: Members, index: i32[]): Ready {
@@ -220,21 +195,13 @@ function release(l: Loops, region: boolean[], root: i32, chosen: i32, own ready:
   return Ready { pending: pending, floor: floor };
 }
 
-// next_ready is the next representative to place and the floor after the
-// search: the fallback's answer when it found one, else the region's size.
 function next_ready(l: Loops, region: boolean[], list: i32[], ready: Ready, done: boolean[], reps: i32[], previous: i32): (i32, i32) {
-  // Follow a ready successor before the stable position-order fallback.
-  // In particular, a ready true arm can fall through instead of jumping
-  // across an unrelated ready false arm. Region and predecessor constraints
-  // still decide eligibility, including around nested loops and joins.
   for successor in l.succ[previous] {
     let candidate: i32 = reps[successor];
     if (region[candidate] && !done[candidate] && ready.pending[candidate] == 0) {
       return (candidate, ready.floor);
     }
   }
-  // `list` is ascending, so the first member at or past the floor that is
-  // ready is the lowest ready position; `floor` here is an index into it.
   let i: i32 = ready.floor;
   while (i < list.len()) {
     let x: i32 = list[i];
@@ -256,7 +223,6 @@ function row(l: Loops, h: i32): boolean[] {
   return out;
 }
 
-// row_list is the members of h's loop in ascending position.
 function row_list(l: Loops, h: i32): i32[] {
   let out: i32[] = [];
   let i: i32 = 0;
@@ -269,7 +235,6 @@ function row_list(l: Loops, h: i32): i32[] {
   return out;
 }
 
-// indexes_of maps each member position to its index in `list`, -1 outside.
 function indexes_of(l: Loops, list: i32[]): i32[] {
   let out: i32[] = util.minus_ones(l.n);
   let i: i32 = 0;
@@ -293,8 +258,6 @@ function complete(list: i32[], done: boolean[], reps: i32[]): boolean {
   return true;
 }
 
-// region_order orders the region whose members `region` marks and `list`
-// names in ascending position, root first.
 function region_order(l: Loops, region: boolean[], list: i32[], root: i32, out: Layout): Layout {
   let start: i32 = out.order.len();
   let reps: i32[] = representatives(l, list, root);
@@ -327,15 +290,12 @@ function region_order(l: Loops, region: boolean[], list: i32[], root: i32, out: 
   return out;
 }
 
-// A failed layout means the reachable graph has a cycle without a single
-// dominating header, which no structured `loop` can express.
 pub function compute(f: ssa.SFunc, dom: ssadeps.Dom): Layout {
   let reachable: boolean[] = ssadeps.reachable_blocks(f);
   let l: Loops = find_loops(f, reachable, dom);
   return region_order(l, reachable, marked(reachable), position(l.at, f.entry), Layout { ok: true, order: [], loop_end: [] });
 }
 
-// marked is the positions `region` marks, ascending.
 function marked(region: boolean[]): i32[] {
   let out: i32[] = [];
   let i: i32 = 0;

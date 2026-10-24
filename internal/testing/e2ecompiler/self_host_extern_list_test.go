@@ -11,17 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestSelfHostExternListResultRunsUnderWasmtime is the self-host P4c gate for
-// composite results (docs/WIT-BRING-YOUR-OWN.md): the self-hosted wasm backend
-// lowers a string/list<u8>-returning `@import` extern via the canonical
-// return-area convention — the raw import gains a trailing return-area pointer
-// (no core result), and a generated wrapper lifts the host (data,len) bytes
-// into a self-host `[len][bytes]` string, with cabi_realloc exported. Mirror of
-// the Go gate TestExternListResultRunsUnderWasmtime.
-//
-// `get-random-bytes: func(len: u64) -> list<u8>` declared as `: string` must
-// produce a string of exactly the requested byte length (deterministic despite
-// the random contents).
 func TestSelfHostExternListResultRunsUnderWasmtime(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -96,11 +85,6 @@ function main(): i32 {
 	}
 }
 
-// TestSelfHostExternU8ArrayResultRunsUnderWasmtime is the u8[] counterpart of
-// the self-host string-result gate (P4c): the same get-random-bytes import,
-// declared as returning u8[], lifts the host bytes into a self-host array
-// (length-prefixed header, 4-byte element slots). The result must have the
-// requested element count.
 func TestSelfHostExternU8ArrayResultRunsUnderWasmtime(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {

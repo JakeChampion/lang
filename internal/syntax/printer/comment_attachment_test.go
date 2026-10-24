@@ -7,27 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// The formatter's contract for comments, from the syntax reference: "The
-// formatter preserves their original position." #6335 is what happens when
-// that is gated by goldens only — a comment trailing an enum variant was
-// detached and re-emitted above an unrelated struct written later in the
-// file, `-fmt -w` wrote it to disk, and `make fmt-check` stayed green because
-// it only ever formats files already in the formatter's fixed point.
-//
-// So this gate is PROPERTY-shaped, not golden-shaped: for each comment in the
-// input it computes an ANCHOR — the code the comment is attached to — and
-// requires the same anchor in the output. That covers shapes nobody thought
-// to write a golden for, which is the class the bug lived in.
-//
-// The anchor is the first identifier-ish token on the comment's own line
-// before it (a trailing comment: `Unclosed(i32),  // …` anchors to
-// "Unclosed"), or, for a comment on its own line, the first such token on the
-// next line that carries code (a leading comment anchors to what it
-// introduces). Comparing anchors rather than whole lines survives the
-// reflowing the formatter legitimately does.
-
-// commentAnchor returns the anchor for the comment on line i of lines, or ""
-// when there is no code to anchor to (a comment at end of file).
 func commentAnchor(lines []string, i int) string {
 	if tok := firstToken(codeBefore(lines[i])); tok != "" {
 		return tok
@@ -35,17 +14,13 @@ func commentAnchor(lines []string, i int) string {
 	for j := i + 1; j < len(lines); j++ {
 		code := codeBefore(lines[j])
 		if strings.TrimSpace(code) == "" {
-			continue // blank, or another comment line
+			continue
 		}
 		return firstToken(code)
 	}
 	return ""
 }
 
-// codeBefore returns the part of a line before its `//`, or "" if the line is
-// entirely a comment. A `//` inside a string literal would fool this; the
-// corpus below deliberately contains none, and a false anchor would make the
-// test stricter, not weaker.
 func codeBefore(line string) string {
 	k := strings.Index(line, "//")
 	if k < 0 {
@@ -54,7 +29,6 @@ func codeBefore(line string) string {
 	return line[:k]
 }
 
-// firstToken returns the first run of identifier characters in s.
 func firstToken(s string) string {
 	start := -1
 	for i, r := range s {
@@ -71,7 +45,6 @@ func firstToken(s string) string {
 	return ""
 }
 
-// commentAnchors maps each comment's text to its anchor, in order.
 type anchored struct {
 	text   string
 	anchor string
@@ -93,12 +66,6 @@ func commentAnchors(src string) []anchored {
 	return out
 }
 
-// commentRunShapes returns, per run of comment-only and blank lines, the
-// pattern of comments (C) and blank gaps (B) inside it. A gap of any height
-// is one B and the run's edges are trimmed, so the formatter may normalise
-// how many blanks separate things, but not whether they are separated.
-// commentAnchor skips blanks, so this is what sees a section comment merge
-// into the doc comment below it (#10870).
 func commentRunShapes(src string) []string {
 	var out []string
 	cur, hasComment := "", false
@@ -182,9 +149,6 @@ enum E { A, B }
 // about main
 function main(): i32 { return 0; }
 `},
-	// The declaration order that made the bug visible: a struct written
-	// AFTER an enum. Kind-grouped emission hoisted it above, and the enum's
-	// comments went with it.
 	{"struct-after-enum", `enum E {
     A,      // first
     B,      // second
@@ -227,7 +191,6 @@ struct Dog { age: i32 }
 
 function main(): i32 { return LIMIT; }
 `},
-	// An import written below declarations (#10870).
 	{"late-import", `import "core/map";
 
 // about first
@@ -245,7 +208,6 @@ function second(): i32 { return 2; }
 `},
 }
 
-// TestFormatPreservesCommentAttachment is the property gate.
 func TestFormatPreservesCommentAttachment(t *testing.T) {
 	for _, tc := range commentAttachmentCorpus {
 		t.Run(tc.name, func(t *testing.T) {
@@ -275,11 +237,6 @@ func TestFormatPreservesCommentAttachment(t *testing.T) {
 	}
 }
 
-// TestFormatKeepsDeclarationOrder pins the other half of #6335: declarations
-// emit in SOURCE order. The kind-grouped emission that preceded it is what
-// desynchronised the comment cursor in the first place, so a regression here
-// would silently re-arm the attachment bug even with the gate above passing
-// on its own corpus.
 func TestFormatKeepsDeclarationOrder(t *testing.T) {
 	src := `function first(): i32 { return 1; }
 
@@ -311,9 +268,6 @@ function fifth(): i32 { return 5; }
 	}
 }
 
-// TestFormatKeepsLateImportInPlace pins #10870: an import written below a
-// declaration prints where it was written, so the comments above the
-// declarations before it stay with them.
 func TestFormatKeepsLateImportInPlace(t *testing.T) {
 	src := `import "core/map";
 // about first
@@ -349,10 +303,6 @@ function second(): i32 {
 	}
 }
 
-// TestFormatKeepsSectionCommentApart pins the other half of #10870: a
-// section comment separated by a blank line from the doc comment below it,
-// or from the declaration, stays separate rather than merging into the
-// declaration's doc block.
 func TestFormatKeepsSectionCommentApart(t *testing.T) {
 	src := `// --- section one ---
 
@@ -409,10 +359,6 @@ function third(): i32 {
 	}
 }
 
-// TestFormatKeepsCommentGapsBelowTopLevel is TestFormatKeepsSectionCommentApart
-// for the comments a statement, a field and the end of the file collect: a
-// blank line between two of them survives, and so does one between the last
-// declaration and a comment after it (#10885).
 func TestFormatKeepsCommentGapsBelowTopLevel(t *testing.T) {
 	src := `function f(): i32 {
   // section
@@ -442,10 +388,6 @@ struct S {
 	}
 }
 
-// TestFormatCommentAttachmentIsIdempotent — formatting the formatted output
-// must not move a comment either. A one-pass gate would miss an attachment
-// that is correct once and drifts on the second pass, which is exactly what
-// `-fmt -w` run twice would commit.
 func TestFormatCommentAttachmentIsIdempotent(t *testing.T) {
 	for _, tc := range commentAttachmentCorpus {
 		t.Run(tc.name, func(t *testing.T) {

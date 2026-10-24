@@ -6,28 +6,6 @@ import (
 	"testing"
 )
 
-// `set_process_group` (#8374) through the SELF-HOST IR path, on each backend
-// that emits it. The op pops [pid, pgid] and pushes Result[void, IoError] from
-// one setpgid(2) — asmcore.rt_src_set_process_group, reached as
-// `call __fn___fern_set_process_group`.
-//
-// The probe MEASURES the group it makes and the errno classification rather
-// than asserting the builtin compiles, because every wrong lowering still
-// compiles and links:
-//
-//   - operands pushed in the wrong order swaps the two argument errors:
-//     setpgid(4194304, 0) is ESRCH where setpgid(0, 4194304) is EPERM, so the
-//     probe holds both and a transposition fails both arms,
-//   - the wrong syscall number is -ENOSYS for everything, so no arm gets the
-//     errno it expects and the first arm's Ok never arrives,
-//   - a group that was never actually made leaves the child unsignallable,
-//     which the last arm catches: it kills the GROUP, not the pid,
-//   - dropping the Err arm loses the errno the caller reads its diagnostic
-//     out of.
-//
-// wasm's whole answer is a refusal: a component has no process table to hold a
-// group, so platforms.fern withholds the builtin on `proc`.
-// TestSelfHostSetProcessGroupIRWasmRefused is that half.
 const setProcessGroupSelfHostSource = `function main(): i32 {
     // pid 0 is the caller and pgid 0 the pid's own value, so this is a
     // process moving into a fresh group of its own — which anything but a
@@ -112,8 +90,6 @@ const setProcessGroupSelfHostSource = `function main(): i32 {
     return 0;
 }`
 
-// setProcessGroupWasmProbe is the refusal probe: set_process_group and nothing
-// else, so the refusal it draws is set_process_group's own.
 const setProcessGroupWasmProbe = `function main(): i32 {
     match (set_process_group(0, 0)) {
         Ok(_) => { return 0; },
@@ -121,8 +97,6 @@ const setProcessGroupWasmProbe = `function main(): i32 {
     }
 }`
 
-// TestSelfHostSetProcessGroupIRX86_64 compiles the probe through the
-// production x86-64 IR driver and runs it.
 func TestSelfHostSetProcessGroupIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -144,8 +118,6 @@ func TestSelfHostSetProcessGroupIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostSetProcessGroupIRArm64 runs the same probe through the arm64 IR
-// backend under qemu, where the helper's syscall number is asm-generic 154.
 func TestSelfHostSetProcessGroupIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -168,11 +140,6 @@ func TestSelfHostSetProcessGroupIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostSetProcessGroupIRWasmRefused pins the wasm answer, which is a
-// refusal NAMING THE BUILTIN. A component has no process table, so
-// platforms.fern withholds `proc`; the wasm driver has to say so itself,
-// because instruction selection downstream sees only an IR op and would frame
-// a deliberate gap as a missing lowering.
 func TestSelfHostSetProcessGroupIRWasmRefused(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

@@ -22,7 +22,6 @@ func TestStdlibRootWritesTheEmbeddedTreeOnce(t *testing.T) {
 			t.Errorf("%s missing from %s: %v", f, dir, err)
 		}
 	}
-	// A second call reuses the copy rather than writing another.
 	if err := os.WriteFile(filepath.Join(dir, "marker"), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -54,8 +53,6 @@ func TestCompilerPrefersTheEnvironment(t *testing.T) {
 	}
 }
 
-// A self-host compiler beside fern is used only when the key written beside it
-// names the sources this fern embeds.
 func TestSiblingIsCurrentOnlyWithItsSourcesKey(t *testing.T) {
 	key, err := SourcesKey()
 	if err != nil {
@@ -87,8 +84,6 @@ func TestSiblingIsCurrentOnlyWithItsSourcesKey(t *testing.T) {
 	}
 }
 
-// TestDownloadRetriesOnlyTransientFailures: a 503 is retried and the next 200
-// is returned, while a 404 is final after one request.
 func TestDownloadRetriesOnlyTransientFailures(t *testing.T) {
 	var hits int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -123,9 +118,6 @@ func TestDownloadRetriesOnlyTransientFailures(t *testing.T) {
 	}
 }
 
-// The self-host compiler is built the same way whatever FERN_ switches the
-// caller's environment carries: they are for the program fern compiles, and
-// the cache is keyed by the sources alone.
 func TestStage0EnvDropsTheCompilerSwitches(t *testing.T) {
 	env := []string{"PATH=/usr/bin", "FERN_SANITIZE=1", "HOME=/home/x", "FERN_LEAKCHECK=1", "FERN_RC_CERTIFY_MEMO=/tmp/m", "GOFLAGS=-mod=mod"}
 	got := stage0Env(env)

@@ -7,12 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostStructArrayFieldIRX86_64 verifies that a struct with an
-// array-of-struct field (`items: P[]`) is admitted to the IR path and that the
-// element read `q.items[i].field` recovers the element struct type. use_q builds
-// Q{items: [P,P], n} and returns q.items[0].x + q.items[1].y + q.n = 1 + 4 + 5 =
-// 10. Without struct-array field support Q is not leaf-safe and the whole module
-// is refused by the driver; the exit code pins the element typing.
 func TestSelfHostStructArrayFieldIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

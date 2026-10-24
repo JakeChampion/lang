@@ -5,15 +5,6 @@ import "std/time";
 import "std/array";
 import "std/option";
 
-// tests/stdlib/http_sse_test.fern — std/http/sse: an event encoded as the
-// standard writes it (one data line per line of the payload, the name,
-// id and retry lines where set, a line break in a name or id left out),
-// the comment line, the standard's own decoding examples read back, a
-// stream fed in pieces that cut lines and a multi-byte character, the
-// reconnection time and an id holding NUL, and the response: its
-// headers, its body the events joined, with and without the keep-alive
-// wrapper, read back by the decoder.
-
 function test_encode_simple(): test.TestOutcome {
   return test.assert_eq(sse.event("hi").encode(), "data: hi\n\n");
 }

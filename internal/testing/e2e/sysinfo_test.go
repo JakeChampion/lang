@@ -12,24 +12,6 @@ import (
 	"testing"
 )
 
-// The three machine-facing primitives group C's system-information
-// utilities are built on: `uname_field(i)` (one field of the kernel's
-// utsname record), `getcwd()` and `cpu_count()`.
-//
-// Every assertion here compares against the SAME kernel fact through a
-// second path, never against "non-empty": sysname is "Linux" on every
-// box in this fleet, so a helper that read the neighbouring field would
-// pass a non-empty check. `uname -m` and Go's syscall.Uname are
-// that second path. The utsname probe (hostUtsname) reads uname(2) and
-// is linux-only: syscall.Utsname does not exist on the darwin target
-// (no uname syscall) and these legs cross-check kernels that answer it,
-// so the probe lives in sysinfo_linux_test.go and the other OSes skip
-// in sysinfo_other_test.go — the OS-gated split the interp's
-// unameFields uses.
-
-// unameFieldProbeSource prints the five fields one per line, then the
-// two out-of-range indices, which must be empty rather than the
-// domainname the record holds at 5.
 func unameFieldProbeSource() string {
 	return `function main(): i32 {
     let i: i32 = 0;
@@ -44,12 +26,6 @@ func unameFieldProbeSource() string {
 `
 }
 
-// wantMachine is the machine name the leg's execution environment
-// reports, which is not always the host's: the arm64 legs run under
-// qemu-aarch64 where the host is x86-64, and the emulator answers
-// "aarch64" for exactly the field this probe is most likely to get
-// wrong. Passing it in keeps the assertion on the real value rather
-// than relaxing it to "non-empty".
 func checkUnameFieldOutput(t *testing.T, out string, wantMachine string) {
 	t.Helper()
 	want := hostUtsname(t)
@@ -87,9 +63,6 @@ func TestArm64UnameField(t *testing.T) {
 	checkUnameFieldOutput(t, out, "aarch64")
 }
 
-// getcwdProbeSource prints the working directory it starts in, removes
-// that directory, and prints what getcwd() answers then — the Ok and the
-// Err half of the builtin. The exit code names a step that went wrong.
 const getcwdProbeSource = `function main(): i32 {
     let here: string = "";
     match (getcwd()) {
@@ -118,8 +91,6 @@ const getcwdProbeSource = `function main(): i32 {
 }
 `
 
-// checkGetcwdProbe runs the probe in a fresh directory: Ok has to be that
-// directory as the kernel names it, and Err the ENOENT a removed one is.
 func checkGetcwdProbe(t *testing.T, cmd *exec.Cmd) {
 	t.Helper()
 	dir, err := filepath.EvalSymlinks(t.TempDir())
@@ -138,8 +109,6 @@ func checkGetcwdProbe(t *testing.T, cmd *exec.Cmd) {
 	}
 }
 
-// hostCwd is the working directory as getcwd(2) names it. os.Getwd would
-// answer $PWD whenever it names the same directory, links and all.
 func hostCwd(t *testing.T) string {
 	t.Helper()
 	wd, err := syscall.Getwd()
@@ -167,17 +136,11 @@ func TestInterpGetcwd(t *testing.T) {
 	checkGetcwdProbe(t, exec.Command(buildLangBinForInterp(t), "-interp", src))
 }
 
-// cpuCountProbeSource exits with the count, so the assertion is the
-// exit status. runtime.NumCPU is the same number through a second path:
-// the Go runtime sets it from sched_getaffinity(2) at startup.
 const cpuCountProbeSource = `function main(): i32 {
     return cpu_count();
 }
 `
 
-// wantCPUCount is the count the probe must report. An exit status is one
-// byte, so a machine with 256 processing units or more cannot carry the
-// answer out — say so rather than compare a truncated number.
 func wantCPUCount(t *testing.T) int {
 	t.Helper()
 	n := runtime.NumCPU()
@@ -220,11 +183,6 @@ func TestInterpSysinfo(t *testing.T) {
 	}
 }
 
-// Neither WASI preview has a utsname record, a processor count or a
-// current directory, so all three are refused by the target capability
-// gate at check time rather than answered with a fiction. E066 names
-// the capability and the builtin; the wasm leg of these primitives IS
-// that diagnostic.
 func TestWasmSysinfoIsRefused(t *testing.T) {
 	bin := buildLangBinForCheck(t)
 	dir := t.TempDir()

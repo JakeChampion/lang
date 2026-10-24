@@ -5,27 +5,6 @@ import (
 	"testing"
 )
 
-// --- Rebound Option siblings: arr-of-arr, struct, tuple payloads (#6127) -----
-//
-// #6225 closed the flat-scalar-array kind and noted that "all three existing
-// Option siblings carry the same blunt `reassigned` exclusion, so rebound
-// arr-of-arr, struct and tuple payloads leak for the same reason." Measured, and
-// they did — every rebound form freed NOTHING at all:
-//
-//	                  single bind   declared in loop   REBOUND
-//	Option[(i32,i32[])]         0              12000     60000  frees=0
-//	Option[P{xs:i32[]}]      4000              12800     64000  frees=0
-//	Option[i32[][]]             0              15200     76000  frees=0
-//
-// A reassigned name is reclaimable when EVERY rebind is itself fresh: each
-// assignment then releases the superseded chain at the depth that payload kind
-// needs, the same rule #6225 gave the flat kind.
-//
-// These assert allocs == frees alongside live_bytes == 0: frees > allocs is a
-// double free, frees < allocs an unclaimed box, and they mean different bugs.
-
-// TestSelfHostOptSiblingRebindReclaimX86_64 — each rebound Option sibling
-// reclaims every superseded chain, and the single-bind forms stay as they were.
 func TestSelfHostOptSiblingRebindReclaimX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -124,8 +103,6 @@ function main(): i32 {
 	})
 
 	t.Run("opttup_single_bind_unchanged", func(t *testing.T) {
-		// Never reassigned, so it is still the consuming-match analysis's. If the
-		// widened collector also claimed it, its chain would be freed twice.
 		balanced(t, "opttup_single", `function round(i: i32): i32 {
     let acc: i32 = 0;
     let o: Option[(i32, i32[])] = Some((i, [i, i + 1]));
@@ -172,9 +149,6 @@ function main(): i32 {
 	})
 }
 
-// TestSelfHostOptSiblingRebindHazardsX86_64 — the shapes the widened credit must
-// still REFUSE. A wrongly-granted one frees a chain something else still reads,
-// so these assert behaviour: the failure mode is a wrong answer or a crash.
 func TestSelfHostOptSiblingRebindHazardsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -187,7 +161,6 @@ func TestSelfHostOptSiblingRebindHazardsX86_64(t *testing.T) {
 		want int
 	}{
 		{
-			// The Some-arm payload leaves as a bare ident, so the callee may retain it.
 			name: "opttup_payload_escapes_into_call",
 			src: `function take(a: i32[]): i32 { return a.len(); }
 function round(i: i32): i32 {
@@ -207,8 +180,6 @@ function main(): i32 {
 			want: 49,
 		},
 		{
-			// A rebind whose tuple element is a live local's buffer. Freeing it at the
-			// next rebind would dangle `shared`, read after the match.
 			name: "opttup_rebind_payload_not_fresh",
 			src: `function round(i: i32): i32 {
     let acc: i32 = 0;
@@ -228,8 +199,6 @@ function main(): i32 {
 			want: 60,
 		},
 		{
-			// Matched twice — not dead after the first, so releasing there would read
-			// a freed box in the second.
 			name: "opttup_used_after_match",
 			src: `function round(i: i32): i32 {
     let acc: i32 = 0;
@@ -249,8 +218,6 @@ function main(): i32 {
 			want: 57,
 		},
 		{
-			// The Option leaves by return, so the callee must not free it. There is no
-			// consuming match in `build` at all, which is what refuses it.
 			name: "opttup_escaping_return",
 			src: `function build(i: i32): Option[(i32, i32[])] {
     let o: Option[(i32, i32[])] = Some((i, [i, i + 1]));
@@ -272,8 +239,6 @@ function main(): i32 {
 			want: 4,
 		},
 		{
-			// A rebind from a CALL, not a fresh literal: the slot becomes the only
-			// reference to a box the callee produced, and the whole name is refused.
 			name: "opttup_rebind_from_a_call",
 			src: `function mk(k: i32): Option[(i32, i32[])] { return Some((k, [k, k + 1])); }
 function round(i: i32): i32 {
@@ -335,11 +300,6 @@ function main(): i32 {
 			want: 4,
 		},
 		{
-			// The struct-literal REBIND stores a live local's buffer into the field.
-			// Unlike the tuple sibling this one IS admitted — a bare-ident array field
-			// value takes the struct-literal construction retain, so the deep drop is
-			// balanced against it and `shared` survives to be read at the end. The
-			// exit code is what proves that rather than the leak figure.
 			name: "optstruct_rebind_field_aliases_a_local",
 			src: `struct P { xs: i32[], n: i32 }
 function round(i: i32): i32 {

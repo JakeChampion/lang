@@ -11,32 +11,6 @@ import (
 	"unicode/utf8"
 )
 
-// The self-host feature census (#6993). `compiler/*.fern` is validated
-// largely by compiling itself, so a language feature the self-host's own sources
-// do not use gets no fixpoint coverage at all — the gate can only prove what the
-// code already exercises. That makes "what does the self-host actually use?" a
-// number that steers decisions: it is what docs/SELFHOST-LANGUAGE-FRICTION.md §1
-// is built from, and what says whether a new e2ecompiler fixture covers a real
-// gap or a hypothetical one. A measurement that steers a decision has to be
-// reproducible and has to fail when the thing it measured moves.
-//
-// Counting has to strip first. The self-host embeds whole test programs as
-// string literals and discusses its own syntax in prose comments, so a raw grep
-// for `=>` or `Map[` counts the compiler talking ABOUT a construct as one that
-// uses it — on the `as` row the raw and stripped counts differ by a factor of
-// five, which is how three successive hand-measurements of this census
-// disagreed with each other in both directions. The strip is the
-// correctness-critical half: TestStripFernLiterals pins it against the cases
-// that break a naive one, and the census re-proves it on the real corpus before
-// counting anything.
-
-// stripFernLiterals blanks `//` comments, string and f-string literals, and char
-// and byte literals, leaving the code text the census counts over. Line
-// structure is preserved, so a hit still reports a usable line number.
-//
-// Every Fern literal is line-bounded — a newline inside a string, f-string or
-// char literal is a lex error (internal/syntax/lexer) — so the strip runs per line and
-// an unterminated literal can never swallow the rest of the file.
 func stripFernLiterals(src string) string {
 	lines := strings.Split(src, "\n")
 	for i, ln := range lines {
@@ -61,10 +35,6 @@ func stripFernLine(line string) string {
 			emit(`""`)
 			i = skipFernString(line, i)
 		case c == 'f' && i+1 < len(line) && line[i+1] == '"' && !identCont(last):
-			// `f"…{expr}…"`. The interpolants are real code, but nothing
-			// the census counts is ever spelled inside one, so dropping
-			// them keeps the strip to a single rule: a literal contributes
-			// nothing.
 			emit(`""`)
 			i = skipFernFString(line, i+1)
 		case c == '\'':
@@ -87,8 +57,6 @@ func identCont(c byte) bool {
 	return c == '_' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 }
 
-// skipFernString returns the index just past the string literal opening at i, or
-// len(line) when the literal does not close on this line.
 func skipFernString(line string, i int) int {
 	for i++; i < len(line); i++ {
 		switch line[i] {
@@ -101,9 +69,6 @@ func skipFernString(line string, i int) int {
 	return len(line)
 }
 
-// skipFernFString is skipFernString for an f-string body, whose interpolants nest
-// braces and may hold a string of their own, so the closing quote is only the one
-// seen at brace depth zero.
 func skipFernFString(line string, i int) int {
 	depth := 0
 	for i++; i < len(line); i++ {
@@ -112,13 +77,13 @@ func skipFernFString(line string, i int) int {
 			i++
 		case '{':
 			if depth == 0 && i+1 < len(line) && line[i+1] == '{' {
-				i++ // `{{` is a literal brace, not an interpolant
+				i++
 				continue
 			}
 			depth++
 		case '}':
 			if depth == 0 && i+1 < len(line) && line[i+1] == '}' {
-				i++ // `}}` is a literal brace
+				i++
 				continue
 			}
 			if depth > 0 {
@@ -134,10 +99,6 @@ func skipFernFString(line string, i int) int {
 	return len(line)
 }
 
-// skipFernChar returns the index just past the char or byte literal opening at i,
-// or -1 when what follows is not a literal — which is how an apostrophe that
-// reaches code text stays one character instead of swallowing the line up to the
-// next quote.
 func skipFernChar(line string, i int) int {
 	j := i + 1
 	if j < len(line) && line[j] == '\\' {
@@ -152,7 +113,6 @@ func skipFernChar(line string, i int) int {
 	return -1
 }
 
-// strippedSource is one self-host module with its literals gone.
 type strippedSource struct {
 	name  string
 	lines []string
@@ -184,7 +144,6 @@ func selfHostStripped(t *testing.T) []strippedSource {
 	return out
 }
 
-// censusHit is one match, kept with its location so a row that moves says where.
 type censusHit struct {
 	file string
 	line int
@@ -195,12 +154,10 @@ func (h censusHit) String() string {
 	return fmt.Sprintf("%s:%d: %s", h.file, h.line, strings.TrimSpace(h.text))
 }
 
-// census maps a row name to every site that row counted.
 type census map[string][]censusHit
 
 func (c census) n(name string) int { return len(c[name]) }
 
-// where names the sites of a row, capped so a 5,000-hit row stays readable.
 func (c census) where(name string) string {
 	hits := c[name]
 	const shown = 12
@@ -215,39 +172,22 @@ func (c census) where(name string) string {
 	return strings.Join(parts, "\n        ")
 }
 
-// censusRow is one line of the table. Rows carrying no assertion are still
-// reported: docs/SELFHOST-LANGUAGE-FRICTION.md quotes them, and `-v` on this test
-// is how they are re-measured.
 type censusRow struct {
 	name string
 	pat  string
-	// must is a literal substring every match of pat contains. It is a
-	// prefilter — the census is 175k lines and a `\b`-anchored regex over all
-	// of them costs ~140ms each — and getting one wrong drops hits, which the
-	// pins below catch.
 	must string
 }
 
 var censusRows = []censusRow{
-	// The language features. Each is pinned below: the fixpoint's coverage of
-	// the feature is exactly these sites and nothing else.
 	{"generic functions", `\bfunction\s+[A-Za-z_][A-Za-z0-9_]*\s*\[`, "function"},
 	{"generic structs", `\bstruct\s+[A-Za-z_][A-Za-z0-9_]*\s*\[`, "struct"},
-	// An arrow lambda's parameter list is annotated and holds no nested
-	// parens; a fn-TYPE annotation like `(parser.Expr, T) => T` has neither,
-	// which is what separates the two spellings textually. The return type is
-	// optional, and the annotated spelling `(x: T): R => …` is the one the
-	// migrated sites carry — without it they were counted by no row at all.
 	{"arrow lambdas", `(^|[^A-Za-z0-9_])\(\s*[A-Za-z_][A-Za-z0-9_]*\s*:[^()]*\)\s*(:\s*[^()=]+)?=>`, "=>"},
 	{"nested named fns", `^[ \t]+(pub\s+)?function\s+[A-Za-z_]`, "function"},
 	{"for..in loops", `\bfor\s+[A-Za-z_][A-Za-z0-9_]*\s+in\s`, "for"},
-	// Every `?` token. There are none at all, so nothing here yet needs to tell
-	// the try operator from an optional-type suffix.
 	{"try op", `\?`, "?"},
 	{"Map type spellings", `\bMap\s*\[`, "Map"},
 	{"astwalk call sites", `\bastwalk\s*\.`, "astwalk"},
 
-	// The dialect the self-host writes instead. Ceilings, or context for them.
 	{"wildcard match arms", `(^|[^A-Za-z0-9_])_\s*=>`, "=>"},
 	{"arrow tokens", `=>`, "=>"},
 	{"while loops", `\bwhile\s*\(`, "while"},
@@ -258,9 +198,6 @@ var censusRows = []censusRow{
 	{"inferred let decls", `\blet\s+[A-Za-z_][A-Za-z0-9_]*\s*=`, "let"},
 }
 
-// incrementRe is the hand-written `x = x + 1` the index-loop dialect is built
-// from. It needs the two names compared, which RE2 has no backreference for, so
-// it is counted apart from the table.
 var incrementRe = regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\s*\+\s*1\b`)
 
 func takeCensus(t *testing.T, srcs []strippedSource) census {
@@ -311,10 +248,6 @@ func logCensus(t *testing.T, srcs []strippedSource, c census) {
 	}
 }
 
-// pinned asserts a row has not moved in either direction. The feature rows are
-// small enough that any move is worth a look, and pinning them is what keeps the
-// doc's table accurate — a floor alone lets the number drift up unnoticed, which is
-// how the disagreeing hand-counts arose.
 func pinned(t *testing.T, c census, name string, want int, why string) {
 	t.Helper()
 	if got := c.n(name); got != want {
@@ -348,19 +281,12 @@ func TestSelfHostFeatureCensus(t *testing.T) {
 	c := takeCensus(t, srcs)
 	logCensus(t, srcs, c)
 
-	// The features. These sites are the ENTIRE fixpoint coverage of each row:
-	// delete them and the self-host stops exercising the feature, whatever the
-	// e2ecompiler fixtures do.
 	pinned(t, c, "generic functions", 16,
 		"Nine on astwalk's fold spine, five on its accumulator-carrying map spine (map_expr_acc / map_exprs_acc / map_stmt_acc / map_stmts_acc / map_stmts_acc_changed), util.append_all, and util.sorted_by. The diagnostics source-order sort added sorted_by in #12993. This code exercises generic function monomorphisation on the fixpoint path.")
 	pinned(t, c, "generic structs", 0,
 		"The self-host declares no generic struct, so nothing on the fixpoint path monomorphises a generic TYPE — only generic functions. This is load-bearing, not incidental: a generic struct in a signature promotes its type param to the monomorphiser, and the per-module emit path runs no monomorphiser, so the un-cloned template fails IR verify there — the accumulator spine returns bare tuples for exactly that reason.")
 	pinned(t, c, "arrow lambdas", 15,
 		"The shared AST splicer now has an identity lambda finish hook. Its other arrow lambdas are traversal callbacks in astwalk, checker and parser. The 13 -> 14 step is the checker's value-block return walk (ret_diags_in_exprs, #9828), a fold_expr_pruned callback closing over the enclosing function's return type, spelled as its loop_diags_in_exprs sibling is. The 14 -> 15 step is the AST lowering's cell-read desugar (cell_reads_as_index, #9320), a map_stmts visitor closing over the cell names. The 15 -> 14 step deletes the parser's call-only fn-value inlining (#10106), whose descent carried one. The 14 -> 15 step is the checker's unannotated-lambda exit walk (lambda_try_exits, #9518), a fold_expr_pruned callback closing over the statement's scope to type each `?` operand. The 15 -> 17 step is the parser's type-variable respelling (rename_type_vars_module, #9577): a map_expr visitor for a parameter's default value and a map_stmts visitor for a body, each closing over the declaration's variables and their new spellings. The 17 -> 18 step is the AST lowering's conditional-leaf credit view (cond_leaf_credit_view, #10570), a map_stmts visitor closing over the local whose retained yields it drops. The 18 -> 15 step deletes constfold's has_asserts, whose walk carried three, with the `-O` pre-gate it fed. The 15 -> 13 step deletes the AST lowering, which held the cell-read desugar and the conditional-leaf credit view. The next 13 -> 14 step adds ircore's scale-map visitor, which captures the verified stdlib declarations so user functions cannot acquire the kernel contract from their names. The latest 14 -> 15 step adds the diagnostic sort in fern.fern (#12993), which captures source order for util.sorted_by. These sites exercise closure compilation on the self-host path.")
-	// 90 -> 91: lift.needs_lift's visit captures the function-signature
-	// registry while counting lambdas and module-function value occurrences.
-	// 91 -> 90: default filling's scoped walk (#11850) carries its state in
-	// an accumulator, so fda_stmts' rw visitor is gone.
 	pinned(t, c, "nested named fns", 87,
 		"Nested named functions are visitors in astwalk, checker, parser, lift, wasm_ir, cover, treeshake and interp. Routing E032 through the shared call-diagnostic walk removes two nested visitors.")
 	pinned(t, c, "try op", 0,
@@ -368,31 +294,17 @@ func TestSelfHostFeatureCensus(t *testing.T) {
 	pinned(t, c, "Map type spellings", 8,
 		"wasm_ir's call set and printer's line-id table (#8611): the ids that intern both sides' lines so the alignment compares i32 keys instead of strings, which is what lets the Hirschberg pass hold two rows rather than the O(m*n) table it replaces. The 12 -> 7 step is #8541 taking irverify's NameIndex back off the builtin Map: that map is an association LIST, so its has/get_or WERE the linear scan the index exists to avoid, and the pass it feeds stayed quadratic. It is a head/next chain over util.hash_bucket now, checker.sig_table's idiom. The 7 -> 8 step is modloader.module_fact_hashes' de-duplication set: a registry can list one fact row several times, and the cache key has to count it once. The 8 -> 11 step is seminline's leaf table, keyed by the callee a call names (#10498). The 11 -> 14 step is ircore.unit_owners' three name tables, which assign each function of a per-module build to its unit. The 14 -> 15 step is wasm_ir's calls_any (#11110), which asks that call set whether it holds any of a list of builtin names, so component_shape's socket and filesystem checks share one walk. The 15 -> 12 step moves seminline's leaf table onto a util.NameIndex over the function list, with the leaves, the functions called once and the call counts as arrays by function. The 12 -> 11 step deletes builtins' mirror of std/json's JObject payload: std/json declares JsonValue itself. The 11 -> 8 step hands wasm_ir's call set on as a util.NameIndex, so its readers query the index rather than the builtin Map, whose `has` became `contains` (#12711) under a stage0 that knows only `has`.")
 
-	// The two adoption metrics. Both are floors rather than pins: they are meant
-	// to climb, and pinning one would fight the migration it measures. The
-	// feature rows above stay pinned because a move there is news either way;
-	// a module converting more loops is not.
 	atLeast(t, c, "for..in loops", 1978,
 		"Measured at 2026 in 66 modules, most of them in checker, parser and semsource. A fall USUALLY means a module went back to hand-indexing — but not always: folding a collector onto astwalk removes its for..in loops along with its variant arms, and INDEXING a table deletes the scan whole rather than converting it, so the SH-022 walker migration, the index-loop conversion and #6888's table indexes move this row in different directions and a floor here protects nothing in between. Lower it for a fold or an index; raise it to the measurement for a loop conversion; investigate it otherwise. The astwalk floor is the one carrying the signal for the fold half.")
 	atLeast(t, c, "astwalk call sites", 241,
 		"Hand-written AST walkers collapsing onto the shared fold spine is what this counts. It should only climb; a fall means a consumer went back to spelling its own traversal. Raise it to the measurement on every conversion — left at a stale 85 while the count reached 96, it would have accepted a walker going back to hand-indexing without a word. 266 -> 241 deletes fnsigs.fern, whose registry builders made 25 of the calls.")
 
-	// The ratchet. These two are what the self-host writes INSTEAD of the
-	// features above, and both are only supposed to fall. A ceiling carries
-	// enough headroom for a normal PR's worth of new arms or loops without a red
-	// build, and no more: the wildcard row spent ~10% in three weeks without one
-	// conversion, so headroom that generous gives drift rather than tolerance.
-	// Size it in PRs, not percent — see the wildcard row's own note.
 	atMost(t, c, "wildcard match arms", 3057, 3054,
 		"A `_ =>` arm is a match that does not enumerate its cases, so a new parser node added later is silently swallowed instead of caught. The fold spine exists to remove them. The 2563/2800 pair this replaces had been overrun on MAIN — 2807 there, red on its own — because nothing runs this workflow outside a pull request, so the arms that consumed the headroom each passed against an older base. The headroom is ~3 arms, not a percentage: the row climbed 244 in three weeks under a ceiling that could absorb it silently, and a ratchet that only ever moves up is not one. The 2908 -> 2915 step is four arms from the checker's map-key destination check: map_key_dest_diag matches a declared Type for TypeMap and its key for TypeStruct / TypeUnion, and mlit_is_desugared matches an Expr for ExprCall and its callee for ExprFieldAccess. All four are `_ => {}` over the Type and Expr sums, where enumerating every variant is longer and no safer — the arms discriminate ONE shape and ignore the rest by construction, which is the case the fold spine does not improve. The 2915 -> 2953 step is the assembler vocabulary lookups cmd/x86tblgen and cmd/arm64tblgen write into x86_native.fern and arm64_native.fern as string matches (#7903): a match over the open string domain REQUIRES a `_` arm (E030), so each generated lookup carries one `_ => { return 0 - 1; }` — the not-a-mnemonic answer its callers test for — and there is no variant sum to enumerate instead. The 2953 -> 2967 step is the #8224 field-append analysis in irlower.fern: fourteen arms across the candidate / excused-read / escape walks and the caller-side bracket, every one of them discriminating ONE shape out of the Expr or Stmt sum — an ident-rooted `<root>.<field>` receiver, a struct literal's spread base, a method call's callee, an ident argument — and contributing nothing for the rest by construction. Enumerating either sum at those arms is longer and no safer, and the excused-read walk is deliberately the case the fold spine cannot take: it prunes at an ident-rooted field chain and treats a method callee differently from a field read, which a descent PREDICATE over one node cannot express. The 2967 -> 2991 step is the #8186 superseded-field own move, landed against a main that had already spent two of the three on the way to 2969: twenty-two arms across the checker's recognizer (ow_field_move_fields and its ow_ident_name, ow_is_field_read and ow_count_field_reads helpers, plus the StmtReturn probe in ow_stmt) and irlower's mirror of it (field_move_owned_value, field_move_keys, field_move_keys_of_stmt, count_ident_reads, count_field_reads, is_field_read_of, defer_at, field_move_decl_of, lambda_body_reads, bad_of, and the own-position bracket in lower_call_named_generic), every one discriminating ONE shape out of the Expr or Stmt sum — an ident, an ident-rooted field read, a direct call and its ident callee, a struct literal with a base, a lambda, a `let`/assign/`for`/match binder, a defer — and contributing nothing for the rest by construction; none is over a small closed sum where explicit arms would be the safer spelling. The 2991 -> 2998 step is the #8409 identity-return handback fix in irlower.fern: seven arms across str_recv_may_be, expr_may_be_str_param, handback_call_on_fresh_arg and str_arg_is_fresh_syntactic, each discriminating ONE shape out of the Expr sum — a bare ident receiver / param, a call, a method callee's field access, a string literal — and contributing nothing for the rest by construction, so enumerating the whole Expr sum at each would be longer and no safer. The 2998 -> 3005 step is #8267's own-lift retain in irlower.fern: five arms across own_lift_stmt_sites and its pick, own_lift_arg_sites_of and own_lift_scan_uses, each discriminating ONE shape out of the Expr or Stmt sum — an ident, an ident-rooted field read, a call's own-position argument, a rebind that ends the alias — and contributing nothing for the rest by construction. It is also the row's own note coming true: #8267 and the #8171 group C round were measured against bases that did not contain each other, so each passed its own build and the sum went red only once both were on main, with nothing running this gate in between. The 3005 -> 3012 step is four arms in irlower.fern from #8556's field-append in-place root (fb80cd89c) — fai_is_struct_lit over the Expr sum, and fai_binder_count_stmt, fai_rebuilds_only_stmt and fai_toplevel_struct_locals over the Stmt sum — each discriminating ONE shape (a struct literal, a binder, a rebuild of the tracked name) and contributing nothing for the rest by construction, so enumerating either sum would be longer and no safer. The other three counted here were already spent when the 3008/3005 pair landed: the tree measured 3008 at that commit, not 3005, so the row passed with ZERO headroom and the next arm was always going to be red. That is the note coming true a third time — the pair records what the author measured, and nothing re-measures main in between, so an understated measurement silently converts the headroom into a debt the next PR pays. The headroom is unchanged at 3, so the next PR gets the same budget this one did. The 3012 -> 3018 step is two arms from #8714's enum-array credit in irlower.fern (arrenum_scrut_elem_read over the Expr sum and arrenum_match_arms_borrow_only over a match arm's pattern, each discriminating ONE shape), landed against a base that already held the 3015 ceiling in full, so main was at 3017 and red before this PR; plus one here, the callee probe inside default_nonconst_reason in parser.fern, which asks whether a call's callee is an ident and nothing else. The 3018 -> 3020 step is two more in parser.fern from the same PR's const folding over parameter defaults: fda_const_value picks the return out of a const's one-statement body, and fda_fold_consts enters only the ident / unary / binary shapes the E076 whitelist admits and leaves every other Expr for that whitelist to refuse. The other three arms that came with the E076 / E077 mirror are paid for: ast.expr_line and ast.expr_col enumerate all seventeen Expr variants and replace the checker's two wildcard-tailed copies, and fda_call_of's method-callee arm existed already. The 3020 -> 3023 step is #8678's tuple-handback reclaim in irlower.fern: ret_hands_back and expr_consume_transparent over the Expr sum (a returned or discarded value that is not an ident, a struct or tuple literal, or a call), expr_consume_transparent's and body_has_nonfresh_tuple_return's callee matches (an ident or field-access callee), handback_unpack_at over the Stmt sum (an assign or a let between the binding and its unpack), field_read_of over the Expr sum (a field read), and the Return lowering's pick of a tuple literal for lower_expr_tuple's returning form — each discriminating ONE shape and contributing nothing for the rest by construction. Three arms went with the code they replaced (v_init_field_obj and the StmtReturn arm's own fallthrough), which is the net of three. The 3023 -> 3028 step is five arms across two changes, and none is over a small closed sum where explicit arms would be safer. Three are #8639's suffixed-literal range rule in checker.fern — lit_sign_chain, at_unary and at_number, each discriminating ONE shape out of the Expr sum (a unary minus, a number literal) and returning the accumulator untouched for the rest by construction. Two are #8706 / #8717's formatter round-trip in printer.fern's check_lambdas, which reads a StmtVar's ExprLambda back out of the reparsed module to assert the return annotation survived; each non-matching shape returns a distinct failure code, the same idiom as the 161 / 162 / 163 arms directly above it. The 3028 -> 3036 step is eight arms from #8657's value-block local retype in checker.fern: vb_local_name's two (the block's leading `let` and its terminal `return`), vb_assigned_types' and vb_stmt's arms over the Stmt sum, vb_retype's three (the call, its lambda callee, and the declaration it rewrites) and vb_at_value_local's over the Expr sum — each discriminating ONE shape and contributing nothing for the rest by construction, which is the case the fold spine does not improve. The 3036 -> 3038 pair is a RE-MEASUREMENT and a removal, not new arms: the tree measured 3039 at the base of #8410 — the note coming true a fourth time, the 3036 that was banked understating main by three — and #8410 took one away by lifting the `@`-binding precondition its post-match box release shares with match_scrut_is_map_get into match_binds_whole_scrutinee, spelled `if let` so the shared probe carries no wildcard arm and the two call sites that used to spell it each carry none either. The 3038 -> 3043 pair is another RE-MEASUREMENT plus two arms. main measured 3041 at the base of #8791 — the note coming true a FIFTH time, and this one had spent the headroom exactly, so main was passing at the ceiling with nothing left and the next arm anywhere was going to be red whatever it was. The two are #8791's interp arm in interp.fern: is_string_arg and vstr_of, the string-side pair of the is_i32_arg / vint_bits that sit directly above them and already carry the same arm — guard, then read, so a builtin taking more than one string does not pay a nested destructure per operand. Each discriminates ONE variant out of the Value sum and answers false or the empty string for the rest by construction, so enumerating every carrier twice would be longer and no safer. The headroom is unchanged at 3, so the next PR gets the same budget this one did. The 3043 -> 3047 step is the note coming true a sixth time. Main measured 3043 when #8791 merged; nothing re-measured it again until now. Three arms are #8722's E047 range rule in checker.fern, landed inside #8881: the int dest-range walk (int_range_diags, and int_dest_range_diags with its TypeArray / TypeTuple / fallback arms) discriminates ONE shape out of the Expr or Type sum at each arm and contributes nothing for the rest by construction, while the old per-let unsettled-literal check it replaces carried a wildcard-tailed copy of the same walk — the rework is the fold the spine would do, only the destination's arms outnumber the removed copy's, so the row climbs the difference. One arm is #8166's closure-array proof in irlower.fern, landed inside #8871: the scrutinee probe reads the whole StmtVar init through a helper that discriminates the closure-array shapes, replacing a nested ident match and a bare wildcard. Both landed against bases that did not contain each other — the note's premise, again — so main stood at the ceiling before either PR's own run. The headroom is unchanged at 3; the ceiling this PR carries is measured 3047 plus that 3.The 3047 -> 3051 step is the note coming true a SEVENTH time, and the clearest case of it yet: main measured 3050 at the base of #9189 — the banked 3047 understating it by exactly the whole headroom — so main was passing AT the ceiling with nothing spare and the next arm anywhere was red whatever it was. Only ONE of the four is this PR's: arm64_vpolylong_entry, the pmull / pmull2 lookup cmd/arm64tblgen writes into arm64_native.fern for #9128's carry-less multiply. It is the same 2915 -> 2953 case as every other generated vocabulary lookup — a match over the open string domain REQUIRES a `_` arm (E030), and the `_ => { return 0 - 1; }` it carries IS the not-a-mnemonic answer its callers test for, so there is no variant sum to enumerate instead and the fold spine has nothing to remove. The other three were already on main. The headroom is unchanged at 3, so the next PR gets the same budget this one did. The 3051 -> 3054 step is the note coming true an EIGHTH time: main measured 3053 at the base of this PR, the banked 3051 understating it by two, so the ceiling had one arm of slack rather than three. ONE of the three is this PR's — the `_ =>` on __crc32_cksum's scrutinee destructure in interp.fern, which cannot ride __memchr's arm the way __count_byte and __sum_bytes do because its STRING is args[1] and theirs is args[0]. Its sibling arms discriminate the same single VString variant out of the Value sum and answer an error for the rest by construction. The headroom is unchanged at 3, so the next PR gets the same budget this one did.")
 	atMost(t, c, "increment by one", 5200, 4185,
 		"Every `x = x + 1` is one hand-written index loop that `for x in xs` would carry. This is the dialect the compiler is written in, and the count is the size of the migration left.")
 }
 
-// assertNoLiteralResidue re-proves the strip on the real corpus before anything
-// is counted over it: nothing that survives may contain a `//`, or a string or
-// char quote outside the empty pair the strip leaves behind. A mis-scanned
-// literal shows up here as residue rather than silently as a wrong count.
 func assertNoLiteralResidue(t *testing.T, srcs []strippedSource) {
 	t.Helper()
 	for _, s := range srcs {
@@ -436,11 +348,7 @@ func TestStripFernLiterals(t *testing.T) {
 		{"f-string with nested string", `out = f"{join(xs, ", ")} _ => x";`, `out = "";`},
 		{"f-string with brace escapes", `out = f"{{ _ => }} {i}";`, `out = "";`},
 		{"identifier ending in f", `let buf: string = "x";`, `let buf: string = "";`},
-		// An apostrophe that reaches code text is not a literal, and must stay
-		// one character rather than eating the line up to the next quote.
 		{"lone apostrophe", `a ' b _ => c`, `a ' b _ => c`},
-		// An unterminated literal is a lex error, not something the strip is
-		// entitled to carry into the next line.
 		{"unterminated string", "emit(\"oops\nlet i: i32 = 0;", "emit(\"\"\nlet i: i32 = 0;"},
 		{"unterminated comment-free f-string", "out = f\"{a\nlet i: i32 = 0;", "out = \"\"\nlet i: i32 = 0;"},
 		{"line count preserved", "a\n// b\nc", "a\n\nc"},

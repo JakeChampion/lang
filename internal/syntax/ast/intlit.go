@@ -5,18 +5,7 @@ import (
 	"strconv"
 )
 
-// IntLitOutOfRange returns the E047 message for an integer literal that t
-// cannot hold, or "" when it fits. The literal is judged as the source wrote
-// it: a parsed NumberLit carries only the magnitude and the sign is a separate
-// unary node, so `-2147483648` is 2^31 negated (in range for i32) while
-// `2147483648` is not, and both share a NumberLit. A literal constfold has
-// substituted carries its sign in Value instead (`const NEG = -5` arrives as a
-// literal holding -5) and is judged the same way. The checker and constfold
-// both report through this so a `let` and a `const` refuse the same literals
-// with the same words.
 func IntLitOutOfRange(lit *NumberLit, negated bool, t NumberType) string {
-	// Past i64 max Value holds the wrapped bit pattern, and uint64 reads the
-	// written magnitude back; below it a negative Value is a folded sign.
 	magnitude := uint64(lit.Value)
 	if !lit.ExceedsI64 && lit.Value < 0 {
 		magnitude = uint64(-lit.Value)
@@ -64,7 +53,6 @@ func IntLitOutOfRange(lit *NumberLit, negated bool, t NumberType) string {
 	case 32:
 		max = 1<<32 - 1
 	default:
-		// u64 holds every bit pattern; usize's width is the target's.
 		return ""
 	}
 	if magnitude > max {

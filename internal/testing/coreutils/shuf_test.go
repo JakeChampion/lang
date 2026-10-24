@@ -17,18 +17,11 @@ func shufFile(t *testing.T, dir, name string, content []byte) string {
 	return p
 }
 
-// shufSource writes a random-source fixture and returns the whole option
-// that names it, so a case carries `count` rather than a path spelled out
-// with its option again.
 func shufSource(t *testing.T, dir, name string, bytes []byte) string {
 	t.Helper()
 	return "--random-source=" + shufFile(t, dir, name, bytes)
 }
 
-// shufRawName writes the not-valid-UTF-8 fixture name, with an optional
-// suffix, where the filesystem will hold it. Where it will not, it returns the
-// path without creating anything: the cases naming it carry `rawByteName` and
-// prep skips them, and shuf's other forty cases still run.
 func shufRawName(t *testing.T, dir, suffix string, content []byte) string {
 	t.Helper()
 	p := filepath.Join(dir, rawByteNameFixture+suffix)
@@ -41,9 +34,6 @@ func shufRawName(t *testing.T, dir, suffix string, content []byte) string {
 	return p
 }
 
-// shufLCG is a deterministic byte stream with no structure: a source of
-// zeros drives every draw to its lowest value and a counting source
-// climbs, so neither exercises a rejection the way arbitrary bytes do.
 func shufLCG(n int) []byte {
 	out := make([]byte, n)
 	x := uint32(12345)
@@ -58,38 +48,6 @@ func init() {
 	registerCorpus("shuf", shufCases)
 }
 
-// shufCases is shuf(1)'s corpus.
-//
-// Everything here is ORACLE-gated — GNU and Fern run the same argv and
-// the bytes are diffed — and that is only possible because
-// `--random-source=FILE` makes the output a function of that file. Every
-// case whose stdout depends on a draw names one. What each source is for:
-//
-//   - zeros: every draw takes its lowest value, so the permutation is the
-//     identity and the byte COUNT is what is being compared.
-//   - ff: every draw of a range that is not a power of two is rejected
-//     and retried, so the source is consumed without end — which is how
-//     the rejection loop itself is pinned, as an `end of file`.
-//   - count and lcg: arbitrary bytes, where the answer is the whole
-//     state machine — how many bytes a draw takes, what the leftover
-//     entropy is, and which values are refused.
-//   - the truncated prefixes: the exhaustion boundary. A run that needs
-//     one more byte than the file holds must fail on BOTH sides at the
-//     same draw, which is only true if the consumption matches exactly.
-//
-// The second thing the corpus has to pin is which of the two sampling
-// paths runs, because they consume different draws: an input LARGER than
-// 8 MiB with `-n` and without `-r` is sampled by a reservoir instead of
-// being read whole and permuted. `bigEq` and `bigGt` sit either side of
-// that threshold by one byte, and the pipe cases reach it from the other
-// direction — a pipe has no size, so `-n` over stdin is always the
-// reservoir while `-n` over a small regular file never is.
-//
-// What is NOT here is any case that shuffles without a named source:
-// nothing can compare two runs of /dev/urandom. Those invariants —
-// that the output is a permutation of the input, that -n bounds it, that
-// -r may repeat — are gated by TestShufInvariants below, against the
-// Fern binary alone.
 func shufCases(t *testing.T) []invocation {
 	dir := t.TempDir()
 	zeros := shufSource(t, dir, "s.zeros", make([]byte, 256))
@@ -107,11 +65,6 @@ func shufCases(t *testing.T) []invocation {
 		trunc = append(trunc, shufSource(t, dir, "s.trunc"+string(rune('0'+len(trunc))), countBytes[:n]))
 	}
 
-	// Source names that are not plain: the two diagnostics quote
-	// differently — an exhausted source always, a source that would not
-	// open only when the name needs it.
-	// Written only where the filesystem holds the name; the cases that use
-	// these two carry rawByteName and skip where it does not.
 	rawSrc := "--random-source=" + shufRawName(t, dir, ".src", nil)
 	spacedSrc := shufSource(t, dir, "sp ace.src", nil)
 	tabbedSrc := shufSource(t, dir, "ta\tb.src", nil)
@@ -138,9 +91,6 @@ func shufCases(t *testing.T) []invocation {
 	}
 	d := filepath.Join(dir, "d")
 
-	// Either side of the reservoir threshold, to the byte. The lines are
-	// long so that the fork is exercised by nine draws rather than by a
-	// million: what is being compared is which path ran, not its speed.
 	bigHead := strings.Repeat(strings.Repeat("x", 1048575)+"\n", 7)
 	bigEqBytes := []byte(bigHead + strings.Repeat("x", 1048575) + "\n")
 	bigGtBytes := []byte(bigHead + strings.Repeat("x", 1048576) + "\n")
@@ -150,9 +100,6 @@ func shufCases(t *testing.T) []invocation {
 	bigEq := shufFile(t, dir, "big.eq", bigEqBytes)
 	bigGt := shufFile(t, dir, "big.gt", bigGtBytes)
 
-	// Enough lines that a small head count is drawn by the sparse table
-	// rather than the dense vector, in a file read whole; the last line
-	// has no delimiter.
 	var manyLines strings.Builder
 	for i := 0; i < 200000; i++ {
 		manyLines.WriteString("\nline " + strconv.Itoa(i))
@@ -172,8 +119,6 @@ func shufCases(t *testing.T) []invocation {
 		}
 	}
 
-	// -o follows a symlink rather than replacing it, and creates the
-	// target of a dangling one.
 	seedLinks := func(t *testing.T, wd string) {
 		if err := os.WriteFile(filepath.Join(wd, "in"), []byte("a\nb\nc\nd\ne\n"), 0o644); err != nil {
 			t.Fatal(err)
@@ -189,8 +134,6 @@ func shufCases(t *testing.T) []invocation {
 		}
 	}
 
-	// An output path the process may not write. As root both sides
-	// write it anyway, which is still the same answer on both.
 	seedRO := func(t *testing.T, wd string) {
 		if err := os.WriteFile(filepath.Join(wd, "in"), []byte("a\nb\nc\nd\ne\n"), 0o644); err != nil {
 			t.Fatal(err)
@@ -204,7 +147,6 @@ func shufCases(t *testing.T) []invocation {
 	}
 
 	cases := []invocation{
-		// ---- the generator, against three shaped sources -------------
 		{name: "range identity under zeros", args: []string{"-i", "1-10", zeros}},
 		{name: "range under count", args: []string{"-i", "1-10", count}},
 		{name: "range under lcg", args: []string{"-i", "1-10", lcg}},
@@ -221,9 +163,6 @@ func shufCases(t *testing.T) []invocation {
 		{name: "zeros one byte drives five", args: []string{"-i", "1-5", one}},
 		{name: "one byte is not enough for a hundred", args: []string{"-i", "1-100", one}},
 
-		// The wide ranges, where the state is 64 bits and the refill
-		// wraps. Nothing below 2^57 can tell a wrapping shift from a
-		// saturating one.
 		{name: "range past 2^32", args: []string{"-i", "0-4294967296", "-n", "6", count}},
 		{name: "range at 2^32", args: []string{"-i", "0-4294967295", "-n", "6", lcg}},
 		{name: "range at 2^57", args: []string{"-i", "0-144115188075855872", "-n", "6", lcg}},
@@ -238,7 +177,6 @@ func shufCases(t *testing.T) []invocation {
 		{name: "wide range sparse past one table", args: []string{"-i", "0-1000000000", "-n", "300", lcg}},
 		{name: "wide range sparse repeats", args: []string{"-i", "0-4294967296", "-r", "-n", "50", lcg}},
 
-		// ---- lines ---------------------------------------------------
 		{name: "file", args: []string{in5, count}},
 		{name: "file under lcg", args: []string{in5, lcg}},
 		{name: "stdin", args: []string{count}, stdin: "a\nb\nc\nd\ne\n"},
@@ -263,7 +201,6 @@ func shufCases(t *testing.T) []invocation {
 		{name: "quoted name", args: []string{spaced, count}},
 		{name: "raw byte name", args: []string{raw, count}, rawByteName: true},
 
-		// ---- -e ------------------------------------------------------
 		{name: "echo", args: []string{"-e", "a", "b", "c", count}},
 		{name: "echo long", args: []string{"--echo", "a", "b", "c", count}},
 		{name: "echo one", args: []string{"-e", "solo", empty}},
@@ -275,7 +212,6 @@ func shufCases(t *testing.T) []invocation {
 		{name: "echo ignores stdin", args: []string{"-e", "a", "b", count}, stdin: "IGNORED\n"},
 		{name: "echo head count", args: []string{"-e", "-n", "2", "a", "b", "c", count}},
 
-		// ---- -n ------------------------------------------------------
 		{name: "head count", args: []string{"-i", "1-10", "-n", "3", count}},
 		{name: "head count glued", args: []string{"-i", "1-10", "-n3", count}},
 		{name: "head count long", args: []string{"-i", "1-10", "--head-count=3", count}},
@@ -301,7 +237,6 @@ func shufCases(t *testing.T) []invocation {
 		{name: "reservoir over a hundred lines", args: []string{"-n", "4", lcg}, stdin: strings.Repeat("line\n", 100)},
 		{name: "reservoir keeps the last lines", args: []string{"-n", "2", zeros}, stdin: strings.Repeat("line\n", 50)},
 
-		// ---- the reservoir threshold ---------------------------------
 		{name: "eight mib exactly is read whole", args: []string{"-n", "3", lcg, bigEq}},
 		{name: "one byte more is a reservoir", args: []string{"-n", "3", lcg, bigGt}},
 		{name: "eight mib exactly on stdin", args: []string{"-n", "3", lcg}, stdinPath: bigEq},
@@ -312,7 +247,6 @@ func shufCases(t *testing.T) []invocation {
 		{name: "a head count of many lines read whole", args: []string{"-n", "40", lcg, many}},
 		{name: "every one of many lines read whole", args: []string{lcgBig, many}},
 
-		// ---- -r ------------------------------------------------------
 		{name: "repeat", args: []string{"-r", "-n", "6", in5, count}},
 		{name: "repeat long", args: []string{"--repeat", "-n", "6", in5, count}},
 		{name: "repeat a range", args: []string{"-r", "-n", "6", "-i", "10-14", count}},
@@ -325,13 +259,9 @@ func shufCases(t *testing.T) []invocation {
 		{name: "repeat of an empty range", args: []string{"-r", "-n", "2", "-i", "1-0", count}},
 		{name: "repeat writes before the source runs out", args: []string{"-r", "-n", "20", "-i", "1-3", one}},
 		{name: "repeat of lines until the source runs out", args: []string{"-r", "-n", "200", in5, one}},
-		// The source has to be one that cannot run out: the case ends
-		// when the harness closes the pipe, and a source exhausted first
-		// would make which of the two happens a race.
 		{name: "repeat forever", args: []string{"-r", in5, "--random-source=/dev/zero"}, limit: 64},
 		{name: "repeat a range forever", args: []string{"-r", "-i", "1-9", "--random-source=/dev/zero"}, limit: 40},
 
-		// ---- -z ------------------------------------------------------
 		{name: "zero terminated", args: []string{"-z", zsep, count}},
 		{name: "zero terminated long", args: []string{"--zero-terminated", zsep, count}},
 		{name: "zero terminated no final nul", args: []string{"-z", zsepNo, count}},
@@ -343,7 +273,6 @@ func shufCases(t *testing.T) []invocation {
 		{name: "zero terminated repeat", args: []string{"-z", "-r", "-n", "3", zsep, count}},
 		{name: "zero terminated twice", args: []string{"-z", "-z", "-i", "1-2", count}},
 
-		// ---- -o ------------------------------------------------------
 		{name: "output file", args: []string{"-o", "out", count, "in"}, seedTree: seed},
 		{name: "output long", args: []string{"--output=out", count, "in"}, seedTree: seed},
 		{name: "output long split", args: []string{"--output", "out", count, "in"}, seedTree: seed},
@@ -370,7 +299,6 @@ func shufCases(t *testing.T) []invocation {
 		{name: "output into an unwritable directory", args: []string{"-o", "ro/out", count, "in"}, seedTree: seedRO},
 		{name: "output over an unwritable file", args: []string{"-o", "rofile", count, "in"}, seedTree: seedRO},
 
-		// ---- --random-source -----------------------------------------
 		{name: "source with no value", args: []string{"--random-source"}},
 		{name: "source is empty", args: []string{"--random-source=", "-i", "1-5"}},
 		{name: "source is missing", args: []string{"--random-source=" + missing, "-i", "1-5"}},
@@ -395,7 +323,6 @@ func shufCases(t *testing.T) []invocation {
 		{name: "missing source with a raw byte in its name", args: []string{rawSrc + ".missing", "-i", "1-5"}, rawByteName: true},
 		{name: "missing source with a space in its name", args: []string{spacedSrc + ".missing", "-i", "1-5"}},
 
-		// ---- the exhaustion boundary ---------------------------------
 		{name: "no bytes at all", args: []string{"-i", "1-5", trunc[0]}},
 		{name: "one byte", args: []string{"-i", "1-5", trunc[1]}},
 		{name: "two bytes", args: []string{"-i", "1-100", trunc[2]}},
@@ -407,7 +334,6 @@ func shufCases(t *testing.T) []invocation {
 		{name: "a reservoir that outruns the source", args: []string{"-n", "3", trunc[3]}, stdin: strings.Repeat("line\n", 100)},
 		{name: "a repeat that outruns the source", args: []string{"-r", "-n", "40", "-i", "1-7", trunc[2]}},
 
-		// ---- -i's grammar --------------------------------------------
 		{name: "range glued", args: []string{"-i1-5", count}},
 		{name: "range long", args: []string{"--input-range=1-5", count}},
 		{name: "range long split", args: []string{"--input-range", "1-5", count}},
@@ -450,7 +376,6 @@ func shufCases(t *testing.T) []invocation {
 		{name: "range twice with a bad second", args: []string{"-i", "1-3", "-i", "5-1"}},
 		{name: "range twice with a bad first", args: []string{"-i", "5-1", "-i", "1-3"}},
 
-		// ---- -n's grammar --------------------------------------------
 		{name: "count is negative", args: []string{"-n", "-1", in5}},
 		{name: "count is a word", args: []string{"-n", "x", in5}},
 		{name: "count is empty", args: []string{"-n", "", in5}},
@@ -464,7 +389,6 @@ func shufCases(t *testing.T) []invocation {
 		{name: "count with no value", args: []string{"-n"}},
 		{name: "count long with no value", args: []string{"--head-count"}},
 
-		// ---- the short circuit ---------------------------------------
 		{name: "zero count opens nothing", args: []string{"-n", "0", missing}},
 		{name: "zero count opens no source", args: []string{"-n", "0", "--random-source=" + missing, missing}},
 		{name: "zero count still checks the range", args: []string{"-n", "0", "-i", "5-1"}},
@@ -472,7 +396,6 @@ func shufCases(t *testing.T) []invocation {
 		{name: "zero count and stdin", args: []string{"-n", "0"}, stdin: "a\nb\n"},
 		{name: "zero count and an extra operand", args: []string{"-n", "0", in5, in5}},
 
-		// ---- operands and the option scan ----------------------------
 		{name: "two operands", args: []string{in5, in5, count}},
 		{name: "three operands", args: []string{"a", "b", "c"}},
 		{name: "an operand with a range", args: []string{"-i", "1-3", in5}},
@@ -508,7 +431,6 @@ func shufCases(t *testing.T) []invocation {
 		{name: "posixly correct with the options first", args: []string{"-n", "2", count, in5}, env: []string{"POSIXLY_CORRECT=1"}},
 		{name: "version after a bad option", args: []string{"-x", "--version"}},
 
-		// ---- write failures ------------------------------------------
 		{name: "closed stdout", args: []string{"-i", "1-3", count}, stdout: stdoutClosed},
 		{name: "closed stdout with nothing to write", args: []string{"-n", "0"}, stdout: stdoutClosed},
 		{name: "full stdout", args: []string{"-i", "1-3", count}, stdout: stdoutFull},
@@ -533,14 +455,6 @@ func TestShufHelpVersion(t *testing.T) {
 	requireVersion(t, "shuf", []string{"-i", "1-3", "extra", "--version"}, 0)
 }
 
-// TestShufInvariants covers what the oracle cannot: a run with no
-// `--random-source` draws from /dev/urandom, so two runs of the same
-// argv disagree with each other and GNU's bytes are not a reference for
-// ours. What IS fixed about such a run — that the output is a
-// permutation of the input, that -n bounds it, that -r may repeat and
-// stays inside the input, that -i covers its range — is checked here
-// against the Fern binary alone. Their stderr and exit status ARE
-// deterministic, so those stay in the oracle corpus above.
 func TestShufInvariants(t *testing.T) {
 	bin := fernBin(t, "shuf")
 	run := func(inv invocation) outcome {
@@ -568,8 +482,6 @@ func TestShufInvariants(t *testing.T) {
 	input := "alpha\nbravo\ncharlie\ndelta\necho\nfoxtrot\ngolf\nhotel\n"
 	want := lines([]byte(input))
 
-	// A plain shuffle is a permutation of the input: same multiset, and
-	// with eight distinct lines, same set.
 	for i := 0; i < 8; i++ {
 		got := run(invocation{stdin: input})
 		if got.exit != 0 || len(got.stderr) != 0 {
@@ -580,8 +492,6 @@ func TestShufInvariants(t *testing.T) {
 		}
 	}
 
-	// -n bounds the count and still draws from the input, on both the
-	// read-whole and the reservoir path (a pipe is always the latter).
 	for _, n := range []int{1, 3, 8, 9} {
 		got := run(invocation{args: []string{"-n", strconv.Itoa(n)}, stdin: input})
 		if got.exit != 0 {
@@ -603,7 +513,6 @@ func TestShufInvariants(t *testing.T) {
 		}
 	}
 
-	// -r may repeat, and every line it writes is one of the input's.
 	got := run(invocation{args: []string{"-r", "-n", "200"}, stdin: input})
 	if got.exit != 0 {
 		t.Fatalf("-r: exit %d stderr %q", got.exit, got.stderr)
@@ -621,7 +530,6 @@ func TestShufInvariants(t *testing.T) {
 		t.Fatalf("-r looks like a permutation rather than a draw with replacement")
 	}
 
-	// -i covers exactly its range.
 	got = run(invocation{args: []string{"-i", "1-50"}})
 	if got.exit != 0 {
 		t.Fatalf("-i: exit %d stderr %q", got.exit, got.stderr)
@@ -643,7 +551,6 @@ func TestShufInvariants(t *testing.T) {
 		}
 	}
 
-	// An unshuffled shape is still a shape: one line in, one line out.
 	got = run(invocation{stdin: "only\n"})
 	if got.exit != 0 || string(got.stdout) != "only\n" {
 		t.Fatalf("one line: exit %d stdout %q", got.exit, got.stdout)

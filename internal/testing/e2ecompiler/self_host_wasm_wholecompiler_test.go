@@ -11,20 +11,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostWasmWholeCompilerShardedLink is the main gate for #5508: the ENTIRE
-// self-host wasm compiler links into one valid wasm module from per-unit
-// objects, with each large module cut into FUNCTION WINDOWS, a unit apiece.
-//
-// This is the wasm analogue of the asm whole-compiler per-module link test, and
-// the first end-to-end proof that per-module wasm emit scales past the toy cases
-// to the compiler itself. wasm-tools validate is the structural bar — a module
-// that assembled with mismatched namespaces, a missing runtime helper, or a
-// dangling funcref fails it — and the linked compiler is then RUN (see
-// runShardedCompiler): validating proves well-formedness, not that the windows
-// compute the right thing.
-//
-// Runs in its own CI job (wasm-wholecompiler-link-x86_64), not in an LPT shard
-// (#6667).
 func TestSelfHostWasmWholeCompilerShardedLink(t *testing.T) {
 	if testing.Short() {
 		t.Skip("whole-compiler sharded link is heavy; skipped in -short")
@@ -43,7 +29,6 @@ func TestSelfHostWasmWholeCompilerShardedLink(t *testing.T) {
 	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "flatten.fern", "modloader.fern", "fern_toml.fern", "builtins.fern", "drivers/wasm_objfile.fern", "drivers/wasm_modload_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_modload_run.fern", "wasm_modload_run")
 	entryPath := filepath.Join(dir, "drivers/wasm_modload_run.fern")
-	// The compiler imports core/map, which resolves beside the entry.
 	copyStdlibTree(t, dir)
 
 	drive := func(t *testing.T, args ...string) (string, string, error) {
@@ -92,10 +77,6 @@ func TestSelfHostWasmWholeCompilerShardedLink(t *testing.T) {
 		t.Fatalf("func-counts returned %d lines, want %d", len(counts), n)
 	}
 
-	// The plan cuts each module into FUNCTION WINDOWS, so the link assembles
-	// many namespaced units per large module. One process emits every unit: the
-	// typed lowering is whole-program, so a process per window would each lower
-	// the whole compiler again.
 	const window = 150
 	var plan strings.Builder
 	units := 0
@@ -111,9 +92,6 @@ func TestSelfHostWasmWholeCompilerShardedLink(t *testing.T) {
 		t.Fatalf("write plan: %v", err)
 	}
 
-	// A host OOM kill (137) on a loaded runner is retried once; the units the
-	// killed run wrote are cache hits the second time. The arena trap (125) is
-	// deterministic, so it is not retried.
 	_, se, err := drive(t, "-per-module-emit-all", "-plan", planPath, "-cache-dir", cacheDir)
 	var ee *exec.ExitError
 	if errors.As(err, &ee) && ee.ExitCode() == 137 {
@@ -141,9 +119,6 @@ func TestSelfHostWasmWholeCompilerShardedLink(t *testing.T) {
 	if out, err := exec.Command(wasmtools, "validate", corePath).CombinedOutput(); err != nil {
 		t.Fatalf("wasm-tools validate of the whole-compiler link failed: %v\n%s", err, out)
 	}
-	// Report the CORE MODULE size, not just the WAT text: the binary is what a
-	// consumer would ship, and the two differ by several-fold. #6643 needed this
-	// number and had to re-derive it — docs/PLAYGROUND-SELFHOST-WASM.md.
 	coreBytes := int64(-1)
 	if fi, err := os.Stat(corePath); err == nil {
 		coreBytes = fi.Size()
@@ -152,21 +127,6 @@ func TestSelfHostWasmWholeCompilerShardedLink(t *testing.T) {
 	runShardedCompiler(t, wasmtime, wasmtools, dir, corePath)
 }
 
-// runShardedCompiler runs the linked whole-compiler module. Validation above
-// proves the module is well-FORMED; it says nothing about whether the windows
-// compute the right thing. A shard whose $__str_base or $__fn_base was assembled
-// against another unit's literals validates perfectly and reads the wrong string
-// or calls the wrong funcref — exactly the failure mode sharding introduces, and
-// exactly the one validate cannot see.
-//
-// The linked module IS the wasm compiler, so the sharpest available exercise is
-// to make it compile something: drive the wasm-hosted driver through the same
-// count → emit → link cycle the Go harness just drove natively, over a small
-// two-module program, then run the module IT produced. The program's answer
-// (14 = len("sharded") + 7) comes back only if the lexer, parser, module
-// resolution, IR lowering and wasm emit all still work after being cut into
-// function windows — and the string literal in the leaf
-// module makes the data-section/base wiring essential rather than incidental.
 func runShardedCompiler(t *testing.T, wasmtime, wasmtools, dir, compiler string) {
 	t.Helper()
 	proj := filepath.Join(dir, "proj")
@@ -183,8 +143,6 @@ func runShardedCompiler(t *testing.T, wasmtime, wasmtools, dir, compiler string)
 	}
 	const want = 14
 
-	// The guest sees proj as its only preopen, so paths are relative to it —
-	// `prog.fern` is the entry and `cache` the object dir, both inside proj.
 	drive := func(args ...string) string {
 		t.Helper()
 		full := append([]string{"run", "--dir", proj + "::/", compiler, "prog.fern"}, args...)

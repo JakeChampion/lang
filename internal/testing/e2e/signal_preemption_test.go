@@ -1,13 +1,3 @@
-// The share-nothing rule for signal handlers (#11914) under real preemption.
-//
-// Reference counts are non-atomic, so a handler that touched a Fern object
-// could race the count the interrupted code was updating. The rule is that
-// the handler signal_catch installs runs no Fern code: it sets a flag the
-// program polls. This test interrupts a program in the middle of heavy
-// reference-count traffic with a storm of signals sent from outside, and
-// checks that the run is indistinguishable from a quiet one: the same
-// output, and a leak census with the same allocation and free counts, which
-// balances.
 package e2e
 
 import (
@@ -23,8 +13,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// Every round builds and drops 64 formatted strings and the array holding
-// them, polling the catch once.
 const signalPreemptionSource = `import "std/i32";
 import "std/i64";
 
@@ -64,15 +52,11 @@ function main(): i32 {
 }
 `
 
-// preemptionRun is one run's stdout, stderr and exit code, and how many
-// signals the test sent it.
 type preemptionRun struct {
 	stdout, stderr string
 	code, sent     int
 }
 
-// runPreempted starts cmd and, when storm is set, sends it SIGUSR1 in a
-// loop from the moment it prints "ready" until it exits.
 func runPreempted(t *testing.T, cmd *exec.Cmd, storm bool) preemptionRun {
 	t.Helper()
 	var stderr bytes.Buffer
@@ -154,9 +138,6 @@ func TestX86_64SignalPreemption(t *testing.T) {
 	checkPreemption(t, func() *exec.Cmd { return runX86_64Bin(runner, bin) })
 }
 
-// Under qemu-user the signal reaches the emulator, which delivers it to the
-// guest's handler before the next guest instruction, mid-sequence like a
-// native one.
 func TestArm64SignalPreemption(t *testing.T) {
 	qemu := e2eharness.Arm64Runner(t)
 	bin := e2eharness.CompileSelfHostSource(t, e2eharness.TargetArm64Linux, signalPreemptionSource, []string{"FERN_LEAKCHECK=1"})

@@ -1,61 +1,10 @@
-// coreutils/lib/pwdb.fern — /etc/passwd and /etc/group, as glibc's
-// `files` backend reads them.
-//
-// `whoami`, `id`, `groups` and `logname` all turn ids into names and
-// names into ids, and GNU does it through NSS. This module is the
-// `files` source of that lookup and nothing else: no nsswitch.conf, no
-// dlopened modules, no LDAP. On a machine whose users come from
-// somewhere else the answers differ, which is the same boundary
-// lib/resolv.fern draws for hosts.
-//
-// The rules that are not obvious and are all observable:
-//
-//   - The FIRST matching line wins, and a malformed line is skipped
-//     rather than fatal — a line with fewer than four colon-separated
-//     fields, or a uid field that is not a plain decimal, is simply not
-//     an entry. That is what the files backend does, and it is why a
-//     truncated passwd file degrades to "no such user" instead of an
-//     error.
-//   - A number that names no entry is NOT an entry. GNU prints the
-//     number instead of a name in the composite `id` line, and says
-//     `cannot find name for user ID N` where a name is what was asked
-//     for; both are the caller's decision, so the lookups here answer
-//     Option and never invent a name.
-//   - `group_list` is getgrouplist(3): the primary gid FIRST, then every
-//     /etc/group line naming the user as a member, in FILE order, with
-//     duplicates removed keeping the first. The order is visible in
-//     `id -G` and in `groups`.
-//
-// On Darwin the files are not the database: regular accounts and groups
-// live in Directory Services, and even root differs there (its shell is
-// /bin/bash, where /etc/passwd says /bin/sh). There every lookup below asks
-// libSystem first through `__account_entry` and reads the files only when
-// it has no answer (#9815); everywhere else the files are the database.
-//
-// The files are read as BYTES. A GECOS field in some 8-bit encoding is
-// legal and common, and `read_file` rejects it as invalid UTF-8, which
-// would turn a real user into "no such user".
 import "std/string";
 import "std/array";
 
-// One /etc/passwd entry. The password field is the only one nothing
-// here reads: it is an `x` on every system with a shadow file, and the
-// hash on one without, and neither is any of these utilities' business.
-//
-// `gecos` is the field finger calls the real name, and it is a
-// comma-separated list whose first element is the name (`full_name`
-// below); `dir` is where `pinky -l` looks for the project and plan
-// files. A line with fewer fields than these leaves the tail empty
-// rather than failing to be an entry.
 pub struct User { name: string, uid: i64, gid: i64, gecos: string, dir: string, shell: string }
 
-// One /etc/group entry: the gid and the name. `members` is not carried —
-// the only consumer walks the file itself (see `group_list`).
 pub struct Group { gid: i64, name: string }
 
-// Whole-file read that answers "" for a file that is missing or
-// unreadable, which is how a lookup with no database behaves: nothing
-// matches. Bytes, not text — see the header.
 function slurp(path: string): string {
   match (read_file_bytes(path)) {
     Ok(bs) => {
@@ -75,9 +24,6 @@ pub function group_path(): string {
   return "/etc/group";
 }
 
-// A field's value as a non-negative decimal, or None. The files backend
-// accepts digits and nothing else here — no sign, no blanks, no empty
-// field — and a line whose id field is anything else is not an entry.
 pub function parse_id(s: string): Option[i64] {
   if (s.len() == 0) {
     return None;
@@ -98,8 +44,6 @@ pub function parse_id(s: string): Option[i64] {
   return Some(v);
 }
 
-// One /etc/passwd line as a User, or None when it is not an entry:
-// a comment, a blank line, too few fields, or a non-decimal id.
 function passwd_entry(line: string): Option[User] {
   if (line.len() == 0) {
     return None;
@@ -125,8 +69,6 @@ function passwd_entry(line: string): Option[User] {
   }
 }
 
-// A field that may not be there: a truncated line is still an entry,
-// with nothing where the missing fields would be.
 function field(f: string[], i: i32): string {
   if (i < f.len()) {
     return f[i];
@@ -134,10 +76,6 @@ function field(f: string[], i: i32): string {
   return "";
 }
 
-// `(u: User) full_name()` — the gecos field as finger reads it: up to
-// the first comma, with `&` standing for the login name with its first
-// letter capitalised. The convention is older than /etc/passwd's other
-// uses of the field and it is what `pinky` prints as the real name.
 pub function (u: User) full_name(): string {
   let out: string = "";
   let i: i32 = 0;
@@ -164,7 +102,6 @@ function capitalised(name: string): string {
   return first.to_ascii_upper() + slice_unchecked(name, 1, name.len());
 }
 
-// One /etc/group line as a Group plus its member list, or None.
 function group_entry(line: string): Option[(Group, string)] {
   if (line.len() == 0) {
     return None;
@@ -187,16 +124,10 @@ function group_entry(line: string): Option[(Group, string)] {
   }
 }
 
-// The first /etc/passwd entry with this name.
 pub function user_by_name(name: string): Option[User] {
   return user_by_name_in(slurp(passwd_path()), name);
 }
 
-// The lookups over a passwd / group file's TEXT rather than its path.
-// The database is a file the tests cannot write, so the parse is
-// reachable on its own: `tests/stdlib/coreutils_pwdb_test.fern` drives
-// these with fixtures for the rules the machine happens not to show —
-// a malformed line, a duplicate name, a gid no group entry claims.
 pub function user_by_name_in(text: string, name: string): Option[User] {
   match (account_user_named(name)) {
     Some(u) => {
@@ -220,9 +151,6 @@ pub function user_by_name_in(text: string, name: string): Option[User] {
   return None;
 }
 
-// The first /etc/group entry with this name. The inverse of group_name,
-// and the direction `chgrp GROUP` and `chown :GROUP` need: a name on the
-// command line has to become the gid the kernel is handed.
 pub function group_by_name(name: string): Option[Group] {
   return group_by_name_in(slurp(group_path()), name);
 }
@@ -250,7 +178,6 @@ pub function group_by_name_in(text: string, name: string): Option[Group] {
   return None;
 }
 
-// The first /etc/passwd entry with this uid.
 pub function user_by_uid(uid: i64): Option[User] {
   return user_by_uid_in(slurp(passwd_path()), uid);
 }
@@ -278,7 +205,6 @@ pub function user_by_uid_in(text: string, uid: i64): Option[User] {
   return None;
 }
 
-// The user name for `uid`.
 pub function user_name(uid: i64): Option[string] {
   return user_name_in(slurp(passwd_path()), uid);
 }
@@ -294,10 +220,6 @@ pub function user_name_in(text: string, uid: i64): Option[string] {
   }
 }
 
-// The two databases as TEXT, for a caller that looks up more than once. Every
-// lookup below that takes a path re-reads the whole file, which is right for a
-// utility asking once and quadratic for one asking per entry — `chown -Rv`
-// over a tree names an owner and a group on every line.
 pub function passwd_text(): string {
   return slurp(passwd_path());
 }
@@ -306,22 +228,16 @@ pub function group_text(): string {
   return slurp(group_path());
 }
 
-// The first /etc/group entry with this gid, as a name, over already-read text.
 pub function group_name_in(text: string, gid: i64): Option[string] {
   let names: Option[string][] = group_names_in(text, [gid]);
   return names[0];
 }
 
-// The first /etc/group entry with this gid, as a name.
 pub function group_name(gid: i64): Option[string] {
   let names: Option[string][] = group_names([gid]);
   return names[0];
 }
 
-// Every gid's name, resolved in ONE pass over /etc/group. `id` and
-// `groups` name a whole list at once, and a lookup per gid would re-read
-// the file per element — quadratic in the group count on the one path
-// these utilities spend their time in.
 pub function group_names(gids: i64[]): Option[string][] {
   return group_names_in(slurp(group_path()), gids);
 }
@@ -354,8 +270,6 @@ pub function group_names_in(text: string, gids: i64[]): Option[string][] {
         let j: i32 = 0;
         while (j < gids.len()) {
           if (gids[j] == e.0.gid) {
-            // The FIRST line with a gid wins, so a later duplicate
-            // never overwrites what an earlier one named.
             match (out[j]) {
               Some(_) => {},
               None => {
@@ -373,7 +287,6 @@ pub function group_names_in(text: string, gids: i64[]): Option[string][] {
   return out;
 }
 
-// Whether `name` appears in a comma-separated member list.
 function has_member(members: string, name: string): boolean {
   if (members.len() == 0) {
     return false;
@@ -403,10 +316,6 @@ function has_member(members: string, name: string): boolean {
   return false;
 }
 
-// getgrouplist(name, gid): the primary gid first, then every /etc/group
-// line naming `name` as a member, in file order, deduped keeping the
-// first occurrence. This is what `id -G USER` and `groups USER` print,
-// and the order is part of the output.
 pub function group_list(name: string, gid: i64): i64[] {
   return group_list_in(slurp(group_path()), name, gid);
 }
@@ -446,14 +355,6 @@ pub function contains_gid(gids: i64[], gid: i64): boolean {
   return false;
 }
 
-// The group set of the CURRENT process, as gnulib's mgetgroups builds
-// it: the effective gid prepended to getgroups(2)'s answer, then
-// duplicates removed keeping the first.
-//
-// The prepend is not conditional on the gid being absent — it goes to
-// the FRONT and the later copy is what the dedupe drops, which is why
-// a process whose egid is 27 and whose supplementary set is [4, 27]
-// reports `27 4` rather than `4 27`.
 pub function process_groups(): i64[] {
   let out: i64[] = [getegid() as i64];
   let gs: i64[] = getgroups();
@@ -467,16 +368,6 @@ pub function process_groups(): i64[] {
   return out;
 }
 
-// ---- names, remembered ------------------------------------------------------
-// Every lookup above that takes a path re-reads its file, which is right for
-// a utility asking once and quadratic for one asking per entry: `ls -l` and
-// `stat` over four thousand files name an owner and a group on every one.
-// `Names` reads each database once, on construction and only when a caller
-// will print that column, and remembers every id it has answered: a listing
-// has one owner and one group in practice, so a lookup is a short scan and
-// the parse happens once per DISTINCT id. An id the database has no name for
-// answers its digits, which is what both utilities print for an orphaned
-// file.
 pub struct Names { want_user: boolean, want_group: boolean, passwd: string, group: string, uids: i64[], users: string[], gids: i64[], groups: string[] }
 
 pub function names_new(want_user: boolean, want_group: boolean): Names {
@@ -533,21 +424,10 @@ pub function (n: Names) group(gid: i64): (string, Names) {
   return (name, Names { ...n, gids: n.gids.append(gid), groups: n.groups.append(name) });
 }
 
-// ---- libSystem's answer -----------------------------------------------------
-// `__account_entry(kind, key)` is what libSystem answers, or 0: kind 0 is
-// getpwuid(key), 1 getpwnam(key), 2 getgrgid(key), 3 getgrnam(key), 4
-// getlogin(), 5 getgrouplist over an argument block, 6 strerror(key) and 7
-// __error(); a name goes in as a C string. The entries are Darwin's
-// `struct passwd` and `struct group`, read field by field before the next
-// call reuses them. Only Darwin is asked: everywhere else the files are the
-// whole database.
-
 function darwin(): boolean {
   return target_os() == "darwin";
 }
 
-// The login name the kernel holds for this session: getlogin(2), which is
-// where Darwin's logname answers from.
 pub function session_login(): Option[string] {
   if (!darwin()) {
     return None;
@@ -593,9 +473,6 @@ function account_group_named(name: string): Option[Group] {
   return g;
 }
 
-// getgrouplist(3): the base gid and every group Directory Services counts
-// the user in, nested ones included. Darwin answers -1 without saying how
-// many there are when the buffer is short, so it doubles until they fit.
 function account_group_list(name: string, gid: i64): Option[i64[]] {
   if (!darwin() || gid < 0 as i64 || gid > 4294967295 as i64) {
     return None;
@@ -634,9 +511,6 @@ function account_group_list(name: string, gid: i64): Option[i64[]] {
   return out;
 }
 
-// The strerror text for the errno the last failed lookup left, or "" when it
-// left none. Only Darwin's lookups set one: there GNU's `no such user` carries
-// it, and glibc's files backend reports a missing entry with errno 0.
 pub function lookup_failure_text(): string {
   if (!darwin()) {
     return "";
@@ -666,7 +540,6 @@ function account_group(p: usize): Option[Group] {
   return Some(Group { gid: id_at(p + 16 as usize), name: c_string(__load_ptr(p)) });
 }
 
-// A uid_t or gid_t: unsigned, so nobody's 4294967294 is not -2.
 function id_at(at: usize): i64 {
   let v: i64 = __load_i32(at) as i64;
   if (v < 0 as i64) {
@@ -675,7 +548,6 @@ function id_at(at: usize): i64 {
   return v;
 }
 
-// `name` as a NUL-terminated copy of `name.len() + 1` bytes.
 function cstr_key(name: string): usize {
   let p: usize = __alloc(name.len() + 1);
   let i: i32 = 0;

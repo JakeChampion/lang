@@ -6,11 +6,6 @@ import (
 	"testing"
 )
 
-// A parameter typed by a trait is an anonymous type parameter bounded by it.
-// The project names a trait three ways: the entry's own (`total`), an
-// imported module's own from inside that module (`shapes.twice`), and an
-// imported one by its qualifier (`thrice`). main answers 0 when every call
-// dispatched to the right impl, and the sum it got otherwise.
 const traitParamsShapes = `pub trait Sided { function sides(self: Self): i32; }
 pub struct Hex { r: i32 }
 impl Sided for Hex { function sides(self: Hex): i32 { return 6; } }
@@ -44,8 +39,6 @@ function main(): i32 {
 }
 `
 
-// WriteTraitParamsProject writes the two-module project into a fresh
-// directory and returns the entry file's path.
 func WriteTraitParamsProject(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()

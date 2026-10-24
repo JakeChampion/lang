@@ -6,8 +6,6 @@ import (
 	"testing"
 )
 
-// A well-formed hash still resolves, and always to a direct child of the
-// store root.
 func TestDirValidHashStaysUnderRoot(t *testing.T) {
 	t.Setenv("FERN_CACHE_DIR", t.TempDir())
 	hexpart := strings.Repeat("ab", 32)

@@ -8,9 +8,6 @@ import (
 	"testing"
 )
 
-// pubUseProject is a 3-module program: helpers defines the real symbols,
-// facade re-exports them via `pub use`, and main imports facade and calls
-// the re-exported names. add5(10) + BONUS(100) = 115.
 var pubUseProject = map[string]string{
 	"helpers.fern": `pub function add5(n: i32): i32 { return n + 5; }
 pub const BONUS: i32 = 100;`,
@@ -30,9 +27,6 @@ func writeProject(t *testing.T, files map[string]string) string {
 	return dir
 }
 
-// `pub use` re-exports resolve + run end-to-end on the interpreter: a
-// consumer calls the re-exported `facade.add5` / `facade.BONUS` and they
-// dispatch to the original helpers definitions. See docs/PRELUDE-TO-MODULES.md.
 func TestInterpPubUseReexport(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := writeProject(t, pubUseProject)
@@ -46,8 +40,6 @@ func TestInterpPubUseReexport(t *testing.T) {
 	}
 }
 
-// Same program compiled for x86-64: re-exports are a load-time rewrite, so
-// codegen sees ordinary flat calls.
 func TestX86_64PubUseReexport(t *testing.T) {
 	dir := writeProject(t, pubUseProject)
 	if _, code := runFixtureX86_64(t, filepath.Join(dir, "main.fern"), ""); code != 115 {
@@ -55,11 +47,6 @@ func TestX86_64PubUseReexport(t *testing.T) {
 	}
 }
 
-// pubUseTypeProject re-exports a struct, an enum, and a trait through a
-// facade, and the consumer uses all the type-position shapes: a struct
-// literal + annotation (facade.Point), an enum match (facade.Shape), a
-// trait impl method call (p.area()), and a `dyn facade.Trait` dispatch.
-// 42 (6*7) + 40 (Square(10)*4) + 42 (dyn) = 124. See docs/PRELUDE-TO-MODULES.md.
 var pubUseTypeProject = map[string]string{
 	"orig.fern": `pub struct Point { x: i32, y: i32 }
 pub enum Shape { Circle(i32), Square(i32) }

@@ -1,13 +1,13 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// String ENUM PAYLOAD reclamation (wasm). A non-uniform enum with a
-// string payload variant: the eligible (inline / fresh payload)
-// enum local's tag-dispatched deep-drop dec's the string payload
-// via __fern_str_dec then frees the box. The match also extracts
-// the payload into a binding that OUTLIVES the enum (out = t), so
-// the binding co-owns and the buffer survives until both release.
-// 200x churn; "hello"+"world" = 10 each. 200*10=2000.
+
+
+
+
+
+
+
+
+
+
 enum Msg { Text(string), Code(i32) }
 function mk(seed: i32): i32 {
     let m: Msg = Text("hello" + "world");

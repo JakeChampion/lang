@@ -8,10 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/printer"
 )
 
-// `()` is the unit value — the sole inhabitant of `void`, and the only way
-// to write one. It exists so a generic that has nothing interesting to
-// carry can still be constructed: `Result[void, IoError]` is what every
-// fallible operation with no result returns, and `Ok(())` builds it.
 func TestParseUnitLiteral(t *testing.T) {
 	prog, err := Parse(`function main(): i32 { let u = (); return 0; }`)
 	if err != nil {
@@ -27,8 +23,6 @@ func TestParseUnitLiteral(t *testing.T) {
 	}
 }
 
-// `()` followed by `=>` is the zero-argument function type; without the
-// arrow it is refused as a type (TestRefusedTypeSpellings).
 func TestParseEmptyParensStillFunctionTypeBeforeArrow(t *testing.T) {
 	prog, err := Parse(`function apply(f: () => i32): i32 { return f(); }
 	                    function main(): i32 { return 0; }`)
@@ -41,11 +35,6 @@ func TestParseEmptyParensStillFunctionTypeBeforeArrow(t *testing.T) {
 	}
 }
 
-// The formatter has to render the literal back — a unit value that
-// round-trips to nothing would silently delete the payload. `Format` is
-// the formatter behind `fern -fmt` and the LSP; `printer.Print` is a
-// determinism-test helper whose type printer predates generic enums and
-// renders `Result[…]` as empty, so it is not the one to assert on here.
 func TestFormatUnitLiteralRoundTrips(t *testing.T) {
 	src := `function f(): Result[void, IoError] { return Ok(()); }
 	        function main(): i32 { return 0; }`

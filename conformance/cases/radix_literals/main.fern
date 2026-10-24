@@ -1,5 +1,5 @@
-// `0o` octal and `0b` binary integer literals, suffixed and not, in both
-// letter cases, beside the hex and decimal spellings of the same values.
+
+
 import "core/int";
 import "std/i32";
 

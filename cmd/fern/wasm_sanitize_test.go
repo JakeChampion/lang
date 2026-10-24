@@ -10,23 +10,8 @@ import (
 	"testing"
 )
 
-// The wasm leak census through the CLI (#7912).
-//
-// The e2e suite exercises the preview-2 component path; this covers the
-// other one — `-emit command-module`, the WASI preview-1 shape
-// `web/wasi-shim.js` runs — whose report goes out through `fd_write`
-// rather than `wasi:cli/stderr`, and whose exit seam is the synthesised
-// `_start` calling `__fern_exit`. Both writers have to produce the same
-// line, and the seam has to produce exactly one of it.
-//
-// The flag reaches the compiler as an environment variable here because
-// that is what it is: read at emit time, changing the module the backend
-// produces.
-
 var cliCensusRe = regexp.MustCompile(`leakcheck: allocs=(-?\d+) frees=(-?\d+) live_bytes=(-?\d+)( from=exit)?\n`)
 
-// buildCommandModule compiles src to a preview-1 command module with the
-// given FERN_* settings on the compiler process, and returns the path.
 func buildCommandModule(t *testing.T, src string, env ...string) string {
 	t.Helper()
 	if _, err := exec.LookPath("wasmtime"); err != nil {
@@ -53,9 +38,6 @@ func runCommandModule(t *testing.T, path string) (stdout, stderr string, code in
 	return so.String(), se.String(), run.ProcessState.ExitCode()
 }
 
-// The catching leg: two never-freed 64-byte blocks read as 128 live
-// bytes, on stderr, without disturbing stdout or the exit code that a
-// command module exists to carry.
 func TestCommandModuleLeakCensusReportsLeak(t *testing.T) {
 	path := buildCommandModule(t, "function main(): i32 {\n"+
 		"  let a: usize = __alloc(64);\n"+
@@ -82,8 +64,6 @@ func TestCommandModuleLeakCensusReportsLeak(t *testing.T) {
 	}
 }
 
-// The clean leg: paired allocs and frees balance, and — flag off — the
-// same program says nothing at all.
 func TestCommandModuleLeakCensusBalancesAndIsOptIn(t *testing.T) {
 	const src = "function main(): i32 {\n" +
 		"  let i: i32 = 0;\n" +
@@ -111,10 +91,6 @@ func TestCommandModuleLeakCensusBalancesAndIsOptIn(t *testing.T) {
 	}
 }
 
-// -sanitize on a wasm target must describe what that build actually
-// carries. Claiming the whole mode would make a silent run read as "no
-// findings" when two of the three checks were never emitted; claiming
-// nothing at all would hide the census that IS there.
 func TestSanitizeWarnsWasmCarriesTheCensusOnly(t *testing.T) {
 	bin := buildFernForStdoutTest(t)
 	entry := writeFern(t, "function main(): i32 { return 0; }\n")

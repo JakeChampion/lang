@@ -56,12 +56,10 @@ function writes(s: string): void {
 }
 
 function current_memory(s: string): void {
-  // The slot is now next, so loading it into AX loses the returned block.
   mutation(s, "popq (%rdi)", "popq (%rdi)\nmovq (%rdi), %rax", false);
   let pop = "pushq %rcx\npushq %rdx\nmovq (%rax), %rdx\nmovq %rdx, (%rdi)\nmovq $0, %rcx\nmovq (%rdi), %rcx\ncmpq %rdx, %rcx\njne .Lbadnext\npopq %rdx\npopq %rcx";
   mutation(s, "pushq (%rax)\npopq (%rdi)", pop, true);
   mutation(s, "pushq (%rax)\npopq (%rdi)", change(pop, "movq (%rdi), %rcx", "movq %rax, %rcx"), false);
-  // Same current heap pointer can reconstruct B without trusting old contents.
   mutation(s, "movq %rdi, __fern_heap_ptr(%rip)", "movq %rdi, __fern_heap_ptr(%rip)\nmovq __fern_heap_ptr(%rip), %rax\nsubq $40, %rax", false);
   let prefix = "pushq %rcx\nmovq %rdi, %rcx\n";
   let suffix = "\nmovq __fern_heap_ptr(%rip), %rax\nsubq %rcx, %rax\npopq %rcx";
@@ -71,8 +69,6 @@ function current_memory(s: string): void {
 }
 
 function stack_order(s: string): void {
-  // The second PUSH must read S-8 before writing S-16. POP (%rsp) uses
-  // S-8 after increment, preserving the next head for the final POP.
   mutation(s, "pushq (%rax)\npopq (%rdi)", "pushq (%rax)\npushq (%rsp)\npopq (%rsp)\npopq (%rdi)", true);
   mutation(s, "pushq (%rax)\npopq (%rdi)", "pushq (%rax)\npushq -8(%rsp)\npopq (%rsp)\npopq (%rdi)", false);
   mutation(s, "pushq (%rax)\npopq (%rdi)", "pushq (%rax)\npushq %rcx\npopq (%rsp)\npopq (%rdi)", false);

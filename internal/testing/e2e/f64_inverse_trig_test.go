@@ -1,18 +1,5 @@
 package e2e
 
-// The accuracy gate for std/f64's inverse trig, expm1 and log1p (#5541):
-// pure-Fern ports of fdlibm's e_asin, e_acos, s_atan, e_atan2, s_expm1 and
-// s_log1p, so every backend runs the same source and each must land within
-// maxULP of the reference.
-//
-// The reference is glibc's libm, recorded here as bit patterns, rather than
-// Go's math package: Go computes Asin from `sqrt(1 - x*x)` and Acos as
-// `π/2 - Asin`, which near ±1 is hundreds of ulp from the true value — the
-// error a real kernel exists to avoid. The inputs reach every branch of each
-// kernel (the |x| thresholds fdlibm switches on), the specials (±0, ±1, out
-// of the domain, ±Inf, NaN, expm1's overflow edge, log1p(-1)), a spread of
-// random arguments, and one call through each f32 wrapper.
-
 import (
 	"fmt"
 	"math"
@@ -615,8 +602,6 @@ var f64InverseTrigTable = []struct {
 	{"(0.0 - 79.79073820865898).atan2((0.0 - 88.02131941178466))", 0xc0033dda5bcc3be4},
 	{"(59.404302368794816).atan2((0.0 - 64.46437436032677))", 0x40032d19ea381341},
 	{"(11.85902832207897).atan2((0.0 - 10.515024499795686))", 0x40025e9c71ef356b},
-	// The f32 wrappers, widened back so the same check reads them: glibc's
-	// f64 answer for the f32 argument, rounded to f32.
 	{"(0.5 as f32).asin() as f64", 0x3fe0c15240000000},
 	{"(-0.25 as f32).acos() as f64", 0x3ffd2cf5c0000000},
 	{"(3.0 as f32).atan() as f64", 0x3ff3fc1760000000},

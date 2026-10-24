@@ -203,8 +203,6 @@ func TestSelfHostCPUProfileCapacity(t *testing.T) {
 				_, qemu = arm64Tooling(t)
 				getpid, gettid, tgkill = "172", "178", "131"
 			}
-			// Deliver synchronously to this thread: the test reaches capacity
-			// without depending on the machine's speed or waiting 82 seconds.
 			src := `function main(): i32 {
   let pid: i64 = __syscall3(` + getpid + `, 0, 0, 0);
   let tid: i64 = __syscall3(` + gettid + `, 0, 0, 0);
@@ -254,8 +252,6 @@ func TestSelfHostCPUProfileSamplerHasNoCalls(t *testing.T) {
 		if end := strings.Index(body, "\n__fn_"); end >= 0 {
 			body = body[:end]
 		}
-		// The entire capture routine must be raw loads/stores/arithmetic:
-		// no allocator, I/O, locks supplied by libraries, or hidden helpers.
 		for _, line := range strings.Split(body, "\n") {
 			fields := strings.Fields(line)
 			if len(fields) == 0 {
@@ -297,8 +293,6 @@ function main(): i32 {
 			cmd = runArm64Bin(qemu, bin)
 		}
 		_, stderr := runCPUProfile(t, cmd, 7)
-		// A first-full buffer contains no late samples. A reservoir should
-		// keep roughly equal populations from the two equal event streams.
 		for _, name := range []string{"__fn_early", "__fn_late"} {
 			if n := strings.Count(stderr, name); n < 2500 || n > 5700 {
 				t.Errorf("%s: %s has %d/8192 retained samples", target, name, n)
@@ -307,9 +301,6 @@ function main(): i32 {
 	}
 }
 
-// TestSelfHostCPUProfileArm64UsesLSE: the arm64 profiler's counters and
-// capture lock use the LSE add and compare-and-swap of the ARMv8.2-A
-// baseline, not ARMv8.0 exclusive retry loops.
 func TestSelfHostCPUProfileArm64UsesLSE(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, kind := range []string{"cpu", "alloc"} {
@@ -327,8 +318,6 @@ func TestSelfHostCPUProfileArm64UsesLSE(t *testing.T) {
 		if !strings.Contains(text, "casal ") {
 			t.Errorf("%s profile: no casal in the runtime", kind)
 		}
-		// GNU as at its default -march takes the text only with the LSE
-		// extension enabled ahead of the first such instruction.
 		if gcc := e2eharness.Arm64Assembler(t); gcc != "" {
 			buildBinArm64(t, gcc, t.TempDir(), "prof-"+kind, text)
 		}

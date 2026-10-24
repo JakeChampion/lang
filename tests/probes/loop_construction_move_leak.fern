@@ -1,30 +1,3 @@
-// Probe for the move-on-construction loop-body leak (#5879), now FIXED.
-//
-// Build with FERN_LEAKCHECK=1 and run; the binary prints
-//   leakcheck: allocs=<N> frees=<M> live_bytes=<K>
-// at the exit seam. All three shapes are balanced — the whole program reports
-// allocs=14 frees=14 live_bytes=0.
-//
-// Before the fix, in_loop() reported allocs=6 frees=4 live_bytes=64 on its
-// own: one array leaked per iteration, linear in the iteration count. The only
-// difference from fresh() is whether the array reaches the tuple as a bare
-// IDENT or as a fresh literal. A bare ident at its last use is MOVED into the
-// construction — the inc is skipped and __drop_tuple releases the element —
-// but markConstructionMoves walked only the function's TOP-LEVEL statements,
-// so inside a loop body the move never fired: the alias-inc was emitted with
-// nothing releasing the source's own reference per iteration.
-//
-// toplevel() is the same construction outside a loop. It was always balanced,
-// which is why the shape looked correct in every existing non-loop test; the
-// leak needs repetition to show, and the churn tests that do repeat build
-// their container in a called function, which is reclaimed at that function's
-// exit.
-//
-// Kept as a probe rather than deleted: these three shapes are the minimal
-// discriminator between the moved and inc'd lowerings, and they are the
-// quickest way to re-check the property by hand. The regression gate is
-// TestX86_64LeakCheckLoopConstructionMove in internal/testing/e2e/leakcheck_test.go.
-
 function in_loop(): i32 {
   let s: i32 = 0;
   let k: i32 = 0;

@@ -16,8 +16,6 @@ func TestSelfHostShredBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The complete utility requires fsmode (chmod), unavailable on WASI.
-	// Its byte-pattern kernel is covered on WASI by the separate test below.
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {
 			var bin string

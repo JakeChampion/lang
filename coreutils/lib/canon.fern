@@ -1,49 +1,8 @@
-// coreutils/lib/canon.fern — the symbolic-link resolution walk
-// `readlink -f/-e/-m` and `realpath` share.
-//
-// One loop over the components of a name, resolving each one against a
-// path built up so far. What separates the modes is only what happens
-// to a component that does NOT resolve:
-//
-//   EXISTING       every component must exist        readlink -e, realpath -e
-//   ALL_BUT_LAST   every component but the last      readlink -f, realpath
-//   MISSING        nothing has to exist              readlink -m, realpath -m
-//
-// and `logical`, which is realpath's `-s`: the links are not read at
-// all, so `..` is applied to the name as written rather than to what
-// the name resolves to.
-//
-// The rules below are the reference binary's, measured against it:
-//
-//   - The answer is absolute. A relative name starts at getcwd().
-//   - `.` is dropped and `..` pops a component off the answer, at the
-//     root too, where it is a no-op.
-//   - A component that is a symbolic link is replaced by its target,
-//     which then goes back through the same loop; an absolute target
-//     restarts the answer at the root.
-//   - A SUFFIX decides how strict the check on a component is. A
-//     component followed by `/` at the end of the name, or by a `.` or
-//     `..` component, has to be a searchable directory whatever mode
-//     is in force — a `..` pops lexically and would otherwise never
-//     ask whether the thing it popped was real. Every other component
-//     is checked by the mode.
-//   - MISSING never refuses anything: a component that is not there,
-//     is not a directory, or sits in a cycle is kept verbatim and the
-//     walk carries on.
-//
-// The loop detection is not a depth limit, and a 5000-link chain
-// resolves. The first twenty links are followed without a thought;
-// from the twenty-first each one stats the directory the link sits in
-// and asks whether this walk has stood at that directory with this
-// remaining path before. Standing there twice is a cycle — and the
-// same link CAN legitimately be met more than once, which is why a
-// count would be wrong.
 import "std/string";
 import "std/array";
 import "std/errno";
 import "./gnu";
 
-// The three modes, in the order they are strict.
 pub function existing(): i32 {
   return 0;
 }
@@ -56,18 +15,12 @@ pub function missing(): i32 {
   return 2;
 }
 
-// How many links are followed before the walk starts looking for a
-// cycle. Twenty is the reference implementation's.
 function unchecked_links(): i32 {
   return 20;
 }
 
-// One (directory, remaining path) pair the walk has already stood at.
 struct Seen { key: string, dev: i64, ino: i64 }
 
-// `canonicalize(name, mode, logical)` — the absolute resolved form of
-// `name`, or the error that stopped the walk. An empty name is ENOENT
-// before anything is looked at, which is what the reference does.
 pub function canonicalize(name: string, mode: i32, logical: boolean): Result[string, IoError] {
   if (name.len() == 0) {
     return Err(NotFound(""));
@@ -96,7 +49,6 @@ pub function canonicalize(name: string, mode: i32, logical: boolean): Result[str
       pos = pos + 1;
     }
     if (pos == start) {
-      // Nothing but trailing slashes left.
       break;
     }
     let end: i32 = pos;
@@ -139,9 +91,6 @@ pub function canonicalize(name: string, mode: i32, logical: boolean): Result[str
             return Err(e);
           }
         }
-        // The key is the whole of what is left to resolve, not the
-        // component alone: the same link reached with a different
-        // remainder is a different position in the walk.
         let key: string = slice_unchecked(path, start, path.len()) + "";
         if (stood_here(seen, key, here.dev, here.ino)) {
           if (mode == missing()) {
@@ -161,7 +110,6 @@ pub function canonicalize(name: string, mode: i32, logical: boolean): Result[str
       continue;
     }
 
-    // The component is not a symbolic link, or could not be read.
     let rest: string = slice_unchecked(path, end, path.len()) + "";
     let ok: boolean = mode == missing();
     if (!ok) {
@@ -175,13 +123,8 @@ pub function canonicalize(name: string, mode: i32, logical: boolean): Result[str
           }
         }
       } else if (!logical) {
-        // EINVAL is `this is not a symbolic link`, which is the
-        // ordinary case and not a fault.
         ok = errno.of(err) == errno.EINVAL;
       } else if (rest.len() > 0) {
-        // Nothing was read, so nothing is known about a component
-        // with more of the name after it; the last one is asked
-        // about directly.
         ok = true;
       } else {
         match (access(rname, 0)) {
@@ -204,9 +147,6 @@ pub function canonicalize(name: string, mode: i32, logical: boolean): Result[str
   return Ok(rname);
 }
 
-// What makes `access` ask whether a name is a searchable directory: `/`,
-// except on Darwin, whose kernel answers `link-to-a-file/` as the file. gnulib
-// appends `/./` there for that reason.
 function dir_suffix(): string {
   if (target_os() == "darwin") {
     return "/./";
@@ -214,20 +154,10 @@ function dir_suffix(): string {
   return "/";
 }
 
-// The strerror text for ELOOP, which the walk decides for itself rather
-// than hearing from the kernel.
 function eloop_text(): string {
   return "Too many levels of symbolic links";
 }
 
-// `relative(p, from)` — `p` written relative to `from`, both absolute
-// and already resolved: one `..` per component of `from` past their
-// common prefix, then what is left of `p`. Nothing left on either side
-// is `.`.
-//
-// Shared by `realpath --relative-to` and `ln -r`, which compute the
-// same thing: the text a name has to have to be read from inside
-// another directory.
 pub function relative(p: string, from: string): string {
   let a: string[] = components(p);
   let b: string[] = components(from);
@@ -258,7 +188,6 @@ pub function relative(p: string, from: string): string {
   return out;
 }
 
-// The components of an absolute resolved path; the root has none.
 function components(p: string): string[] {
   let out: string[] = [];
   let i: i32 = 1;
@@ -273,8 +202,6 @@ function components(p: string): string[] {
   return out;
 }
 
-// `p` with its last component removed. The root has no parent and
-// stays put, which is what makes `/..` the root.
 function parent_of(p: string): string {
   let i: i32 = p.len();
   while (i > 0 && p[i - 1] as i32 != 47) {
@@ -286,7 +213,6 @@ function parent_of(p: string): string {
   return slice_unchecked(p, 0, i - 1) + "";
 }
 
-// `p` with `comp` appended, with exactly one slash between them.
 function child_of(p: string, comp: string): string {
   if (p.len() == 1) {
     return "/" + comp;
@@ -294,12 +220,6 @@ function child_of(p: string, comp: string): string {
   return p + "/" + comp;
 }
 
-// Whether `rest` — what follows a component, starting at its slash —
-// makes that component have to be a searchable directory. A trailing
-// slash does, and so does a `.` or `..` component anywhere in it: `..`
-// pops without looking, so this is the only place the thing it pops
-// is checked. An ordinary component after it does not, because that
-// one gets a check of its own.
 function suffix_needs_dir(rest: string): boolean {
   let i: i32 = 0;
   while (i < rest.len() && rest[i] as i32 == 47) {
@@ -324,8 +244,6 @@ function suffix_needs_dir(rest: string): boolean {
   return false;
 }
 
-// Whether `s` is nothing but slashes, which is how a name's LAST
-// component is told from one with more of the name after it.
 function all_slashes(s: string): boolean {
   let i: i32 = 0;
   while (i < s.len()) {
@@ -337,9 +255,6 @@ function all_slashes(s: string): boolean {
   return true;
 }
 
-// Whether this walk has already stood at `dev`/`ino` with `key` left
-// to resolve. The list is only ever reached past the twentieth link,
-// so it holds nothing at all for a name that resolves.
 function stood_here(seen: Seen[], key: string, dev: i64, ino: i64): boolean {
   let i: i32 = 0;
   while (i < seen.len()) {

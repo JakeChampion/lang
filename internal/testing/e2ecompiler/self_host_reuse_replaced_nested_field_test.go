@@ -8,49 +8,21 @@ import (
 	"testing"
 )
 
-// #8568: when the in-place reuse path repurposes an `own` parameter's box
-// (__fern_rc_is_unique), the OLD value of a replaced nested-struct field is
-// released deeply, not box-only, so the inner's fields are not stranded.
-//
-// The deep release is rc==1-gated per field, and a child carried into the new
-// inner from the old one is retained by the construction (the struct literal's
-// alias-inc), so it sits at rc 2 when the walk decs it and survives at 1 for
-// the new owner. The own-shared-child row below is that case built
-// deliberately. The release runs BEFORE the stores, so the walk reads the old
-// inner while it is still intact.
-//
-// THE EXIT CODE DOES NOT MOVE, as with the rest of this family: the leakcheck
-// leg is the gate, and the register/wasm legs are the miscompile guard on the
-// deep walk.
 var selfHostReuseReplacedNestedCases = []struct {
 	name string
 	src  string
 }{
-	// The reported shape: an `own` base superseding its nested-struct field,
-	// then handing itself back.
 	{"own-base-supersede-nested", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    a = Asm { ...a, cfi: CfiState { bad: [v], open: false } };\n    return a;\n}\nfunction main(): i32 {\n    let a: Asm = Asm { cfi: CfiState { bad: [], open: false }, n: 0 };\n    a = step(a, 1);\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
 
-	// The hazard `shallow`'s comment named, built on purpose: the NEW inner
-	// carries a child of the OLD inner. The deep walk runs over it now, and the
-	// construction's retain is what keeps that from being an over-release — so
-	// this row fails loudly (exit 99, not a leak) if the retain ever stops.
 	{"own-base-new-inner-shares-child", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    let shared: i32[] = a.cfi.bad;\n    a = Asm { ...a, cfi: CfiState { bad: shared, open: true } };\n    return a;\n}\nfunction main(): i32 {\n    let a: Asm = Asm { cfi: CfiState { bad: [7], open: false }, n: 0 };\n    a = step(a, 1);\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
 
-	// The BORROWED sibling of the shared-child row. It already took the deep
-	// arm, so it is the control that says the two base modes now agree rather
-	// than that the own mode merely stopped leaking.
 	{"borrowed-base-new-inner-shares-child", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    let shared: i32[] = a.cfi.bad;\n    return Asm { ...a, cfi: CfiState { bad: shared, open: true } };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { cfi: CfiState { bad: [7], open: false }, n: 0 };\n    a = step(a, 1);\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
 
-	// Control: an ARRAY field in the same own-base shape. The buffer is the box,
-	// so it never wanted the deep arm and must not have gained one.
 	{"own-base-array-field-control", "struct Asm { bad: i32[], n: i32 }\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    a = Asm { ...a, bad: [v] };\n    return a;\n}\nfunction main(): i32 {\n    let a: Asm = Asm { bad: [], n: 0 };\n    a = step(a, 1);\n    return a.bad.len() + __rc_underflow_count();\n}"},
 
-	// Control: the same supersede on a LOCAL, which never took the shallow arm.
 	{"local-base-control", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\nfunction main(): i32 {\n    let a: Asm = Asm { cfi: CfiState { bad: [], open: false }, n: 0 };\n    a = Asm { ...a, cfi: CfiState { bad: [1], open: false } };\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
 }
 
-// TestSelfHostReuseReplacedNestedLeakCheck is the gate: clean under
-// FERN_LEAKCHECK on BOTH compilers, native as the oracle.
 func TestSelfHostReuseReplacedNestedLeakCheck(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	cli := buildLangBinForInterp(t)
@@ -76,9 +48,6 @@ func TestSelfHostReuseReplacedNestedLeakCheck(t *testing.T) {
 	}
 }
 
-// TestSelfHostReuseReplacedNestedX86_64 — the answers against the interpreter
-// oracle. An over-release from the added walk lands here as exit 99, which is
-// what makes the shared-child rows worth running on this leg as well.
 func TestSelfHostReuseReplacedNestedX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
@@ -108,7 +77,6 @@ func TestSelfHostReuseReplacedNestedX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostReuseReplacedNestedArm64 — the arm64 emit of the same lowering.
 func TestSelfHostReuseReplacedNestedArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -134,8 +102,6 @@ func TestSelfHostReuseReplacedNestedArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostReuseReplacedNestedWasmIR — the wasm leg emits its own reuse
-// sequence from the same IR, so the added drop needs proving there too.
 func TestSelfHostReuseReplacedNestedWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping the wasm leg")

@@ -1,10 +1,5 @@
 package e2e
 
-// Differential coverage for std/string `count_matches` — the number of
-// non-overlapping occurrences of a substring (`"aaaa".count_matches("aa") ==
-// 2`), the allocation-free tally matching `find_all().len()`. Returns 42 iff
-// every check holds across interp / x86-64 / wasm / arm64.
-
 import "testing"
 
 const stringCountMatchesProg = `

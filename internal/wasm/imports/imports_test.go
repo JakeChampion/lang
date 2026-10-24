@@ -27,12 +27,10 @@ func TestImportDescGlobal(t *testing.T) {
 }
 
 func TestImportDescMemory(t *testing.T) {
-	// No max.
 	got := imports.ImportDescMemory(1, -1)
 	if !bytes.Equal(got, []byte{0x00, 0x01}) {
 		t.Errorf("no-max: got % x", got)
 	}
-	// With max.
 	got = imports.ImportDescMemory(1, 16)
 	if !bytes.Equal(got, []byte{0x01, 0x01, 0x10}) {
 		t.Errorf("with-max: got % x", got)
@@ -47,17 +45,16 @@ func TestImportDescTable(t *testing.T) {
 }
 
 func TestEncodeImportSection(t *testing.T) {
-	// One import: env.foo, kind func, typeidx 0.
 	got := imports.EncodeImportSection(nil,
 		[]string{"env"}, []string{"foo"},
 		[]byte{imports.ImportFunc},
 		[][]byte{imports.ImportDescFunc(0)})
 	want := []byte{
-		0x02, 0x0b, // id 2 (import), size 11
-		0x01,                // count
-		0x03, 'e', 'n', 'v', // module
-		0x03, 'f', 'o', 'o', // name
-		0x00, 0x00, // kind func, typeidx 0
+		0x02, 0x0b,
+		0x01,
+		0x03, 'e', 'n', 'v',
+		0x03, 'f', 'o', 'o',
+		0x00, 0x00,
 	}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("got % x, want % x", got, want)
@@ -65,15 +62,14 @@ func TestEncodeImportSection(t *testing.T) {
 }
 
 func TestEncodeGlobalSection(t *testing.T) {
-	// One global: const i32 = 7. init_expr = i32.const 7 ; end.
 	initExpr := []byte{0x41, 0x07, 0x0b}
 	got := imports.EncodeGlobalSection(nil,
 		[]byte{encode.ValtypeI32}, []byte{imports.MutConst}, [][]byte{initExpr})
 	want := []byte{
-		0x06, 0x06, // id 6 (global), size 6
-		0x01,       // count
-		0x7f, 0x00, // i32, mut const
-		0x41, 0x07, 0x0b, // i32.const 7; end
+		0x06, 0x06,
+		0x01,
+		0x7f, 0x00,
+		0x41, 0x07, 0x0b,
 	}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("got % x, want % x", got, want)

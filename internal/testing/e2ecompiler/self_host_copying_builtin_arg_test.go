@@ -4,28 +4,6 @@ import (
 	"testing"
 )
 
-// --- A string local passed to a copying builtin keeps its reclaim ----------
-//
-// A builtin that copies a string argument rather than retaining it (#7867,
-// #8394) borrows it, so `print(out)` or `w.write(out)` leaves `out` owned and
-// its scope-exit release still frees it. Counted as an escape, the local lost
-// its release and every round leaked its accumulator.
-//
-// The last case declares a user receiver method called `write` that retains
-// its argument into a field, and checks the program still reads the value
-// back: given the builtin's borrow, `out` would be released under the field
-// (exit 139, or 250 when the bytes had already been recycled).
-//
-// `__mismatch` is the one row with the string in TWO argument positions, so it
-// pins the per-POSITION half of the rule: a table keyed by name alone would
-// free `out` under position 0 and lose it under position 2.
-//
-// Every row is balanced: print writes the payload and a "\n" literal without
-// joining them, and a match over `w.write(...)` releases the Result[void, IoError]
-// box it consumed (#8410), so each case allocates only the accumulator per
-// round, two blocks once its later appends grow into headroom (#8770), and
-// frees all of them.
-
 const copyingBuiltinProlog = `function round(n: i32): i32 {
     let out: string = "";
     let i: i32 = 0;
@@ -44,13 +22,9 @@ function main(): i32 {
 `
 
 type copyingBuiltinCase struct {
-	name  string
-	decls string
-	use   string
-	// pinCounts asks for the leak counts as well as the exit code: every
-	// block the round allocates must be freed, the builtin's own included
-	// (#8410). The retaining user method is checked by its exit code only,
-	// since its Sink's own drop may legitimately free the string once.
+	name      string
+	decls     string
+	use       string
 	pinCounts bool
 }
 
@@ -90,7 +64,6 @@ func TestSelfHostCopyingBuiltinArgX86_64(t *testing.T) {
 			asm := hevCompile(t, runner, driverBin, src, []string{"FERN_LEAKCHECK=1"})
 			progBin := buildBin(t, gcc, dir, "copying_"+tc.name, asm)
 			stderr, exit := hevRun(t, runner, progBin)
-			// 50 rounds of 24 + n: 2425 % 7.
 			if exit != 3 {
 				t.Fatalf("%s exited %d, want 3 (99 = rc underflow; 139 = it read freed memory; 250 = the retained string changed)", tc.name, exit)
 			}
@@ -108,7 +81,6 @@ func TestSelfHostCopyingBuiltinArgX86_64(t *testing.T) {
 			if allocs == 0 {
 				t.Fatalf("%s allocated nothing — the probe is not exercising the path", tc.name)
 			}
-			// 50 rounds, two blocks each: every accumulator block is freed.
 			if frees < 100 {
 				t.Errorf("%s: %s — the accumulator's blocks were not freed; the credit did not reach `out`", tc.name, summary)
 			}

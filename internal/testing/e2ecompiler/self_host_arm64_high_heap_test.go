@@ -6,22 +6,6 @@ import (
 	"testing"
 )
 
-// The self-host half of the arm64 high-heap gate (internal/testing/e2e/arm64_high_heap_test.go).
-//
-// Linux honours the arena's mmap address hint, so every self-host arm64 lane
-// runs with heap pointers below 4 GiB; XNU ignores the hint and maps the arena
-// above the 4 GiB __PAGEZERO, so on arm64-darwin every heap pointer has a
-// non-zero high half from the first allocation. A pointer the emitted code
-// handles 32 bits wide — a `w` load of a handle, a 32-bit compare of two
-// addresses, an offset computed then sign-extended — is therefore green on
-// every Linux lane and wrong only on Apple hardware. FERN_HIGH_HEAP=1 makes
-// the self-host arm64 emitter raise the hint to 8 GiB, and qemu-aarch64
-// honours the raised hint, so the regime is reachable here.
-//
-// The shapes are the e2e gate's minus the two Map[i64, _] cases, which the
-// self-host refuses to lower (#10005: a map key wider than 4 bytes has no
-// column). Each stores heap pointers into memory and reads them back, and
-// returns 0 on success on either heap.
 var selfHostHighHeapRoundTrips = []struct {
 	name string
 	src  string
@@ -160,9 +144,6 @@ function main(): i32 {
 	},
 }
 
-// TestSelfHostArm64HighHeapPointerRoundTrip runs the shapes with the arena
-// above 4 GiB. A slot, load, store or compare that is 32 bits wide either
-// faults or returns a wrong answer here while staying green on the 256 MiB heap.
 func TestSelfHostArm64HighHeapPointerRoundTrip(t *testing.T) {
 	arm64Tooling(t)
 	cli := buildSelfHostCLI(t)
@@ -175,8 +156,6 @@ func TestSelfHostArm64HighHeapPointerRoundTrip(t *testing.T) {
 	}
 }
 
-// TestSelfHostArm64HighHeapRoundTripControl is the same set at the DEFAULT
-// hint: green here and red above means the address regime, not the program.
 func TestSelfHostArm64HighHeapRoundTripControl(t *testing.T) {
 	arm64Tooling(t)
 	cli := buildSelfHostCLI(t)
@@ -189,8 +168,6 @@ func TestSelfHostArm64HighHeapRoundTripControl(t *testing.T) {
 	}
 }
 
-// TestSelfHostArm64HighHeapProbeRaisesTheHint pins the knob itself: without
-// it the two runs above would be the same run twice and the gate vacuous.
 func TestSelfHostArm64HighHeapProbeRaisesTheHint(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	const shift = "    lsl x0, x0, #28\n"
@@ -221,7 +198,6 @@ func TestSelfHostArm64HighHeapProbeRaisesTheHint(t *testing.T) {
 			}
 		})
 	}
-	// The original probe is a static aggregate and does not need an arena.
 	t.Run("constant-array-needs-no-heap", func(t *testing.T) {
 		src := writeTempFern(t, t.TempDir(), "main.fern", `function main(): i32 { let a: i32[] = [1, 2, 3]; return a[0] - 1; }`)
 		low := read(t, src)

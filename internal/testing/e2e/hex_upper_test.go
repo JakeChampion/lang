@@ -2,11 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/hex.encode_upper across backends:
-// uppercase A-F output (vs the lowercase encode), multi-byte UTF-8
-// input, the empty string, and a round-trip through decode (which
-// accepts either case). Returns 42 iff every check holds. Each leg skips
-// itself when its toolchain is absent.
 const hexUpperProg = `
 import "std/hex" as hex;
 import "std/codec";

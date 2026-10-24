@@ -15,10 +15,6 @@ import (
 	"testing"
 )
 
-// exactMidpoint renders the midpoint of two doubles as its exact decimal
-// expansion. Every binary64 midpoint terminates in decimal, and the shortest
-// of them — 2^-1075, the tie below the smallest subnormal — needs 1075 decimal
-// places, so 1100 places is exact for all of them.
 func exactMidpoint(lo, hi float64) string {
 	m := new(big.Rat).Add(new(big.Rat).SetFloat64(lo), new(big.Rat).SetFloat64(hi))
 	m.Quo(m, big.NewRat(2, 1))
@@ -26,18 +22,10 @@ func exactMidpoint(lo, hi float64) string {
 	return strings.TrimSuffix(s, ".")
 }
 
-// parseF64Corpus builds the differential corpus: the compiler's own libm
-// constant spellings, the known-hard subnormal/overflow boundary literals,
-// exact ULP ties, shortest and 17-digit spellings of deterministic random
-// doubles, and random fixed/scientific decimals. Each entry pairs the literal
-// with the bits strconv.ParseFloat (a correctly-rounding strtod) assigns it —
-// out-of-range literals keep ParseFloat's clamped ±Inf / ±0 value, which
-// is the correct rounding for them too.
 func parseF64Corpus() (lits []string, want []int64) {
 	add := func(s string) {
 		v, err := strconv.ParseFloat(s, 64)
 		if err != nil {
-			// ErrRange still returns the correctly-clamped value.
 			if ne, ok := err.(*strconv.NumError); !ok || ne.Err != strconv.ErrRange {
 				return
 			}
@@ -60,20 +48,16 @@ func parseF64Corpus() (lits []string, want []int64) {
 	} {
 		add(s)
 	}
-	// Exact ULP ties, where round-half-to-even is the only thing that separates
-	// two adjacent doubles. Written out in full they run to 751 significant
-	// digits at the subnormal end, so a parser that truncates its digit buffer
-	// decides them by truncation instead and lands 1 ULP low.
 	for _, d := range []float64{
 		1.0, 2.0, 1.5, 3.0, 1024.0, 0.1, 1e30, 1e100, 1e-100,
-		math.Ldexp(1, -1022), // smallest normal
-		math.Ldexp(1, -1074), // smallest subnormal
-		math.Ldexp(3, -1074), // subnormal, odd significand: the tie rounds up
-		math.Ldexp(1, -1073), // subnormal, even significand: the tie rounds down
+		math.Ldexp(1, -1022),
+		math.Ldexp(1, -1074),
+		math.Ldexp(3, -1074),
+		math.Ldexp(1, -1073),
 	} {
 		add(exactMidpoint(d, math.Nextafter(d, math.Inf(1))))
 	}
-	add(exactMidpoint(0, math.Ldexp(1, -1074))) // 2^-1075: ties to even -> +0
+	add(exactMidpoint(0, math.Ldexp(1, -1074)))
 	r := rand.New(rand.NewSource(5404))
 	for i := 0; i < 300; i++ {
 		f := math.Float64frombits(r.Uint64())
@@ -90,9 +74,6 @@ func parseF64Corpus() (lits []string, want []int64) {
 	return lits, want
 }
 
-// runParseF64Driver compiles progSrc (a driver printing
-// f64_bits(<parser>(line)) per stdin line) and diffs its output against
-// the strtod oracle bits.
 func runParseF64Driver(t *testing.T, gcc string, runner []string, dir, name, progSrc string) {
 	t.Helper()
 	path := filepath.Join(dir, name+".fern")
@@ -145,12 +126,6 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostParseF64Watbin pins SH-004: the assemblers' decimal->f64
-// parsers are correctly rounding (nearest, ties to even) — bit-exact with
-// strconv.ParseFloat on the compiler's libm constant spellings, the hard
-// subnormal/overflow boundaries, and 17-digit round-trip spellings of
-// random doubles. The old per-digit accumulation was ~1 ULP off, so the
-// in-process assemble could differ from the GNU-as path.
 func TestSelfHostParseF64Watbin(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -166,8 +141,6 @@ func TestSelfHostParseF64Watbin(t *testing.T) {
 	runParseF64Driver(t, gcc, runner, dir, "pf64_watbin", prog)
 }
 
-// TestSelfHostParseF64X86Gas runs the same corpus through x86_gas's
-// mirrored copy (concatenated with x86_encode, its usual test shape).
 func TestSelfHostParseF64X86Gas(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -177,8 +150,6 @@ func TestSelfHostParseF64X86Gas(t *testing.T) {
 	runParseF64Driver(t, gcc, runner, dir, "pf64_x86gas", prog)
 }
 
-// TestSelfHostParseF64Arm64 runs the same corpus through arm64_native's
-// mirrored copy.
 func TestSelfHostParseF64Arm64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -204,19 +175,6 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostF64LitOutOfRangeX86_64 pins `util.f64_lit_out_of_range`, the
-// predicate the self-host front end rejects a float literal with (#6842),
-// against the same oracle as the kernel above: a literal is out of range
-// exactly when a correctly-rounding strtod answers ±Inf, which is when
-// strconv.ParseFloat reports ErrRange and the Go parser reports P002.
-//
-// It runs the whole parse_f64 corpus, so it covers the rounding boundary the
-// 14 hand-written cases in self_host_front_end_codes_test.go only sample: the
-// exact ULP tie above the largest finite double (which rounds to +Inf, ties to
-// even), the spelling one below it (which does not), 1100-digit exact midpoints
-// and 300 random doubles. The added exponent sweep straddles the threshold the
-// allocation-free pre-filter uses, so a pre-filter that returns early one
-// decade too soon fails here rather than silently accepting `1e309`.
 func TestSelfHostF64LitOutOfRangeX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -269,20 +227,10 @@ func TestSelfHostF64LitOutOfRangeX86_64(t *testing.T) {
 	}
 }
 
-// pf64Mirrors are the four copies of the decimal->f64 kernel: util's, which
-// every IR emitter and the interpreter reach through an import, and the three
-// standalone ones the assemblers keep so they need no import at all.
 var pf64Mirrors = []string{"util", "watbin", "x86_native", "arm64_native"}
 
-// pf64MirrorFuncs are the kernel's functions, which have to agree across all
-// four copies for the behavioural tests above (which only reach three of them,
-// and only where a Linux x86-64 toolchain exists) to say anything about the
-// fourth.
 var pf64MirrorFuncs = []string{"parse_f64_bits", "pf64_div2", "pf64_mul2", "pf64_sub", "pf64_all_zero"}
 
-// pf64FuncBody extracts `name`'s body from a self-host module with comments,
-// blank lines and indentation removed, so the copies can be compared on code
-// alone — each carries its own commentary, and util's copy is `pub`.
 func pf64FuncBody(t *testing.T, module, name string) string {
 	t.Helper()
 	src := string(mustRead(t, "../../../compiler/"+module+".fern"))
@@ -313,12 +261,6 @@ func pf64FuncBody(t *testing.T, module, name string) string {
 	return strings.Join(kept, "\n")
 }
 
-// TestSelfHostParseF64MirrorsAgree pins the four copies to identical code.
-// Three of them are only reachable through a Linux x86-64 toolchain, so on any
-// other host the behavioural tests above skip and this is the only thing
-// standing between a fix landing in one copy and the other three keeping the
-// bug — which is exactly how the 40-digit truncation that lost long exact ULP
-// ties survived in all four (#6824).
 func TestSelfHostParseF64MirrorsAgree(t *testing.T) {
 	for _, fn := range pf64MirrorFuncs {
 		t.Run(fn, func(t *testing.T) {

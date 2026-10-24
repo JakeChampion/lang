@@ -10,21 +10,6 @@ import (
 	"testing"
 )
 
-// `examples/vcl/` is a front end for a language that is not Fern: a
-// lexer, parser, AST, and printer for the Varnish Configuration Language,
-// written in Fern and depending on nothing outside `std`.
-//
-// It is a gate as well as an example. A parser is the densest user of the
-// features a self-hosting language has to get right — recursive unions
-// with struct payloads, exhaustive `match`, arrays of nodes grown by
-// `append`, functional struct update in place of a mutable cursor — and
-// it exercises them through the interpreter on every CI run, from a
-// program nobody is tempted to shape around a compiler bug.
-//
-// The suites below are the two properties worth pinning: the TAP tests
-// pass, and running the formatter over its own output changes nothing.
-
-// TestVCLExampleTapSuitePasses runs the front end's in-language TAP suite.
 func TestVCLExampleTapSuitePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/vcl/vcl_test.fern")
@@ -47,8 +32,6 @@ func TestVCLExampleTapSuitePasses(t *testing.T) {
 	}
 }
 
-// runVclfmt runs the example driver over `arg`, from the example's own
-// directory so its relative testdata path resolves.
 func runVclfmt(t *testing.T, bin, arg string) (int, string, string) {
 	t.Helper()
 	cmd := exec.Command(bin, "-interp", "vclfmt.fern", "--", arg)
@@ -60,15 +43,6 @@ func runVclfmt(t *testing.T, bin, arg string) (int, string, string) {
 	return cmd.ProcessState.ExitCode(), out.String(), errb.String()
 }
 
-// TestVCLExampleFormatterIsAFixedPoint pins the property the printer
-// exists to have: formatting formatted output changes nothing. It runs
-// over `testdata/sample.vcl`, which carries every construct the front end
-// claims — all three `elseif` spellings, an inline probe, the four ACL
-// entry forms, `backend … none`, inline C, and the long string forms.
-//
-// A round trip through a temp file rather than a second in-language
-// assertion, because it also proves the driver's exit status: 0 means the
-// sample parsed with no diagnostics at all.
 func TestVCLExampleFormatterIsAFixedPoint(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 
@@ -80,8 +54,6 @@ func TestVCLExampleFormatterIsAFixedPoint(t *testing.T) {
 		t.Fatalf("output does not look like VCL:\n%s", once)
 	}
 
-	// Feed the output back in. The driver takes a path, so the second
-	// pass reads from a temp file next to the example's testdata.
 	tmp := filepath.Join(t.TempDir(), "once.vcl")
 	if err := os.WriteFile(tmp, []byte(once), 0o644); err != nil {
 		t.Fatalf("write temp: %v", err)
@@ -95,8 +67,6 @@ func TestVCLExampleFormatterIsAFixedPoint(t *testing.T) {
 	}
 }
 
-// TestVCLExampleReportsBadSyntax pins the other half of the driver's
-// contract: a file it cannot parse exits 1 and says where.
 func TestVCLExampleReportsBadSyntax(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	bad := filepath.Join(t.TempDir(), "bad.vcl")
@@ -113,9 +83,6 @@ func TestVCLExampleReportsBadSyntax(t *testing.T) {
 	}
 }
 
-// TestVCLBackendTapSuitePasses runs the evaluator's TAP suite: VCL's
-// coercion rules, ACL matching, the per-subroutine variable scoping, and
-// the request state machine.
 func TestVCLBackendTapSuitePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/vcl/vclbackend_test.fern")
@@ -133,7 +100,6 @@ func TestVCLBackendTapSuitePasses(t *testing.T) {
 	}
 }
 
-// TestVCLCheckTapSuitePasses runs the static checker's TAP suite.
 func TestVCLCheckTapSuitePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/vcl/vclcheck_test.fern")
@@ -151,7 +117,6 @@ func TestVCLCheckTapSuitePasses(t *testing.T) {
 	}
 }
 
-// runVclcheck runs the checker driver from the example's own directory.
 func runVclcheck(t *testing.T, bin string, args ...string) (int, string, string) {
 	t.Helper()
 	argv := append([]string{"-interp", "vclcheck.fern", "--"}, args...)
@@ -164,9 +129,6 @@ func runVclcheck(t *testing.T, bin string, args ...string) (int, string, string)
 	return cmd.ProcessState.ExitCode(), out.String(), errb.String()
 }
 
-// TestVCLCheckAcceptsTheSamplePolicy pins that the shipped policy is
-// clean: a checker that rejected it would make every other gate here
-// meaningless.
 func TestVCLCheckAcceptsTheSamplePolicy(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	code, out, errOut := runVclcheck(t, bin, "testdata/policy.vcl")
@@ -178,11 +140,6 @@ func TestVCLCheckAcceptsTheSamplePolicy(t *testing.T) {
 	}
 }
 
-// TestVCLCheckReportsEveryProblem pins the checker's two distinctive
-// properties on one file: it reports ALL problems rather than the first,
-// and it finds a helper's illegal access under the entry point that makes
-// it illegal — `tag_it` reads `req.url`, which is fine in principle and
-// wrong because `vcl_backend_response` is what calls it.
 func TestVCLCheckReportsEveryProblem(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	bad := filepath.Join(t.TempDir(), "broken.vcl")
@@ -213,8 +170,6 @@ sub vcl_backend_response { call tag_it; return (deliver); }
 	}
 }
 
-// runVclrun runs the evaluator driver from the example's own directory so
-// its relative testdata path resolves.
 func runVclrun(t *testing.T, bin string, args ...string) (int, string, string) {
 	t.Helper()
 	argv := append([]string{"-interp", "vclrun.fern", "--"}, args...)
@@ -227,10 +182,6 @@ func runVclrun(t *testing.T, bin string, args ...string) (int, string, string) {
 	return cmd.ProcessState.ExitCode(), out.String(), errb.String()
 }
 
-// TestVCLBackendCachesAndPurges drives the sample policy end to end
-// through the driver: the first request misses and stores, the second
-// hits what it stored. This is the whole point of the state machine, so
-// it is worth pinning outside the in-language suite too.
 func TestVCLBackendCachesAndPurges(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	code, out, errOut := runVclrun(t, bin, "testdata/policy.vcl", "GET", "/static/app.css", "-n", "2")
@@ -248,10 +199,6 @@ func TestVCLBackendCachesAndPurges(t *testing.T) {
 	}
 }
 
-// TestVCLBackendEnforcesACL pins that the sample policy's purge ACL both
-// admits and rejects, including the exclusion that a first-match-wins
-// walk would wrongly admit — `192.0.2.23` is inside the `192.0.2.0/24`
-// the ACL also lists.
 func TestVCLBackendEnforcesACL(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	for _, tc := range []struct {
@@ -273,8 +220,6 @@ func TestVCLBackendEnforcesACL(t *testing.T) {
 	}
 }
 
-// TestVCLCompileTapSuitePasses runs the compiler's TAP suite, which pins
-// the SHAPE of the generated source.
 func TestVCLCompileTapSuitePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/vcl/vclcompile_test.fern")
@@ -292,18 +237,6 @@ func TestVCLCompileTapSuitePasses(t *testing.T) {
 	}
 }
 
-// TestVCLCompiledMatchesInterpreted is the gate the compiler actually
-// stands on: compile the sample policy to Fern, run the result, and diff
-// its output against the interpreter's over a set of requests chosen to
-// take different paths through the state machine.
-//
-// A string assertion on generated source can only say the compiler emitted
-// what was intended. This says the emitted code MEANS the same thing —
-// which is the only claim worth making about a compiler, and the one that
-// catches a codegen table drifting from the runtime one it mirrors.
-//
-// The generated module goes in a temp dir with an import prefix pointing
-// back at examples/vcl, so nothing is written into the source tree.
 func TestVCLCompiledMatchesInterpreted(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	vclDir := langSrcAbs(t, "examples/vcl")
@@ -315,7 +248,6 @@ func TestVCLCompiledMatchesInterpreted(t *testing.T) {
 	}
 	prefix = filepath.ToSlash(prefix) + "/"
 
-	// Compile testdata/policy.vcl with imports pointing back at the runtime.
 	compileCmd := exec.Command(bin, "-interp", "vclc.fern", "--", "-p", prefix, "testdata/policy.vcl")
 	compileCmd.Dir = vclDir
 	var gen, genErr bytes.Buffer
@@ -329,9 +261,6 @@ func TestVCLCompiledMatchesInterpreted(t *testing.T) {
 		t.Fatalf("write generated policy: %v", err)
 	}
 
-	// Each case takes a different route: cache hit, pass, uncacheable 5xx,
-	// the built-in cookie pass, pipe on an unknown method, and every arm of
-	// the purge ACL including the exclusion inside the /24.
 	cases := [][]string{
 		{"GET", "/static/app.css", "-n", "3"},
 		{"GET", "/admin"},
@@ -377,8 +306,6 @@ func TestVCLCompiledMatchesInterpreted(t *testing.T) {
 	}
 }
 
-// hostFernTarget names the fern target that produces a binary this machine
-// can execute.
 func hostFernTarget(t *testing.T) string {
 	t.Helper()
 	switch {
@@ -394,10 +321,6 @@ func hostFernTarget(t *testing.T) string {
 	}
 }
 
-// TestVCLCompiledPolicyBuildsNatively pins that a compiled policy is a
-// real program: it builds to a native binary and that binary behaves like
-// the interpreter. It builds for the HOST architecture so the binary can
-// actually be run, whichever runner this lands on.
 func TestVCLCompiledPolicyBuildsNatively(t *testing.T) {
 	if testing.Short() {
 		t.Skip("native build is slow; skipped under -short")
@@ -425,9 +348,6 @@ func TestVCLCompiledPolicyBuildsNatively(t *testing.T) {
 		t.Fatalf("write generated policy: %v", err)
 	}
 
-	// The binary is RUN, so it has to be built for the host: this gate runs
-	// on both x86-64 and aarch64 runners, and a cross-built binary fails
-	// with "exec format error" rather than telling us anything.
 	target := hostFernTarget(t)
 	exePath := filepath.Join(outDir, "policy")
 	build := exec.Command(bin, "-target", target, "-o", exePath, genPath)
@@ -456,10 +376,6 @@ func TestVCLCompiledPolicyBuildsNatively(t *testing.T) {
 	}
 }
 
-// TestVCLBackendRejectsOutOfScopeVariable pins the scoping rule VCL
-// authors trip over most: `req` is not readable while fetching from a
-// backend. The driver must exit 1 and name both the variable and the
-// subroutine.
 func TestVCLBackendRejectsOutOfScopeVariable(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	bad := filepath.Join(t.TempDir(), "scope.vcl")

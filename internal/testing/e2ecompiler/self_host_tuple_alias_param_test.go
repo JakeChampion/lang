@@ -5,19 +5,6 @@ import (
 	"testing"
 )
 
-// A callee that binds `let x = src` and only READS through the alias (#7553)
-// still borrows its tuple param, so the caller's deep free of the tuple
-// survives the call. A callee that hands the payload out through the alias
-// must keep it alive (the handout shape below was a sanitizer-confirmed UAF).
-//
-// Every want is confirmed against bin/fern -interp — never read off the
-// self-host run under test. Each case also recompiles under FERN_SANITIZE=1
-// and must exit identically with no over-release or use-after-free report (a
-// leak report on a refused row is the census's business): a wrongly-admitted
-// handout trips the quarantine, not the census.
-
-// tupleAliasParamCase is one program whose run must exit want and balance at
-// live_bytes 0.
 type tupleAliasParamCase struct {
 	name string
 	src  string
@@ -38,10 +25,6 @@ function main(): i32 {
 func tupleAliasParamCases() []tupleAliasParamCase {
 	return []tupleAliasParamCase{
 		{
-			// The matrix cell tuple_mixed__fnscope__alias_param: a read-only
-			// alias in the callee no longer costs main's keep its deep free.
-			// Was a constant 2 allocs / 0 frees before the alias sites fed
-			// the TUPB vet.
 			name: "fnscope_alias_reads_only",
 			src: `function round(src: (i32, i32[]), i: i32): i32 {
     let t: i32 = 0;
@@ -52,9 +35,6 @@ func tupleAliasParamCases() []tupleAliasParamCase {
 			want: 43,
 		},
 		{
-			// tuple_mixed__if_block__alias_param: the same alias inside a
-			// branch — a block-scoped bind is treated exactly like the
-			// function-scope one.
 			name: "if_block_alias_reads_only",
 			src: `function round(src: (i32, i32[]), i: i32): i32 {
     let t: i32 = 0;
@@ -68,10 +48,6 @@ func tupleAliasParamCases() []tupleAliasParamCase {
 			want: 75,
 		},
 		{
-			// The alias hands the rc element out, so a deep free of keep
-			// under it would dangle every `out` the loop holds; the exit
-			// and the sanitize leg guard that. The typed lowering reclaims
-			// everything.
 			name: "handout_elem_keeps_refused",
 			src: `function get(src: (i32, i32[]), i: i32): i32[] {
     let x: (i32, i32[]) = src;
@@ -94,7 +70,6 @@ function main(): i32 {
 			want: 20,
 		},
 		{
-			// A chained alias: `let y = x`.
 			name: "chained_alias_keeps_refused",
 			src: `function round(src: (i32, i32[]), i: i32): i32 {
     let x: (i32, i32[]) = src;
@@ -104,8 +79,6 @@ function main(): i32 {
 			want: 43,
 		},
 		{
-			// A reassigned alias: the rebind ends the aliasing. The pinned
-			// exit and the sanitize leg hold.
 			name: "reassigned_alias_sound",
 			src: `function round(src: (i32, i32[]), i: i32): i32 {
     let x: (i32, i32[]) = src;
@@ -149,17 +122,12 @@ func TestSelfHostTupleAliasParamX86_64(t *testing.T) {
 				t.Errorf("%s: %s — must balance at live_bytes 0", tc.name, summary)
 			}
 
-			// Sanitize leg: same program, all three detectors on. Must exit
-			// identically and print no sanitizer report — a wrongly-admitted
-			// alias shows up here as a quarantine hit, not in the census.
 			sanAsm := hevCompile(t, runner, driverBin, tc.src, []string{"FERN_SANITIZE=1"})
 			sanBin := buildBin(t, gcc, dir, "tupaliasparam_san_"+tc.name, sanAsm)
 			sanErr, sanExit := hevRun(t, runner, sanBin)
 			if sanExit != tc.want {
 				t.Fatalf("%s sanitize leg exited %d, want %d (124 = fatal sanitizer check)", tc.name, sanExit, tc.want)
 			}
-			// A leak report is fine on a refused row — the census already
-			// pins it. Only the free-safety detectors are fatal here.
 			if strings.Contains(sanErr, "rc over-release") || strings.Contains(sanErr, "use-after-free") {
 				t.Fatalf("%s sanitize leg reported:\n%s", tc.name, sanErr)
 			}

@@ -7,9 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/pkg/modload"
 )
 
-// checkModuleSource type-checks src with its imports resolved, so a test
-// can compile the exact spelling a diagnostic suggests. checkSource
-// parses in isolation and cannot see `import "core/cmp";`.
 func checkModuleSource(t *testing.T, src string) error {
 	t.Helper()
 	prog, _, err := modload.LoadSource(src)
@@ -20,16 +17,6 @@ func checkModuleSource(t *testing.T, src string) error {
 	return err
 }
 
-// TestDeriveHintsSpellWhatCompiles pairs every diagnostic that tells the
-// reader to derive or implement a core/cmp trait with a program that
-// follows it verbatim (#6990). `bad` must report a message containing
-// each `want` fragment, and each `fix` — which spells exactly what those
-// fragments suggest — must check clean.
-//
-// The pairing is the point. There is no prelude, so a hint naming a bare
-// `@derive(Eq)` sends the reader into E021 "unknown trait"; only the
-// qualified `cmp.Eq` plus `import "core/cmp";` resolves. A message-text
-// assertion on its own cannot tell those two apart.
 func TestDeriveHintsSpellWhatCompiles(t *testing.T) {
 	const cmpImportFrag = "`import \"core/cmp\";`"
 
@@ -194,9 +181,6 @@ function main(): i32 {
 	}
 }
 
-// The E045 catch-all — a map-literal key that is neither an integer,
-// a string, nor a struct/enum — names the same qualified spelling as
-// the struct and enum branches, and that spelling is a usable key.
 func TestMapKeyFallbackHintNamesQualifiedDerive(t *testing.T) {
 	err := checkModuleSource(t, `import "core/map";
 function main(): i32 {
@@ -223,12 +207,6 @@ function main(): i32 {
 	}
 }
 
-// TestUnknownTypeHintOnlyFiresForUnknownNames pins the E064 respelling
-// table against the failure it shipped with (#6990): `str` (the borrowed
-// string view) and `u8` are real, type-checking types, so entries
-// offering to replace them with `string` / `u32` were both dead and
-// wrong. Every surviving entry names a type that does not exist, and
-// every replacement it suggests does.
 func TestUnknownTypeHintOnlyFiresForUnknownNames(t *testing.T) {
 	for name, want := range map[string]string{
 		"bool":   "did you mean `boolean`?",
@@ -248,8 +226,6 @@ func TestUnknownTypeHintOnlyFiresForUnknownNames(t *testing.T) {
 		}
 	}
 
-	// The real types the table must never offer to replace, alongside
-	// every spelling it does suggest.
 	if err := checkSource(t, `function main(): i32 {
     let a: boolean = true;
     let b: i32 = 1;
@@ -264,19 +240,11 @@ func TestUnknownTypeHintOnlyFiresForUnknownNames(t *testing.T) {
 	}
 }
 
-// foreignHintCases are the derive/impl hints reached with a type from
-// ANOTHER module. `regex.RMatch` is a `pub struct` in std/regex with no
-// Eq / Ord / Display, so every one of these fires on a name modload has
-// mangled to `regex__RMatch`.
 var foreignHintCases = []struct {
-	name string
-	bad  string
-	// orphan is the local `impl` the hint must NOT tell the reader to
-	// write; the checker refuses it, which is why the hint sends them to
-	// the declaring module instead. "" where the hint offers no impl.
+	name   string
+	bad    string
 	orphan string
-	// local is a fix that DOES work from here, "" where none exists.
-	local string
+	local  string
 }{
 	{
 		name: "E041 equality",
@@ -310,8 +278,6 @@ impl cmp.Display for regex.RMatch {
     function to_string(self: Self): string { return "m"; }
 }
 function main(): i32 { return 0; }`,
-		// The receiver-method route the message offers first. Only a
-		// TRAIT impl is orphan-checked, so this one is writable here.
 		local: `import "std/regex";
 pub function (m: regex.RMatch) to_string(): string { return "m"; }
 function main(): i32 {
@@ -332,7 +298,6 @@ function main(): i32 {
 	},
 }
 
-// foreignProg wraps `body` in a program that binds two std/regex values.
 func foreignProg(body string) string {
 	return `import "std/regex";
 function main(): i32 {
@@ -342,20 +307,6 @@ function main(): i32 {
 }`
 }
 
-// TestDeriveHintsForForeignTypesNameAWritableFix is the cross-module half
-// of the pairing above, and it is the half #7000 did not have: every one
-// of its cases declares the type locally, so the mangled spelling never
-// appeared. Reached with a type from another module, the same four hints
-// were wrong twice over — they printed the internal `regex__RMatch`, and
-// both routes they named are ones this checker refuses (`@derive`
-// annotates a declaration you do not own, a local impl of a foreign trait
-// for a foreign type is an orphan impl).
-//
-// So the contract has two directions: every route a hint OFFERS must
-// check clean, and every route it WITHHOLDS must be one the checker
-// really rejects. Asserting only the first lets a hint go quiet about a
-// fix that works; asserting only the second lets it recommend one that
-// does not.
 func TestDeriveHintsForForeignTypesNameAWritableFix(t *testing.T) {
 	for _, tc := range foreignHintCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -393,8 +344,6 @@ func TestDeriveHintsForForeignTypesNameAWritableFix(t *testing.T) {
 	}
 }
 
-// The E001 Map hint names an import, so it gets the same pairing: the
-// program it describes has to check clean.
 func TestMapHintNamesAnImportThatWorks(t *testing.T) {
 	err := checkModuleSource(t, `function main(): i32 {
     let m: Map[string, i32] = Map {};
@@ -415,9 +364,6 @@ function main(): i32 {
 	}
 }
 
-// demangleAll is what keeps a hint's type label writable. The composite
-// case is the reason it is not a single strings.Replace: `demangle` undoes
-// one mangling, and a tuple carries one per element.
 func TestDemangleAllRewritesEveryPart(t *testing.T) {
 	for in, want := range map[string]string{
 		"P":                          "P",
@@ -435,10 +381,6 @@ func TestDemangleAllRewritesEveryPart(t *testing.T) {
 	}
 }
 
-// A derived Default delegates a struct field to the field type's own
-// default(), so a field type without one is reported at the derive, naming
-// the field. It used to surface as `undefined identifier "Inner"` with no
-// position, from the synthesised `Inner.default()` call (#11853).
 func TestDeriveDefaultNeedsAFieldDefault(t *testing.T) {
 	err := checkModuleSource(t, `import "core/cmp";
 struct Inner { v: i32 }

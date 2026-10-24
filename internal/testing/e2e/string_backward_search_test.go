@@ -1,30 +1,5 @@
 package e2e
 
-// std/string's BACKWARD search — `last_index_of` / `rfind` / `rsplit_once` /
-// `rpartition`.
-//
-// Forward search became Two-Way (linear) in #6179; backward search stayed a
-// naive right-to-left probe loop, O(n*m) worst case (#6196). `__str_rfind_from`
-// now has three tiers: the empty-needle gap, a backward memchr-shaped scan for
-// a single byte, and for anything longer a metered naive scan that ESCALATES to
-// reverse Two-Way, which reads the original strings through backward index
-// coordinates and maps the result back, once the comparison budget is spent.
-//
-// Measured on the adversarial shape (40 KB of "a", needle 2000×"a"+"b", five
-// repeats): 2.655s before, 0.014s after.
-//
-// The escalation is why the coverage below is differential rather than a table
-// of expected indices. Every case is checked against a naive reference rfind in
-// the SAME program, so the two tiers must agree with each other and with the
-// obvious implementation on every input — including the ones that cross the
-// budget mid-scan, which is the case a hand-written expectation table is least
-// likely to get right.
-//
-// Both tiers were additionally verified in ISOLATION by forcing the budget to
-// each extreme and re-running this program: at -1 (escalate immediately) it
-// exercises only the reverse Two-Way, at 1000000 only the naive scan. Both
-// return 42, so neither tier is carrying the other.
-
 import "testing"
 
 const stringBackwardSearchProg = `

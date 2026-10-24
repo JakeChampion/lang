@@ -8,41 +8,10 @@ import (
 	"testing"
 )
 
-// TestSelfHostArm64AsmEncodingMatchesGas pins the SELF-HOST in-process arm64
-// assembler's instruction encodings to GNU as's, on identical GAS text.
-//
-// # Why an encoding test, when execution tests exist
-//
-// #6047: `arm64_gas_mem` read the index REGISTER of `ldrb w0, [x0, x1]` as an
-// immediate — the digit lifted out of the register name — so the instruction
-// assembled as `ldrb w0, [x0, #1]`. The binary was well-formed and ran; every
-// string-copy loop just reloaded the source's second byte forever, so
-// `print("Hello, Fern!")` emitted "eeeeeeeeeeeeF": the right LENGTH, the wrong
-// bytes. Nothing caught it for as long as it existed, because:
-//
-//   - the fixture corpus never ran through the self-host arm64 path at all (the
-//     arm64 leg of #6005 is what found it), and
-//   - TestSelfHostArm64LinuxBuilds, the one test that executes this path, has a
-//     `print` case that compared only the EXIT CODE, and skips entirely unless
-//     qemu-aarch64 is installed — which the CI job running it does not do.
-//
-// This test needs no qemu and executes no arm64 code. It compares encodings,
-// which is the layer the bug was in, and it fails on any divergence rather than
-// only on the ones that happen to change an exit code.
-//
-// # Why the snippet avoids labels, adrp and literal pools
-//
-// The self-host lays out a whole image and GNU as an unlinked object, so any
-// address-bearing instruction legitimately differs. The snippet below is
-// deliberately position-independent: registers and immediates only. Add a row
-// whenever the emitter learns a new instruction form.
 func TestSelfHostArm64AsmEncodingMatchesGas(t *testing.T) {
 	gas := gnuArm64Oracle(t)
 	gcc, runner := x86_64Tooling(t)
 
-	// Every form here is one the arm64 emitter actually produces. The
-	// register-offset byte loads/stores in the middle block are #6047's shape:
-	// they are how a string-copy loop indexes its source and destination.
 	const snippet = `.text
 .globl _start
 _start:
@@ -533,8 +502,6 @@ Lend:
 
 	lines := snippetInsns(snippet)
 	if len(got) != len(want) {
-		// A dropped instruction shifts every word after it, so the first
-		// disagreement names the line that went missing.
 		for i := range want {
 			if i >= len(got) || got[i] != want[i] {
 				src := "?"
@@ -558,9 +525,6 @@ Lend:
 	}
 }
 
-// buildAsmBenchDriver builds the in-process-assembler harness. buildSelfHostBin
-// caches on the sources, so the second and later callers in a package run pay
-// nothing.
 func buildAsmBenchDriver(t *testing.T, gcc string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -568,13 +532,6 @@ func buildAsmBenchDriver(t *testing.T, gcc string) string {
 	return buildSelfHostBin(t, gcc, dir, "drivers/arm64_asm_bench_run.fern", "arm64_asm_bench")
 }
 
-// assembleSelfHost feeds GAS text to the driver and returns the assembled
-// words. A refused line (p.unknown) is a finding, not a pass: the driver would
-// otherwise report a short word list and every comparison against it would
-// misalign. Refusals now cover unresolved LABELS and SYMBOLS as well as unknown
-// mnemonics — before that, an unfound branch target was patched as though the
-// "not placed" sentinel were an offset, which is the whole reason #6045's
-// numeric-local-label bug produced runnable binaries instead of an error.
 func assembleSelfHost(t *testing.T, bin string, runner []string, snippet string) []uint32 {
 	t.Helper()
 	args := []string{"-words"}
@@ -596,8 +553,6 @@ func assembleSelfHost(t *testing.T, bin string, runner []string, snippet string)
 	return parseAsmWords(t, out.String())
 }
 
-// asmRefusals extracts the driver's `unknown=` lines — the assembler's refusal
-// list, covering unknown mnemonics, unresolved labels and unresolved symbols.
 func asmRefusals(out string) []string {
 	var refused []string
 	for _, ln := range strings.Split(out, "\n") {
@@ -608,8 +563,6 @@ func asmRefusals(out string) []string {
 	return refused
 }
 
-// refusalsFor assembles a snippet the assembler is EXPECTED to reject and
-// returns what it refused.
 func refusalsFor(t *testing.T, bin string, runner []string, snippet string) []string {
 	t.Helper()
 	var cmd *exec.Cmd
@@ -627,17 +580,6 @@ func refusalsFor(t *testing.T, bin string, runner []string, snippet string) []st
 	return asmRefusals(out.String())
 }
 
-// TestSelfHostArm64AsmUnresolvedBranchRefused pins the behaviour that made the
-// three #6045 bugs survivable in the first place: patching a branch whose
-// target does not resolve as though the -1 "not placed" sentinel were an offset
-// emits a well-formed binary that branches into the ELF header instead of
-// reporting anything. It must refuse.
-//
-// Both shapes here are ones the emitter cannot produce, which is the point — the
-// guard has to hold for input nobody is currently generating, or it is not a
-// guard. `1b` with no preceding `1:` is the subtler of the two: resolving it to
-// definition 0 would aim the branch at a label defined LATER in the file, a
-// silently wrong target rather than an error.
 func TestSelfHostArm64AsmUnresolvedBranchRefused(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	bin := buildAsmBenchDriver(t, gcc)
@@ -657,10 +599,6 @@ func TestSelfHostArm64AsmUnresolvedBranchRefused(t *testing.T) {
 	})
 }
 
-// TestSelfHostArm64AsmVectorMovLaneRefused pins that a vector mov the
-// assembler has no encoding for is refused: the register-to-register form is
-// the orr alias, and the lane forms (ins and umov) used to fall to the scalar
-// mov encoder, which read no vector register and wrote a wrong instruction.
 func TestSelfHostArm64AsmVectorMovLaneRefused(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	bin := buildAsmBenchDriver(t, gcc)
@@ -670,33 +608,10 @@ func TestSelfHostArm64AsmVectorMovLaneRefused(t *testing.T) {
 	}
 }
 
-// TestSelfHostArm64AsmNumericLocalLabels pins GAS numeric local labels — `1:`
-// defined repeatedly, with `1f` / `1b` naming the next / previous definition.
-//
-// The arm64 emitter writes every bounds check that way:
-//
-//	cmp x1, x2 / b.lo 1f / b __fern_oob_abort / 1: …
-//
-// and the in-process assembler did not implement them. `1:` became a label
-// literally named "1", so the lookup returned the FIRST definition in the
-// program for all of them, and `1f` matched nothing at all and came back as the
-// -1 "not placed" sentinel, which the fixup pass then patched as if it were an
-// offset. Every array index and string slice therefore branched to `-1 - here`,
-// a word inside the ELF header, which is zero, which is UDF #0. 129 of 317
-// corpus fixtures died on SIGILL before printing a byte (#6045).
-//
-// The numeric spelling is checked against GNU as. Address-bearing
-// instructions are safe to compare here, unlike in the snippet above, because
-// every branch target is inside the same fragment.
 func TestSelfHostArm64AsmNumericLocalLabels(t *testing.T) {
 	gas := gnuArm64Oracle(t)
 	gcc, runner := x86_64Tooling(t)
 
-	// Two definitions of `1` and one of `2`, exercising: a forward reference
-	// resolving past an intervening definition-free stretch, a SECOND forward
-	// reference that must pick the second `1:` rather than the first, a
-	// backward `2b` in a loop, and a backward `1b` that must select the most
-	// recent `1:` and not the earliest.
 	const numeric = `.text
 .globl _start
 _start:
@@ -736,20 +651,10 @@ Labort:
 	}
 }
 
-// TestSelfHostArm64AsmLiteralPool64Bit pins the literal pool's width. `ldr Xt,
-// =N` is how the emitter materialises any constant too wide for a mov-wide
-// immediate, and the pool parsed its value with a 32-bit accumulator: `ldr x0,
-// =1234567890123` laid down 1912767691. That is why the arm64 leg failed
-// i64_max_to_string, to_string_round_trip, divmod_inline and the u64 half of
-// int_byte_swap while the u32/i32 checks inside those same fixtures passed —
-// the truncation tracked the CONSTANT's width, not the operation's.
-//
-// No oracle here: the assertion is arithmetic (the pool must contain the
-// constant's 64 bits, little-endian), not an encoding choice.
 func TestSelfHostArm64AsmLiteralPool64Bit(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
-	const want uint64 = 1234567890123 // 0x0000011F71FB04CB — needs 41 bits
+	const want uint64 = 1234567890123
 	const snippet = `.text
 .globl _start
 _start:
@@ -770,8 +675,6 @@ _start:
 	}
 }
 
-// parseAsmWords reads the `word <n> <decimal>` lines the driver prints under
-// -words.
 func parseAsmWords(t *testing.T, out string) []uint32 {
 	t.Helper()
 	var ws []uint32
@@ -795,8 +698,6 @@ func parseAsmWords(t *testing.T, out string) []uint32 {
 	return ws
 }
 
-// snippetInsns lists the snippet's instruction lines (skipping directives and
-// labels) so a divergence can name the source line rather than only an index.
 func snippetInsns(src string) []string {
 	var out []string
 	for _, ln := range strings.Split(src, "\n") {

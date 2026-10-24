@@ -1,70 +1,11 @@
-// compiler/irverifyprovided.fern — the callee-resolution verifier
-// (#6639 slice 4).
-//
-// Every `call_direct` names its callee by string. Three things can satisfy
-// that name: a function the program DECLARES, an `@import` extern the host
-// supplies, or a runtime helper whose body a backend emits. Anything else is
-// a call to a symbol nothing defines — which surfaces as a link error if you
-// are lucky, and as a call into whatever the linker happened to place at that
-// name if you are not.
-//
-// The other three passes cannot see this class. irverify.fern checks a call's
-// ARITY against the module's own functions and deliberately leaves an
-// unresolved name alone; irverifystack.fern models the operand stack, where a
-// nonexistent callee with a plausible arity balances perfectly; irfipverify
-// counts allocations. A missing body is invisible to all three.
-//
-// # Why the inventory is a SECOND record
-//
-// ircore.is_fern_helper already answers "does the emitter provide this?", and
-// this file could call it. It deliberately does not — for the reason native's
-// verifyprovided.go gives:
-//
-//   > It is deliberately a SECOND record rather than a shared one: the point
-//   > of a verifier is to disbelieve the compiler, and reading a signature
-//   > out of the same place the emitter reads it would make the two agree by
-//   > construction.
-//
-// What keeps the copy correct is the audit in the direction it can be checked:
-// every name here must satisfy the emitter's own predicate (asm_modload_run
-// `-provided-audit`), so an entry naming a helper no backend emits fails a
-// test. The other direction — a helper the emitter gained and this file did
-// not — is not enumerable from a predicate, and shows up instead as an
-// unresolved callee in the corpus sweep, which is the failure this pass exists
-// to produce.
-//
-// # Resolution needs the WHOLE program
-//
-// A single module's lowering leaves every imported `Type.method` unresolved by
-// construction: a census over the 454 conformance fixtures found 255 distinct
-// unresolved names, ~200 of them stdlib methods reached through an import. So
-// the declared set has to come from the merged bundle — `asm_modload_run
-// -verifyprovided`.
-//
-// It also has to come from the module's DECLARED functions, not its lowered
-// ones. `early` (conformance defer_block_form) is an ordinary top-level
-// function whose lowering bailed, and `unbox` (generic_box) is generic, so it
-// is monomorphised under another name and the declared spelling never lowers
-// at all. Resolving against what lowered would report a missing callee on
-// exactly the functions a lowering bug already hid.
-
 import "../ir";
 import "../irverify";
 import "../util";
 
-// ---- the inventory -----------------------------------------------------
-
-// provided_names is the exact-match half of the record: the runtime helpers a
-// backend emits a body for. Enumerable rather than a predicate so the audit
-// can walk it.
-//
-// Grouped as the emitters group them, so a reader comparing the two lists is
-// comparing like for like.
 pub function provided_names(): string[] {
   return [
     "__fern_oob_abort",
     "__fern_slice_abort",
-    // reference counting, and the grow-bracket share pair
     "__fern_rc_inc",
     "__fern_rc_dec",
     "__fern_rc_is_unique",
@@ -76,8 +17,6 @@ pub function provided_names(): string[] {
     "__fern_str_grow_range",
     "__fern_str_grow_fresh",
     "__fern_str_grow_fresh_range",
-    // Suspension lowering saves and restores frame slots through these
-    // exact runtime entry points. A task-like prefix alone proves nothing.
     "__fern_task_new",
     "__fern_task_free",
     "__fern_task_cur",
@@ -97,13 +36,10 @@ pub function provided_names(): string[] {
     "__fern_account_entry",
     "__fern_arr_share_inc",
     "__fern_arr_share_dec",
-    // reclaim: strings, arrays of them, arrays of arrays
     "__fern_str_free",
     "__fern_str_view_free",
     "__fern_str_arr_free",
-    // FBIP reuse degrade
     "__fern_alloc_reuse",
-    // stringifiers
     "__fern_i32_to_string",
     "__fern_u32_to_string",
     "__fern_i64_to_string",
@@ -113,15 +49,11 @@ pub function provided_names(): string[] {
     "__fern_bytes_owned",
     "__fern_bytes_range",
     "__fern_bytes_into",
-    // the bulk byte copies a copy loop lowers to (rtbytecopy)
     "__fern_bytes_append_range",
     "__fern_bytes_write_range",
   ];
 }
 
-// is_generated_helper reports the per-TYPE helpers the emitters synthesise one
-// body per instantiated type for. They cannot be listed: the suffix is a type
-// name the program supplies, so the rule is a prefix and not an inventory.
 pub function is_generated_helper(name: string): boolean {
   if (name.len() > 11 && slice_unchecked(name, 0, 11) == "__sem_drop_") {
     return true;
@@ -129,9 +61,6 @@ pub function is_generated_helper(name: string): boolean {
   return name.len() > 14 && slice_unchecked(name, 0, 14) == "__sem_release_";
 }
 
-// is_c_call_shim reports the `__c_call<n>` FFI family — `__c_call0`..`_4` with
-// an optional `_f32` / `_f64` return suffix. Restated here rather than taken
-// from asm_ir for the same reason the inventory is: a second record.
 pub function is_c_call_shim(name: string): boolean {
   if (name.len() < 9) {
     return false;
@@ -147,8 +76,6 @@ pub function is_c_call_shim(name: string): boolean {
   return rest == "" || rest == "_f32" || rest == "_f64";
 }
 
-// is_provided is the whole record: the inventory, the generated-helper
-// prefixes, and the FFI shims.
 pub function is_provided(name: string): boolean {
   if (is_generated_helper(name)) {
     return true;
@@ -159,21 +86,8 @@ pub function is_provided(name: string): boolean {
   return util.has_str(provided_names(), name);
 }
 
-// ---- the pass ----------------------------------------------------------
-
-// ProvidedResult is one module's verdict: the problems, and how many
-// call_direct ops were resolved behind them. The count travels with the
-// problems for the reason the stack pass reports coverage — a clean verdict
-// over a module with no calls in it is not the same result as a clean verdict
-// over the compiler.
 pub struct ProvidedResult { problems: irverify.Problem[], calls: i32 }
 
-// verify_provided_fn checks every `call_direct` in one function against
-// `declared` (the program's declared function names, plus its externs) and the
-// provided record, and reports each callee neither can satisfy.
-//
-// An empty callee name is irverify.fern's problem, not this one — it reports
-// that already, and repeating it here would double every occurrence.
 pub function verify_provided_fn(fn_name: string, ops: ir.Op[], declared: irverify.NameIndex): ProvidedResult {
   let out: irverify.Problem[] = [];
   let calls: i32 = 0;

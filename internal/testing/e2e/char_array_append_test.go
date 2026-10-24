@@ -2,11 +2,6 @@ package e2e
 
 import "testing"
 
-// A `char[]` grown by append (#10953). ElemSizeBytesFor had no case for
-// `char`, so append strode its elements at pointer width while the drop and
-// every index read used four bytes: on the natives each grown buffer went
-// back short of what it took, and the elements the walk reads back are
-// checked too. `s.chars()` is that loop.
 const charArrayAppendSrc = `import "std/string";
 function mk(n: i32): char[] {
     let out: char[] = [];

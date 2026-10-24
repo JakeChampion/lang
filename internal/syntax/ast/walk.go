@@ -2,32 +2,10 @@ package ast
 
 import "fmt"
 
-// Node is any AST entity that carries a source position. Every Expr,
-// Stmt, and top-level declaration implements it. Type interface
-// values don't (types are positionless in this AST), so Walk skips
-// them — consumers that need to inspect annotated types do so off
-// the parent node directly.
 type Node interface {
 	Pos() Position
 }
 
-// Walk visits every node in the subtree rooted at root in depth-first,
-// source-order traversal. fn is called on each node before its
-// children; returning false skips descent into that subtree (the
-// parent's siblings are still visited). The traversal is read-only;
-// fn must not mutate the tree.
-//
-// Walk is the building block for LSP features that need to locate a
-// node by source position (hover, go-to-definition) or enumerate
-// references (find-references, rename), and for the compiler passes that
-// rewrite a subtree (monomorph). It deliberately does not visit the
-// Type-shaped fields on expressions and declarations — those are
-// positionless and not directly addressable from an editor cursor.
-//
-// The traversal is exhaustive by construction: a Node kind with no case
-// panics, and walk_exhaustive_test.go pins both the kind list and the
-// child slots each kind must descend into, so a new Expr / Stmt cannot
-// be silently skipped here or in a private copy of the tree shape.
 func Walk(root Node, fn func(Node) bool) {
 	if root == nil {
 		return
@@ -38,11 +16,6 @@ func Walk(root Node, fn func(Node) bool) {
 	walkChildren(root, fn)
 }
 
-// WalkProgram walks every top-level declaration in p, plus their
-// bodies, in source order across funcs / structs / enums / consts.
-// Useful as the LSP entry point — there's no single Node for a
-// Program (the struct doesn't carry a Position), so callers go
-// through this helper instead of Walk(p, ...).
 func WalkProgram(p *Program, fn func(Node) bool) {
 	if p == nil {
 		return
@@ -67,14 +40,6 @@ func WalkProgram(p *Program, fn func(Node) bool) {
 	}
 }
 
-// RewriteProgramExprs post-order rewrites every expression slot in p.
-// For each expression — after its own children have been rewritten —
-// fn is called and its return value replaces the expression in its
-// parent slot. Statement / declaration structure is traversed but not
-// replaced. This is the building block for type-directed desugars that
-// must run after the checker yet be visible to every later pass
-// (monomorph, treeshake, codegen): replacing the node in place means
-// no pass needs to learn about a hidden side-channel field.
 func RewriteProgramExprs(p *Program, fn func(Expr) Expr) {
 	if p == nil {
 		return
@@ -91,14 +56,12 @@ func RewriteProgramExprs(p *Program, fn func(Expr) Expr) {
 	}
 }
 
-// RewriteBlockExprs is RewriteProgramExprs over one block.
 func RewriteBlockExprs(b *Block, fn func(Expr) Expr) {
 	if b != nil {
 		rewriteStmtChildren(b, fn)
 	}
 }
 
-// rewriteExpr rewrites e's children, then applies fn to e itself.
 func rewriteExpr(e Expr, fn func(Expr) Expr) Expr {
 	if e == nil {
 		return nil
@@ -107,12 +70,9 @@ func rewriteExpr(e Expr, fn func(Expr) Expr) Expr {
 	return fn(e)
 }
 
-// rewriteExprChildren reassigns every Expr-typed child slot of e with
-// its rewritten form. Mirrors walkChildren's expression coverage.
 func rewriteExprChildren(n Node, fn func(Expr) Expr) {
 	switch x := n.(type) {
 	case *NumberLit, *BoolLit, *UnitLit, *StringLit, *CharLit, *FloatLit, *Ident, *CaptureRef:
-		// leaves
 	case *CastExpr:
 		x.Inner = rewriteExpr(x.Inner, fn)
 	case *DowncastExpr:
@@ -123,8 +83,6 @@ func rewriteExprChildren(n Node, fn func(Expr) Expr) {
 				x.Parts[i].Expr = rewriteExpr(x.Parts[i].Expr, fn)
 			}
 		}
-		// Desugared is what the interpreter and the IR evaluate, so a
-		// lowering has to reach it as well as the Parts it mirrors.
 		if x.Desugared != nil {
 			x.Desugared = rewriteExpr(x.Desugared, fn)
 		}
@@ -149,11 +107,6 @@ func rewriteExprChildren(n Node, fn func(Expr) Expr) {
 			x.Args[i] = rewriteExpr(x.Args[i], fn)
 		}
 	case *Binary:
-		// A composite `==`/`!=` (EqCall), ordering op (CmpCall), or
-		// arithmetic op (ArithCall) carries its desugared method call; rewrite
-		// inside that (so a NESTED composite operand like `(a-b)*b` has its
-		// inner `a.sub(b)` swapped in too), not Left/Right (which the
-		// replacement discards).
 		switch {
 		case x.EqCall != nil:
 			rewriteExprChildren(x.EqCall, fn)
@@ -166,8 +119,6 @@ func rewriteExprChildren(n Node, fn func(Expr) Expr) {
 			x.Right = rewriteExpr(x.Right, fn)
 		}
 	case *Unary:
-		// A composite unary minus (`-v` → `v.neg()`) carries its desugared
-		// call on NegCall; rewrite inside that so a nested operand is swapped.
 		if x.NegCall != nil {
 			rewriteExprChildren(x.NegCall, fn)
 		} else {
@@ -205,10 +156,6 @@ func rewriteExprChildren(n Node, fn func(Expr) Expr) {
 			x.Args[i] = rewriteExpr(x.Args[i], fn)
 		}
 	case *Lambda:
-		// Same as the nested-FuncDecl case in rewriteStmtChildren: an
-		// anonymous function's body is ordinary code and needs the
-		// post-check rewrites. Reached before closureconv hoists the
-		// Lambda into a top-level FuncDecl.
 		if x.Body != nil {
 			rewriteStmtChildren(x.Body, fn)
 		}
@@ -231,7 +178,6 @@ func rewriteExprChildren(n Node, fn func(Expr) Expr) {
 		if x.Tail != nil {
 			x.Tail = rewriteExpr(x.Tail, fn)
 		}
-	// Statements — traverse, don't replace.
 	case Stmt:
 		rewriteStmtChildren(x, fn)
 	default:
@@ -239,8 +185,6 @@ func rewriteExprChildren(n Node, fn func(Expr) Expr) {
 	}
 }
 
-// rewriteStmtChildren reassigns Expr slots and recurses into nested
-// statements / blocks. Mirrors walkChildren's statement coverage.
 func rewriteStmtChildren(n Node, fn func(Expr) Expr) {
 	switch x := n.(type) {
 	case *Block:
@@ -284,9 +228,6 @@ func rewriteStmtChildren(n Node, fn func(Expr) Expr) {
 		}
 	case *Destructure:
 		x.Init = rewriteExpr(x.Init, fn)
-		// A nested level is a whole Destructure of its own; its Init reads
-		// this level's synthesised binder, so a rewrite that renames or
-		// rewraps that binder has to reach it too.
 		for _, sub := range x.Nested {
 			if sub != nil {
 				rewriteStmtChildren(sub, fn)
@@ -305,51 +246,28 @@ func rewriteStmtChildren(n Node, fn func(Expr) Expr) {
 			}
 		}
 	case *FuncDecl:
-		// A nested function is a FuncDecl in STATEMENT position, and its
-		// body is ordinary code that the post-check rewrites apply to
-		// just as much as any other: the checked-arithmetic desugar
-		// (Binary.CheckedLowered), composite operator overloads
-		// (ArithCall / NegCall / EqCall / CmpCall), the error-converting
-		// `?` (TryOp.Lowered), and the default-i32 width stamp.
-		//
-		// Omitting this case did not lose the rewrite quietly — it made
-		// the IR reject the un-desugared node ("unsupported binary
-		// `+?`"), so a checked operator or an overloaded `+` inside a
-		// nested function failed to COMPILE while the interpreter, which
-		// evaluates the original AST, ran it fine.
 		if x.Body != nil {
 			rewriteStmtChildren(x.Body, fn)
 		}
 	case *Break, *Continue:
-		// leaves
 	default:
 		panic(unhandledKind("rewriteStmtChildren", n))
 	}
 }
 
-// NodeKinds returns one zero instance of every concrete type implementing
-// Node. It is the enumeration a pass carrying its own hand-written switch
-// over the AST tests itself against: drive every kind through the switch,
-// and a missing case surfaces as an unhandled-kind panic rather than as a
-// construct the pass silently ignores. TestNodeKindsRegistryMatchesPackage
-// checks this list against the set derived from the package source, so a new
-// Expr / Stmt / declaration cannot be added without appearing here.
 func NodeKinds() []Node {
 	return []Node{
 
-		// Expressions.
 		&NumberLit{}, &FloatLit{}, &BoolLit{}, &UnitLit{}, &StringLit{}, &CharLit{},
 		&FString{}, &Ident{}, &CaptureRef{}, &ArrayLit{}, &TupleLit{}, &MapLit{},
 		&StructLit{}, &EnumLit{}, &Index{}, &SliceExpr{}, &Call{}, &Binary{},
 		&Unary{}, &Assign{}, &IfExpr{}, &MatchExpr{}, &BlockExpr{}, &TryOp{},
 		&FieldAccess{}, &CastExpr{}, &DowncastExpr{}, &Lambda{}, &MakeClosure{},
 
-		// Statements.
 		&Block{}, &If{}, &While{}, &Loop{}, &For{}, &ForEach{}, &Break{},
 		&Continue{}, &Return{}, &Defer{}, &Var{}, &Destructure{}, &ExprStmt{},
 		&Match{}, &FuncDecl{},
 
-		// Declarations.
 		&StructDecl{}, &EnumDecl{}, &UnionDecl{}, &ConstDecl{}, &Import{},
 		&TraitDecl{}, &ImplDecl{}, &PubUse{},
 	}
@@ -358,11 +276,8 @@ func NodeKinds() []Node {
 func walkChildren(n Node, fn func(Node) bool) {
 	switch x := n.(type) {
 
-	// ---------- Expressions with no Expr children ----------
 	case *NumberLit, *BoolLit, *UnitLit, *StringLit, *CharLit, *FloatLit, *Ident, *CaptureRef:
-		// leaves
 
-	// ---------- Expressions ----------
 	case *CastExpr:
 		Walk(x.Inner, fn)
 	case *DowncastExpr:
@@ -373,8 +288,6 @@ func walkChildren(n Node, fn func(Node) bool) {
 				Walk(p.Expr, fn)
 			}
 		}
-		// Desugared is a checker-stamped mirror of Parts; skip
-		// it to avoid double-visiting interpolant expressions.
 	case *ArrayLit:
 		for _, e := range x.Elems {
 			Walk(e, fn)
@@ -455,7 +368,6 @@ func walkChildren(n Node, fn func(Node) bool) {
 			Walk(x.Tail, fn)
 		}
 
-	// ---------- Statements ----------
 	case *Block:
 		for _, s := range x.Stmts {
 			Walk(s, fn)
@@ -486,7 +398,6 @@ func walkChildren(n Node, fn func(Node) bool) {
 		Walk(x.Iter, fn)
 		Walk(x.Body, fn)
 	case *Break, *Continue:
-		// leaves
 	case *Return:
 		if x.Value != nil {
 			Walk(x.Value, fn)
@@ -517,18 +428,12 @@ func walkChildren(n Node, fn func(Node) bool) {
 			}
 		}
 
-	// ---------- Top-level ----------
 	case *FuncDecl:
 		if x.Body != nil {
 			Walk(x.Body, fn)
 		}
 	case *StructDecl, *EnumDecl, *UnionDecl, *Import:
-		// leaves at the AST level (their child types are
-		// positionless type references, not Nodes)
 	case *TraitDecl, *ImplDecl, *PubUse:
-		// Leaves too: the checker consumes conformance + coherence
-		// and re-exports, no later pass traverses them, and
-		// WalkProgram does not reach them.
 	case *ConstDecl:
 		if x.Value != nil {
 			Walk(x.Value, fn)
@@ -538,12 +443,6 @@ func walkChildren(n Node, fn func(Node) bool) {
 	}
 }
 
-// unhandledKind builds the panic message the three traversals raise for
-// a Node kind none of their cases name. Reaching it means a new Expr /
-// Stmt / declaration was added without extending the traversal, which is
-// the failure #7042 and #7149 both shipped as a silent no-op; the panic
-// and the exhaustiveness tests in walk_exhaustive_test.go turn it into a
-// loud one.
 func unhandledKind(where string, n Node) string {
 	return fmt.Sprintf("ast: %s: unhandled node kind %T (add a case for it)", where, n)
 }

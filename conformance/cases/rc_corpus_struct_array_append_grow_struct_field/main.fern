@@ -1,13 +1,13 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// struct[] grown through repeated `.append` inside a struct functional
-// update — the parser `Par{toks: Token[]}` shape (#3425). Same grow-copy
-// element-share as the string[] case, but the freeing walk is the deep
-// struct-element drop (__drop_arr_struct_<E> / element arr_dec), which
-// freed the shared Tok boxes (and their string fields) under the live
-// grown buffer. Pre-fix this segfaulted outright on x86-64. 0 when
-// correct.
+
+
+
+
+
+
+
+
+
+
 struct Tok {
     kind: i32,
     text: string

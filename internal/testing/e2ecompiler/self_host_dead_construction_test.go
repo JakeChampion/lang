@@ -9,13 +9,6 @@ import (
 	"testing"
 )
 
-// A record, tuple or variant construction nothing reads is not built
-// (semdead, #11912): each case returns a value the interpreter agrees on,
-// runs under the sanitizer and the leak census on every target, and pins
-// how many boxes it allocates. The operands of a removed construction are
-// still released, a construction that is read is still built, and one whose
-// type has a finalizer is built so the finalizer runs. A cycle of phis and
-// constructions that read only one another goes the same way.
 func TestSelfHostDeadConstruction(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	cases := []struct {
@@ -28,12 +21,10 @@ func TestSelfHostDeadConstruction(t *testing.T) {
 		{"record-unread", `struct P { x: i32, y: i32 }
 @noinline function f(i: i32): i32 { let a: P = P { x: i, y: 1 }; return i * 2; }
 function main(): i32 { let s: i32 = 0; let i: i32 = 0; while (i < 4) { s = s + f(i); i = i + 1; } return s; }`, 12, 0, ""},
-		// The array the construction took is still released where it died.
 		{"operand-released", `struct P { x: i32, xs: i32[] }
 @noinline function id(xs: i32[]): i32[] { return xs; }
 @noinline function f(i: i32): i32 { let a: P = P { x: i, xs: id([i]) }; return i * 2; }
 function main(): i32 { let s: i32 = 0; let i: i32 = 0; while (i < 4) { s = s + f(i); i = i + 1; } return s; }`, 12, 4, ""},
-		// Removing the tuple leaves the record it held unread, and it goes too.
 		{"nested-unread", `struct P { x: i32, y: i32 }
 @noinline function f(i: i32): i32 { let t: (P, i32) = (P { x: i, y: 1 }, i); return i * 2; }
 function main(): i32 { let s: i32 = 0; let i: i32 = 0; while (i < 4) { s = s + f(i); i = i + 1; } return s; }`, 12, 0, ""},
@@ -45,15 +36,10 @@ function main(): i32 { let s: i32 = 0; let i: i32 = 0; while (i < 4) { s = s + f
 @noinline function get(p: P): i32 { return p.x + p.xs[0]; }
 @noinline function f(i: i32): i32 { let a: P = P { x: i, xs: id([i]) }; return get(a); }
 function main(): i32 { let s: i32 = 0; let i: i32 = 0; while (i < 4) { s = s + f(i); i = i + 1; } return s; }`, 12, 8, ""},
-		// An unread update goes like any construction, and its base, read
-		// through the update's imm alone, is released where it dies.
 		{"update-unread", `struct P { x: i32, y: i32 }
 @noinline function mk(i: i32): P { return P { x: i, y: 1 }; }
 @noinline function f(i: i32): i32 { let a: P = mk(i); let b: P = P { ...a, x: 2 }; return i * 2; }
 function main(): i32 { let s: i32 = 0; let i: i32 = 0; while (i < 4) { s = s + f(i); i = i + 1; } return s; }`, 12, 4, ""},
-		// A read update whose base no instruction reads as an operand: the
-		// base is read through the update, so it is built for the update
-		// to consume.
 		{"update-read-base-overridden", `struct P { x: i32, y: i32 }
 @noinline function get(p: P): i32 { return p.x + p.y; }
 @noinline function f(i: i32): i32 { let a: P = P { x: i, y: 1 }; let b: P = P { ...a, x: 2, y: 1 }; return get(b) + i; }
@@ -63,10 +49,6 @@ struct G { n: i32 }
 impl mem.Drop for G { function drop(self: Self): void { eprint("dropped"); } }
 @noinline function f(i: i32): i32 { let g: G = G { n: i }; return i * 2; }
 function main(): i32 { let s: i32 = 0; let i: i32 = 0; while (i < 4) { s = s + f(i); i = i + 1; } return s; }`, 12, 4, "dropped\ndropped\ndropped\ndropped\n"},
-		// A record two loops carry and only read field by field: the spliced
-		// updater splits it into one phi a field, and the record's own phis
-		// and update read only one another, so none of them is built (28
-		// boxes while the cycle stood).
 		{"loop-carried-unread", `struct P { xs: i32[], note: string, n: i32 }
 function put(p: P, i: i32, v: i32): P { return P { ...p, xs: p.xs.with(i, v) }; }
 @noinline function f(k: i32): i32 {
@@ -82,15 +64,12 @@ function put(p: P, i: i32, v: i32): P { return P { ...p, xs: p.xs.with(i, v) }; 
     return s;
 }
 function main(): i32 { return f(1) + f(2); }`, 21, 2, ""},
-		// The same cycle of a type with a finalizer is built, so each round's
-		// value is dropped.
 		{"loop-carried-finalizer-kept", `import "core/mem";
 struct G { n: i32 }
 impl mem.Drop for G { function drop(self: Self): void { eprint("dropped"); } }
 @noinline function f(k: i32): i32 { let g: G = G { n: k }; let s: i32 = 0; let i: i32 = 0; while (i < 2) { g = G { ...g, n: g.n + 1 }; s = s + g.n; i = i + 1; } return s; }
 function main(): i32 { return f(1) + f(2); }`, 12, 6, "dropped\ndropped\ndropped\ndropped\ndropped\ndropped\n"},
 	}
-	// Debug bindings must not keep otherwise unread allocations alive.
 	t.Run("debug-binding-eliminated", func(t *testing.T) {
 		src := filepath.Join(t.TempDir(), "main.fern")
 		if err := os.WriteFile(src, []byte(cases[0].src), 0o644); err != nil {

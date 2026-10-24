@@ -1,19 +1,3 @@
-// x86-64 (amd64) Linux end-to-end tests. Third native backend
-// alongside arm64 and the WASM family — emits System V AMD64
-// assembly + Linux x86-64 syscall wiring.
-//
-// Tests run the compiled binary natively when the host is
-// x86_64 Linux (no qemu needed); otherwise fall back to
-// qemu-x86_64 in user-mode-emulation. Each test SKIPs (rather
-// than fails) when the cross-compiler or qemu isn't installed,
-// so CI on aarch64-only hosts doesn't hard-fail.
-//
-// First-PR scope (the "scaffolding + exit code" cut from the
-// docs/LANGUAGE-DIRECTION.md x86-64 plan): exactly one
-// shape — `function main(): i32 { return N; }`. Subsequent PRs
-// add arithmetic / control flow, then strings + the alloc
-// runtime, then composite types, then TCP + HTTP, then the
-// parked `ir.TailCallOptimize` pass.
 package e2e
 
 import (
@@ -28,12 +12,6 @@ import (
 	"time"
 )
 
-// `function main(): i32 { return N; }` is the smallest
-// program shape that exercises the entire emit pipeline:
-// _start prologue, main's prologue/epilogue, OpConstI32,
-// OpReturn, the exit_group syscall wiring. If this passes
-// the toolchain + test harness are wired correctly and
-// follow-up PRs can layer on arithmetic / control flow.
 func TestX86_64ExitCode(t *testing.T) {
 	for _, want := range []int{0, 1, 42, 255} {
 		want := want
@@ -47,10 +25,6 @@ func TestX86_64ExitCode(t *testing.T) {
 	}
 }
 
-// Arithmetic, locals, function calls (direct + recursive).
-// Mirrors TestArm64Arithmetic's case table so the two
-// backends stay observably equivalent — same source, same
-// exit code.
 func TestX86_64Arithmetic(t *testing.T) {
 	for _, c := range []struct {
 		src  string
@@ -76,10 +50,6 @@ function main(): i32 { return fib(10); }`, 55},
 	}
 }
 
-// Control flow: while loop, if/else chain, comparison ops.
-// Exercises OpBlock / OpLoop / OpIf / OpEnd / OpBr / OpBrIf
-// scope tracking and the test+jz/jnz branch idioms. Mirrors
-// TestArm64ControlFlow's case table.
 func TestX86_64ControlFlow(t *testing.T) {
 	for _, c := range []struct {
 		src  string
@@ -113,13 +83,6 @@ function main(): i32 {
 	}
 }
 
-// String literals + len(). Each literal lives in .rodata
-// with a 4-byte little-endian length prefix at `[ptr - 4]`;
-// `len(s)` lowers to `OpConstStr; OpConstI32 4; OpSub;
-// OpLoad`. PR 3 wires the .rodata emission + the load width
-// dispatch, so this is the smallest test that catches a
-// broken length prefix or a broken `.LStr_N` address
-// materialisation.
 func TestX86_64StringLiteralLen(t *testing.T) {
 	for _, c := range []struct {
 		src  string
@@ -137,18 +100,6 @@ func TestX86_64StringLiteralLen(t *testing.T) {
 	}
 }
 
-// String concat via the runtime `__fern_strcat` helper.
-// Exercises the alloc + memcpy + length-prefix path
-// end-to-end: each `+` lowers to `OpCallDirect __fern_strcat`,
-// which mmaps the heap on first call, copies both operands
-// in, and returns a fresh data pointer.
-// string.repeat_char — a std/string FREE function, reachable now that
-// the parser accepts the keyword-named `string` module qualifier
-// (docs/POST-PRELUDE-CLEANUP.md item 4). Pins parse + check + codegen +
-// runtime end-to-end.
-// Import aliases run end-to-end: `import "std/string" as s;` lets a
-// keyword-basename module's free function be reached via the alias
-// qualifier, alongside an aliased receiver-method module.
 func TestX86_64ImportAlias(t *testing.T) {
 	src := `
 import "std/string" as s;
@@ -188,8 +139,6 @@ func TestX86_64StringConcat(t *testing.T) {
     let b: string = "barbaz";
     return (a + b).len();
 }`, 9},
-		// Triple-concat — each `+` is left-associative so this
-		// flexes the strcat helper twice on the same arena.
 		{`function main(): i32 { return ("aa" + "bb" + "cc").len(); }`, 6},
 	} {
 		_, code := compileAndRunX86_64(t, c.src)
@@ -199,9 +148,6 @@ func TestX86_64StringConcat(t *testing.T) {
 	}
 }
 
-// `type X = A | B | C;` unions on x86-64 — third-backend
-// cross-check for the union-types desugaring. See the arm64
-// + wasm counterparts for the same source.
 func TestX86_64Unions(t *testing.T) {
 	src := `struct Add { l: i32, r: i32 }
 struct Mul { l: i32, r: i32 }
@@ -229,18 +175,6 @@ function main(): i32 {
 	}
 }
 
-// A union may take its own type parameters, and its members may be
-// generic structs instantiated with them (#7737). The desugar target —
-// a generic enum whose variant payload is a parameterised struct — is
-// the shape the composite-payload monomorphizer already handled; the
-// union form is sugar over it, so this pins the whole path end to end
-// rather than just the parse.
-//
-// Covered in one program: a parameterised member (Leaf[T]), a plain
-// member alongside it (Lit), explicit construction through the union
-// name, implicit struct-to-union wrap, and two instantiations of the
-// same union (i32 and a nested Pair[i32]) so the monomorphizer has to
-// emit more than one clone.
 func TestX86_64GenericUnions(t *testing.T) {
 	src := `struct Leaf[T] { v: T }
 struct Pair[T] { a: T, b: T }
@@ -268,9 +202,6 @@ function main(): i32 {
 	}
 }
 
-// Implicit struct → union wrap on x86-64. Third-backend cross-
-// check for the wrap-and-re-check pass. See arm64 + wasm
-// counterparts for the same source.
 func TestX86_64UnionImplicitWrap(t *testing.T) {
 	src := `struct Add { l: i32, r: i32 }
 struct Mul { l: i32, r: i32 }
@@ -303,9 +234,6 @@ function main(): i32 {
 	}
 }
 
-// `s.lines()` on x86-64 — verifies the prelude function emits
-// identical results on the third backend, picking up the same
-// per-byte index + slice paths as wasm / arm64.
 func TestX86_64StringLines(t *testing.T) {
 	src := `
 import "std/string";
@@ -370,11 +298,6 @@ function main(): i32 {
 	}
 }
 
-// Struct literals + field access. Verifies the existing
-// `payloadStoreOp` + `structFieldLayout` IR-level lowering
-// composes correctly on x86-64 — most of the work is
-// IR-side; the backend just needs OpStore / OpLoad with the
-// right widths (PR 3 wired both).
 func TestX86_64Struct(t *testing.T) {
 	for _, c := range []struct {
 		src  string
@@ -385,8 +308,6 @@ function main(): i32 {
     let p: Point = Point { x: 10, y: 32 };
     return p.x + p.y;
 }`, 42},
-		// Struct with a string field — exercises the
-		// ptr-width slot widening from PR #267.
 		{`struct Person { age: i32, name: string }
 function main(): i32 {
     let p: Person = Person { age: 25, name: "Claude" };
@@ -440,12 +361,6 @@ func TestX86_64Floats(t *testing.T) {
 	}
 }
 
-// Cheap f64 math intrinsics — abs/sqrt/floor/ceil/trunc lower to
-// SSE one-liners; round is round-half-away-from-zero (matching the
-// interpreter's math.Round and arm64's frinta), implemented via the
-// trunc + exact-frac sequence. Adds the rounding edge cases x86's roundsd can't do
-// directly (ties-away on negatives, and the x+0.5 representability
-// trap the naive formula falls into).
 func TestX86_64FloatIntrinsics(t *testing.T) {
 	for _, c := range []struct {
 		name string
@@ -457,15 +372,10 @@ func TestX86_64FloatIntrinsics(t *testing.T) {
 		{"floor", "function main(): i32 { return __floor_f64(42.9) as i32; }", 42},
 		{"ceil", "function main(): i32 { return __ceil_f64(41.1) as i32; }", 42},
 		{"trunc", "function main(): i32 { return __trunc_f64(42.9) as i32; }", 42},
-		// round: ties away from zero.
 		{"round_tie_up", "function main(): i32 { return __round_f64(41.5) as i32; }", 42},
 		{"round_down", "function main(): i32 { return __round_f64(42.4) as i32; }", 42},
 		{"round_25", "function main(): i32 { return __round_f64(2.5) as i32; }", 3},
-		// Negative ties away: round(-2.5) == -3, +45 == 42.
 		{"round_neg_tie", "function main(): i32 { return (__round_f64(0.0 - 2.5) as i32) + 45; }", 42},
-		// The largest double below 0.5 must round to 0, not 1 — the
-		// naive trunc(x+0.5) gets this wrong because x+0.5 rounds up
-		// to 1.0. +42 == 42 proves we return 0.
 		{"round_below_half", "function main(): i32 { return (__round_f64(0.49999999999999994) as i32) + 42; }", 42},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -477,9 +387,6 @@ func TestX86_64FloatIntrinsics(t *testing.T) {
 	}
 }
 
-// f64 transcendentals: std/f64's sin/cos/exp/log/pow, compiled — no libm.
-// Tolerance comparisons: the accuracy contract itself is f64_ulp_test.go's,
-// against a correctly-rounded reference.
 func TestX86_64Transcendentals(t *testing.T) {
 	for _, c := range []struct {
 		name string
@@ -509,20 +416,6 @@ func TestX86_64Transcendentals(t *testing.T) {
 	}
 }
 
-// End-to-end x86-64 HTTP handler. Same shape as
-// `TestArm64HttpHandler` — compiles a tiny `handle` program
-// (no manual main; the checker synthesises one calling
-// `serve.supervise(serve.__port_from_env("PORT", 8080), serve.config(), handle)`),
-// spawns the resulting binary on a Go-picked free port,
-// sends two requests on separate connections, asserts both
-// bodies round-trip. The second request validates that the
-// first request's allocations are reclaimed (by reference
-// counting) inside `serve.run` — a leak there would either
-// OOM or scramble state between requests; both pass cleanly.
-//
-// Together with `TestArm64HttpHandler` this brings the two
-// native backends to observable parity for the
-// edge-handler use case the language is targeting.
 func TestX86_64HttpHandler(t *testing.T) {
 	probe, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -572,8 +465,6 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 		t.Fatalf("server never bound on %s within 10s", addr)
 	}
 
-	// Each request asks the server to close, so reading to end of
-	// stream sees the whole response.
 	cases := []struct {
 		req  string
 		want string
@@ -605,17 +496,6 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 	}
 }
 
-// stdout builtins lowered to direct write(2) syscalls.
-// Verifies the asm wires the right fd (1), length, and
-// newline behaviour: `print` adds one, `write` doesn't,
-// `putchar` writes a single byte.
-// `now_unix_ms()` on the x86_64 backend lowers to a
-// `clock_gettime(CLOCK_REALTIME, &ts)` syscall + a
-// `tv_sec * 1000 + tv_nsec / 1_000_000` reduction. Asserts
-// the returned ms value is in a plausible range — past a
-// sentinel epoch (2023) and before the i64 limit. Closes
-// docs/STDLIB-DESIGN-RESEARCH.md Rec §4 Phase 2.x on this
-// backend.
 func TestX86_64InstantNow(t *testing.T) {
 	_, code := compileAndRunX86_64(t, `
 import "std/time";
@@ -648,13 +528,6 @@ func TestX86_64Print(t *testing.T) {
 	}
 }
 
-// argv capture. `args()` returns the program's argv as a
-// `string[]` materialised by `__fern_args()`, populated
-// from the argc / argv stashed at `_start`. Same shape as
-// `TestArm64Args`: spawn the binary with three fixed user
-// args, print each, check (a) len(args) reports the right
-// count and (b) the user args show up on stdout. argv[0]
-// is the binary path so we only check the trailing three.
 func TestX86_64Args(t *testing.T) {
 	src := `function main(): i32 {
     let a: string[] = args();
@@ -684,9 +557,6 @@ func TestX86_64Args(t *testing.T) {
 	}
 }
 
-// Tail-call optimisation: a self-recursive tail call runs in O(1) stack
-// depth, so a recursion depth that would overflow the kernel-default 8 MiB
-// stack returns cleanly. Without it this segfaults long before completing.
 func TestX86_64TailCall(t *testing.T) {
 	src := `function sum_to(n: i32, acc: i32): i32 {
     if (n == 0) { return acc; }
@@ -703,18 +573,11 @@ function main(): i32 {
 		cmd = exec.Command(runner[0], append(runner[1:], binPath)...)
 	}
 	_, _ = cmd.CombinedOutput()
-	// 100000 * 100001 / 2 = 5,000,050,000. As i32 (mod
-	// 2^32) = 705_082_704. As an 8-bit exit code (mod
-	// 256) = 80.
 	if got := cmd.ProcessState.ExitCode(); got != 80 {
 		t.Errorf("sum_to(100000, 0) → exit = %d, want 80", got)
 	}
 }
 
-// random_bytes(n) — kernel CSPRNG fill via getrandom(2).
-// Verifies length matches and that the output isn't all
-// zeros (extremely unlikely from a working getrandom +
-// actual entropy).
 func TestX86_64RandomBytes(t *testing.T) {
 	out, code := compileAndRunX86_64(t, `function main(): i32 {
     let s: u8[] = random_bytes(16);
@@ -739,12 +602,6 @@ func TestX86_64RandomBytes(t *testing.T) {
 	}
 }
 
-// random_i32() — single CSPRNG i32 via a 4-byte getrandom(2)
-// read. Cross-backend companion to the interp / arm64 / wasm
-// random_i32 paths (issue #2747). We can't assert a specific
-// value, so the program folds many draws into a "saw a non-zero
-// AND saw two differing draws" signal — exit 7 means the source
-// is live and varying, exit 0/1 flags a stuck generator.
 func TestX86_64RandomI32(t *testing.T) {
 	_, code := compileAndRunX86_64(t, `function main(): i32 {
     let a: i32 = random_i32();
@@ -758,21 +615,13 @@ func TestX86_64RandomI32(t *testing.T) {
 	}
 }
 
-// s.as_bytes() — non-copying (data, len) → slice<u8> view.
-// Was `undefined label "__method_string_as_bytes"` on x86-64
-// before #2747. Verifies the slice length matches the source
-// string and that indexing the view reads back the original
-// bytes. Covers both the SSO inline form ("ABC", ≤7 bytes) and
-// the heap form ("ABCDEFGHIJ", >7 bytes).
 func TestX86_64StringAsBytes(t *testing.T) {
-	// Inline string: 'A'+'B'+'C' = 65+66+67 = 198.
 	if _, code := compileAndRunX86_64(t, `function main(): i32 {
     let b = "ABC".as_bytes();
     return b.len() + (b[0] as i32) + (b[1] as i32) + (b[2] as i32);
 }`); code != 201 {
 		t.Errorf("inline as_bytes: exit = %d, want 201 (3 + 65+66+67)", code)
 	}
-	// Heap string: len 10 + last byte 'J' (74) = 84.
 	if _, code := compileAndRunX86_64(t, `function main(): i32 {
     let b = "ABCDEFGHIJ".as_bytes();
     return b.len() + (b[9] as i32);
@@ -781,8 +630,6 @@ func TestX86_64StringAsBytes(t *testing.T) {
 	}
 }
 
-// io.read_line(stdin()): empty stdin answers Ok(None) (exit 0), a line
-// answers Ok(Some) (exit 1).
 func TestX86_64ReadLine(t *testing.T) {
 	src := `import "std/io";
 
@@ -810,32 +657,10 @@ function main(): i32 {
 			t.Errorf("stdin=%q: exit = %d, want %d", stdin, got, want)
 		}
 	}
-	runCase("", 0)        // EOF before any byte → None
-	runCase("hello\n", 1) // Some(line)
+	runCase("", 0)
+	runCase("hello\n", 1)
 }
 
-// Closure factory pattern: `let f = makeAdder(7); f(35)`. The
-// IR's Defunctionalise pass rewrites `f(35)` into a direct call
-// to the hoisted `add` with env_ptr pulled out of the closure
-// pair at offset +ptrW (=8 on native; was hardcoded to 4 for
-// wasm — see Defunctionalise's pairEnvOffset parameter). The
-// pair allocation itself can't elide here because the slot's
-// writer is OpCallDirect makeAdder, not a direct OpMakeClosure.
-// `let f = nested_fn; f()` crashes with SIGSEGV if
-// defunctionalize detects only the directly-preceded
-// OpMakeClosure / OpCallDirect-returning-closure source. Going
-// through an intermediate variable (or a chain of them) kept
-// the OpCallIndirect path, which at the backend would `call r11`
-// where r11 = closure pair pointer — jumping into pair data,
-// not into the fn pointer that the pair contained. The fix
-// makes Phase 1 a fixed-point loop that chases OpLoadLocal
-// through known-monomorphic slots.
-// Chained-alias no-capture closures must not heap-allocate.
-// The elide-closure-pair pass rewrites OpMakeClosure → OpMakeEnv
-// even when the closure value flows through an intermediate
-// `let f = nested_fn` slot. Verify at runtime that the chained
-// alias still returns the right value (the no-allocation
-// property itself is covered by the elide-closure-pair IR tests).
 func TestX86_64ClosureChainNoAlloc(t *testing.T) {
 	_, code := compileAndRunX86_64(t, `function main(): i32 {
     function answer(): i32 { return 7; }
@@ -848,21 +673,6 @@ func TestX86_64ClosureChainNoAlloc(t *testing.T) {
 	}
 }
 
-// Native `use`-callback ABI: function values flowing through a
-// FUNCTION PARAMETER (rather than through a local slot the
-// defunctionalise pass can analyse) used to segfault — the
-// OpCallIndirect handler emitted `call r11` on a closure-pair
-// pointer, jumping into pair data instead of dereferencing
-// fn_ptr from [pair + 0]. This PR uniforms the function-value
-// ABI: OpConstFunc emits a static .rodata closure-pair cell
-// `{fn_ptr, 0}`, and OpCallIndirect derefs every callee through
-// the same pair shape (loading env from [pair + 8] into the
-// next-arg-register past the user args).
-// Result[T, E] pair-form: `Result[i32, i32]`-returning functions
-// whose body is only `Ok(EXPR)` / `Err(EXPR)` literals lower to
-// the (tag, payload) pair-form ABI just like `Option[i32]`.
-// match on the result skips the heap-box rebox AND the heap-
-// load tag dispatch — zero alloc end-to-end.
 func TestX86_64ResultPairForm(t *testing.T) {
 	for _, c := range []struct {
 		name string
@@ -897,13 +707,6 @@ function main(): i32 {
 	}
 }
 
-// Pointer-shaped payloads (string here) now go through
-// pair-form on natives too — `OpMakeSomeI32 / OpMakeNoneI32`
-// emit a 16-byte heap box with the 8-byte string pointer at
-// offset 8 (matching `payloadLayout(Option[string])`'s native
-// alignment), and `OpCallDirectPair` at the consumer side
-// reads 8 bytes from `[box+8]`. The round-trip is observable
-// via `len(payload)` after a match.
 func TestX86_64PointerPayloadPairForm(t *testing.T) {
 	src := `function pick(b: boolean): Option[string] {
     if (b) { return Some("hello world"); }
@@ -979,8 +782,6 @@ function main(): i32 {
 	}
 }
 
-// Two closures over different captured values must not share
-// state — separate env blocks per MakeClosure.
 func TestX86_64ClosureMultipleInstances(t *testing.T) {
 	src := `function makeAdder(n: i32): (i32) => i32 {
     function add(x: i32): i32 { return x + n; }
@@ -991,16 +792,11 @@ function main(): i32 {
     let add10 = makeAdder(10);
     return add5(1) + add10(1);
 }`
-	// (5+1) + (10+1) = 17
 	if _, code := compileAndRunX86_64(t, src); code != 17 {
 		t.Errorf("got %d, want 17", code)
 	}
 }
 
-// Direct nested-function call (the ElideClosurePair case): the
-// slot writer IS OpMakeClosure, so elide fires and the closure
-// pair allocation collapses to just an env_ptr in the slot.
-// Exercises the OpMakeEnv path.
 func TestX86_64ClosureCapturesParamAndVar(t *testing.T) {
 	src := `function outer(seed: i32): i32 {
     let bonus: i32 = 100;
@@ -1008,16 +804,11 @@ func TestX86_64ClosureCapturesParamAndVar(t *testing.T) {
     return inner(2);
 }
 function main(): i32 { return outer(40); }`
-	// 2 + 40 + 100 = 142
 	if _, code := compileAndRunX86_64(t, src); code != 142 {
 		t.Errorf("got %d, want 142", code)
 	}
 }
 
-// String capture — pointer-shaped capture takes a full ptr-width
-// slot in the env block. Verifies captureSlotSize routes through
-// the 8-byte store path (`mov [r12], rax`) rather than the 4-byte
-// `mov [r12], eax` truncation.
 func TestX86_64ClosureCapturesString(t *testing.T) {
 	src := `function outer(s: string): i32 {
     function inner(): i32 { return s.len(); }
@@ -1029,13 +820,6 @@ function main(): i32 { return outer("hello"); }`
 	}
 }
 
-// Mirror of TestArm64LambdaWithBodyLocals. Anonymous lambdas
-// used to discard the body's Var declarations entirely: the
-// checker stored them against a throwaway synthetic FuncDecl
-// pointer that closureconv never re-keyed onto the hoisted
-// lambda, so lowerFunc would panic with "var X has no slot".
-// String-typed body local exercises the pointer-width slot
-// path under x86-64's two-word string ABI.
 func TestX86_64LambdaWithBodyLocals(t *testing.T) {
 	src := `function main(): i32 {
     let greet = "hi";
@@ -1056,12 +840,6 @@ func TestX86_64LambdaWithBodyLocals(t *testing.T) {
 	}
 }
 
-// Mirror of TestArm64LambdaCallsMethodOnCapturedString. Method
-// calls inside a lambda body used to fall off the treeshake
-// liveness walk because `walkExpr` had no case for
-// `*ast.Lambda`; the lambda body was invisible at shake time
-// (closureconv hoists it later), so `__method_string_trim`
-// got pruned and link died on the undefined reference.
 func TestX86_64LambdaCallsMethodOnCapturedString(t *testing.T) {
 	src := `
 import "std/string";
@@ -1077,11 +855,6 @@ function main(): i32 {
 	}
 }
 
-// Mirror of TestArm64NestedLambdaUniqueNames. Two anonymous
-// lambdas hoisted in the same converter session used to
-// collide on `__closure_lambda_1` because freshName keyed off
-// `len(c.hoisted)` (which doesn't grow when an existing key
-// gets incremented).
 func TestX86_64NestedLambdaUniqueNames(t *testing.T) {
 	src := `function main(): i32 {
     let outer = (): i32 => {
@@ -1099,9 +872,6 @@ func TestX86_64NestedLambdaUniqueNames(t *testing.T) {
 	}
 }
 
-// Multi-capture closure: two i32 captures laid out at offsets 0
-// and 4 in the env block. Verifies the running-offset
-// arithmetic in emitMakeClosureOrEnv.
 func TestX86_64ClosureMultiCapture(t *testing.T) {
 	src := `function make2(a: i32, b: i32): (i32) => i32 {
     function f(x: i32): i32 { return a + b + x; }
@@ -1116,27 +886,17 @@ function main(): i32 {
 	}
 }
 
-// Pointer + scalar captures mixed in one closure — pointer slot
-// is 8 bytes, scalar slot is 4 bytes, total env = 12 bytes (rounded
-// to 16 by the bump allocator). Exercises mixed-width offset
-// arithmetic.
 func TestX86_64ClosureCapturesMixedPointers(t *testing.T) {
 	src := `function outer(s: string, n: i32): i32 {
     function inner(): i32 { return s.len() + n; }
     return inner();
 }
 function main(): i32 { return outer("hi", 40); }`
-	// len("hi") + 40 = 42
 	if _, code := compileAndRunX86_64(t, src); code != 42 {
 		t.Errorf("got %d, want 42", code)
 	}
 }
 
-// Mirror of TestWASMClosureCapturesTuple — `targetTupleType`
-// now recognises `*ast.CaptureRef` so `t.0` / `t.1` inside a
-// closure body resolves through the tuple-offset path instead
-// of falling through to the struct path and erroring with
-// `field access on unresolved struct ""` at IR-emit time.
 func TestX86_64ClosureCapturesTuple(t *testing.T) {
 	src := `function build(): () => i64 {
     let t: (i64, i64) = (1000000000000i64, 2000000000000i64);
@@ -1153,9 +913,6 @@ function main(): i32 {
 	}
 }
 
-// Mirror of TestWASMClosureFStringCapture — closureconv now
-// recurses through FString.Desugared so captured-name idents
-// inside `f"…{cap}…"` get rewritten to CaptureRef nodes.
 func TestX86_64ClosureFStringCapture(t *testing.T) {
 	src := `
 import "std/string";
@@ -1173,8 +930,6 @@ function main(): i32 {
 	}
 }
 
-// Mirror of TestWASMMutableCapturedVar — assignment to a
-// captured outer-scope variable now stores into the env block.
 func TestX86_64MutableCapturedVar(t *testing.T) {
 	src := `function makeCounter(): () => i32 {
     let count: i32 = 0;
@@ -1196,9 +951,6 @@ function main(): i32 {
 	}
 }
 
-// Mirror of TestWASMClosureCallsCapturedFn — the IR's call()
-// path now handles `*ast.CaptureRef` callees so calling a
-// captured function value inside a nested closure works.
 func TestX86_64ClosureCallsCapturedFn(t *testing.T) {
 	src := `function makeAdder(n: i32): (i32) => i32 {
     function add(x: i32): i32 { return x + n; }
@@ -1218,11 +970,6 @@ function main(): i32 {
 	}
 }
 
-// Mirror of TestWASMClosureRecursiveSelfCall — closureconv now
-// rewrites a recursive self-reference inside the hoisted body
-// from the original local name (`fact`) to the hoisted name
-// (`__closure_fact_1`) and forwards `__env` through so the
-// recursive callee gets the same captured-state block.
 func TestX86_64ClosureRecursiveSelfCall(t *testing.T) {
 	src := `function makeFact(): (i32) => i32 {
     function fact(n: i32): i32 {
@@ -1240,12 +987,6 @@ function main(): i32 {
 	}
 }
 
-// Map runtime — exercises the codegen-alias rewrites (`map_new`
-// → `map_new_impl`, `__method_Map_*` → `_impl`), the new
-// `__store_i32` / `__load_i32` / `__store_ptr` / `__load_ptr` /
-// `__ptr_width` / `__memset` runtime helpers, and the lang
-// prelude's open-addressing core. Mirrors TestArm64Map and the
-// wasm StateMap* tests.
 func TestX86_64Map(t *testing.T) {
 	for _, c := range []struct {
 		name string
@@ -1439,19 +1180,6 @@ func TestX86_64IfLet(t *testing.T) {
 	}
 }
 
-// `usize` is the target-aware native-pointer-width unsigned
-// integer: 4 bytes on wasm32, 8 bytes on natives. Foundational
-// for the arm64-darwin truncation fix — pointer-holding prelude
-// locals need a type whose width follows the target. The cast machinery
-// accepts usize as a source / dest in the data-pointer hop
-// pattern (T[] / [T] / string / struct ↔ usize), and
-// settled-literal lowering picks OpConstI64 on natives so
-// values exceeding 32 bits round-trip without truncating.
-// `usize + i32` arithmetic auto-widens the i32 side to usize.
-// This is the unblock for prelude pointer-arithmetic migration
-// (e.g. `entriesBase + idx * entryStride` where idx + stride
-// are i32) without sprinkling explicit `as usize` everywhere.
-// Pins the pattern across both natives.
 func TestX86_64UsizeAutowiden(t *testing.T) {
 	src := `function offset_compute(base: usize, idx: i32, stride: i32): usize {
     return base + idx * stride;
@@ -1471,17 +1199,7 @@ function main(): i32 {
 	}
 }
 
-// TestX86_64UsizeDivRem — usize is 64-bit on x86-64, so `usize / usize`
-// and `usize % usize` must use the 64-bit idiv/div register form. A
-// 32-bit form truncates the dividend to its low 32 bits and produces a
-// wrong quotient/remainder for values exceeding 2^32. Regression for the
-// B1 finding in docs/ADVERSARIAL-REVIEW-2026-06.md. arm64 + wasm32 were
-// already correct (wasm32's usize is genuinely 32-bit); x86-64 was the
-// lone broken backend.
 func TestX86_64UsizeDivRem(t *testing.T) {
-	// 5_000_000_000 = 0x1_2A05_F200. Low 32 bits = 705032704.
-	//   64-bit: 5000000000 / 3 = 1666666666, 5000000000 % 3 = 2.
-	//   32-bit (buggy): 705032704 / 3 = 235010901, % 3 = 1.
 	src := `function main(): i32 {
     let x: usize = 5000000000 as usize;
     let q: usize = x / 3;
@@ -1496,12 +1214,6 @@ func TestX86_64UsizeDivRem(t *testing.T) {
 	}
 }
 
-// TestX86_64FloatToUsize — `f64 as usize` must produce a 64-bit
-// truncation on natives (usize is pointer-width = 8 bytes). The shared
-// IR cast lowering must not clamp usize's width to 32: a 32-bit
-// float-trunc loses the high bits for values exceeding 2^32.
-// Regression for B2 in docs/ADVERSARIAL-REVIEW-2026-06.md (shared IR, so
-// arm64 has the matching test).
 func TestX86_64FloatToUsize(t *testing.T) {
 	src := `function main(): i32 {
     let f: f64 = 5000000000.0;
@@ -1515,16 +1227,6 @@ func TestX86_64FloatToUsize(t *testing.T) {
 	}
 }
 
-// Wide-scalar `Map[K, V]` works on natives even though the
-// prelude's `__map_*_impl` functions declare K + V as `i32`:
-// the native operand stack uses 8-byte slots so i64 / f64
-// values flow through the i32-typed prelude params without
-// truncation, and `__store_ptr` / `__load_ptr` (now usize-
-// typed since PR #315) push 8 bytes through.
-//
-// Wasm32 needs proper per-instantiation dispatch — its typed
-// stack rejects the i32 / i64 mismatch at component-validation
-// time.
 func TestX86_64WideScalarMap(t *testing.T) {
 	for _, c := range []struct {
 		name string
@@ -1580,14 +1282,6 @@ function main(): i32 {
     // Coincident-collision would give v1=v2 → 2 or 4.
     return v1 + v2;
 }`, 3},
-		// m.keys() on Map[i64, _] needs to materialise an i64[]
-		// snapshot, not the i32[] truncation the lang-level
-		// `__map_keys_impl` would produce with its hard-coded
-		// 4-byte destStride. The IR's emitWideMapKeys walks the
-		// entries and memcpy's the raw 8-byte K slot into the
-		// result. Without it, every key gets its upper 32 bits
-		// dropped — distinct high-bit keys collide into the same
-		// snapshot value.
 		{"keys() preserves 8-byte values", `
 import "core/map";
 function main(): i32 {
@@ -1649,11 +1343,6 @@ function main(): i32 {
 	}
 }
 
-// compileX86_64InDir builds `src` and runs the resulting binary
-// in a fresh temp dir seeded with `seed` files (path → content).
-// Returns stdout, exit code, AND the dir so callers can read
-// back files the program created. Mirrors wasm's runWasmInDir +
-// arm64's compileArm64InDir.
 func compileX86_64InDir(t *testing.T, src string, seed map[string]string) (stdout string, exitCode int, dir string) {
 	t.Helper()
 	binPath, runner := compileX86_64Bin(t, src)
@@ -1669,7 +1358,6 @@ func compileX86_64InDir(t *testing.T, src string, seed map[string]string) (stdou
 	return string(out), cmd.ProcessState.ExitCode(), dir
 }
 
-// read_file returns Ok(content) for a present file.
 func TestX86_64ReadFileOk(t *testing.T) {
 	src := `function main(): i32 {
     match (read_file("greeting.txt")) {
@@ -1686,8 +1374,6 @@ func TestX86_64ReadFileOk(t *testing.T) {
 	}
 }
 
-// Missing files surface as `IoError.NotFound(path)`. The path
-// the caller passed must round-trip through the variant payload.
 func TestX86_64ReadFileNotFound(t *testing.T) {
 	src := `function main(): i32 {
     match (read_file("does_not_exist.txt")) {
@@ -1702,14 +1388,11 @@ func TestX86_64ReadFileNotFound(t *testing.T) {
     return 0 - 1;
 }`
 	_, code, _ := compileX86_64InDir(t, src, nil)
-	// len("does_not_exist.txt") = 18
 	if code != 18 {
 		t.Errorf("got %d, want 18 (len of missing-file path via NotFound payload)", code)
 	}
 }
 
-// read_file_bytes returns Ok(u8[]) with the raw bytes — content
-// that is not valid UTF-8 round-trips exactly (D9, #5714).
 func TestX86_64ReadFileBytesOk(t *testing.T) {
 	src := `function main(): i32 {
     match (read_file_bytes("blob.bin")) {
@@ -1733,7 +1416,6 @@ func TestX86_64ReadFileBytesOk(t *testing.T) {
 	}
 }
 
-// read_file_bytes classifies errors identically to read_file.
 func TestX86_64ReadFileBytesNotFound(t *testing.T) {
 	src := `function main(): i32 {
     match (read_file_bytes("does_not_exist.bin")) {
@@ -1748,17 +1430,11 @@ func TestX86_64ReadFileBytesNotFound(t *testing.T) {
     return 0 - 1;
 }`
 	_, code, _ := compileX86_64InDir(t, src, nil)
-	// len("does_not_exist.bin") = 18
 	if code != 18 {
 		t.Errorf("got %d, want 18 (len of missing-file path via NotFound payload)", code)
 	}
 }
 
-// read_file validates UTF-8 at the boundary (D9, #5714): malformed
-// content surfaces as Err(InvalidUtf8(path)) with the caller's path
-// in the payload, while read_file_bytes still hands the same bytes
-// back raw. The strict-scan matrix mirrors std/utf8.is_valid_utf8:
-// stray continuation, overlong, surrogate, >U+10FFFF, truncation.
 func TestX86_64ReadFileInvalidUtf8(t *testing.T) {
 	src := `function bad(path: string): i32 {
     match (read_file(path)) {
@@ -1790,7 +1466,7 @@ function main(): i32 {
     return 0;
 }`
 	_, code, _ := compileX86_64InDir(t, src, map[string]string{
-		"valid.txt":     "h\xc3\xa9llo \xe2\x82\xac \xf0\x9f\x99\x82", // 15 bytes of valid multibyte UTF-8
+		"valid.txt":     "h\xc3\xa9llo \xe2\x82\xac \xf0\x9f\x99\x82",
 		"bad.bin":       "\xff\xfe",
 		"overlong.bin":  "\xc0\x80",
 		"surrogate.bin": "\xed\xa0\x80",
@@ -1803,9 +1479,6 @@ function main(): i32 {
 	}
 }
 
-// write_file truncates the target and writes `content`. Verify
-// by reading the file back from the host side after the program
-// returns.
 func TestX86_64WriteFileOk(t *testing.T) {
 	src := `function main(): i32 {
     match (write_file("out.txt", "wrote it\n")) {
@@ -1827,8 +1500,6 @@ func TestX86_64WriteFileOk(t *testing.T) {
 	}
 }
 
-// Round-trip: write then read; len reports the expected byte
-// count. Both helpers in one program.
 func TestX86_64ReadWriteFileRoundtrip(t *testing.T) {
 	src := `function main(): i32 {
     match (write_file("rt.txt", "round trip")) {
@@ -1847,9 +1518,6 @@ func TestX86_64ReadWriteFileRoundtrip(t *testing.T) {
 	}
 }
 
-// Function-value-in-var: `let f: (i32, i32) => i32 = add; f(20, 22)`
-// — exercises OpConstFunc + OpCallIndirect on x86-64. Mirrors
-// TestArm64IndirectCall.
 func TestX86_64IndirectCall(t *testing.T) {
 	_, code := compileAndRunX86_64(t, `function add(a: i32, b: i32): i32 { return a + b; }
 function main(): i32 {
@@ -1861,14 +1529,6 @@ function main(): i32 {
 	}
 }
 
-// Slice construction + indexing on natives. `__slice_make` has to be
-// emitted there and not only on wasm, or any program containing
-// `a[lo:hi]` fails to link with "undefined reference to
-// __slice_make". The natives' inline `__slice_idx_N` helper must also
-// dereference the header's data_ptr field before indexing, not compute
-// `header_ptr + i*N`. The runtime
-// helper and fixes the inline so all strides (u8 / i32 /
-// i64-shape) work for both reads and writes.
 func TestX86_64SliceMake(t *testing.T) {
 	for _, c := range []struct {
 		name string
@@ -1903,9 +1563,6 @@ func TestX86_64SliceMake(t *testing.T) {
 	}
 }
 
-// eprint(s) routes a string + newline to stderr (fd 2); exit(N)
-// terminates immediately via the exit_group syscall. Verifies the
-// post-exit `return 99` is unreachable. Mirrors TestArm64EprintExit.
 func TestX86_64EprintExit(t *testing.T) {
 	out, code := compileAndRunX86_64(t, `function main(): i32 {
     eprint("oops");
@@ -1915,8 +1572,6 @@ func TestX86_64EprintExit(t *testing.T) {
 	if code != 7 {
 		t.Errorf("exit = %d, want 7 (exit(7) should not fall through to return 99)", code)
 	}
-	// compileAndRunX86_64 captures CombinedOutput so stderr is
-	// folded in.
 	if out != "oops\n" {
 		t.Errorf("output = %q, want %q", out, "oops\n")
 	}
@@ -1953,11 +1608,6 @@ func TestX86_64FloatBitCast(t *testing.T) {
     if (back == neg) { return 0; }
     return 1;
 }`, 0},
-		// Regression pin for the OpFNeg fix. The old shape
-		// emitted `0.0 - x`, which folded `-0.0` to `+0.0`
-		// per IEEE-754. The sign-bit-XOR shape used here
-		// preserves negative zero, so `f32_bits(-0.0)` is
-		// the expected 0x80000000.
 		{"-0.0 bits = sign bit", `function main(): i32 {
     let bits_u: u32 = f32_bits(-0.0) as u32;
     if (bits_u == 2147483648 as u32) { return 0; }
@@ -1999,11 +1649,6 @@ func TestX86_64ReaderWriter(t *testing.T) {
     }
     return 0 - 1;
 }`, "first-second", 0},
-		// A path of seven bytes or fewer is SSO-encoded — the bytes are
-		// IN the value rather than behind it — so the open helpers have
-		// to materialise and NUL-terminate them before openat sees a
-		// pointer. A literal escapes it by being heap-form already,
-		// which is why the path here is built at runtime (#8711).
 		{"open_reader_sso_path", `import "std/string";
 function main(): i32 {
     match (open_writer("sso.txt")) {
@@ -2126,10 +1771,6 @@ function main(): i32 {
 	}
 }
 
-// Wasm-shaped feature parity for the native x86-64 backend.
-// Each case asserts the program returns 0 — same source as
-// TestArm64FeatureParity so the backends stay observably
-// equivalent on language-feature behaviour.
 func TestX86_64FeatureParity(t *testing.T) {
 	for _, c := range []struct {
 		name string
@@ -2199,10 +1840,6 @@ function main(): i32 {
 	}
 }
 
-// x86-64 counterpart to TestArm64NoPreludeStdlibImports — proves
-// the no-prelude path through the prelude-to-modules stack works
-// on the SysV ABI backend too. See the arm64 sibling for the
-// rationale and per-case explanations.
 func TestX86_64NoPreludeStdlibImports(t *testing.T) {
 	for _, c := range []struct {
 		name string
@@ -2251,17 +1888,7 @@ function main(): i32 {
 	}
 }
 
-// Phase 3 step 3: enum drop handlers (uniform case). A heap-boxed
-// enum whose payload-carrying variants share an identical
-// droppable-payload signature drops those payloads on its last
-// reference (gated by __fern_rc_is_unique) before dec'ing the box.
-// This covers unions (`type U = W | V2`), where every variant
-// carries a single struct pointer at the same payload offset.
-// Non-uniform / generic enums fall through to the plain box dec.
 func TestX86_64RcDropEnumPayload(t *testing.T) {
-	// Fresh struct boxed into a union, dropped at scope exit — the
-	// box transfer-owns the payload, so the drop balances (0
-	// over-releases) and the value round-trips.
 	fresh := `struct W { a: i32[] }
 struct V2 { b: i32 }
 type U = W | V2;
@@ -2276,9 +1903,6 @@ function main(): i32 { return build() - 2; }`
 		t.Errorf("got %d, want 0 (union payload drop: value 2, 0 underflow)", code)
 	}
 
-	// Aliased struct widened into a union: widening inc's the
-	// payload, so dropping the union must not over-release the
-	// still-live struct.
 	aliased := `struct W { a: i32 }
 struct V2 { b: i32 }
 type U = W | V2;
@@ -2291,9 +1915,6 @@ function main(): i32 {
 		t.Errorf("got %d, want 0 (aliased struct widened to union: 0 underflow)", code)
 	}
 
-	// Non-uniform enum (pointer payload in one variant, scalar in
-	// another) falls through to the plain box dec — payload leaks,
-	// but no over-release.
 	nonUniform := `enum E { Arr(i32[]), Num(i32) }
 function main(): i32 {
     let e: E = Arr([1, 2, 3]);
@@ -2309,9 +1930,6 @@ function main(): i32 {
 	}
 }
 
-// Phase 2: aliased rc>1 forces copy semantics even with spare
-// cap — otherwise the other holder's view of the array would
-// silently extend.
 func TestX86_64ArrayPushAliasedCopies(t *testing.T) {
 	src := `function main(): i32 {
     let xs: i32[] = [10, 20];
@@ -2329,7 +1947,6 @@ func TestX86_64ArrayPushAliasedCopies(t *testing.T) {
 	}
 }
 
-// Mirror of TestArm64ArrayIndexSetAliasedCopies.
 func TestX86_64ArrayIndexSetAliasedCopies(t *testing.T) {
 	src := `function main(): i32 {
     let xs: i32[] = [10, 20, 30];
@@ -2348,11 +1965,6 @@ func TestX86_64ArrayIndexSetAliasedCopies(t *testing.T) {
 	}
 }
 
-// Mirror of TestArm64ArrayIndexSetU8Stride. The int_to_string
-// scratch[i] = digit pattern hit the wasm raw-_start path's
-// __fern_rc_dec low-address guard before the helper internalised
-// rc bookkeeping; covers the u8 stride here on x86-64 for
-// regression parity.
 func TestX86_64ArrayIndexSetU8Stride(t *testing.T) {
 	src := `function main(): i32 {
     let buf: u8[] = __alloc_u8(4);
@@ -2367,7 +1979,6 @@ func TestX86_64ArrayIndexSetU8Stride(t *testing.T) {
 	}
 }
 
-// Mirror of TestArm64ArrayIndexSetStructField.
 func TestX86_64ArrayIndexSetStructField(t *testing.T) {
 	src := `struct State { items: i32[] }
 function main(): i32 {
@@ -2383,7 +1994,6 @@ function main(): i32 {
 	}
 }
 
-// Mirror of TestArm64ArrayIndexSetStructFieldAliasedCopies.
 func TestX86_64ArrayIndexSetStructFieldAliasedCopies(t *testing.T) {
 	src := `struct State { items: i32[] }
 function main(): i32 {
@@ -2403,7 +2013,6 @@ function main(): i32 {
 	}
 }
 
-// Mirror of TestArm64ArrayIndexSetNestedStructField.
 func TestX86_64ArrayIndexSetNestedStructField(t *testing.T) {
 	src := `struct Inner { items: i32[] }
 struct Outer { inner: Inner }
@@ -2420,7 +2029,6 @@ function main(): i32 {
 	}
 }
 
-// Mirror of TestArm64ArrayIndexSetNestedStructFieldAliasedCopies.
 func TestX86_64ArrayIndexSetNestedStructFieldAliasedCopies(t *testing.T) {
 	src := `struct Inner { items: i32[] }
 struct Outer { inner: Inner }
@@ -2437,7 +2045,6 @@ function main(): i32 {
 	}
 }
 
-// Mirror of TestArm64ArrayIndexSetMat.
 func TestX86_64ArrayIndexSetMat(t *testing.T) {
 	src := `function main(): i32 {
     let mat: i32[][] = [[1, 2, 3], [4, 5, 6]];
@@ -2453,7 +2060,6 @@ func TestX86_64ArrayIndexSetMat(t *testing.T) {
 	}
 }
 
-// Mirror of TestArm64ArrayIndexSetMatInnerAliasedCopies.
 func TestX86_64ArrayIndexSetMatInnerAliasedCopies(t *testing.T) {
 	src := `function main(): i32 {
     let mat: i32[][] = [[1, 2], [3, 4]];
@@ -2468,7 +2074,6 @@ func TestX86_64ArrayIndexSetMatInnerAliasedCopies(t *testing.T) {
 	}
 }
 
-// Mirror of TestArm64MapSetReturnsMap.
 func TestX86_64MapSetReturnsMap(t *testing.T) {
 	src := `
 import "core/map";
@@ -2488,7 +2093,6 @@ function main(): i32 {
 	}
 }
 
-// Mirror of TestArm64ArrayIndexSetObjMatInnerAliasedCopies.
 func TestX86_64ArrayIndexSetObjMatInnerAliasedCopies(t *testing.T) {
 	src := `struct State { mat: i32[][] }
 function main(): i32 {
@@ -2505,7 +2109,6 @@ function main(): i32 {
 	}
 }
 
-// Mirror of TestArm64ArraySetSelfAssign.
 func TestX86_64ArraySetSelfAssign(t *testing.T) {
 	src := `function main(): i32 {
     let xs: i32[] = [10, 20, 30];
@@ -2520,7 +2123,6 @@ func TestX86_64ArraySetSelfAssign(t *testing.T) {
 	}
 }
 
-// Mirror of TestArm64ArraySetAliasedCopies.
 func TestX86_64ArraySetAliasedCopies(t *testing.T) {
 	src := `function main(): i32 {
     let xs: i32[] = [10, 20, 30];
@@ -2535,7 +2137,6 @@ func TestX86_64ArraySetAliasedCopies(t *testing.T) {
 	}
 }
 
-// Mirror of TestArm64MapDeleteReturnsMapBool.
 func TestX86_64MapDeleteReturnsMapBool(t *testing.T) {
 	src := `
 import "core/map";
@@ -2562,7 +2163,6 @@ function main(): i32 {
 	}
 }
 
-// Mirror of TestArm64MapClearReturnsMap.
 func TestX86_64MapClearReturnsMap(t *testing.T) {
 	src := `
 import "core/map";
@@ -2584,12 +2184,6 @@ function main(): i32 {
 	}
 }
 
-// Phase 2d: Map.set copy-on-write. A local alias of a map
-// (let m2 = m1) bumps the handle rc to 2, so m2.insert(...) must
-// COPY rather than mutate the shared buffer — m1 stays intact.
-// Mirrors TestX86_64ArraySetAliasedCopies. The seed entry is a
-// statement-form set (no reassign) so m1's rc stays 1 before the
-// alias; under the borrowed-parameter model that set is in-place.
 func TestX86_64MapSetAliasedCopies(t *testing.T) {
 	src := `
 import "core/map";
@@ -2607,10 +2201,6 @@ function main(): i32 {
 	}
 }
 
-// Phase 2d: Map.delete / Map.clear copy-on-write. An aliased map
-// (let m2 = m1) has rc=2, so delete/clear copy and leave the
-// source alias intact. The cow is threaded at the IR wrapper so
-// the (bool/void)-returning impls hand the new handle back.
 func TestX86_64MapDeleteClearAliasedCopies(t *testing.T) {
 	src := `
 import "core/map";
@@ -2637,7 +2227,6 @@ function main(): i32 {
 	}
 }
 
-// Mirror of TestArm64TupleStructElem.
 func TestX86_64TupleStructElem(t *testing.T) {
 	src := `struct Inner { x: i32, y: i32 }
 function main(): i32 {
@@ -2653,7 +2242,6 @@ function main(): i32 {
 	}
 }
 
-// Mirror of TestArm64TupleArrayElem.
 func TestX86_64TupleArrayElem(t *testing.T) {
 	src := `function main(): i32 {
     let t: (i32, i32[]) = (1, [10, 20, 30]);
@@ -2669,7 +2257,6 @@ func TestX86_64TupleArrayElem(t *testing.T) {
 	}
 }
 
-// Mirror of TestArm64TupleNestedTuple.
 func TestX86_64TupleNestedTuple(t *testing.T) {
 	src := `function main(): i32 {
     let t: (i32, (i32, i32)) = (1, (2, 3));
@@ -2685,7 +2272,6 @@ func TestX86_64TupleNestedTuple(t *testing.T) {
 	}
 }
 
-// Mirror of TestArm64LexerChainedTupleNumericAccess.
 func TestX86_64LexerChainedTupleNumericAccess(t *testing.T) {
 	src := `function main(): i32 {
     let t: (i32, (i32, i32)) = (1, (2, 3));
@@ -2699,7 +2285,6 @@ func TestX86_64LexerChainedTupleNumericAccess(t *testing.T) {
 	}
 }
 
-// Mirror of TestArm64EmptyMapDestinationInference.
 func TestX86_64EmptyMapDestinationInference(t *testing.T) {
 	src := `
 import "core/map";
@@ -2726,7 +2311,6 @@ function main(): i32 {
 	}
 }
 
-// Mirror of TestArm64EnumVariantInTuple.
 func TestX86_64EnumVariantInTuple(t *testing.T) {
 	src := `enum Color { Red, Green, Blue }
 function main(): i32 {
@@ -2756,7 +2340,6 @@ function main(): i32 {
 	}
 }
 
-// Mirror of TestArm64MapPointerShapedValues.
 func TestX86_64MapPointerShapedValues(t *testing.T) {
 	src := `
 import "core/map";
@@ -2793,7 +2376,6 @@ function main(): i32 {
 	}
 }
 
-// Mirror of TestArm64StructTupleFieldAccess.
 func TestX86_64StructTupleFieldAccess(t *testing.T) {
 	src := `struct Rec { pos: (i32, i32), name: string }
 struct Nested { t: (i32, (i32, i32)) }
@@ -2812,8 +2394,6 @@ function main(): i32 {
 	}
 }
 
-// Mirror of TestArm64UnsignedComparison (regression guard — x86 was
-// already correct, but pin it so a future refactor can't regress).
 func TestX86_64UnsignedComparison(t *testing.T) {
 	src := `function main(): i32 {
     let big: u32 = 4294967295u32;
@@ -2838,7 +2418,6 @@ func TestX86_64UnsignedComparison(t *testing.T) {
 	}
 }
 
-// Mirror of TestArm64UnaryMinusWideTypes.
 func TestX86_64UnaryMinusWideTypes(t *testing.T) {
 	src := `function main(): i32 {
     let a: i64 = -5i64;
@@ -2860,7 +2439,6 @@ func TestX86_64UnaryMinusWideTypes(t *testing.T) {
 	}
 }
 
-// Mirror of TestArm64ScientificNotation.
 func TestX86_64ScientificNotation(t *testing.T) {
 	src := `function main(): i32 {
     let a: f64 = 1e3;
@@ -2884,7 +2462,6 @@ func TestX86_64ScientificNotation(t *testing.T) {
 	}
 }
 
-// Mirror of TestArm64SubI32ArithmeticWraps.
 func TestX86_64SubI32ArithmeticWraps(t *testing.T) {
 	src := `struct S { v: u8 }
 function main(): i32 {

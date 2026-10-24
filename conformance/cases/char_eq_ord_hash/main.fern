@@ -1,6 +1,6 @@
-// `char` implements cmp.Eq, cmp.Ord and cmp.Hash like the other scalars
-// (#12809): an array of chars answers `.contains`, `cmp.sort` orders one by
-// scalar value, and a char is a map key.
+
+
+
 import "core/cmp";
 import "core/map";
 import "std/array";

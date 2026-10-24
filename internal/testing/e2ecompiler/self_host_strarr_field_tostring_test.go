@@ -8,9 +8,6 @@ import (
 	"testing"
 )
 
-// A record's string[] field built from a number's `.to_string()` holds fresh
-// elements, so every Rec keeps its deep drop: the buffer and the decimal text
-// are released on every round (#10319).
 const strarrFieldToStringSrc = `import "std/i32";
 struct Rec { n: i32, xs: string[] }
 function round(i: i32): i32 {
@@ -25,7 +22,6 @@ function main(): i32 {
 }
 `
 
-// Interpreter-confirmed.
 const strarrFieldToStringWant = 21
 
 func writeStrarrFieldToStringSrc(t *testing.T) string {

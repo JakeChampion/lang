@@ -24,9 +24,6 @@ func writeVendorTree(t *testing.T, files map[string]string) string {
 	return root
 }
 
-// `fern -vendor` flattens the transitive path-dep graph into vendor/,
-// after which a load resolves everything from vendor/ (proven by
-// deleting the original dependency directories before loading).
 func TestRunVendorThenLoadOffline(t *testing.T) {
 	root := writeVendorTree(t, map[string]string{
 		"app/fern.toml":     "[package]\nname = \"app\"\n[dependencies]\nhelper = { path = \"../helper\" }\n",
@@ -40,13 +37,11 @@ func TestRunVendorThenLoadOffline(t *testing.T) {
 	if err := runVendor(app); err != nil {
 		t.Fatal(err)
 	}
-	// Both transitive packages are present in the flat vendor tree.
 	for _, name := range []string{"helper", "textkit"} {
 		if _, err := os.Stat(filepath.Join(app, "vendor", name, "lib.fern")); err != nil {
 			t.Fatalf("vendor/%s/lib.fern missing: %v", name, err)
 		}
 	}
-	// Remove the originals — the load must now be fully offline.
 	if err := os.RemoveAll(filepath.Join(root, "helper")); err != nil {
 		t.Fatal(err)
 	}
@@ -58,8 +53,6 @@ func TestRunVendorThenLoadOffline(t *testing.T) {
 	}
 }
 
-// Two distinct packages sharing a name can't be vendored into the flat
-// namespace — a hard error, not a silent overwrite.
 func TestRunVendorNameCollision(t *testing.T) {
 	root := writeVendorTree(t, map[string]string{
 		"app/fern.toml":  "[package]\nname = \"app\"\n[dependencies]\na = { path = \"../a\" }\nb = { path = \"../b\" }\n",
@@ -79,8 +72,6 @@ func TestRunVendorNameCollision(t *testing.T) {
 	}
 }
 
-// copyPackage takes only source files (fern.toml + .fern), skipping a
-// nested vendor/ and non-source files.
 func TestVendorCopiesOnlySources(t *testing.T) {
 	root := writeVendorTree(t, map[string]string{
 		"app/fern.toml":        "[package]\nname = \"app\"\n[dependencies]\nh = { path = \"../h\" }\n",
@@ -105,10 +96,6 @@ func TestVendorCopiesOnlySources(t *testing.T) {
 	}
 }
 
-// A workspace root vendors the UNION of all members' external deps into
-// the root vendor/, skipping in-tree workspace-member deps; members then
-// resolve those deps out of the root vendor/ (proven by deleting the
-// original external dep dir).
 func TestRunVendorWorkspaceUnion(t *testing.T) {
 	root := writeVendorTree(t, map[string]string{
 		"fern.toml":       "[workspace]\nmembers = [\"lexer\", \"app\"]\n",
@@ -122,15 +109,12 @@ func TestRunVendorWorkspaceUnion(t *testing.T) {
 	if err := runVendor(root); err != nil {
 		t.Fatal(err)
 	}
-	// The external dep is vendored; the in-tree workspace member is not.
 	if _, err := os.Stat(filepath.Join(root, "vendor", "ext", "lib.fern")); err != nil {
 		t.Fatalf("ext should be vendored: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(root, "vendor", "lexer")); !os.IsNotExist(err) {
 		t.Error("workspace member 'lexer' should not be vendored (it's in-tree)")
 	}
-	// Delete the original ext — the member build must now resolve it from
-	// the root vendor/.
 	if err := os.RemoveAll(filepath.Join(root, "ext")); err != nil {
 		t.Fatal(err)
 	}
@@ -139,11 +123,6 @@ func TestRunVendorWorkspaceUnion(t *testing.T) {
 	}
 }
 
-// A versioned (MVS) dependency names no directory of its own, so its source
-// has to come from fern.lock — the same place a build reads it from. Before
-// this resolved through the lock, `m.DepDir` answered the manifest's OWN
-// directory: the package was vendored into its own vendor/ under its own
-// name, and the dependency was dropped silently.
 func TestRunVendorVersionedDepThroughLock(t *testing.T) {
 	root := writeVendorTree(t, map[string]string{
 		"app/fern.toml": "[package]\nname = \"app\"\nindex = \"../index.toml\"\n" +
@@ -166,7 +145,6 @@ func TestRunVendorVersionedDepThroughLock(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(app, "vendor", "app")); !os.IsNotExist(err) {
 		t.Error("the package vendored ITSELF — a versioned dep resolved to its own manifest dir")
 	}
-	// The pinned source is now the only copy the build can reach.
 	if err := os.RemoveAll(filepath.Join(root, "libv-1.0.0")); err != nil {
 		t.Fatal(err)
 	}
@@ -175,8 +153,6 @@ func TestRunVendorVersionedDepThroughLock(t *testing.T) {
 	}
 }
 
-// A versioned dependency with no lock at all is refused, naming `-resolve` —
-// vendoring never resolves versions on its own.
 func TestRunVendorVersionedDepWithoutLock(t *testing.T) {
 	root := writeVendorTree(t, map[string]string{
 		"app/fern.toml": "[package]\nname = \"app\"\nindex = \"../index.toml\"\n" +

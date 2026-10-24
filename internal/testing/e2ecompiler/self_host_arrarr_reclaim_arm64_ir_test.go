@@ -4,8 +4,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostArrArrReclaimIRArm64 runs the shared nested-array reclaim
-// cases on ARM64, exercising the typed release pipeline.
 func TestSelfHostArrArrReclaimIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -27,7 +25,6 @@ func TestSelfHostArrArrReclaimIRArm64(t *testing.T) {
 		}
 	}
 
-	// string[][] churn — flat at detector zero.
 	run(t, `function main(): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -50,7 +47,6 @@ func TestSelfHostArrArrReclaimIRArm64(t *testing.T) {
     return 0;
 }`, "arrarr-str-flat-arm64", 0)
 
-	// i32[][] churn with expression inner elements — flat.
 	run(t, `function main(): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -73,7 +69,6 @@ func TestSelfHostArrArrReclaimIRArm64(t *testing.T) {
     return 0;
 }`, "arrarr-scalar-flat-arm64", 0)
 
-	// Row-alias exclusion pin.
 	run(t, `function main(): i32 {
     let bad: i32 = 0;
     let i: i32 = 0;

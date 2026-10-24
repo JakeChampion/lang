@@ -12,20 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/diag"
 )
 
-// Capabilities is phase 2 of docs/PACKAGE-CAPABILITIES-BRIEF.md
-// (#5361): after a successful type-check, run the same reachability
-// walk the -capabilities report uses (caps.Analyze) and hold every
-// dependency package to its manifest grant. A package whose declaring
-// dependency entry carries a `capabilities` key erroring outside the
-// grant is E070, reported at the package function its call chain starts
-// from, with each function in the chain spelled as its source declares it;
-// a package with no key gets a warn-and-allow warning, once per
-// package+capability; the root package is never enforced or warned.
-// Manifest-less modules fold into it unless an explicit grant boundary
-// governs them. Wired into every
-// path a program compiles or runs through: `fern -check`, `-interp`,
-// and codegen (run) — stdin programs skip it (no manifest can govern
-// them).
 func Capabilities(entry string, prog *ast.Program) ([]Warning, error) {
 	resolve := packageInfoResolver(entry, prog.CapGrants)
 	enforceable := false
@@ -36,10 +22,6 @@ func Capabilities(entry string, prog *ast.Program) ([]Warning, error) {
 		}
 	}
 	if !enforceable {
-		// Every function is the root package's (or stdlib, which folds
-		// into its caller) — nothing to enforce or warn about, so skip
-		// the reachability walk entirely on the common single-package
-		// compile.
 		return nil, nil
 	}
 	rows, grants := CapabilityRows(entry, prog)
@@ -69,9 +51,6 @@ func Capabilities(entry string, prog *ast.Program) ([]Warning, error) {
 	return warns, errs
 }
 
-// sourceChain spells a violation's call chain with each function's name as
-// its source declares it, and returns the package function the chain starts
-// from, where the violation is reported.
 func sourceChain(chain []string, fns map[string]*ast.FuncDecl) ([]string, *ast.FuncDecl) {
 	out := make([]string, len(chain))
 	for i, name := range chain {
@@ -83,8 +62,6 @@ func sourceChain(chain []string, fns map[string]*ast.FuncDecl) ([]string, *ast.F
 	return out, fns[chain[0]]
 }
 
-// CapabilityRows uses resolved package directories as authority identities.
-// Display names are never keys: two manifests may use the same name.
 func CapabilityRows(entry string, prog *ast.Program) ([]caps.Row, map[string]caps.Grant) {
 	resolve := packageInfoResolver(entry, prog.CapGrants)
 	names := map[string]string{}
@@ -114,14 +91,6 @@ func CapabilityRows(entry string, prog *ast.Program) ([]caps.Row, map[string]cap
 	return rows, grants
 }
 
-// packageInfoResolver maps a FuncDecl.SourceModule onto its package
-// identity: the nearest governing fern.toml's [package] name and
-// directory, plus whether the module belongs to the ROOT package —
-// the entry's own manifest, an ungoverned manifest-less module, or a synthesised
-// function with no module stamp (all of which fold into the root and
-// are exempt from enforcement). Stdlib modules resolve to ("", "",
-// false): caps.Analyze folds them into whichever package calls them.
-// The root package of a program with no fern.toml reports as "(root)".
 func packageInfoResolver(entry string, grants map[string][]string) func(module string) (name, dir string, root bool) {
 	rootName, rootDir := "(root)", ""
 	if abs, err := filepath.Abs(entry); err == nil {
@@ -157,8 +126,6 @@ func packageInfoResolver(entry string, grants map[string][]string) func(module s
 				id.name = man.Name
 			}
 		}
-		// A declared grant remains a boundary even without a manifest in
-		// the dependency directory. Prefer the closest applicable boundary.
 		for boundary := range grants {
 			within := mdir == boundary || strings.HasPrefix(mdir, boundary+string(filepath.Separator))
 			ownerContains := mdir == id.dir || strings.HasPrefix(mdir, id.dir+string(filepath.Separator))

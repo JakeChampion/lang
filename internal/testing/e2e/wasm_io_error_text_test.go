@@ -7,16 +7,6 @@ import (
 	"testing"
 )
 
-// IoError.Other's message is strerror's text for the errno on wasm as
-// on every other backend (#8265). The conformance corpus cannot reach
-// this: its wasm leg mounts no directory, so no path is openable there
-// (conformance/cases/io_error_other_*/meta). This mounts one and reads
-// through a regular file as if it were a directory — ENOTDIR from the
-// host on both WASI framings — and pins the text on each: preview 1
-// carries the errno straight through, preview 2 reports a
-// wasi:filesystem error-code the runtime translates first
-// (__wasi_errno_of_code), which is the path that used to collapse
-// every failure to NotFound.
 const ioErrorTextProg = `function main(): i32 {
     match (read_file("reg.txt/nested")) {
         Ok(_) => { print("read through a file"); return 1; },
@@ -42,7 +32,6 @@ func ioErrorTextDir(t *testing.T) string {
 	return dir
 }
 
-// ioErrorTextRun runs the program as `wasm` with ioErrorTextDir preopened.
 func ioErrorTextRun(t *testing.T, wasm string) {
 	t.Helper()
 	stdout, stderr, ec := runWasmArtifact(t, wasm, runOpts{workDir: ioErrorTextDir(t)})

@@ -1,28 +1,28 @@
 // spec: AL-01
-//
-// The AL-01 shape for a fresh container handed to a CONSTRUCTOR that keeps
-// it: `node(name, no_deps(), k)`. The callee takes its own reference when it
-// stores the array in the struct it returns, so the caller's reference to the
-// temp is the one with nothing to release it — and reclaiming it wrongly
-// frees what the returned struct now owns.
-//
-// Both halves are here because they fail in opposite directions. The FRESH
-// argument leaks if the caller never releases it (#6522, 32 B per node on all
-// three backends, unbounded); the ALIASED argument — a live local passed at
-// the same position — is a use-after-free if the caller releases one it does
-// not own. The stored array is read back through the returned struct, and the
-// live local is read after its call, so either mistake shows up as wrong
-// output rather than as a byte count.
-//
-// The case prints the SHAPE, never a byte count — see
-// docs/ALLOCATION-OBSERVABLE.md.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import "std/i32";
 import "std/i64";
 import "std/string";
 
 struct Node { name: string, deps: string[], mtime: i32 }
 
-// Past the small-string threshold, so every element is a real heap buffer.
+
 function wide(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
 
 function deps_of(n: i32): string[] {
@@ -61,7 +61,7 @@ function main(): i32 {
 
     print(x.to_string());
     print(y.to_string());
-    // Twice the work must not cost more fresh memory.
+
     if ((b2 - b1) > (b1 - b0)) { print("grows"); } else { print("flat"); }
     return 0;
 }

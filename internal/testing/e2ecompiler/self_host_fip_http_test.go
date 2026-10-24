@@ -8,9 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The self-host twin of TestFipHttpCodecAgreesAndDoesNotAllocate: the fip
-// HTTP codec experiment (#9853) built by the self-host CLI, held to the same
-// claims (e2eharness.CheckFipHttpReports).
 func TestSelfHostFipHttpCodecAgreesAndDoesNotAllocate(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	dir := t.TempDir()

@@ -1,4 +1,3 @@
-// Integer rules shared by all representations in the simulation experiment.
 pub fip function wrap(value: i32): i32 {
   return value & 4095;
 }

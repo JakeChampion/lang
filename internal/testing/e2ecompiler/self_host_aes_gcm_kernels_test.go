@@ -10,19 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The AES-GCM kernels std/crypto/aes_gcm is built on, each checked on its
-// own against known answers on every target: AES-NI and PCLMULQDQ on
-// x86-64, AESE and PMULL on arm64 (under qemu), the bitsliced AES and the
-// masked carry-less multiply on wasm, and the two interpreters' reference
-// spellings.
-//
-// The key schedules are FIPS-197 Appendix A.1 and A.3, the blocks Appendix
-// C.1 and C.3, and the GHASH pin GCM's test case 2. The rest were computed
-// by Go's crypto/aes and a reference GHASH checked against crypto/cipher's
-// GCM: a counter whose low word wraps, partial last blocks, and lengths that
-// cross every unrolled stride. The fused seal and open answer GCM's test
-// case 4 and, at every length to 80, what the separate kernels compose to.
-// Each failure answers its own code; 0 means every comparison matched.
 const aesGCMKernelsProg = `function hex(s: string): u8[] {
   let out: u8[] = __alloc_u8(s.len() / 2);
   let i: i32 = 0;
@@ -282,7 +269,6 @@ const (
 	aesKATCtr256Long = "ff56feaa6d804759f03c320d54b0ddaa1f861681450c6b175d0bf7f08913563e8fb24b5317c376b527ea56bf644e1890139ed3b31ffbce0eb48c10396bf2f33a08d1895094b7388d0802f7224bc2a24fe30b0fe6d514b72e813b9e0d8462263082317bc6785a570d1c00a1756f44e658e6cac967bf2e9e5f5f20d582d96dd521292abc33779b235d7513e4a49de50a8ea380f3a8b4495523d698980ae697ed71c112dd0734e3b85c507624994d088c42dbc7050fe998396518ace8f6905be9bf659b3773856472d6586f3b40a67aeea10d7d98c8d952c350dd6e634af5ee02b34f79627149f82ed8c1ec842f77036162afbe7cda134c625858dbde52daf1e5f1147b3c5228a42b20281b0640978addab460fc9f29045f9aeacd21d9ae1554957c78b383970297a22e231414e"
 )
 
-// aesGCMKernelsCompile compiles the program for target with the self-host CLI.
 func aesGCMKernelsCompile(t *testing.T, target string) string {
 	t.Helper()
 	cli := buildSelfHostCLI(t)

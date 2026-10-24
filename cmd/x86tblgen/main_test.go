@@ -10,10 +10,6 @@ import (
 
 const x86NativeFern = "../../compiler/x86_native.fern"
 
-// TestGeneratedFernIsUpToDate is the gate that makes the shared table real. It
-// is not enough to generate the Fern side once: if someone edits either the
-// table or the generated block by hand, the two assemblers drift again and
-// nothing else notices until a mnemonic silently stops assembling (#8071).
 func TestGeneratedFernIsUpToDate(t *testing.T) {
 	src, err := os.ReadFile(x86NativeFern)
 	if err != nil {
@@ -28,10 +24,6 @@ func TestGeneratedFernIsUpToDate(t *testing.T) {
 	}
 }
 
-// TestMarkersArePresent keeps the test above from passing vacuously. Rewrite
-// leaves a file carrying no markers untouched, so a renamed or deleted marker
-// would make the staleness check compare a file against itself and always
-// agree.
 func TestMarkersArePresent(t *testing.T) {
 	src, err := os.ReadFile(x86NativeFern)
 	if err != nil {
@@ -47,9 +39,6 @@ func TestMarkersArePresent(t *testing.T) {
 	}
 }
 
-// TestEverySpellingIsDistinct guards the table's own shape: a duplicated
-// spelling would silently give one of its two codes, and a duplicate is easy
-// to introduce when adding aliases by hand.
 func TestEverySpellingIsDistinct(t *testing.T) {
 	seen := map[string]byte{}
 	for _, c := range x86tbl.Conds {
@@ -65,10 +54,6 @@ func TestEverySpellingIsDistinct(t *testing.T) {
 	}
 }
 
-// TestSSEHalvesPartitionTheTable pins the split the generated dispatch
-// depends on. x86_gas_emit consults the float half before the integer one, so
-// a row in both halves would be shadowed and a row in neither would vanish
-// from the self-host without the Go side noticing.
 func TestSSEHalvesPartitionTheTable(t *testing.T) {
 	seen := map[string]x86tbl.SSEHalf{}
 	for _, o := range x86tbl.SSEOps {
@@ -82,9 +67,6 @@ func TestSSEHalvesPartitionTheTable(t *testing.T) {
 	if got, want := len(fp)+len(in)+len(none), len(x86tbl.SSEOps); got != want {
 		t.Errorf("the halves account for %d rows, the table has %d", got, want)
 	}
-	// The only rows outside both halves are the pair whose direction AT&T
-	// decides from the operands; anything else there is a row the self-host
-	// silently cannot reach.
 	for _, o := range none {
 		if o.Mnemonic != "movdqa" && o.Mnemonic != "movdqu" {
 			t.Errorf("%q is in neither half — the self-host has no table entry for it, and only movdqa/movdqu are meant to be handled outside the tables", o.Mnemonic)
@@ -95,9 +77,6 @@ func TestSSEHalvesPartitionTheTable(t *testing.T) {
 	}
 }
 
-// TestSSEIntHalfIsAll66Prefixed pins what the integer half's doc comment
-// claims. A row with the wrong prefix still encodes something, so nothing
-// else would catch it.
 func TestSSEIntHalfIsAll66Prefixed(t *testing.T) {
 	for _, o := range x86tbl.SSEHalfOps(x86tbl.SSEIntHalf) {
 		if o.Prefix != 0x66 {
@@ -106,11 +85,6 @@ func TestSSEIntHalfIsAll66Prefixed(t *testing.T) {
 	}
 }
 
-// TestNamedRowsAreWellFormed guards the by-name vocabulary's own shape: a
-// duplicated AT&T spelling would dispatch to one of its two rows, and a probe
-// that does not start with its spelling probes some other row. The self-host
-// side of the same rows is internal/testing/e2ecompiler's
-// TestSelfHostX86TableRowsMatchGas.
 func TestNamedRowsAreWellFormed(t *testing.T) {
 	seenATT := map[string]bool{}
 	for _, fam := range x86tbl.Named {

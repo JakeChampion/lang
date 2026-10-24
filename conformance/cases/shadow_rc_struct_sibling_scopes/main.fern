@@ -1,16 +1,16 @@
-// Two same-named rc-bearing locals in sibling scopes: one fresh, one aliasing
-// a parameter. irlower's reclaim credit is keyed by BARE NAME, so both `v`s
-// share one entry and one of the two verdicts is necessarily wrong — the
-// aliasing arm releases a buffer `base` still owns (#7349, #7253).
-//
-// MEASURE THIS WITH THE SELF-HOST, NOT NATIVE. Native and interp answer 50
-// on both sides of the fix; only the self-host's irlower carries the defect.
-// A self-host built at 593933f^ exits 99 here.
-//
-// The underflow counter is the assertion, not the answer. A doubly-released
-// block returns to the freelist, so FERN_LEAKCHECK reports allocs == frees at
-// live_bytes == 0 on BOTH sides of the fault — a fixture checking only its
-// result passes straight through the bug.
+
+
+
+
+
+
+
+
+
+
+
+
+
 struct P { xs: i32[], s: string }
 
 function w(s: string): string { return s + ""; }
@@ -28,7 +28,7 @@ function main(): i32 {
     let i: i32 = 0;
     while (i < 100) { t = t + round(base, i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
-    // `base` must still own its buffer after 50 aliasing rounds.
+
     if (base.xs.len() != 3) { return 98; }
     return t % 200;
 }

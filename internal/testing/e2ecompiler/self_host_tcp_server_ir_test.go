@@ -13,20 +13,6 @@ import (
 	"time"
 )
 
-// #4371: the SERVER half of the edge-handler use case — tcp_listen / tcp_accept —
-// must lower on the self-host x86-64 IR path. The client half (tcp_connect_with /
-// send / recv / close / pollable) already lowered; tcp_listen / tcp_accept bailed the IR
-// path (irlower had no op for them, asmcore didn't type them), so std/serve's serve
-// loop bailed — and the legacy AST backend it fell to had no x86
-// __fern_tcp_listen body, so it wouldn't link. This drives a poll-driven one-shot
-// server through the
-// self-host x86-64 IR driver (asm_run) end-to-end: compile → link → serve one real
-// TCP connection → respond → exit 42. A successful run PROVES the IR path was taken,
-// since nothing else emits the listen/accept helpers.
-//
-// Poll-driven (like internal/testing/e2e's native TestPollDrivenTcpServerX86_64) so accept
-// and recv never block the test: poll the listener before accept, the connection
-// before recv. Distinct small exit codes localise a failed step.
 func TestSelfHostTcpServerIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -39,13 +25,6 @@ func TestSelfHostTcpServerIRX86_64(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_run.fern", "driver")
 
-	// No port is named anywhere: the server binds 0, asks the socket which
-	// port it got, and prints it. That replaces probing the host for a free
-	// port and re-binding it in the guest, which raced anything else on the
-	// machine between the probe closing and the server binding.
-	//
-	// `port_str` is spelled out rather than imported from core/int because
-	// this driver parses ONE module off stdin and resolves no imports.
 	prog := `function port_str(n: i32): string {
     let s: string = "";
     let v: i32 = n;
@@ -94,9 +73,6 @@ function main(): i32 {
 	}
 	defer func() { _ = cmd.Process.Kill(); _, _ = cmd.Process.Wait() }()
 
-	// The announced port is also the readiness signal — it is printed after
-	// the listen, so there is nothing to poll for and no dial to retry. The
-	// one connection the server accepts IS the request.
 	port := readAnnouncedPort(t, stdout)
 	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 5*time.Second)
 	if err != nil {
@@ -118,10 +94,6 @@ function main(): i32 {
 	}
 }
 
-// readAnnouncedPort reads the port a self-announcing server prints on its
-// first stdout line. A server that dies before printing gives an EOF here
-// rather than a dial that times out against a port nobody bound, so the
-// failure names the real cause.
 func readAnnouncedPort(t *testing.T, stdout io.Reader) int {
 	t.Helper()
 	type result struct {

@@ -4,10 +4,6 @@ package interp
 
 import "syscall"
 
-// fsStatFields is one `statfs(2)`: Linux reports the whole record, including
-// `f_namelen`. There is no pathconf syscall — glibc computes it from statfs
-// plus constants — so PATH_MAX is the kernel's own 4096, which is what
-// `getconf PATH_MAX` reports for every Linux filesystem.
 func fsStatFields(path string) (rawFsStat, error) {
 	const linuxPathMax = 4096
 	var st syscall.Statfs_t

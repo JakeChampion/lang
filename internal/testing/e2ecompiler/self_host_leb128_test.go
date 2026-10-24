@@ -7,17 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostLEB128 exercises the self-hosted binary-wasm LEB128 byte
-// encoders, which live in compiler/watbin.fern (the WAT-text
-// emitter is wasm_ir.fern).
-//
-// watbin.fern is a single import-free module, so this test reads it from
-// disk and concatenates it with a self-test main() that encodes the
-// textbook LEB128 vectors and asserts the resulting bytes, then runs the
-// combined program through the existing self-host wasm pipeline
-// (wasm_run -> WAT -> wasmtime). The program returns 0 when every vector
-// matches, or the (1-based) number of the failing check — which the error
-// message surfaces — so a regression points straight at the bad case.
 func TestSelfHostLEB128(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host leb128 e2e")
@@ -49,9 +38,6 @@ func TestSelfHostLEB128(t *testing.T) {
 	}
 }
 
-// leb128SelfTestMain checks the canonical LEB128 vectors. Each `return N`
-// is a distinct failing-check id (0 = all pass). Byte values are decimal
-// (0xE5=229, 0x8E=142, 0x26=38, 0xC0=192, 0xBF=191, 0x7F=127).
 const leb128SelfTestMain = `
 function main(): i32 {
     let b: i32[] = [];

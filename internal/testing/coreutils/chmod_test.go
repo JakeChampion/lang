@@ -7,35 +7,6 @@ import (
 	"testing"
 )
 
-// chmod(1)'s whole output is usually silence, so most of what these cases
-// prove is the TREE each side leaves behind: `seedTree` gives every case its
-// own working directory and compares the twelve-bit mode of every entry
-// under it, which is exactly what this utility is for.
-//
-// Three things the fixtures are shaped around:
-//
-//   - A DIRECTORY keeps its setuid and setgid through a `=` that does not
-//     name them, so `chmod 755 sd` on 6777 is 6755 where `chmod 755 s` on a
-//     file of the same mode is 0755. `sd` and `td` are here to catch an
-//     implementation that treats the two alike.
-//   - `X` reads the execute bits as they stand AT ITS CLAUSE, so `u+x,+X`
-//     and `+X` disagree on the same file.
-//   - The umask only reaches a clause with no `ugoa` prefix, and only for
-//     the value it sets or clears. TestMain pins the process mask at 022
-//     (umask_unix_test.go) and the harness has no way to hand a child a
-//     different one, so every case here is at 022 — enough to separate `u`
-//     from `g` and `o` for `w`, and enough to reach the complaint a `-`
-//     clause raises when the mask stops it clearing what it named, but NOT
-//     a second mask value. Seven others were checked against the reference
-//     by hand while this was written.
-//
-// What is NOT here, and why: every case runs as uid 0 in this container, so
-// the EACCES legs — a directory chmod(2) refuses, a directory whose children
-// cannot be listed — are unreachable from a corpus, because root bypasses
-// the check that produces them. `/proc/self/fd` stands in for the first:
-// it is EPERM even for root. The second (`cannot read directory`) was
-// checked by hand under `setpriv --reuid=65534` and is not in the corpus.
-
 func chmodChmod(t *testing.T, path string, mode uint32) {
 	t.Helper()
 	if err := syscall.Chmod(path, mode); err != nil {
@@ -68,17 +39,6 @@ func chmodLink(t *testing.T, dir, target, name string) {
 	}
 }
 
-// chmodFlat is the main fixture: one file of each interesting starting mode and
-// one directory of each, so a single mode argument exercises the file rule
-// and the directory rule side by side.
-//
-//	f  0644   the ordinary file
-//	x  0777   everything set, so a `-` clause has something to fail at
-//	z  0000   nothing set, so a `+` clause has somewhere to go
-//	s  6755   a FILE with both special bits — they are cleared by a `=`
-//	d  0755   the ordinary directory
-//	sd 6777   a DIRECTORY with both special bits — they survive a `=`
-//	td 7777   the same plus sticky, which does NOT survive
 func chmodFlat(t *testing.T, dir string) {
 	t.Helper()
 	chmodFile(t, dir, "f", 0o644)
@@ -90,17 +50,11 @@ func chmodFlat(t *testing.T, dir string) {
 	chmodDir(t, dir, "td", 0o7777)
 }
 
-// chmodOne is a single file, for the diagnostics where anything else is
-// noise.
 func chmodOne(t *testing.T, dir string) {
 	t.Helper()
 	chmodFile(t, dir, "f", 0o644)
 }
 
-// chmodTree is the `-R` fixture: a directory with a file, a subdirectory
-// with its own file, a symlink to a sibling and a dangling one. The walk is
-// pre-order in raw readdir order, so `-v` prints the parent, then whatever
-// the kernel hands back, descending into a directory as it is reached.
 func chmodTree(t *testing.T, dir string) {
 	t.Helper()
 	chmodDir(t, dir, "t", 0o755)
@@ -112,8 +66,6 @@ func chmodTree(t *testing.T, dir string) {
 	chmodFile(t, dir, "ref", 0o750)
 }
 
-// chmodDeep is a tree whose second level has its own directory, so the walk
-// has to come back UP to the entries it had not reached yet.
 func chmodDeep(t *testing.T, dir string) {
 	t.Helper()
 	chmodDir(t, dir, "t", 0o755)
@@ -126,10 +78,6 @@ func chmodDeep(t *testing.T, dir string) {
 	chmodFile(t, dir, "t/zdir/deeper/leaf", 0o444)
 }
 
-// chmodLinks is every way a symlink can refuse to resolve: a target that is
-// not there, one whose parent is a file, a pair pointing at each other, and
-// one pointing at itself. A command-line symlink is FOLLOWED, so each of
-// these is an error rather than a silent skip, and each has its own wording.
 func chmodLinks(t *testing.T, dir string) {
 	t.Helper()
 	chmodFile(t, dir, "f", 0o644)
@@ -144,8 +92,6 @@ func chmodLinks(t *testing.T, dir string) {
 	chmodLink(t, dir, "d", "dlink")
 }
 
-// chmodRefs are the `--reference` sources: an ordinary mode, one with both
-// special bits, and a symlink to the first, which --reference dereferences.
 func chmodRefs(t *testing.T, dir string) {
 	t.Helper()
 	chmodFile(t, dir, "f", 0o644)
@@ -157,27 +103,17 @@ func chmodRefs(t *testing.T, dir string) {
 	chmodDir(t, dir, "sd", 0o6777)
 }
 
-// chmodOdd is the names the diagnostics have to quote: one needing single
-// quotes, one whose only trouble is the apostrophe (which goes in double
-// quotes), one with a control character, and one that is not valid UTF-8 —
-// a file name is bytes, and the quoting has to render it as octal escapes
-// rather than refuse it.
 func chmodOdd(t *testing.T, dir string) {
 	t.Helper()
 	chmodFile(t, dir, "a b", 0o777)
 	chmodFile(t, dir, "a'b", 0o777)
 	chmodFile(t, dir, "tab\there", 0o777)
 	chmodFile(t, dir, "-lead", 0o777)
-	// Only where the filesystem holds the name; the cases naming it carry
-	// rawByteName and skip there.
 	if rawByteNamesHeld(t) {
 		chmodFile(t, dir, "raw\xff\xfe", 0o777)
 	}
 }
 
-// chmodKinds is the two non-regular shapes a corpus can build: a fifo, which
-// carries permission bits like anything else, and a hard-link pair, whose
-// mode follows the INODE rather than either name.
 func chmodKinds(t *testing.T, dir string) {
 	t.Helper()
 	chmodFile(t, dir, "f", 0o644)
@@ -191,10 +127,8 @@ func init() {
 	registerCorpus("chmod", chmodCases)
 }
 
-// chmodCases is chmod(1)'s corpus.
 func chmodCases(t *testing.T) []invocation {
 	return []invocation{
-		// ---- octal modes -------------------------------------------------
 		{name: "four digits", args: []string{"-v", "0755", "f"}, seedTree: chmodFlat},
 		{name: "three digits", args: []string{"-v", "755", "f"}, seedTree: chmodFlat},
 		{name: "one digit", args: []string{"-v", "7", "f"}, seedTree: chmodFlat},
@@ -206,8 +140,6 @@ func chmodCases(t *testing.T) []invocation {
 		{name: "sticky", args: []string{"-v", "1755", "f"}, seedTree: chmodFlat},
 		{name: "the three special bits alone", args: []string{"-v", "7000", "f"}, seedTree: chmodFlat},
 		{name: "a file loses its special bits", args: []string{"-v", "755", "s"}, seedTree: chmodFlat},
-		// Fewer than five digits leaves a directory's setuid and setgid
-		// alone; five or more is explicit and clears them.
 		{name: "a directory keeps them", args: []string{"-v", "755", "sd"}, seedTree: chmodFlat},
 		{name: "four digits keep them too", args: []string{"-v", "0755", "sd"}, seedTree: chmodFlat},
 		{name: "five digits clear them", args: []string{"-v", "00755", "sd"}, seedTree: chmodFlat},
@@ -222,14 +154,11 @@ func chmodCases(t *testing.T) []invocation {
 		{name: "a removed octal", args: []string{"-v", "-0777", "x"}, seedTree: chmodFlat},
 		{name: "a removed octal on a directory", args: []string{"-v", "-4000", "sd"}, seedTree: chmodFlat},
 		{name: "an octal is not masked", args: []string{"-v", "+7", "z"}, seedTree: chmodFlat},
-		// A numeric perm ENDS its clause, so a comma may follow it and
-		// another clause carry on from there.
 		{name: "a clause after a numeric perm", args: []string{"-v", "=7,u+r", "f"}, seedTree: chmodFlat},
 		{name: "one after an octal with an operator", args: []string{"-v", "+755,u+r", "z"}, seedTree: chmodFlat},
 		{name: "a numeric perm after a clause", args: []string{"-v", "u+r,=7", "f"}, seedTree: chmodFlat},
 		{name: "two numeric perms", args: []string{"-v", "=7,+7", "z"}, seedTree: chmodFlat},
 
-		// ---- octal modes that are not modes ------------------------------
 		{name: "past the twelve bits", args: []string{"-v", "010000", "f"}, seedTree: chmodFlat},
 		{name: "five sevens", args: []string{"-v", "77777", "f"}, seedTree: chmodFlat},
 		{name: "far past any integer", args: []string{"-v", "7777777777777777777777", "f"}, seedTree: chmodFlat},
@@ -241,7 +170,6 @@ func chmodCases(t *testing.T) []invocation {
 		{name: "leading blank", args: []string{"-v", " 644", "f"}, seedTree: chmodFlat},
 		{name: "trailing blank", args: []string{"-v", "644 ", "f"}, seedTree: chmodFlat},
 
-		// ---- the symbolic grammar ----------------------------------------
 		{name: "u plus x", args: []string{"-v", "u+x", "f"}, seedTree: chmodFlat},
 		{name: "an omitted who is masked", args: []string{"-v", "+w", "z"}, seedTree: chmodFlat},
 		{name: "a is not masked", args: []string{"-v", "a+w", "z"}, seedTree: chmodFlat},
@@ -265,7 +193,6 @@ func chmodCases(t *testing.T) []invocation {
 		{name: "four operators in one clause", args: []string{"-v", "a+rwx-w-r", "z"}, seedTree: chmodFlat},
 		{name: "the who spans the operators", args: []string{"-v", "ug+r-w", "z"}, seedTree: chmodFlat},
 
-		// ---- the special bits and who they apply to ----------------------
 		{name: "u plus s is setuid", args: []string{"-v", "u+s", "f"}, seedTree: chmodFlat},
 		{name: "g plus s is setgid", args: []string{"-v", "g+s", "f"}, seedTree: chmodFlat},
 		{name: "o plus s is nothing", args: []string{"-v", "o+s", "z"}, seedTree: chmodFlat},
@@ -289,7 +216,6 @@ func chmodCases(t *testing.T) []invocation {
 		{name: "t does not name s", args: []string{"-v", "a=t", "sd"}, seedTree: chmodFlat},
 		{name: "the running mode is what survives", args: []string{"-v", "g-s,a=rwx", "td"}, seedTree: chmodFlat},
 
-		// ---- the copy form -----------------------------------------------
 		{name: "o equals u", args: []string{"-v", "o=u", "f"}, seedTree: chmodFlat},
 		{name: "g equals u", args: []string{"-v", "g=u", "f"}, seedTree: chmodFlat},
 		{name: "u equals g", args: []string{"-v", "u=g", "f"}, seedTree: chmodFlat},
@@ -302,7 +228,6 @@ func chmodCases(t *testing.T) []invocation {
 		{name: "a copy letter followed by an operator", args: []string{"-v", "-u=rwx", "f"}, seedTree: chmodFlat},
 		{name: "a copy letter followed by a comma", args: []string{"-v", "g=u,o=u", "f"}, seedTree: chmodFlat},
 
-		// ---- X, whose condition moves ------------------------------------
 		{name: "X on a file with no execute", args: []string{"-v", "+X", "f"}, seedTree: chmodFlat},
 		{name: "X after an execute bit arrives", args: []string{"-v", "u+x,+X", "f"}, seedTree: chmodFlat},
 		{name: "X on a directory", args: []string{"-v", "+X", "d"}, seedTree: chmodFlat},
@@ -314,13 +239,10 @@ func chmodCases(t *testing.T) []invocation {
 		{name: "X removes what is there", args: []string{"-v", "a-X", "x"}, seedTree: chmodFlat},
 		{name: "X removes nothing when nothing is", args: []string{"-v", "-X", "f"}, seedTree: chmodFlat},
 		{name: "any execute bit satisfies X", args: []string{"-v", "a=,g+x,+X", "f"}, seedTree: chmodFlat},
-		// X carries no bits of its own, so an `x` beside it is unaffected
-		// by the condition X is under.
 		{name: "x and X in one action", args: []string{"-v", "a+xX", "f"}, seedTree: chmodFlat},
 		{name: "X before x", args: []string{"-v", "a=Xx", "f"}, seedTree: chmodFlat},
 		{name: "X beside s", args: []string{"-v", "a+Xs", "f"}, seedTree: chmodFlat},
 
-		// ---- symbolic modes that are not modes ---------------------------
 		{name: "an empty mode", args: []string{"-v", "", "f"}, seedTree: chmodFlat},
 		{name: "a lone comma", args: []string{"-v", ",", "f"}, seedTree: chmodFlat},
 		{name: "two commas", args: []string{"-v", ",,", "f"}, seedTree: chmodFlat},
@@ -337,7 +259,6 @@ func chmodCases(t *testing.T) []invocation {
 		{name: "a who after a perm", args: []string{"-v", "ux+r", "f"}, seedTree: chmodFlat},
 		{name: "two copy letters", args: []string{"-v", "--", "-uu", "f"}, seedTree: chmodFlat},
 
-		// ---- -v and -c wording -------------------------------------------
 		{name: "verbose on a change", args: []string{"-v", "0700", "f"}, seedTree: chmodFlat},
 		{name: "verbose on no change", args: []string{"-v", "0644", "f"}, seedTree: chmodFlat},
 		{name: "changes on a change", args: []string{"-c", "0700", "f"}, seedTree: chmodFlat},
@@ -353,9 +274,6 @@ func chmodCases(t *testing.T) []invocation {
 		{name: "verbose and changes together", args: []string{"-vc", "0700", "f"}, seedTree: chmodFlat},
 		{name: "changes then verbose", args: []string{"-cv", "0644", "f"}, seedTree: chmodFlat},
 
-		// ---- the umask complaint -----------------------------------------
-		// Raised only for a mode that came in through the option letters:
-		// `chmod -w x` says so and `chmod -- -w x` does not.
 		{name: "a minus the umask blocks", args: []string{"-w", "x"}, seedTree: chmodFlat},
 		{name: "the same with verbose", args: []string{"-v", "-w", "x"}, seedTree: chmodFlat},
 		{name: "the same with changes", args: []string{"-c", "-w", "x"}, seedTree: chmodFlat},
@@ -373,7 +291,6 @@ func chmodCases(t *testing.T) []invocation {
 		{name: "on a directory", args: []string{"-w", "sd"}, seedTree: chmodFlat},
 		{name: "under -R", args: []string{"-R", "-w", "t"}, seedTree: chmodTree},
 
-		// ---- errors ------------------------------------------------------
 		{name: "a missing file", args: []string{"0644", "nosuch"}, seedTree: chmodFlat},
 		{name: "a missing file with verbose", args: []string{"-v", "0644", "nosuch"}, seedTree: chmodFlat},
 		{name: "a missing file with changes", args: []string{"-c", "0644", "nosuch"}, seedTree: chmodFlat},
@@ -390,8 +307,6 @@ func chmodCases(t *testing.T) []invocation {
 		{name: "a run of trailing slashes", args: []string{"-v", "0700", "d///"}, seedTree: chmodFlat},
 		{name: "a dot operand", args: []string{"-v", "0755", "d/."}, seedTree: chmodFlat},
 		{name: "a dotdot operand", args: []string{"-v", "0755", "d/.."}, seedTree: chmodFlat},
-		// EPERM even for root, which is the only way this container can
-		// reach the failing-chmod path at all.
 		{name: "a chmod the kernel refuses", args: []string{"0700", "/proc/self/fd"}},
 		{name: "the same with verbose", args: []string{"-v", "0700", "/proc/self/fd"}},
 		{name: "the same with changes", args: []string{"-c", "0700", "/proc/self/fd"}},
@@ -399,12 +314,6 @@ func chmodCases(t *testing.T) []invocation {
 		{name: "-f keeps its verbose line", args: []string{"-fv", "0700", "/proc/self/fd"}},
 		{name: "a refused no-op still fails", args: []string{"-v", "0500", "/proc/self/fd"}},
 
-		// ---- symlinks ----------------------------------------------------
-		// ---- --dereference, -h and the -H / -L / -P traversal ---------------
-		// 9.5 named the two questions apart: which links the WALK
-		// follows, and whether the CHANGE lands on the link or on what
-		// it points at. Linux has no mode on a symlink, so a change
-		// that does not follow one is `neither … has been changed`.
 		{name: "-h on a symlink", args: []string{"-hv", "0600", "good"}, seedTree: chmodLinks},
 		{name: "-h on a dangling symlink", args: []string{"-hv", "0600", "gone"}, seedTree: chmodLinks},
 		{name: "-h on an ordinary file", args: []string{"-hv", "0600", "f"}, seedTree: chmodLinks},
@@ -424,8 +333,6 @@ func chmodCases(t *testing.T) []invocation {
 		{name: "-R -L over a tree with links", args: []string{"-RLv", "0700", "t"}, seedTree: chmodTree},
 		{name: "-R -P over a tree with links", args: []string{"-RPv", "0700", "t"}, seedTree: chmodTree},
 		{name: "-R -h over a tree with links", args: []string{"-Rhv", "0700", "t"}, seedTree: chmodTree},
-		// chownLongTree's chain is past PATH_MAX, and the walk goes through
-		// each directory it holds rather than by the full path.
 		{name: "-R beyond PATH_MAX", args: []string{"-Rv", "0700", "longpath"}, seedTree: chownLongTree},
 		{name: "-R --dereference needs -H or -L", args: []string{"-R", "--dereference", "-P", "0700", "t"}, seedTree: chmodTree},
 		{name: "-R --dereference with -L is allowed", args: []string{"-R", "--dereference", "-L", "-v", "0700", "t"}, seedTree: chmodTree},
@@ -444,7 +351,6 @@ func chmodCases(t *testing.T) []invocation {
 		{name: "-R on a symlink to a file", args: []string{"-Rv", "0600", "good"}, seedTree: chmodLinks},
 		{name: "every symlink at once", args: []string{"-v", "0600", "good", "gone", "notdir", "loopa", "self"}, seedTree: chmodLinks},
 
-		// ---- recursion ---------------------------------------------------
 		{name: "a tree", args: []string{"-Rv", "0700", "t"}, seedTree: chmodTree},
 		{name: "a tree with --recursive", args: []string{"--recursive", "-v", "0700", "t"}, seedTree: chmodTree},
 		{name: "a tree with -c", args: []string{"-Rc", "0700", "t"}, seedTree: chmodTree},
@@ -463,10 +369,6 @@ func chmodCases(t *testing.T) []invocation {
 		{name: "two trees", args: []string{"-Rv", "0700", "t/sub", "t"}, seedTree: chmodTree},
 		{name: "the whole working directory", args: []string{"-Rv", "0700", "."}, seedTree: chmodTree},
 
-		// ---- the root failsafe -------------------------------------------
-		// Only the REFUSING spellings are here: chmod's default is
-		// --no-preserve-root, so the same case without it would really
-		// change every mode on the machine.
 		{name: "the root directory", args: []string{"-R", "--preserve-root", "0777", "/"}, seedTree: chmodOne},
 		{name: "two slashes say so", args: []string{"-R", "--preserve-root", "0777", "//"}, seedTree: chmodOne},
 		{name: "three collapse to one", args: []string{"-R", "--preserve-root", "0777", "///"}, seedTree: chmodOne},
@@ -482,7 +384,6 @@ func chmodCases(t *testing.T) []invocation {
 		{name: "and the other way round", args: []string{"-Rv", "--no-preserve-root", "--preserve-root", "0755", "t"}, seedTree: chmodTree},
 		{name: "a missing operand under the failsafe", args: []string{"-Rv", "--preserve-root", "0700", "/nonexistentzz"}, seedTree: chmodOne},
 
-		// ---- --reference -------------------------------------------------
 		{name: "a reference", args: []string{"--reference=r640", "f"}, seedTree: chmodRefs},
 		{name: "a reference with verbose", args: []string{"-v", "--reference=r640", "d"}, seedTree: chmodRefs},
 		{name: "a reference with special bits", args: []string{"-v", "--reference=r6755", "f"}, seedTree: chmodRefs},
@@ -501,7 +402,6 @@ func chmodCases(t *testing.T) []invocation {
 		{name: "a reference, a mode and no file", args: []string{"--reference=r640", "-w"}, seedTree: chmodRefs},
 		{name: "a reference over a tree", args: []string{"-Rv", "--reference=ref", "t"}, seedTree: chmodTree},
 
-		// ---- operand counting --------------------------------------------
 		{name: "no arguments at all"},
 		{name: "only options", args: []string{"-R"}},
 		{name: "only a verbose flag", args: []string{"-v"}},
@@ -513,7 +413,6 @@ func chmodCases(t *testing.T) []invocation {
 		{name: "the mode is quoted as typed", args: []string{"u+r'x"}},
 		{name: "a control character in the mode", args: []string{"a\nb"}},
 
-		// ---- the mode as an option ---------------------------------------
 		{name: "a bare minus w", args: []string{"--", "-w", "x"}, seedTree: chmodFlat},
 		{name: "minus w through the options", args: []string{"-w", "f"}, seedTree: chmodFlat},
 		{name: "an octal through the options", args: []string{"-0644", "x"}, seedTree: chmodFlat},
@@ -552,7 +451,6 @@ func chmodCases(t *testing.T) []invocation {
 		{name: "a dashdash between them", args: []string{"-R", "--", "-w", "t"}, seedTree: chmodTree},
 		{name: "an option after the mode operand", args: []string{"-w", "-R", "t"}, seedTree: chmodTree},
 
-		// ---- getopt ------------------------------------------------------
 		{name: "an unknown long option", args: []string{"--bogus", "f"}, seedTree: chmodFlat},
 		{name: "an unknown short option", args: []string{"-z", "f"}, seedTree: chmodFlat},
 		{name: "an unambiguous prefix", args: []string{"--rec", "0644", "f"}, seedTree: chmodFlat},
@@ -577,16 +475,12 @@ func chmodCases(t *testing.T) []invocation {
 		{name: "a dashdash after it", args: []string{"-v", "0644", "--", "f"}, seedTree: chmodFlat},
 		{name: "a lone dash is an operand", args: []string{"-v", "0644", "-"}, seedTree: chmodFlat},
 
-		// ---- quoting -----------------------------------------------------
 		{name: "a name with a space", args: []string{"-v", "0644", "a b"}, seedTree: chmodOdd},
 		{name: "a name with an apostrophe", args: []string{"-v", "0644", "a'b"}, seedTree: chmodOdd},
 		{name: "a name with a tab", args: []string{"-v", "0644", "tab\there"}, seedTree: chmodOdd},
 		{name: "a missing name with a space", args: []string{"-v", "0644", "no such"}, seedTree: chmodOdd},
 		{name: "a missing name with an apostrophe", args: []string{"-v", "0644", "no'such"}, seedTree: chmodOdd},
 		{name: "a name that is not valid UTF-8", args: []string{"-v", "0644", "raw\xff\xfe"}, seedTree: chmodOdd, rawByteName: true},
-		// A file whose name begins with `-` reaches chmod only behind `--`
-		// or a `./` prefix; bare, its first byte is read as a mode letter
-		// and the second as an option that is not one.
 		{name: "a leading-dash name behind a dashdash", args: []string{"-v", "0644", "--", "-lead"}, seedTree: chmodOdd},
 		{name: "the same name behind a dot slash", args: []string{"-v", "0644", "./-lead"}, seedTree: chmodOdd},
 		{name: "the same name bare", args: []string{"-v", "0644", "-lead"}, seedTree: chmodOdd},
@@ -594,18 +488,14 @@ func chmodCases(t *testing.T) []invocation {
 		{name: "a missing one that is not", args: []string{"-v", "0644", "gone\xff"}, seedTree: chmodOdd},
 		{name: "a mode that is not valid UTF-8", args: []string{"-v", "\xff\xfe", "f"}, seedTree: chmodOdd},
 		{name: "and one with no operand after it", args: []string{"\xff\xfe"}},
-		// The umask complaint is the one diagnostic that names the file the
-		// way a shell would need it typed rather than always in quotes.
 		{name: "the complaint quotes a space", args: []string{"-w", "a b"}, seedTree: chmodOdd},
 		{name: "the complaint quotes an apostrophe", args: []string{"-w", "a'b"}, seedTree: chmodOdd},
 		{name: "the complaint leaves a plain name bare", args: []string{"-w", "x"}, seedTree: chmodFlat},
 
-		// ---- the other file kinds ----------------------------------------
 		{name: "a fifo", args: []string{"-v", "0600", "pipe"}, seedTree: chmodKinds},
 		{name: "a hard link names one inode", args: []string{"-v", "0600", "hard"}, seedTree: chmodKinds},
 		{name: "-R over every kind", args: []string{"-Rv", "0640", "."}, seedTree: chmodKinds},
 
-		// ---- the write-failure paths -------------------------------------
 		{name: "a silent run to a closed stdout", args: []string{"0700", "f"}, seedTree: chmodFlat, stdout: stdoutClosed},
 		{name: "a verbose line to a closed stdout", args: []string{"-v", "0700", "f"}, seedTree: chmodFlat, stdout: stdoutClosed},
 		{name: "a verbose line to a full stdout", args: []string{"-v", "0700", "f"}, seedTree: chmodFlat, stdout: stdoutFull},

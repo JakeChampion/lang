@@ -5,20 +5,6 @@ import (
 	"testing"
 )
 
-// --- `.len()` on an array-of-structs / -tuples is a borrow (#6127) -----------
-//
-// A `.len()` on the LOCAL ITSELF reads only its header, so it must not cost the
-// local its deep release. Same array, same struct, 100 rounds; every row must
-// balance:
-//
-//	ps[0].xs[0]   (element read)
-//	ps[0].n       (scalar field)
-//	ps.len()      (header read)
-//	ps.len() + ps[0].xs[0]
-//
-// The rows assert alloc/free balance rather than bump-allocator growth, which
-// the freelist can mask.
-
 func TestSelfHostArrStructLenBorrowX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -58,7 +44,6 @@ func TestSelfHostArrStructLenBorrowX86_64(t *testing.T) {
 		want int
 	}{
 		{
-			// The minimal shape: `.len()` is the ONLY use.
 			name: "arrstruct_len_is_the_only_use",
 			src: `struct P { xs: i32[] }
 function round(r: i32): i32 {
@@ -74,9 +59,6 @@ function main(): i32 {
 			want: 17,
 		},
 		{
-			// `.len()` alongside an element read — this is the one that shows the
-			// old behaviour was a poison rather than a missing admission: the
-			// element read on its own always reclaimed.
 			name: "arrstruct_len_alongside_an_element_read",
 			src: `struct P { xs: i32[] }
 function round(r: i32): i32 {
@@ -92,8 +74,6 @@ function main(): i32 {
 			want: 70,
 		},
 		{
-			// Bound through a local rather than used inline, so the fix cannot be
-			// keyed on the return position.
 			name: "arrstruct_len_bound_to_a_local",
 			src: `struct P { xs: i32[] }
 function round(r: i32): i32 {
@@ -110,7 +90,6 @@ function main(): i32 {
 			want: 17,
 		},
 		{
-			// The tuple sibling, ARRTUP:.
 			name: "arrtup_len_is_the_only_use",
 			src: `function round(r: i32): i32 {
     let ts: (i32, i32[])[] = [(r, [r, r + 1])];
@@ -125,8 +104,6 @@ function main(): i32 {
 			want: 17,
 		},
 		{
-			// Declared inside a loop — the shape #6285 measured at 35200 and left
-			// open. It is the same cause, not a block-scoped one.
 			name: "arrstruct_len_declared_in_a_loop",
 			src: `struct P { xs: i32[], n: i32 }
 function round(r: i32): i32 {
@@ -148,7 +125,6 @@ function main(): i32 {
 			want: 38,
 		},
 		{
-			// The ARRTUP twin of the above — 32000 in #6285.
 			name: "arrtup_len_declared_in_a_loop",
 			src: `function round(r: i32): i32 {
     let acc: i32 = 0;
@@ -182,11 +158,6 @@ function main(): i32 {
 	}
 }
 
-// TestSelfHostArrStructLenBorrowHazardsX86_64 — `.len()` is a borrow, but it
-// must not credit anything else in the same function. Each of these pairs a
-// `.len()` with a genuine escape and asserts the credit is still refused;
-// behaviour is the assertion, since a wrongly-granted credit frees a value
-// something else still holds. Every `want` is from `fern -interp`.
 func TestSelfHostArrStructLenBorrowHazardsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -237,7 +208,6 @@ function main(): i32 {
 			want: 53,
 		},
 		{
-			// The element's array field is extracted whole and outlives the array.
 			name: "len_plus_element_field_extracted",
 			src: `struct P { xs: i32[] }
 function round(r: i32): i32 {
@@ -255,7 +225,6 @@ function main(): i32 {
 			want: 70,
 		},
 		{
-			// The array itself is passed to a callee that keeps it.
 			name: "len_plus_call_arg_the_callee_keeps",
 			src: `struct P { xs: i32[] }
 @noinline function keepit(ps: P[]): P[] { return ps; }

@@ -15,10 +15,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// std/http/compress under std/serve's loop, its gzip and zstd read by
-// Go's decoders: a page of numbered lines and one mixing them with
-// pseudo-random words, each asked for in gzip, in zstd and without
-// `Accept-Encoding`. The interpreter and the x86-64 backend.
 func TestCompressServeInterp(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := writeCompressServeSource(t)
@@ -158,7 +154,6 @@ func checkCompressServe(t *testing.T, addr string) {
 	}
 }
 
-// decodeCompressed is `raw` read by Go's decoder for `coding`.
 func decodeCompressed(t *testing.T, path, coding string, raw []byte, size int) []byte {
 	t.Helper()
 	switch coding {

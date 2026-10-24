@@ -2,13 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/string.partition / rpartition — the Python-style
-// three-way split (head, sep, tail) that KEEPS the separator (unlike
-// split_once/rsplit_once, which drop it). partition splits at the FIRST
-// occurrence and, when the sep is absent, returns (s, "", ""); rpartition
-// splits at the LAST and, when absent, returns ("", "", s). The result is a
-// (string, string, string) tuple. Returns 42 iff every check holds across interp
-// / x86-64 / wasm / arm64; each leg skips itself when its toolchain is absent.
 const stringPartitionProg = `
 import "std/string";
 function chk(t: (string, string, string), a: string, b: string, c: string): boolean {

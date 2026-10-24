@@ -25,9 +25,6 @@ func TestSelfHostTabsBytes(t *testing.T) {
 				gnu = "g" + utility
 			}
 			oracle, err := exec.LookPath(gnu)
-			// Use the same configured reference as internal/testing/coreutils. The
-			// devbox's system GNU 9.1 differs from the pinned GNU 9.12 on NUL
-			// display width, so PATH alone is not the corpus oracle.
 			for _, dir := range filepath.SplitList(os.Getenv("FERN_GNU_COREUTILS")) {
 				candidate := filepath.Join(dir, utility)
 				if info, statErr := os.Stat(candidate); statErr == nil && !info.IsDir() {

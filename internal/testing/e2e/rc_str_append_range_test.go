@@ -4,25 +4,6 @@ import (
 	"testing"
 )
 
-// #8770 — end-to-end benefit and safety of `__fern_str_append_range`, the
-// fusion of `acc = acc + slice_unchecked(s, lo, hi)`. These pin what the
-// emitted runtime does.
-
-// strAppendRangeCorrectnessSrc covers every shape the fused path must get
-// right, all against values the interpreter agrees on:
-//
-//   - an EMPTY range (the shared-sentinel case __str_slice short-circuits),
-//   - a range of 7 bytes or fewer (the inline/SSO case __str_slice packs
-//     without allocating), and one above it (its heap case),
-//   - an ALIASED accumulator, which puts the buffer at rc>1 so the append
-//     must copy instead of mutating the value `alias` still reads,
-//   - a source that IS the accumulator (`e = e + slice_unchecked(e, 0, 2)`),
-//     where the read range and the write slack are one buffer apart,
-//   - a chain, whose left operand is the previous join's intermediate,
-//   - growth from nothing to 4800 bytes, so the in-place grow crosses out of
-//     the small tier at 2048 and through several large-tier classes; the
-//     slices either side of 2048 and at the very end catch a grow that
-//     silently stopped copying.
 const strAppendRangeCorrectnessSrc = `function build(s: string, lo: i32, hi: i32, n: i32): string {
     let out: string = "";
     let i: i32 = 0;
@@ -79,8 +60,6 @@ function main(): i32 {
     return 0;
 }`
 
-// The trailing newline of the final print is omitted: runWasmCapturingStdout
-// trims it, and the native comparison adds it back.
 const strAppendRangeWant = `abcabcabcabcabc
 []
 abcdefgabcdefgabcdefg
@@ -93,10 +72,6 @@ abababab|ababababab
 xyxyxyxyxy
 <bcd><bcd><bcd>`
 
-// TestX86_64StrAppendRangeCorrect runs the shapes above on the native
-// single-word ABI under the leak detector, so the same program doubles as an
-// over-release probe: a buffer freed while still aliased shows up as
-// frees > allocs, or as corrupted output.
 func TestX86_64StrAppendRangeCorrect(t *testing.T) {
 
 	stdout, stderr, code := runLeakCheckX86_64(t, strAppendRangeCorrectnessSrc)
@@ -112,8 +87,6 @@ func TestX86_64StrAppendRangeCorrect(t *testing.T) {
 	}
 }
 
-// TestWASMStrAppendRangeCorrect is the two-word (wasm) sibling, where the
-// in-place path returns (a_data, la+lb) with the buffer's rc left at 1.
 func TestWASMStrAppendRangeCorrect(t *testing.T) {
 
 	if got := runWasmCapturingStdout(t, strAppendRangeCorrectnessSrc); got != strAppendRangeWant {
@@ -121,9 +94,6 @@ func TestWASMStrAppendRangeCorrect(t *testing.T) {
 	}
 }
 
-// TestWASMStrAppendRangeBalanced runs the same program through the wasm leak
-// census: the fused helper's fallback releases BOTH the consumed accumulator
-// and the range it materialised, and only that census sees the second one.
 func TestWASMStrAppendRangeBalanced(t *testing.T) {
 
 	_, stderr, code := runLeakCheckWasm(t, strAppendRangeCorrectnessSrc, false)
@@ -136,10 +106,6 @@ func TestWASMStrAppendRangeBalanced(t *testing.T) {
 	}
 }
 
-// TestArm64StrAppendRangeCorrect is the two-word NATIVE sibling. Under the
-// leak detector, so it doubles as an over-release probe: the fused helper's
-// fallback releases BOTH the consumed accumulator and the range it
-// materialised.
 func TestArm64StrAppendRangeCorrect(t *testing.T) {
 
 	stdout, stderr, code := runLeakCheckArm64(t, strAppendRangeCorrectnessSrc)
@@ -170,9 +136,6 @@ func TestArm64StrAppendRangeAllocsCollapse(t *testing.T) {
 	}
 }
 
-// strAppendRangeAllocSrc appends 12-byte ranges — above the 7-byte inline
-// threshold, so the unfused pair allocates a slice buffer per append on top
-// of the accumulator's own class steps.
 const strAppendRangeAllocSrc = `function main(): i32 {
     let s: string = "abcdefghijklmnop";
     let out: string = "";
@@ -185,15 +148,6 @@ const strAppendRangeAllocSrc = `function main(): i32 {
     return 0;
 }`
 
-// TestX86_64StrAppendRangeAllocsCollapse pins the allocation half of the
-// benefit on this exact program:
-//
-//	before -> allocs=633 frees=633 live_bytes=0
-//	after  -> allocs=266 frees=266 live_bytes=0
-//
-// The 500 slice buffers are gone; what remains is the accumulator's own
-// size-class steps, which the fusion does not change. The assertion is the
-// invariant rather than the exact number: no allocation per append.
 func TestX86_64StrAppendRangeAllocsCollapse(t *testing.T) {
 
 	stdout, stderr, code := runLeakCheckX86_64(t, strAppendRangeAllocSrc)
@@ -224,18 +178,6 @@ func TestWASMStrAppendRangeAllocsCollapse(t *testing.T) {
 	}
 }
 
-// strAppendWidePieceSrc is the shape a 12-byte range does not reach: pieces
-// WIDER than the slack the block-fit test leaves behind, appended past the
-// 2048-byte tier change, with a live heap string allocated mid-loop.
-//
-// A fit test that compares the grown request against anything but the total —
-// an arm64 register collision put a size-class intermediate there — still says
-// "grow in place" while the piece runs off the end of the block, and the
-// overrun lands in whatever the bump cursor hands out next. The accumulator's
-// own LENGTH stays right (it is stored, not measured), so only reading the
-// bytes back and checking a neighbouring allocation catches it. Both the
-// fused range form and the plain append are exercised, each against its own
-// guard.
 const strAppendWidePieceSrc = `function main(): i32 {
     let s: string = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ!?";
     let out: string = "";
@@ -307,13 +249,6 @@ func TestStrAppendWidePiece(t *testing.T) {
 	})
 }
 
-// The trap contract: the fused helper must reject exactly the ranges
-// __str_slice rejects — a < 0 || b > s.len() || a > b — and it has to do so on
-// the FAST path too, where no __str_slice call is left to check them. Each
-// case runs several valid appends first, so the accumulator is a uniquely-held
-// heap buffer by the time the bad range arrives; without the up-front check
-// the in-place grow reads out of bounds and the program returns a length.
-// Bounds are carried in vars so constfold cannot pre-judge them.
 var strAppendRangeTrapCases = []struct{ name, src string }{
 	{"high_past_end", `function main(): i32 {
     let s: string = "hello";
@@ -377,8 +312,6 @@ func TestStrAppendRangeTrap(t *testing.T) {
 				}
 			})
 			t.Run("wasm", func(t *testing.T) {
-				// wasm's `unreachable` surfaces as wasmtime's own non-zero
-				// exit, not 134 — assert the trap, not its spelling.
 				_, _, code := runWasmArtifact(t, buildCLIComponent(t, c.src), runOpts{})
 				if code == 0 {
 					t.Errorf("wasm did not trap (exit 0)")

@@ -1,14 +1,6 @@
 import "std/test";
 import "std/f64";
 
-// tests/stdlib/float_recip_copysign_midpoint_test.fern — pure-Fern coverage
-// of std/f64.recip / copysign / midpoint: three purely-arithmetic helpers
-// (reciprocal 1/x; magnitude-of-receiver with sign-of-argument; overflow-safe
-// halfway point a*0.5 + b*0.5). No libm primitive, so unlike the transcendentals
-// these lower on all four backends including wasmbin. Both f64 and f32. The
-// Go-side TestFloatRecipCopysignMidpoint pins these across all four backends;
-// this is the migration-shaped companion.
-
 function test_recip(): test.TestOutcome {
   if (!float_near(4.0.recip(), 0.25)) {
     return test.fail("recip 4");

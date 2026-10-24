@@ -3,20 +3,6 @@ import "std/test";
 import "std/string";
 import "std/array";
 
-// tests/stdlib/fuzz_shrink_test.fern — `r.fuzz_shrink`
-// walkthrough. Same shape as the base `r.fuzz` but on a
-// failure the harness minimises the offending input before
-// reporting, so the failure log shows a clean reproducer
-// rather than the unminimised mutated buffer that happened to fire.
-//
-// Properties here pass — the shrinker is exercised in the
-// failure-shape Go gate
-// (`TestRunnerFuzzShrinkSurfacesMinimisedInput`) and in
-// the dedicated reducer probes below.
-
-// Property that holds: `input.len() >= 0` for every byte
-// array. This shouldn't ever fire — the shrinker still runs
-// the mutation pass but never gets to minimise anything.
 function check_len_nonneg(input: u8[]): test.TestOutcome {
   if (input.len() >= 0) {
     return test.pass();
@@ -24,20 +10,10 @@ function check_len_nonneg(input: u8[]): test.TestOutcome {
   return test.fail("len returned negative");
 }
 
-// Property that holds: reversing the bytes twice is the
-// identity — checked directly on the `u8[]` input, no text
-// bridge needed. The fuzz.DEFAULT_ITERATIONS loop exercises
-// the byte-level mutator thoroughly; if the round-trip
-// ever broke, the shrinker would localise the trigger to a
-// minimal byte sequence.
 function check_reverse_idempotent(input: u8[]): test.TestOutcome {
   return test.assert_eq_array(input.reverse().reverse(), input);
 }
 
-// Property that holds: every byte in `to_lower(s)` is
-// outside the uppercase range [65, 90]. The scan is
-// byte-level and holds for invalid UTF-8 too, so the bridge
-// is `string_from_bytes_unchecked`.
 function check_to_lower_no_upper(input: u8[]): test.TestOutcome {
   let s: string = string_from_bytes_unchecked(input);
   let lowered: string = s.to_lower();

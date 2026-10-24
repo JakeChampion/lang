@@ -9,37 +9,6 @@ import (
 	"testing"
 )
 
-// `rlimit_nofile` (#8819) through the SELF-HOST IR path, on each backend that
-// emits it. The op takes no operands and pushes the soft RLIMIT_NOFILE as a
-// full-width i64 — asmcore.rt_src_rlimit_nofile, reached as
-// `call __fn___fern_rlimit_nofile`.
-//
-// The probe compares against a limit the HARNESS chose, not against a range:
-// each run is wrapped in `ulimit -S -n <want>`, so the child's soft limit is a
-// number this test set and the hard limit is left where it was. Every way the
-// helper can be wrong produces a plausible number otherwise —
-//
-//   - reading rlim_max (offset 8) instead of rlim_cur gives the hard limit,
-//     which `want` is deliberately not,
-//   - the wrong resource id gives some other ceiling entirely (RLIMIT_NPROC,
-//     RLIMIT_STACK),
-//   - the wrong syscall number fails the call, which the helper normalises to
-//     i64 max,
-//   - letting Linux's all-ones RLIM_INFINITY through unclamped reads as -1,
-//   - lowering to nothing pushes whatever was already on the stack.
-//
-// One thing no RUN can measure: the result's WIDTH. Linux refuses to set
-// RLIMIT_NOFILE above /proc/sys/fs/nr_open, so no soft limit this test can
-// impose exceeds the i32 range, and every such value survives a sign-extend
-// unchanged. Only the unlimited normalisation (i64 max) would tell the two
-// apart, and it is unreachable for the same reason. The width is therefore
-// pinned STRUCTURALLY instead, by assertNoNarrowingAfter: without the i64
-// arms in the lowering, `let n: i64 = rlimit_nofile()` lowers as a widened i32 and
-// the backend narrows the pushed result right after the call — which would
-// turn i64 max into -1 on a host that does report unlimited.
-//
-// wasm has no leg beyond a refusal: neither preview enforces a resource limit,
-// so platforms.fern withholds the builtin on `rlimit`.
 func rlimitSelfHostSource(want int64) string {
 	return fmt.Sprintf(`function main(): i32 {
     let n: i64 = rlimit_nofile();
@@ -52,9 +21,6 @@ func rlimitSelfHostSource(want int64) string {
 }`, want)
 }
 
-// nofileProbeLimit is a soft RLIMIT_NOFILE this test imposes on the probe: a
-// value that is neither the hard limit nor the limit the test process itself
-// runs under, so reading either of those instead fails rather than coincides.
 func nofileProbeLimit(t *testing.T) int64 {
 	t.Helper()
 	var lim syscall.Rlimit
@@ -70,14 +36,6 @@ func nofileProbeLimit(t *testing.T) int64 {
 	return 0
 }
 
-// runUnderNofile runs argv with the child's soft RLIMIT_NOFILE set to `want`,
-// leaving the hard limit alone. A shell's `ulimit` is the only portable way to
-// set a child's limit from Go, and `exec` keeps the shell from adding a process
-// between it and the probe.
-//
-// `-S` is essential: a bare `ulimit -n N` sets BOTH limits, which would make
-// a helper reading rlim_max agree with one reading rlim_cur and let the whole
-// hard-vs-soft question through untested.
 func runUnderNofile(want int64, argv ...string) *exec.Cmd {
 	quoted := make([]string, len(argv))
 	for i, a := range argv {
@@ -86,9 +44,6 @@ func runUnderNofile(want int64, argv ...string) *exec.Cmd {
 	return exec.Command("/bin/sh", "-c", fmt.Sprintf("ulimit -S -n %d; exec %s", want, strings.Join(quoted, " ")))
 }
 
-// assertNoNarrowingAfter fails when `narrow` appears in the instructions that
-// immediately follow `call`, which is where a lost i64 width tracking puts the
-// backend's 32-bit sign-extend of an already-full-width result.
 func assertNoNarrowingAfter(t *testing.T, asm []byte, call, narrow string) {
 	t.Helper()
 	at := bytes.Index(asm, []byte(call))
@@ -104,8 +59,6 @@ func assertNoNarrowingAfter(t *testing.T, asm []byte, call, narrow string) {
 	}
 }
 
-// TestSelfHostRlimitNofileIRX86_64 compiles the probe through the production
-// x86-64 IR driver and runs it under a soft limit this test picked.
 func TestSelfHostRlimitNofileIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	want := nofileProbeLimit(t)
@@ -129,10 +82,6 @@ func TestSelfHostRlimitNofileIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostRlimitNofileIRArm64 runs the same probe through the arm64 IR
-// backend under qemu, where getrlimit is asm-generic 163. qemu-user passes the
-// process's rlimits through unchanged, so the soft limit set outside it is the
-// one the guest reads.
 func TestSelfHostRlimitNofileIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -161,10 +110,6 @@ func TestSelfHostRlimitNofileIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostRlimitNofileIRWasmRefused pins the wasm answer, which is a
-// refusal NAMING THE BUILTIN rather than a fabricated ceiling: neither preview
-// enforces resource limits, and both "unlimited" and a plausible 1024 would be
-// measurements a component never took.
 func TestSelfHostRlimitNofileIRWasmRefused(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

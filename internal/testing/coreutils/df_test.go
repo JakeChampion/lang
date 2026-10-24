@@ -14,69 +14,6 @@ func init() {
 	registerCorpus("df", dfCases)
 }
 
-// df's answer is the machine's LIVE state, and almost none of it is
-// comparable between two processes. The GNU leg and the Fern leg run
-// seconds apart over one machine; anything that moved in between is a
-// diff that says nothing about either implementation. What this corpus
-// can hold, and why, is the whole design of the file.
-//
-// NOT here, deliberately:
-//
-//   - `df` and `df -a` with no operands, and every `-t` / `-x` naming a
-//     type that real volumes use. Their answer is "whatever happens to
-//     be mounted", and the free space of a mounted volume moves under
-//     any writer on the box — this container's own `/` moved by several
-//     megabytes between consecutive probe runs. A case like that fails
-//     for reasons that have nothing to do with df. The reasoning is
-//     `scripts/coreutils-bench.d/_utmp.sh`'s, applied to space rather
-//     than to logins.
-//   - The `Used`, `Available`, `Use%`, `IUsed`, `IFree` and `IUse%`
-//     columns of any filesystem that can be written to, for the same
-//     reason. A mask by position would hide exactly the digits the
-//     column exists for AND the width they give it, so `--output=`
-//     selecting the stable columns is used instead: it leaves the
-//     alignment, the header and the value under byte comparison and
-//     drops only the fields that move.
-//
-// What IS here:
-//
-//   - Operands that land on a filesystem reporting NO BLOCKS AT ALL —
-//     procfs, sysfs, devpts. Those counts are zero by construction
-//     rather than by luck, so a complete row of theirs is stable: every
-//     layout, every header, the `-` that a zero denominator prints in
-//     `Use%`, and the whole `--output` field set are byte-exact against
-//     GNU there.
-//   - The SIZE of the filesystem the harness's temp directory is on,
-//     which is fixed for the life of a mount and is the only real
-//     number df prints that does not move. That is what exercises the
-//     block-size division and the human-readable rounding against a
-//     number with digits in it. (An allocate-on-demand filesystem whose
-//     total grows — btrfs — could still move it. Every CI runner and
-//     this container are ext4.)
-//   - Every option parse, every diagnostic, and every operand that
-//     fails to resolve: those touch no filesystem state at all.
-//
-// Four things are outside what any corpus here can reach, and are
-// checked by hand against the reference on a machine with the mounts
-// arranged for them rather than pretended at with a case:
-//
-//   - `--sync`. Its cases prove the option is accepted and changes no
-//     output; that nothing was flushed is invisible here and is a real
-//     divergence (#9102).
-//   - Which mount of a device `df` keeps when two claim one, and which
-//     it marks `-` under `-a`. Arranging that needs two mounts of one
-//     filesystem, or a mount over another, which needs privileges this
-//     suite does not assume.
-//   - The pseudo-filesystem type list, past the members that report no
-//     blocks and are covered by the blocks rule either way. `devtmpfs`
-//     and `squashfs` are the two that report a size and are still
-//     dropped, and neither can be mounted from a test.
-//   - `-l`'s idea of remote. A source with a host before a colon is
-//     confirmed against a tmpfs mounted from `host:/export`; the
-//     `//server/share` half needs an SMB type to go with it.
-
-// dfTree makes the file and directory the size cases are asked about,
-// under the harness's own temp directory, and hands back its path.
 func dfTree(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -92,9 +29,6 @@ func dfTree(t *testing.T) string {
 	if err := os.Symlink("nowhere", filepath.Join(dir, "dangling")); err != nil {
 		t.Fatal(err)
 	}
-	// A link out of the temp directory's filesystem entirely: the mount an
-	// operand lands on is decided after the name is resolved, and nothing
-	// inside one filesystem can tell that apart from deciding it before.
 	if err := os.Symlink("/proc", filepath.Join(dir, "procl")); err != nil {
 		t.Fatal(err)
 	}
@@ -114,11 +48,8 @@ func dfCases(t *testing.T) []invocation {
 	env := func(name string, vars []string, args ...string) {
 		cases = append(cases, invocation{name: name, args: args, env: vars})
 	}
-	// size names the stable columns of a real filesystem: everything
-	// except the four that move.
 	const stable = "--output=source,fstype,size,file,target"
 
-	// --- the layouts, over a filesystem whose every count is zero -----------
 	add("proc", "/proc")
 	add("proc-human", "-h", "/proc")
 	add("proc-si", "-H", "/proc")
@@ -152,7 +83,6 @@ func dfCases(t *testing.T) []invocation {
 	add("repeated-operand-mixed", "/proc", "/sys", "/proc")
 	add("dash-dash-operand", "--", "/proc")
 
-	// --- --output ------------------------------------------------------------
 	add("output-all", "--output", "/proc")
 	add("output-all-two", "--output", "/proc", "/sys")
 	add("output-source", "--output=source", "/proc")
@@ -195,7 +125,6 @@ func dfCases(t *testing.T) []invocation {
 	add("output-conflict-i-outranks-p", "-P", "-i", "--output=size", "/proc")
 	add("output-conflict-i-outranks-p-and-t", "-T", "-P", "-i", "--output=size", "/proc")
 
-	// --- the block-size grammar ---------------------------------------------
 	for _, spec := range []string{
 		"1", "512", "1K", "2K", "K", "k", "M", "G", "T", "P", "KiB", "MiB", "1MiB",
 		"KB", "MB", "1KB", "2KB", "1MB", "1024", "1048576", "3000", "010", "0x10",
@@ -208,12 +137,6 @@ func dfCases(t *testing.T) []invocation {
 		add("block-size-bad-"+spec, "-B", spec, "/proc")
 		add("block-size-long-bad-"+spec, "--block-size="+spec, "/proc")
 	}
-	// The header is the block size written back the way -B would have to
-	// be typed for it, and which of the two bases that is depends on
-	// which divides the number further — with a tie going to the powers
-	// of 1000, which is what makes 102400 `100K` and 256000 `256kB`.
-	// These are the sizes where the choice, the tie and the dropped `.0`
-	// each decide the answer.
 	for _, spec := range []string{
 		"1023", "1025", "1500", "102400", "103424", "204800", "256000", "262144",
 		"307200", "512000", "524288", "999424", "1022976", "1024000", "1047552",
@@ -226,9 +149,6 @@ func dfCases(t *testing.T) []invocation {
 	}
 	add("block-size-inodes-suffix", "-B", "KiB", "-i", "/proc")
 	add("block-size-inodes-no-suffix", "-B", "M", "-i", "/proc")
-	// A bare -B names a unit per COLUMN, off that column's own divisor:
-	// the block columns divide by the block size and the inode columns by
-	// one, so the two can carry different units in one row.
 	add("block-size-suffix-per-column", "-B", "KiB", "--output=size,itotal", "/proc")
 	add("block-size-suffix-per-column-k", "-B", "K", "--output=size,itotal", "/proc")
 	add("block-size-suffix-per-column-mb", "-B", "MB", "--output=size,iused", "/proc")
@@ -243,7 +163,6 @@ func dfCases(t *testing.T) []invocation {
 	add("unit-last-wins-si-after-h", "-h", "--si", "/proc")
 	add("unit-last-wins-h-after-si", "--si", "-h", "/proc")
 
-	// --- the environment -----------------------------------------------------
 	env("env-df-block-size", []string{"DF_BLOCK_SIZE=M"}, "/proc")
 	env("env-block-size", []string{"BLOCK_SIZE=M"}, "/proc")
 	env("env-blocksize", []string{"BLOCKSIZE=M"}, "/proc")
@@ -264,9 +183,6 @@ func dfCases(t *testing.T) []invocation {
 	env("portability-ignores-env", []string{"DF_BLOCK_SIZE=M"}, "-P", "/proc")
 	env("posixly-correct-no-permute", []string{"POSIXLY_CORRECT=1"}, "/proc", "-T")
 
-	// --- -t / -x / -l --------------------------------------------------------
-	// Only types whose every mount reports no blocks: a `-t ext4` would
-	// be asking about whatever volumes this machine happens to carry.
 	add("type-proc-filtered-out", "-t", "proc")
 	add("type-proc-all", "-a", "-t", "proc")
 	add("type-two", "-a", "-t", "proc", "-t", "sysfs")
@@ -285,10 +201,6 @@ func dfCases(t *testing.T) []invocation {
 	add("type-and-exclude-conflict-second", "-t", "sysfs", "-t", "proc", "-x", "proc", "/proc")
 	add("local-proc", "-l", "-t", "proc", "/proc")
 	add("local-all", "-a", "-l", "-t", "proc")
-	// Types that are not on the pseudo-filesystem list and still report no
-	// blocks at all: the default listing drops them for the blocks, and
-	// every one of them is zero on every machine, so both legs agree
-	// whichever of these a kernel happens to mount.
 	var zeroArgs []string
 	for _, k := range []string{"cgroup", "cgroup2", "tracefs", "debugfs", "mqueue",
 		"bpf", "pstore", "securityfs", "hugetlbfs", "ramfs", "binfmt_misc",
@@ -298,15 +210,11 @@ func dfCases(t *testing.T) []invocation {
 	add("zero-block-types-filtered-out", zeroArgs...)
 	add("zero-block-types-all", append([]string{"-a"}, zeroArgs...)...)
 
-	// --- --sync --------------------------------------------------------------
-	// Accepted, and changes nothing that can be seen here: see the note
-	// at the top of this file.
 	add("sync", "--sync", "/proc")
 	add("no-sync", "--no-sync", "/proc")
 	add("no-sync-then-sync", "--no-sync", "--sync", "/proc")
 	add("sync-then-no-sync", "--sync", "--no-sync", "/proc")
 
-	// --- the getopt surface --------------------------------------------------
 	add("bad-short", "-z")
 	add("bad-long", "--foo=bar")
 	add("bad-long-prefix", "--te")
@@ -337,7 +245,6 @@ func dfCases(t *testing.T) []invocation {
 	add("cluster-with-split-value", "-TB", "M", "/proc")
 	add("operand-before-option", "/proc", "-T")
 
-	// --- operands that do not resolve ---------------------------------------
 	add("missing", "/nosuchpath")
 	add("missing-twice", "/nosuchpath", "/alsonosuch")
 	add("missing-then-good", "/nosuchpath", "/proc")
@@ -353,7 +260,6 @@ func dfCases(t *testing.T) []invocation {
 	add("dangling-symlink", filepath.Join(dir, "dangling"))
 	add("missing-under-tmp", filepath.Join(dir, "nosuch"))
 
-	// --- real numbers, in the columns that cannot move ----------------------
 	add("tempdir", stable, dir)
 	add("tempfile", stable, file)
 	add("tempsub", stable, sub)
@@ -376,7 +282,6 @@ func dfCases(t *testing.T) []invocation {
 	add("temp-size-two-operands", "--output=size,target", dir, "/proc")
 	add("temp-size-with-proc", "--output=source,fstype,size,target", "/proc", dir, "/sys")
 
-	// --- write failures ------------------------------------------------------
 	cases = append(cases, invocation{
 		name: "write-error-full", args: []string{"/proc"}, stdout: stdoutFull,
 	})
@@ -393,27 +298,6 @@ func TestDf(t *testing.T) {
 	requireParity(t, "df", dfCases(t))
 }
 
-// TestDfAvailableIsNotFree holds the one thing about df's numbers that the
-// oracle corpus structurally cannot: that `Available` is the count an
-// unprivileged caller may take (`f_bavail`) and not every free block
-// (`f_bfree`). The two differ by the superuser reserve, and a filesystem
-// that keeps one is a filesystem being written to — so the columns that
-// would show it move between the GNU run and the Fern run and cannot be
-// diffed. It is checked here the way mktemp's unprovable properties are:
-// beside the corpus, against the machine rather than against GNU.
-//
-// The check needs no clock-tight read. Both numbers come from ONE statfs
-// inside df, so the identity holds exactly however much drifted since this
-// test's own statfs:
-//
-//	used + available <= size
-//
-// Under the swap, used becomes blocks - bavail and available becomes
-// bfree, and their sum exceeds blocks by the whole reserve.
-//
-// The reserve has to be real for that to show, so the filesystem is chosen
-// by asking the kernel which of the paths the suite can reach keeps one; a
-// machine where none does fails rather than passing vacuously.
 func TestDfAvailableIsNotFree(t *testing.T) {
 	dir := t.TempDir()
 	var path string

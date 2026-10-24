@@ -6,13 +6,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/lexer"
 )
 
-// The native half of the comment-capture differential. The self-host half is
-// `test_comments` in compiler/lexer.fern (exit codes 2100-2106),
-// which TestSelfHostLexerX86_64 / TestSelfHostLexerArm64 already run on both
-// backends. Both halves assert the SAME fixture and the SAME expectations, so
-// either side drifting turns one of them red.
-//
-// Keep this fixture byte-identical to the one in test_comments.
 const commentFixture = "// leading\nlet u: string = \"http://x//y\"; // trailing\nlet n: i32 = 1;\n//: last\n"
 
 func TestLexerCommentsMatchSelfHost(t *testing.T) {
@@ -25,10 +18,6 @@ func TestLexerCommentsMatchSelfHost(t *testing.T) {
 		text      string
 	}{
 		{1, 1, " leading"},
-		// Line 2 holds `"http://x//y"`. Both `//` runs inside the string
-		// literal must be invisible here — a comment scan that does not
-		// understand string literals reports four comments on this fixture,
-		// not three, and that is the failure this fixture exists to catch.
 		{2, 32, " trailing"},
 		{4, 1, ": last"},
 	}

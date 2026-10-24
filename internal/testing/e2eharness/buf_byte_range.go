@@ -1,7 +1,5 @@
 package e2eharness
 
-// BufByteRangeProgram checks copy lengths around native word boundaries,
-// clamped bounds, multiple growths, independent builders and retained arrays.
 const BufByteRangeProgram = `function matches(out: u8[], at: i32, lo: i32, n: i32): boolean {
     let i: i32 = 0;
     while (i < n) {

@@ -6,11 +6,6 @@ import (
 	"testing"
 )
 
-// `h = bump(h, i)` with an in-place `own` update hands the same box back, so
-// the rebind's old and new values are one box. Releasing the old value there
-// must not release the carried nested field, which has only that one
-// reference. Pinned under the sanitizer: the plain run reads the freed inner
-// array back intact.
 func TestSelfHostIdentityReclaimKeepsNestedFieldX86_64(t *testing.T) {
 	src, err := os.ReadFile(langSrcAbs(t, "conformance/cases/struct_nested_field_identity_rebind/main.fern"))
 	if err != nil {

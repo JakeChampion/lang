@@ -2,21 +2,6 @@ package e2e
 
 import "testing"
 
-// stringUnicodeCaseProg pins the #5630 flip: on `string`, the unqualified
-// `to_upper` / `to_lower` are Unicode-correct, and the byte fold that used
-// to own those names is now spelled `to_ascii_upper` / `to_ascii_lower`.
-//
-// The contrast pairs are the point of the test. `"café".to_upper()` and
-// `"café".to_ascii_upper()` differ in exactly one code point, and before
-// this change there was no way to ask for either one by name — the ASCII
-// answer was all you could get, whatever you meant. Each numbered exit
-// isolates one claim so a backend divergence names itself.
-//
-// Mapping is FULL: a code point may expand to several, so `ß` uppercases
-// to `SS` and the result can be longer than the input in both bytes and
-// code points. The Greek Final_Sigma context rule is applied too, so a
-// word-final Σ lowercases to ς — the locale tailorings (Turkish,
-// Lithuanian) remain deliberately absent.
 const stringUnicodeCaseProg = `
 import "std/string";
 

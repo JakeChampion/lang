@@ -6,16 +6,6 @@ import (
 	"testing"
 )
 
-// scopeCollisionProg exercises the scope-blind-locals fix: a local name reused
-// with a DIFFERENT type across sibling match arms. `m` is a `let Ent[]` (array
-// slot) in the NIf arm and the struct payload binding in the NMatch arm. The IR
-// lowerer allocates slots by name function-wide, so before the fix both `m`s
-// collapsed onto one slot with conflicting type metadata (is_arr AND struct) and
-// `lower_func` bailed (`g: BAIL lower`). The fix had lower_block
-// retire the locals a block introduces on exit, so the NIf arm's `m` was retired
-// before the NMatch arm bound its `m` and each got a distinct, correctly-typed
-// slot; `g` lowers through the IR. main() exercises both arms: g(NIf,b) joins
-// b with itself (len 4); g(NMatch,..) returns b (len 2) -> 4*10 + 2 = 42.
 const scopeCollisionProg = `struct Ent { k: i32 }
 struct MatchPayload { scrutinee: i32, arms: i32 }
 enum Node { NIf(i32), NMatch(MatchPayload) }
@@ -46,11 +36,6 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostScopeCollisionIRX86_64 builds the asm_ir_run stdin driver and (1)
-// probes the program, asserting the colliding function `g` now lowers through
-// the IR (`g: ir`, `module: IR`) instead of bailing, and (2) emits + links +
-// runs it, asserting the result is 42 — proving the distinct-slot lowering is
-// not just eligible but correct.
 func TestSelfHostScopeCollisionIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -69,7 +54,6 @@ func TestSelfHostScopeCollisionIRX86_64(t *testing.T) {
 		return out, cmd.ProcessState.ExitCode()
 	}
 
-	// (1) eligibility: the collision now lowers through the IR.
 	rep, _ := run("-ir-probe")
 	for _, want := range []string{"g: ir", "main: ir", "module: IR"} {
 		if !bytes.Contains(rep, []byte(want)) {
@@ -77,7 +61,6 @@ func TestSelfHostScopeCollisionIRX86_64(t *testing.T) {
 		}
 	}
 
-	// (2) correctness: emit -> link -> run, expect 42.
 	asm, _ := run()
 	if len(asm) == 0 {
 		t.Fatal("driver emitted 0 bytes for the scope-collision program")

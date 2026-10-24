@@ -9,16 +9,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostWasmIoErrorVariantLayout pins the IoError variant box that
-// read_file's Err payload carries to the layout its CONSUMER reads: field i at
-// 8*(1+i).
-//
-// Worth pinning because the boxer writes those
-// offsets by hand.
-//
-// Each case asserts WHICH layout the emitted core carries before running it, so
-// a silent change to the box geometry reads as a diff rather than as garbage
-// output.
 func TestSelfHostWasmIoErrorVariantLayout(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -30,8 +20,6 @@ func TestSelfHostWasmIoErrorVariantLayout(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
 	wasmRun := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
-	// A regular file, so that read_file("reg.txt/nested") fails with an errno
-	// outside the mapped five (ENOTDIR) and lands on the three-field Other arm.
 	if err := os.WriteFile(filepath.Join(dir, "reg.txt"), []byte("the file"), 0o644); err != nil {
 		t.Fatalf("write reg.txt: %v", err)
 	}
@@ -58,8 +46,6 @@ function main(): i32 {
 `
 	}
 
-	// The boxer's NotFound store — field 0 of a single-string variant — reads
-	// back the emitted slot width.
 	storeAt := func(off int) string {
 		return fmt.Sprintf("(i32.store (i32.add (local.get $r) (i32.const %d)) (local.get $path))", off)
 	}
@@ -70,10 +56,6 @@ function main(): i32 {
 		want string
 	}{
 		{"notfound", "nope.txt", "notfound:nope.txt"},
-		// Every unmapped errno lands on Other(path, msg, errno): three fields, so
-		// it pins the stride and not just the first field's offset. The message
-		// is strerror's text for the errno (#8265), and the errno WASI's 54
-		// translated to Linux's 20 (#11296).
 		{"other", "reg.txt/nested", "other:reg.txt/nested/msg=Not a directory/errno=ENOTDIR:end"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -81,8 +63,6 @@ function main(): i32 {
 			if len(wat) == 0 {
 				t.Fatal("wasm emitter produced 0 bytes")
 			}
-			// Guard the case against becoming vacuous: confirm the box really
-			// carries the IR consumer's geometry.
 			if !strings.Contains(string(wat), storeAt(8)) {
 				t.Fatalf("emitted core does not carry the IR IoError layout %q", storeAt(8))
 			}
@@ -102,26 +82,6 @@ function main(): i32 {
 	}
 }
 
-// TestSelfHostWasmIoErrorMessageIsRcBoxed pins the fourth instance of the
-// headerless-box shape this migration keeps turning up (the Reader leaves,
-// subprocess, the old string-builder singleton, and now this one).
-//
-// `$__fern_build_io_error`'s six mapped arms all build their box with
-// `$__fern_str_box`, which writes rc=1 at base and returns base+8. The default
-// `Other(path, "")` arm built its MESSAGE string with a bare `$__fern_alloc(4)`
-// instead, so that string had no rc word at [e-8].
-//
-// It is not shielded the way a low address would be: `$__fern_alloc` returns a
-// bump-heap address, so the `i32.lt_u ... heap_base` guard in `$__fern_arr_dec`
-// and `$__fern_rc_dec` does not fire, and each reads the last word of the
-// PRECEDING allocation instead — decrementing a neighbour's payload, or pushing
-// the block onto a freelist class derived from garbage. Native wasmbin sidesteps
-// it by storing a null message, and the register backends use a real empty-string
-// literal; only this body allocated one bare.
-//
-// Reachable from any wasm program that does file I/O and hits an errno outside
-// the mapped set (EISDIR, ENOSPC, EBADF, ...) and then binds or drops the
-// message — which the `other` case above does.
 func TestSelfHostWasmIoErrorMessageIsRcBoxed(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -145,9 +105,6 @@ func TestSelfHostWasmIoErrorMessageIsRcBoxed(t *testing.T) {
 	if strings.Contains(body, "(call $__fern_alloc (i32.const 4))") {
 		t.Error("the Other arm still builds its empty message with a bare $__fern_alloc — no rc word at [e-8]")
 	}
-	// Every allocation inside the builder must go through the rc-headered
-	// constructor. Counting rather than merely finding one keeps the assertion
-	// from passing on the strength of the six arms that were already correct.
 	if got := strings.Count(body, "(call $__fern_str_box "); got != 8 {
 		t.Errorf("$__fern_build_io_error makes %d $__fern_str_box calls, want 8 (seven variant boxes + the Other arm's message)", got)
 	}
@@ -156,8 +113,6 @@ func TestSelfHostWasmIoErrorMessageIsRcBoxed(t *testing.T) {
 	}
 }
 
-// ioErrorBuilderBody slices out just the $__fern_build_io_error function, so the
-// counts above cannot be met by neighbouring helpers.
 func ioErrorBuilderBody(t *testing.T, wat string) string {
 	t.Helper()
 	start := strings.Index(wat, "(func $__fern_build_io_error ")

@@ -1,16 +1,3 @@
-// Unified-diff helper for the formatter's `-d` mode.
-//
-// Computes a line-level diff between the file as-written and its
-// formatted form, emitting a familiar `--- a/file +++ b/file @@`
-// unified-diff string. The alignment is Myers' O(ND) diff in linear
-// space, so the cost tracks the size of the change rather than the size
-// of the file; no external diff binary is required, so the CLI stays
-// self-contained on Windows / WSL / wherever it runs.
-//
-// The diff intentionally lives in the printer package rather than
-// alongside Format itself so a future tooling consumer (an LSP, a
-// pre-commit hook) can pull it in without dragging the CLI in too.
-
 package printer
 
 import (
@@ -18,15 +5,6 @@ import (
 	"strings"
 )
 
-// UnifiedDiff returns a unified-diff text of `before` against
-// `after`, both expected to be \n-separated source listings.
-// `pathBefore` and `pathAfter` populate the `--- ` / `+++ ` header
-// rows. The result is empty when the two inputs are byte-identical.
-//
-// The hunk format is the conventional `@@ -a,b +c,d @@` with the
-// surrounding context lines included. Tools that read unified diffs
-// (`patch`, GitHub PR review, IDE diff viewers) accept the output
-// without complaint.
 func UnifiedDiff(before, after, pathBefore, pathAfter string) string {
 	if before == after {
 		return ""
@@ -46,11 +24,6 @@ func UnifiedDiff(before, after, pathBefore, pathAfter string) string {
 	return sb.String()
 }
 
-// splitLines returns s broken on '\n' boundaries with the trailing
-// newline retained on each line (so " " lines reproduce verbatim
-// in the diff output). A trailing-empty entry from a final '\n'
-// is dropped — the diff doesn't need a phantom empty line at
-// the end.
 func splitLines(s string) []string {
 	if s == "" {
 		return nil
@@ -64,47 +37,24 @@ func splitLines(s string) []string {
 		}
 	}
 	if start < len(s) {
-		// Trailing line with no \n — keep it so the diff faithfully
-		// shows "no newline at end of file".
 		out = append(out, s[start:])
 	}
 	return out
 }
 
-// op describes one entry in the edit script.
 type op struct {
-	kind byte // ' ' equal, '-' delete from a, '+' insert from b
+	kind byte
 	line string
 }
 
-// anchor is one matched line pair in the alignment, in filtered
-// coordinates.
 type anchor struct{ a, b int }
 
-// maxSearchCost caps how far the middle-snake search looks for its two
-// halves to meet before giving up on minimality and splitting at the
-// furthest-reaching diagonal instead. The halves meet after about D/2
-// rounds each, so edit distances up to twice the cap come out minimal;
-// past that the script is still correct, just not guaranteed shortest.
-// No source in this repository reaches it, reformatted from scratch or
-// not — it bounds the machine-generated input that would.
 const maxSearchCost = 1 << 14
 
-// editScript diffs a against b and returns the merge of the two as an
-// ordered edit script. Each op carries the line text (already with its
-// trailing newline if any) so the hunk emitter just needs to glue
-// prefixes and write.
-//
-// The alignment is Myers' O(ND) greedy diff in its linear-space
-// divide-and-conquer form. Memory is O(m+n); the LCS table this replaced
-// was O(m*n), which is 48 GB for the largest source in this repository.
 func editScript(a, b []string, maxCost int) []op {
 	m, n := len(a), len(b)
 	ia, ib, distinct := internLines(a, b)
 
-	// Shared ends belong to every optimal alignment, so peel them off
-	// before searching. The usual case — a handful of reformatted lines in
-	// an otherwise untouched file — then costs about what the change costs.
 	pre := 0
 	for pre < m && pre < n && ia[pre] == ib[pre] {
 		pre++
@@ -114,10 +64,6 @@ func editScript(a, b []string, maxCost int) []op {
 		suf++
 	}
 
-	// A line occurring on only one side cannot be part of any common
-	// subsequence, so it is an edit in every alignment and the search never
-	// needs to see it. On a wholly reformatted source that is most of the
-	// file, and the search cost scales with the edit distance.
 	inA := make([]bool, distinct)
 	inB := make([]bool, distinct)
 	for _, id := range ia[pre : m-suf] {
@@ -141,8 +87,6 @@ func editScript(a, b []string, maxCost int) []op {
 	}
 	d.compare(0, len(d.ia), 0, len(d.ib))
 
-	// Everything between two matched lines is an edit; deletions come
-	// before insertions within each such run.
 	out := make([]op, 0, m+n)
 	i, j := 0, 0
 	fill := func(ai, bj int) {
@@ -170,8 +114,6 @@ func editScript(a, b []string, maxCost int) []op {
 	return out
 }
 
-// internLines maps every distinct line to a small integer so the snake
-// loops compare ints instead of strings, and reports how many there are.
 func internLines(a, b []string) ([]int32, []int32, int) {
 	ids := make(map[string]int32, len(a)+len(b))
 	intern := func(lines []string) []int32 {
@@ -190,10 +132,6 @@ func internLines(a, b []string) ([]int32, []int32, int) {
 	return ra, rb, len(ids)
 }
 
-// differ holds the two filtered line sequences, the map back to the
-// original line numbers, and the alignment being built. vf and vr are the
-// forward and reverse furthest-reaching arrays, allocated once and reused
-// by every bisect.
 type differ struct {
 	ia, ib     []int32
 	mapA, mapB []int
@@ -202,11 +140,7 @@ type differ struct {
 	maxCost    int
 }
 
-// compare appends the alignment of ia[alo:ahi] against ib[blo:bhi].
 func (d *differ) compare(alo, ahi, blo, bhi int) {
-	// Peeling the shared ends off every subproblem is not just a shortcut:
-	// it is what guarantees the bisect below splits strictly inside the
-	// range, so the recursion terminates.
 	for alo < ahi && blo < bhi && d.ia[alo] == d.ib[blo] {
 		d.anchors = append(d.anchors, anchor{alo, blo})
 		alo++
@@ -221,9 +155,6 @@ func (d *differ) compare(alo, ahi, blo, bhi int) {
 
 	if alo < ahi && blo < bhi {
 		x, y := d.bisect(alo, ahi, blo, bhi)
-		// A split that makes no progress would not terminate. The end
-		// peeling above rules that out; the guard keeps a bug in the bisect
-		// from becoming a hang.
 		if (x != alo || y != blo) && (x != ahi || y != bhi) {
 			d.compare(alo, x, blo, y)
 			d.compare(x, ahi, y, bhi)
@@ -235,15 +166,8 @@ func (d *differ) compare(alo, ahi, blo, bhi int) {
 	}
 }
 
-// bisect finds a point (x, y) on a shortest edit path between
-// ia[alo:ahi] and ib[blo:bhi] by growing the forward search from the top
-// left and the reverse search from the bottom right until they meet on a
-// common diagonal. Past the cost cap it stops waiting for them to meet
-// and returns the furthest-reaching point either search has found.
 func (d *differ) bisect(alo, ahi, blo, bhi int) (int, int) {
 	nA, nB := ahi-alo, bhi-blo
-	// The searches meet after at most ceil(D/2) rounds each, and D is at
-	// most nA+nB; the extra round leaves room for the odd-delta case.
 	maxD := (nA + nB + 3) / 2
 	off := maxD + 1
 	size := 2*maxD + 4
@@ -259,10 +183,7 @@ func (d *differ) bisect(alo, ahi, blo, bhi int) (int, int) {
 	vf[off+1] = 0
 	vr[off+1] = 0
 	delta := nA - nB
-	// The two searches can only meet on a forward step when delta is odd,
-	// and only on a reverse step when it is even.
 	meetForward := delta%2 != 0
-	// Diagonals that have run off the grid stop being extended.
 	fLo, fHi, rLo, rHi := 0, 0, 0, 0
 
 	budget := maxD
@@ -329,12 +250,6 @@ func (d *differ) bisect(alo, ahi, blo, bhi int) (int, int) {
 	return d.furthest(vf, vr, off, size, alo, ahi, blo, bhi)
 }
 
-// furthest picks the split point for a subproblem whose edit distance
-// exceeded the cost cap. The forward search's best point is the one that
-// consumed most of both inputs from the front and the reverse search's is
-// the one that consumed most from the back, so the two are scored on their
-// own progress and the deeper one wins. Progress is at least the budget
-// either way, so the recursion terminates.
 func (d *differ) furthest(vf, vr []int32, off, size, alo, ahi, blo, bhi int) (int, int) {
 	nA, nB := ahi-alo, bhi-blo
 	bestF, fx, fy := 0, 0, 0
@@ -359,31 +274,20 @@ func (d *differ) furthest(vf, vr []int32, off, size, alo, ahi, blo, bhi int) (in
 	} else if rx > 0 || ry > 0 {
 		return alo + rx, blo + ry
 	}
-	// No usable split. Halve both sides so the recursion still shrinks;
-	// compare's guard turns a truly degenerate range into a replace.
 	return alo + nA/2, blo + nB/2
 }
 
-// hunk is one contiguous region of the diff plus enough surrounding
-// context (`contextLines` on each side) to make the output
-// human-readable.
 type hunk struct {
 	aStart, aLen int
 	bStart, bLen int
 	ops          []op
 }
 
-// buildHunks partitions the full edit script into hunks separated by
-// runs of `2*context+1` equal lines or longer (anything shorter than
-// that gets merged into the surrounding hunk). The result is a list
-// of hunks each containing only its own context plus changes; ops
-// that fall in pure-equal runs *between* hunks are discarded.
 func buildHunks(a, b []string, context int) []hunk {
 	script := editScript(a, b, maxSearchCost)
 	if len(script) == 0 {
 		return nil
 	}
-	// Collect indices of changed ops, then expand by context.
 	type changeRun struct{ lo, hi int }
 	var runs []changeRun
 	i := 0
@@ -401,7 +305,6 @@ func buildHunks(a, b []string, context int) []hunk {
 	if len(runs) == 0 {
 		return nil
 	}
-	// Merge runs whose context windows overlap.
 	merged := []changeRun{runs[0]}
 	for _, r := range runs[1:] {
 		last := &merged[len(merged)-1]
@@ -412,9 +315,6 @@ func buildHunks(a, b []string, context int) []hunk {
 			merged = append(merged, r)
 		}
 	}
-	// Emit a hunk per merged run, with `context` lines of surrounding
-	// equal context tacked on each side (clipped to the script
-	// boundaries).
 	out := []hunk{}
 	for _, r := range merged {
 		start := r.lo - context
@@ -425,8 +325,6 @@ func buildHunks(a, b []string, context int) []hunk {
 		if end > len(script) {
 			end = len(script)
 		}
-		// Compute aStart / bStart by counting the prefix of the
-		// script before `start`.
 		aPos, bPos := 0, 0
 		for k := 0; k < start; k++ {
 			switch script[k].kind {
@@ -452,7 +350,7 @@ func buildHunks(a, b []string, context int) []hunk {
 			}
 		}
 		out = append(out, hunk{
-			aStart: aPos + 1, // unified-diff line numbers are 1-based
+			aStart: aPos + 1,
 			aLen:   aLen,
 			bStart: bPos + 1,
 			bLen:   bLen,
@@ -462,19 +360,12 @@ func buildHunks(a, b []string, context int) []hunk {
 	return out
 }
 
-// formatHunk turns one hunk into its `@@ -a,b +c,d @@\n<lines>`
-// string. Each context / change line includes its prefix and the
-// original trailing newline.
 func formatHunk(h hunk) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "@@ -%d,%d +%d,%d @@\n", h.aStart, h.aLen, h.bStart, h.bLen)
 	for _, op := range h.ops {
 		sb.WriteByte(op.kind)
 		sb.WriteString(op.line)
-		// Each line in the script already carries its trailing
-		// newline. If a final line lacks one (no-newline-at-eof
-		// case), append a `\n` so the diff itself stays
-		// well-formed.
 		if len(op.line) == 0 || op.line[len(op.line)-1] != '\n' {
 			sb.WriteByte('\n')
 		}

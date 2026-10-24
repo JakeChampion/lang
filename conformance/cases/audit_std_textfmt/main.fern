@@ -2,7 +2,7 @@ import "core/int";
 import "std/format";
 import "std/csv";
 
-// Audit fixture: std/csv + std/format helpers across every native backend.
+
 
 function main(): i32 {
   let Ok(fields) = csv.parse_line("a,b,c") else {
@@ -20,7 +20,7 @@ function main(): i32 {
     print("FAIL csv-join");
     return 13;
   }
-  // a value with a comma is quoted by csv.escape
+
   if (csv.escape("x,y").len() <= 3) {
     print("FAIL csv-escape");
     return 14;

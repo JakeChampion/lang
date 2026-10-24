@@ -46,9 +46,6 @@ func TestSelfHostXattrBytes(t *testing.T) {
 	}
 }
 
-// The interpreter is also part of the WASM playground. Its native xattr
-// dispatch must not prevent that build, and interpreted calls must report
-// Unsupported instead of attempting a native operation.
 func TestSelfHostWasmInterpXattrUnsupported(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("requires wasmtime")

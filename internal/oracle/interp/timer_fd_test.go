@@ -5,8 +5,6 @@ import (
 	"testing"
 )
 
-// timer_fd is a handle poll waits on and tcp_close releases; it becomes ready
-// once its milliseconds have passed.
 func TestTimerFdBecomesReady(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("timerfd is Linux's; elsewhere timer_fd answers -1")

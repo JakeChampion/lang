@@ -7,13 +7,6 @@ import (
 	"testing"
 )
 
-// auditBuiltinCases isolate one foundational built-in language feature
-// each and compile+run them through the SELF-HOSTED compiler, asserting
-// the process exit code — the self-host arm of the feature audit
-// (docs/FEATURE-AUDIT.md §A). A failure pinpoints exactly which built-in
-// the IR subset is missing.
-//
-// Exit codes are the observable: each `main` returns a value in 0..255.
 var auditBuiltinCases = []struct {
 	name string
 	src  string
@@ -21,7 +14,7 @@ var auditBuiltinCases = []struct {
 }{
 	{"arith-add-mul", `function main(): i32 { return 7 + 3 * 4; }`, 19},
 	{"arith-divmod", `function main(): i32 { return 7 / 3 * 10 + 7 % 3; }`, 21},
-	{"arith-divneg", `function main(): i32 { return (0 - 7) / 3 + 10; }`, 8}, // -2 + 10 (trunc toward zero)
+	{"arith-divneg", `function main(): i32 { return (0 - 7) / 3 + 10; }`, 8},
 	{"unary-minus", `function main(): i32 { return -5 + 13; }`, 8},
 	{"compare-chain", `function main(): i32 { if (3 < 4 && 4 >= 4 && 3 != 4) { return 5; } return 0; }`, 5},
 	{"bitwise-and-or-shl", `function main(): i32 { return (6 & 3) + (6 | 1) + (1 << 4); }`, 25},
@@ -32,24 +25,13 @@ var auditBuiltinCases = []struct {
 	{"for-in-array", `function main(): i32 { let a: i32[] = [2, 3, 4]; let s: i32 = 0; for x in a { s = s + x * x; } return s; }`, 29},
 	{"range-inclusive", `function main(): i32 { let s: i32 = 0; for k in 0..=5 { s = s + k; } return s; }`, 15},
 	{"range-half-open", `function main(): i32 { let s: i32 = 0; for k in 0..4 { s = s + k; } return s; }`, 6},
-	// break / continue exercised over a foreach loop (not a C-style for —
-	// see the held-out gaps below): break at the 5th element -> 5;
-	// continue skipping evens, summing odds -> 1+3+5 = 9.
 	{"break", `function main(): i32 { let a: i32[] = [0,1,2,3,4,5,6,7]; let n: i32 = 0; for x in a { if (x == 5) { break; } n = n + 1; } return n; }`, 5},
 	{"continue", `function main(): i32 { let a: i32[] = [0,1,2,3,4,5]; let n: i32 = 0; for x in a { if (x % 2 == 0) { continue; } n = n + x; } return n; }`, 9},
-	// Bare nested block `{ ... }` — fixed by #2821 (#2831 added StmtBlock
-	// to the self-host parser). Re-enabled here as a regression guard.
 	{"nested-block", `function main(): i32 { let b: i32 = 1; { let inner: i32 = 40; b = b + inner; } return b; }`, 41},
-	// C-style `for (let i = …; …; …)` — a parse-time desugar to a while-loop
-	// with a first-iteration flag, so `continue` re-runs the step (#2841).
 	{"c-style-for", `function main(): i32 { let s: i32 = 0; for (let i: i32 = 1; i <= 10; i = i + 1) { s = s + i; } return s; }`, 55},
-	// `for b in <string>` — iterates the BYTES: the lowering desugars it to a
-	// byte-index counted loop (#2822 / #2834), so 'A'+'B' = 131.
 	{"for-in-string", `function main(): i32 { let s: i32 = 0; for b in "AB" { s = s + (b as i32); } return s; }`, 131},
 }
 
-// TestSelfHostAuditBuiltinsX86_64 runs each isolated built-in through the
-// self-hosted x86-64 driver and asserts the exit code.
 func TestSelfHostAuditBuiltinsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -83,7 +65,6 @@ func TestSelfHostAuditBuiltinsX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostAuditBuiltinsArm64 — CI-gated arm64 counterpart.
 func TestSelfHostAuditBuiltinsArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range auditBuiltinCases {

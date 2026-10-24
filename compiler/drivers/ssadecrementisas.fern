@@ -36,7 +36,6 @@ function memory_moves(): void {
   require(load.kind == 3 && load.width == 32 && load.base == 15 && load.offset == -8 && load.destination == 1);
   let store = sample("movl %ecx, -8(%rax)");
   require(store.kind == 4 && store.width == 32 && store.base == 0 && store.offset == -8 && store.source == 1);
-  // Syntax retains wrong widths/addresses for the future semantic checker.
   require(sample("movq %rcx, -8(%rax)").width == 64);
   require(sample("movl %ecx, -16(%rax)").offset == -16);
 }
@@ -74,7 +73,6 @@ function branches(): void {
   require(isa.program(prefix + "jmp .Lmissing\n", entry).error != "");
   require(isa.program(prefix + "jmp .Loutside\n__other:\n.Loutside:\nret\n", entry).error != "");
   require(isa.program(prefix + "jmp .Lreturn\n.Lreturn:\nret\n.data\n.Lreturn: .quad 0\n", entry).error != "");
-  // Cycles and unknown operations are represented, not certified or erased.
   let cycle = isa.program(prefix + "jmp " + entry + ".r\n" + suffix, entry);
   require(cycle.error == "" && cycle.ops[1].target == 0);
   require(isa.program(prefix + "ret\nunknown_instruction\n" + suffix, entry).ops[2].kind == 0);

@@ -1,6 +1,6 @@
-// IoError and FetchError implement error.Error, so `?` boxes either into
-// `dyn error.Error` and the caller reads both through `message()` (#12668).
-// IoError is also cmp.Display. The fetch fails on its URL, before any socket.
+
+
+
 import "std/error";
 import "std/fetch";
 import "core/cmp";

@@ -20,13 +20,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/fernsmith"
 )
 
-// sweepN returns the number of seeds / iterations a generator
-// sweep should run. Drops to 1/8th the full size under
-// `testing.Short()` so dev-loop `go test ./internal/testing/fernsmith`
-// returns in ~3s instead of ~25s. Coverage-landmark sweeps
-// (TestGenFeatureCoverage) should stay at their full size —
-// dropping seeds risks missing a rarely-fired landmark and
-// turning the test flaky.
 func sweepN(t *testing.T, full uint64) uint64 {
 	t.Helper()
 	if testing.Short() {
@@ -39,8 +32,6 @@ func sweepN(t *testing.T, full uint64) uint64 {
 	return full
 }
 
-// randBytes fills out with n bytes drawn from r. math/rand/v2 dropped
-// the v1 *rand.Rand.Read method, so the tests roll their own.
 func randBytes(r *rand.Rand, n int) []byte {
 	out := make([]byte, n)
 	for i := 0; i+8 <= n; i += 8 {
@@ -54,11 +45,6 @@ func randBytes(r *rand.Rand, n int) []byte {
 	return out
 }
 
-// checkGenerated loads generated source through modload (so the
-// `import "std/…";` preamble fernsmith now emits resolves) and
-// type-checks it. Post-prelude-removal a bare parser.Parse no longer
-// pulls stdlib into scope, so generated programs must go through the
-// real module loader the same way the CLI does.
 func checkGenerated(t *testing.T, src string) error {
 	t.Helper()
 	dir := t.TempDir()
@@ -77,11 +63,6 @@ func checkGenerated(t *testing.T, src string) error {
 	return err
 }
 
-// TestGenProducesValidPrograms is the deterministic counterpart to
-// FuzzGenerate_ParseRoundTrips — it walks a fixed range of seeds so
-// regressions show up in `go test ./...` without anyone having to
-// remember to run the fuzzer. Failure prints the failing source so
-// the seed-to-input mapping is reproducible.
 func TestGenProducesValidPrograms(t *testing.T) {
 	n := sweepN(t, 256)
 	for seed := uint64(0); seed < n; seed++ {
@@ -92,9 +73,6 @@ func TestGenProducesValidPrograms(t *testing.T) {
 	}
 }
 
-// TestGenIsDeterministic — same seed → same source, every time.
-// Without this the corpus for the fuzzer can't be minimised
-// reproducibly and a reported crash can't be replayed.
 func TestGenIsDeterministic(t *testing.T) {
 	for _, seed := range []uint64{0, 1, 42, 1234567} {
 		a := fernsmith.Gen(seed)
@@ -105,8 +83,6 @@ func TestGenIsDeterministic(t *testing.T) {
 	}
 }
 
-// TestGenEmitsAtLeastOneFunction — the essential claim of v1 is
-// "non-empty, well-typed program". Tighten the guarantee here.
 func TestGenEmitsAtLeastOneFunction(t *testing.T) {
 	for seed := uint64(0); seed < 16; seed++ {
 		src := fernsmith.Gen(seed)
@@ -116,24 +92,6 @@ func TestGenEmitsAtLeastOneFunction(t *testing.T) {
 	}
 }
 
-// TestGenMainProducesRunnablePrograms — every seed yields a
-// well-typed program whose `main(): i32` returns a byte. Also
-// runs the full driver pipeline (modload → constfold → checker
-// → monomorph) for each seed, because the parse + check path
-// alone misses bugs that only show up under generic-function
-// monomorphisation (an earlier seed produced a program where
-// the field name `id` shadowed the `id[T]` generic, and the
-// monomorph re-check rejected the cloned program after the
-// initial checker said OK).
-//
-// 256 seeds, not the differential oracle's 2048, and the gap is
-// deliberate: this walk costs ~29s here and ~3m50s at 2048, which does
-// not belong in the unit lane when the differential lane
-// already type-checks all 2048 as a precondition to running them. A
-// generator bug rare enough to need more than 256 seeds surfaces
-// there, not here — the lambda-body `?` bug did exactly that, on seeds
-// 680 / 1117 / 1759 with this test green. Widen it only if the
-// differential lane stops being the broader sweep.
 func TestGenMainProducesRunnablePrograms(t *testing.T) {
 	n := sweepN(t, 256)
 	for seed := uint64(0); seed < n; seed++ {
@@ -164,16 +122,11 @@ func TestGenMainProducesRunnablePrograms(t *testing.T) {
 	}
 }
 
-// TestGenBytesProducesValidPrograms — byte-stream API mirror of
-// TestGenProducesValidPrograms. Uses pseudo-random byte slabs of
-// varying lengths so the test exercises both byte-rich (mutator
-// drives every decision) and byte-poor (early exhaustion → short
-// program) regimes.
 func TestGenBytesProducesValidPrograms(t *testing.T) {
 	r := rand.New(rand.NewPCG(42, 99))
 	n := sweepN(t, 64)
 	for i := 0; uint64(i) < n; i++ {
-		n := r.IntN(512) // 0..511 bytes; covers exhaustion path too
+		n := r.IntN(512)
 		data := randBytes(r, n)
 		src := fernsmith.GenBytes(data)
 		if err := checkGenerated(t, src); err != nil {
@@ -182,8 +135,6 @@ func TestGenBytesProducesValidPrograms(t *testing.T) {
 	}
 }
 
-// TestGenMainBytesProducesRunnablePrograms — byte-stream API
-// mirror for GenMain. Same exhaustion-coverage rationale.
 func TestGenMainBytesProducesRunnablePrograms(t *testing.T) {
 	r := rand.New(rand.NewPCG(7, 13))
 	iters := sweepN(t, 64)
@@ -201,9 +152,6 @@ func TestGenMainBytesProducesRunnablePrograms(t *testing.T) {
 	}
 }
 
-// TestGenBytesIsDeterministic — same bytes → same source. The
-// minimisation contract relies on this: a smaller corpus must
-// produce a smaller-or-same program, not a different one.
 func TestGenBytesIsDeterministic(t *testing.T) {
 	for _, n := range []int{0, 1, 8, 64, 256} {
 		r := rand.New(rand.NewPCG(uint64(n), 31415))
@@ -216,14 +164,6 @@ func TestGenBytesIsDeterministic(t *testing.T) {
 	}
 }
 
-// TestGenFeatureCoverage — the essential observation that
-// language features added to the generator actually show up in
-// practice. Without this, regressions like "the call production
-// stopped firing because the flip bias drifted" would only
-// surface when someone notices a backend stopped crashing.
-// Walks 1024 seeds and asserts each landmark feature appears in
-// at least one program.
-// u32LiteralRE / u64LiteralRE match a suffixed unsigned literal.
 var (
 	u32LiteralRE = regexp.MustCompile(`\b(\d+)u32\b`)
 	u64LiteralRE = regexp.MustCompile(`\b(\d+)u64\b`)
@@ -231,21 +171,11 @@ var (
 	u8LiteralRE  = regexp.MustCompile(`\b(\d+)u8\b`)
 )
 
-// unsignedOperandNear reports whether op appears with a literal of the given
-// unsigned suffix directly on one side of it. Substring-matching the operator
-// alone would credit the signed corpus, since `/` and `<` are generated at i32
-// and i64 too; anchoring on a `<digits>u32` / `<digits>u64` token is a cheap
-// way to be sure the UNSIGNED opcode is the one being reached, at the width
-// being claimed.
 func unsignedOperandNear(src, suffix, op string, lit *regexp.Regexp) bool {
 	for i := 0; i+len(op) <= len(src); i++ {
 		if src[i:i+len(op)] != op {
 			continue
 		}
-		// Skip the parentheses the generator wraps sub-expressions in, so
-		// `(460i64) +? (...)` counts the same as a bare `460i64 +? ...`.
-		// Without this the checked-fold production, whose operands are
-		// always parenthesised, reads as having no wide operand at all.
 		left := strings.TrimRight(src[:i], "( )")
 		if strings.HasSuffix(left, suffix) {
 			return true
@@ -266,35 +196,13 @@ func u64OperandNear(src, op string) bool {
 	return unsignedOperandNear(src, "u64", op, u64LiteralRE)
 }
 
-// wideOperandNear reports whether op appears with a 64-bit literal — i64 or
-// u64 — on either side.
 func wideOperandNear(src, op string) bool {
 	return unsignedOperandNear(src, "i64", op, i64LiteralRE) ||
 		unsignedOperandNear(src, "u64", op, u64LiteralRE)
 }
 
-// u32AsI32RE matches emitU32AsI32's cast with a u32 token inside it, so a
-// plain `(<i64 expr> >> 32i64) as i32` from emitI64HighHalf doesn't count.
 var u32AsI32RE = regexp.MustCompile(`u32[^()]*\) as i32\)`)
 
-// aliasCowClusterOrdered reports whether src contains a complete array
-// alias / copy-on-write cluster with its three parts IN ORDER: the
-// bare-ident alias of the source, the `.with` write whose receiver is
-// that same source, and the read back through the alias.
-//
-// The order is the whole point. `.with` lowers to an in-place store
-// only when its receiver is at its last use, and a read through the
-// alias is only a witness to that store if it happens afterwards —
-// checking for the three parts in any arrangement would credit a
-// corpus that never produces the shape. Spelled as a scan rather than
-// a regexp because tying the three parts to one cluster index needs a
-// backreference, which RE2 does not have.
-// loopReadBeforeWithOrdered reports whether src holds a complete
-// maybeEmitLoopReadBeforeWith shape: one receiver read into the
-// accumulator BEFORE a `.with` on that same receiver, both inside the
-// loop body. Order is the whole point — a `.with` ahead of the read is
-// an ordinary copy, and RE2 has no backreferences, so the parts are
-// tied to one cluster index by scanning rather than by one pattern.
 func loopReadBeforeWithOrdered(src string) bool {
 	for i := 0; i < 64; i++ {
 		recv := fmt.Sprintf("__cowl_s%d", i)
@@ -421,9 +329,6 @@ func TestGenFeatureCoverage(t *testing.T) {
 	}
 	for seed := uint64(0); seed < 1024; seed++ {
 		src := fernsmith.GenMain(seed)
-		// "gen_f0(" appears either in the helper decl OR a call.
-		// Both forms are useful evidence; the nested-call check
-		// distinguishes a call-from-main shape.
 		if strings.Contains(src, "gen_f0(") {
 			want["function call"] = true
 		}
@@ -433,21 +338,15 @@ func TestGenFeatureCoverage(t *testing.T) {
 		if strings.Contains(src, " + ") || strings.Contains(src, " * ") {
 			want["binary arithmetic"] = true
 		}
-		// Reference to a generated var inside an expression — `v0`
-		// only ever appears as a token after a `let v0` decl.
 		if strings.Contains(src, "v0") && strings.Count(src, "v0") > 1 {
 			want["variable reference"] = true
 		}
-		// Helper call inside main: the helper name appears after
-		// `function main`.
 		if i := strings.Index(src, "function main"); i >= 0 {
 			tail := src[i:]
 			if strings.Contains(tail, "gen_f0(") || strings.Contains(tail, "gen_f1(") {
 				want["helper-call inside main"] = true
 			}
 		}
-		// Nested call: `gen_f0(... gen_f0(...) ...)` — second `gen_f0(`
-		// occurs before the matching close of the first.
 		if strings.Count(src, "gen_f0(") >= 2 || strings.Count(src, "gen_f1(") >= 2 {
 			want["nested call (call as arg)"] = true
 		}
@@ -457,49 +356,30 @@ func TestGenFeatureCoverage(t *testing.T) {
 		if strings.Contains(src, "while (__loop_i") {
 			want["while loop"] = true
 		}
-		// Prelude decls — should always be present, but assert
-		// they're not silently dropped.
 		if strings.Contains(src, "struct Pair { fst: i32, snd: i32 }") {
 			want["struct decl"] = true
 		}
 		if strings.Contains(src, "enum Color { Red, Green, Blue }") {
 			want["enum decl"] = true
 		}
-		// Array-typed var: `: i32[] = [` is a strong signal for
-		// "literal array constructed at runtime".
 		if strings.Contains(src, "i32[] = [") || strings.Contains(src, "i64[] = [") || strings.Contains(src, "boolean[] = [") {
 			want["array literal"] = true
 		}
-		// Array indexed read: `v0[0i32]` shape — written in
-		// tryCompositeProduction.
 		if strings.Contains(src, "[0i32]") {
 			want["array index"] = true
 		}
-		// Pair literal written by pairLiteral as `(Pair {`.
 		if strings.Contains(src, "(Pair { fst: ") {
 			want["pair literal"] = true
 		}
-		// Field access from tryCompositeProduction: `vN.fst` or
-		// `vN.snd`.
 		if strings.Contains(src, ".fst") || strings.Contains(src, ".snd") {
 			want["field access"] = true
 		}
-		// An enum variant appears as a bare identifier in an
-		// expression position. The prelude line contains them
-		// but with `{` / `,` / `}` punctuation. A use site has
-		// the variant followed by either `,` (inside match arm)
-		// or a token like `;` / `)` / `}` / space. Just check
-		// for one occurrence outside the prelude line — count
-		// total occurrences > 1 in the source.
 		if strings.Count(src, "Red") > 1 || strings.Count(src, "Green") > 1 || strings.Count(src, "Blue") > 1 {
 			want["enum variant in expr"] = true
 		}
 		if strings.Contains(src, "match (") {
 			want["match expression"] = true
 		}
-		// String concat produces a `(<string-expr> + <string-expr>)`
-		// shape. Tokens like `" + ` (string-quote then plus) only
-		// appear in the concat / f-string productions.
 		if strings.Contains(src, "\" + \"") || strings.Contains(src, "\" + ") || strings.Contains(src, " + \"") {
 			want["string concat"] = true
 		}
@@ -512,16 +392,9 @@ func TestGenFeatureCoverage(t *testing.T) {
 		if strings.Contains(src, "|>") {
 			want["pipe operator"] = true
 		}
-		// Some appears in literals + match arms. Match arms are
-		// `Some(__opt_x...)`, so check for the literal-call form
-		// `Some(` separately. Subtract 0 occurrences in Color decl.
 		if strings.Contains(src, "(Some(") {
 			want["Some literal"] = true
 		}
-		// None as a bare token. Appears in literal positions plus
-		// match arms. Don't conflate with `Done` / `Stone` / etc.
-		// — full word match is enough since the generator never
-		// emits names ending in "None".
 		for _, tok := range []string{" None;", " None,", " None ", "{None}", "= None;"} {
 			if strings.Contains(src, tok) {
 				want["None literal"] = true
@@ -531,8 +404,6 @@ func TestGenFeatureCoverage(t *testing.T) {
 		if strings.Contains(src, "match (") && strings.Contains(src, "Some(__opt_x") {
 			want["Option match"] = true
 		}
-		// `?)` is the generator's try-operator shape (always
-		// emitted with the outer paren).
 		if strings.Contains(src, "?)") {
 			want["try operator (?)"] = true
 		}
@@ -548,8 +419,6 @@ func TestGenFeatureCoverage(t *testing.T) {
 		if strings.Contains(src, "(Xyz { n: ") {
 			want["Xyz literal"] = true
 		}
-		// `.n ` (with trailing space / token boundary) catches
-		// `.n` as a field access but not `.snd` / `.swap()` etc.
 		if strings.Contains(src, ".n ") || strings.Contains(src, ".n)") || strings.Contains(src, ".n,") || strings.Contains(src, ".n;") {
 			want["Xyz.n field access"] = true
 		}
@@ -559,8 +428,6 @@ func TestGenFeatureCoverage(t *testing.T) {
 		if strings.Contains(src, "enum Status { Active, Inactive, Pending }") {
 			want["Status enum decl"] = true
 		}
-		// Status variant appears as an Ident; check for any of the
-		// three names outside the decl line. Total > 1 catches use sites.
 		if strings.Count(src, "Active") > 1 || strings.Count(src, "Inactive") > 1 || strings.Count(src, "Pending") > 1 {
 			want["Status variant"] = true
 		}
@@ -573,38 +440,27 @@ func TestGenFeatureCoverage(t *testing.T) {
 		if strings.Contains(src, ".get(") || strings.Contains(src, ".contains(") || strings.Contains(src, ".len()") {
 			want["map get / contains / len"] = true
 		}
-		// Dynamic structs use `struct S<N>` and dynamic enums
-		// `enum E<N>` with `__E<N>_V<M>` variants.
 		if strings.Contains(src, "struct S0 ") || strings.Contains(src, "struct S1 ") {
 			want["dynamic struct decl"] = true
 		}
 		if strings.Contains(src, "enum E0 ") || strings.Contains(src, "enum E1 ") {
 			want["dynamic enum decl"] = true
 		}
-		// id(...) appears after the prelude decl `function id[T]
-		// (x: T): T { return x; }`. Total occurrences > 1 means
-		// at least one CALL site (not just the decl).
 		if strings.Count(src, "id(") > 1 {
 			want["id[T] generic call"] = true
 		}
 		if strings.Count(src, "pick(") > 1 {
 			want["pick[T] generic call"] = true
 		}
-		// for-each over arrays: `for __fe_x<N> in <arr-var>`.
-		// for-each over maps: `for (__fe_k<N>, __fe_v<N>) in <map>`.
 		if strings.Contains(src, "for __fe_x") {
 			want["for-each over array"] = true
 		}
 		if strings.Contains(src, "for (__fe_k") {
 			want["for-each over map"] = true
 		}
-		// Nested function: `function __local_fn<N>(...)`.
 		if strings.Contains(src, "function __local_fn") {
 			want["nested function (closure)"] = true
 		}
-		// Statement-level control flow, by the generator-private names its
-		// productions bind. An if-EXPRESSION is always `(if (`; the statement
-		// is what follows a `; ` or opens a block.
 		if strings.Contains(src, "; if (") || strings.Contains(src, "{ if (") {
 			want["if/else statement"] = true
 		}
@@ -644,10 +500,6 @@ func TestGenFeatureCoverage(t *testing.T) {
 		if strings.Contains(src, "let Some(__le") {
 			want["let Some … else"] = true
 		}
-		// Function VALUES. Each of these is a distinct lowering, and
-		// the escaping / array / indirect-call trio is the #5001 /
-		// #5007 / #5009 / #5026 bug cluster that until now only
-		// hand-written probes could reach.
 		if strings.Contains(src, "((__lam_x") {
 			want["lambda literal"] = true
 		}
@@ -657,46 +509,27 @@ func TestGenFeatureCoverage(t *testing.T) {
 		if strings.Contains(src, "((i32) => i32)[] = [") {
 			want["closure array literal"] = true
 		}
-		// An escaping closure: a generated helper whose RETURN type is
-		// a function, so the value outlives the frame that built it.
 		if strings.Contains(src, "): (i32) => i32 {") {
 			want["closure escapes via return"] = true
 		}
-		// A closure crossing a call boundary as an argument.
 		if strings.Contains(src, "p0: (i32) => i32") || strings.Contains(src, ", p1: (i32) => i32") {
 			want["fn-typed parameter"] = true
 		}
-		// Indirect call through a function value. `__lam_x` params and
-		// `__fe_x` bindings are the two names a fn value can carry
-		// besides `v<N>` / `p<N>` / `w<N>`; a call through any of them
-		// is a `blr` / `call r11`, never a direct symbol.
 		if fnCallRE.MatchString(src) {
 			want["indirect call via fn value"] = true
 		}
-		// Result literals.
 		if strings.Contains(src, "(Ok(") {
 			want["Ok literal"] = true
 		}
 		if strings.Contains(src, "(Err(") {
 			want["Err literal"] = true
 		}
-		// Result match-with-binding emits `Ok(__res_ok<N>)`.
 		if strings.Contains(src, "Ok(__res_ok") {
 			want["Result match-with-binding"] = true
 		}
-		// Result try operator: generator emits `(<var>?)` where
-		// the var is a Result-typed scope var. We have the
-		// Option try gate emitting `?)` too, so distinguish by
-		// also checking for `Result[i32, i32]` somewhere in the
-		// program (a stronger signal that Result paths fired).
 		if strings.Contains(src, "?)") && strings.Contains(src, "Result[i32, i32]") {
 			want["Result try (?)"] = true
 		}
-		// u32 — the corpus's only unsigned type. Reaching the unsigned
-		// opcodes is not enough on its own: div_u / rem_u / shr_u and
-		// the unsigned condition codes only diverge from their signed
-		// siblings on an operand with bit 31 set, so the above-i32::MAX
-		// literal is tracked as its own feature.
 		if strings.Contains(src, ": u32 ") {
 			want["u32 let declaration"] = true
 		}
@@ -719,15 +552,9 @@ func TestGenFeatureCoverage(t *testing.T) {
 		if u32OperandNear(src, " >> ") || u32OperandNear(src, " << ") {
 			want["unsigned shift"] = true
 		}
-		// emitU32AsI32's `((<u32 expr>) as i32)` — the channel that
-		// carries a full 32-bit unsigned result into the exit byte.
 		if u32AsI32RE.MatchString(src) {
 			want["u32 reinterpreted as i32"] = true
 		}
-		// u64 — the same pairs one width up. Tracked separately from
-		// u32 because the wide unsigned opcodes are different
-		// instructions with a different (6-bit) count mask, so u32
-		// coverage says nothing about them.
 		if strings.Contains(src, ": u64 ") {
 			want["u64 let declaration"] = true
 		}
@@ -753,10 +580,6 @@ func TestGenFeatureCoverage(t *testing.T) {
 		if strings.Contains(src, ") >> 32u64) as i32)") {
 			want["u64 high half as i32"] = true
 		}
-		// Saturating arithmetic. Tracked per operator because the four
-		// expand to materially different clamps: the +|/-| pre-checks
-		// against MAX-b / MIN-b, *| and <<| post-check the wrapped
-		// result with a division instead.
 		if strings.Contains(src, " +| ") || strings.Contains(src, " -| ") {
 			want["saturating add or subtract"] = true
 		}
@@ -766,18 +589,11 @@ func TestGenFeatureCoverage(t *testing.T) {
 		if strings.Contains(src, " <<| ") {
 			want["saturating shift"] = true
 		}
-		// The clamp bounds are per-width, so a saturating op reached
-		// only at i32 leaves the 64-bit bounds untested.
 		for _, op := range []string{" +| ", " -| ", " *| ", " <<| "} {
 			if wideOperandNear(src, op) {
 				want["saturating at i64 or u64"] = true
 			}
 		}
-		// Checked arithmetic, folded back to a bare integer through a
-		// match. Tracked per operator group because the desugars differ:
-		// a carry / sign-pattern test for +? and -?, a division
-		// round-trip for *?, divisor and MIN/-1 guards for /? and %?,
-		// a count-range test (and for <<? a round trip) for the shifts.
 		if strings.Contains(src, " +? ") || strings.Contains(src, " -? ") {
 			want["checked add or subtract"] = true
 		}
@@ -795,16 +611,9 @@ func TestGenFeatureCoverage(t *testing.T) {
 				want["checked at i64 or u64"] = true
 			}
 		}
-		// The None arm is the half that only runs on an actual
-		// overflow; its presence in the source is what makes the
-		// operator observable rather than a Some passthrough.
 		if strings.Contains(src, "None => ") && strings.Contains(src, "__chk_v") {
 			want["checked None arm taken"] = true
 		}
-		// u8 — the only sub-word integer. Its wrap mask is 8 bits and its
-		// saturating clamp is 0/255, so reaching it at all is a different
-		// surface from the 32- and 64-bit types; the near-255 literal is
-		// tracked separately because only those cross either boundary.
 		if strings.Contains(src, ": u8 ") {
 			want["u8 let declaration"] = true
 		}
@@ -824,14 +633,6 @@ func TestGenFeatureCoverage(t *testing.T) {
 				want["u8 saturating or checked"] = true
 			}
 		}
-		// Array copy-on-write. `.with` on its own is the broad
-		// production — tryCompositeProduction reaches for it in any
-		// array-valued expression position — and the two cluster
-		// landmarks are the narrow ordered shape: an alias whose
-		// source is later a `.with` receiver, then a read through the
-		// alias. Tracked apart because a corpus can have plenty of the
-		// first and none of the second, which is what it had before
-		// maybeEmitArrayAliasCow existed.
 		if strings.Contains(src, ".with(") {
 			want["array .with() call"] = true
 		}
@@ -852,15 +653,6 @@ func TestGenFeatureCoverage(t *testing.T) {
 	}
 }
 
-// TestGenPrintableFloatCoverage is TestGenFeatureCoverage's counterpart for
-// the float-allowing profile. Floats are dropped from ProfileRunnable — the
-// exit-byte oracle observes one byte and cannot see a float — so GenMain seeds
-// never contain an f32 or f64 at all, and the features below are invisible to
-// that sweep no matter how many seeds it runs.
-//
-// f64 is tracked apart from f32 because width is the whole point: f64 is the
-// width at which a float needs no rounding step, so an f32 path that rounds
-// correctly says nothing about it.
 func TestGenPrintableFloatCoverage(t *testing.T) {
 	want := map[string]bool{
 		"f32 literal":                   false,
@@ -889,9 +681,6 @@ func TestGenPrintableFloatCoverage(t *testing.T) {
 		if strings.Contains(src, "f64) as i32)") || f64CastRE.MatchString(src) {
 			want["f64 truncated to i32"] = true
 		}
-		// An f32 carries ~7 significant digits; a literal needing more
-		// is one only f64 can hold, which is what catches a backend
-		// that narrowed an f64 on the way through.
 		for _, m := range f64LiteralRE.FindAllStringSubmatch(src, -1) {
 			if len(strings.ReplaceAll(m[1], ".", "")) > 8 {
 				want["f64 literal past f32 mantissa"] = true
@@ -909,27 +698,11 @@ func TestGenPrintableFloatCoverage(t *testing.T) {
 var (
 	f64LiteralRE = regexp.MustCompile(`\b(\d+\.\d+)f64\b`)
 	f64CastRE    = regexp.MustCompile(`f64[^()]*\) as i32\)`)
-	// A call whose callee is a VARIABLE rather than a declared
-	// function name. Every generated declaration is `gen_f<N>` /
-	// `__local_fn<N>` / `id` / `pick`, so a `(` directly after any
-	// value-carrying name can only be an indirect call through a
-	// function value. Indexing is `v0[...]` and field access is
-	// `v0.fst`, neither of which this matches.
-	fnCallRE = regexp.MustCompile(`(?:^|[^A-Za-z0-9_])(?:v\d+|p\d+|lp\d+|w\d+_\d+|__fe_x\d+|__lam_x\d+)\(`)
+	fnCallRE     = regexp.MustCompile(`(?:^|[^A-Za-z0-9_])(?:v\d+|p\d+|lp\d+|w\d+_\d+|__fe_x\d+|__lam_x\d+)\(`)
 )
 
-// ---- float-in-aggregate coverage (#7348) -----------------------------
-
-// reFloatAggDecl matches the aggregate the printable profile's mandatory
-// float-aggregate observation declares, capturing its name and its type.
 var reFloatAggDecl = regexp.MustCompile(`let (__fag\d+): (.+?) = `)
 
-// floatAggObservation reports which kind of float-bearing aggregate the
-// mandatory observation built in this program, and whether EVERY slot of
-// it is printed. The second half is the part that matters: a float
-// element's width is only observable next to a neighbour, so an
-// aggregate whose later slots are never read is a shape in the corpus
-// that the oracle still cannot see.
 func floatAggObservation(mainBody string) (kind string, allSlotsPrinted bool) {
 	m := reFloatAggDecl.FindStringSubmatch(mainBody)
 	if m == nil {
@@ -953,10 +726,6 @@ func floatAggObservation(mainBody string) (kind string, allSlotsPrinted bool) {
 			fmt.Sprintf("print(((%s.y) as i32)", name),
 		}
 	case "FShape":
-		// One match per payload slot, each reading a DIFFERENT binding:
-		// slot 0 through the first, slot 1 through the second. Other
-		// observations may match on the same var too, so the check is
-		// for these two exact reads rather than a count.
 		idx := strings.TrimPrefix(name, "__fag")
 		for slot, narrow := range []string{"a", "b"} {
 			wide := []string{"c", "d"}[slot]
@@ -983,34 +752,13 @@ func mainBodyOf(src string) string {
 }
 
 var (
-	// A dynamic struct decl with at least one float field.
 	reDynStructFloatField = regexp.MustCompile(`struct S\d+ \{[^}]*: f(?:32|64)`)
-	// A dynamic enum variant declared with a float payload slot.
 	reDynEnumFloatPayload = regexp.MustCompile(`__E\d+_V\d+\([^)]*f(?:32|64)`)
-	// An ordinary main-level local, as drawn by pickMainVarType.
-	reMainLocalDecl = regexp.MustCompile(`let v\d+: (.+?) = `)
+	reMainLocalDecl       = regexp.MustCompile(`let v\d+: (.+?) = `)
 )
 
-// TestGenPrintableFloatsReachAggregates is the non-vacuity gate on the
-// float-in-aggregate widening, and it is stated as FREQUENCY floors
-// rather than "seen at least once" on purpose.
-//
-// The class this covers — a float sharing a box with a neighbour, where
-// an access too wide for the element reaches the slot after it — was
-// unreachable for the whole life of the generator, so #7333 had to be
-// found by hand. A widening that merely CAN produce the shape is worse
-// than none: it reads as coverage while a distribution that emits one
-// in five hundred seeds leaves the class as unreached as it was. So each
-// landmark carries the share of seeds it must reach, generously below
-// what the generator actually produces (measured at the floors' comment)
-// but far enough above zero that a regression to "technically possible"
-// fails here.
 func TestGenPrintableFloatsReachAggregates(t *testing.T) {
 	const seeds = 2048
-	// Measured over 2048 seeds: each mandatory-observation kind ~19-21%,
-	// each ordinary main-local kind ~4-5%, float struct field 64%, float
-	// enum payload 41%. A main-local kind is rare enough that 512 seeds
-	// put it two deviations either side of its rate.
 	landmarks := []struct {
 		name  string
 		floor float64
@@ -1049,9 +797,6 @@ func TestGenPrintableFloatsReachAggregates(t *testing.T) {
 		{"dynamic enum variant with a float payload slot", 0.15, func(src, _ string) bool {
 			return reDynEnumFloatPayload.MatchString(src)
 		}},
-		// Every seed: the observation is mandatory, so a seed that does
-		// not observe an aggregate-carried float is a wiring bug, not a
-		// sampling shortfall.
 		{"every slot of one float aggregate observed", 1.0, func(_, body string) bool {
 			_, ok := floatAggObservation(body)
 			return ok
@@ -1087,15 +832,6 @@ func mainLocalIs(typeName string) func(src, body string) bool {
 	}
 }
 
-// TestGenMainStaysFloatFree pins the other half of the widening: the
-// return-byte oracle compares main()'s exit code bit-for-bit across
-// backends, and Fern deliberately under-specifies IEEE edge cases
-// (docs/FLOAT-SEMANTICS.md), so ProfileRunnable admits no float at all.
-// Widening the aggregate element types is exactly the kind of change
-// that leaks one in through a type list that is not profile-gated —
-// a dynamic struct field, an array element, an enum payload slot — and
-// the leak would show up as a non-portable exit byte reported as a
-// codegen bug.
 func TestGenMainStaysFloatFree(t *testing.T) {
 	banned := regexp.MustCompile(`\b(?:f32|f64|Vec2|FShape)\b`)
 	for seed := uint64(0); seed < sweepN(t, 512); seed++ {
@@ -1106,56 +842,6 @@ func TestGenMainStaysFloatFree(t *testing.T) {
 	}
 }
 
-// TestGenBytesShrinkIsMonotonicAndValid is the minimisation contract
-// stated as a property rather than sampled at three points, and it is the
-// gate on growing this generator (#6073).
-//
-// The contract (fernsmith.go's doc, and what makes the fuzzer's shrinker
-// work) is that chopping bytes off a corpus collapses the program
-// smoothly. This replaces TestGenBytesExhaustionShrinksProgram, which
-// sampled 256 / 8 / 0 bytes on one seed and compared source LENGTH — a
-// quantity the generator does not promise, see below. Two things that
-// sampling could not see:
-//
-//   - a non-monotonic step anywhere between those points, which would let
-//     the shrinker walk uphill instead of converging
-//   - a truncation that yields an INVALID program, which would make the
-//     shrinker hand back a repro that does not compile, and would break
-//     the always-type-checks invariant that lets the fuzz oracle treat
-//     any checker error as a real bug
-//
-// Both are exactly what closures, `match` and nested control flow
-// threaten: truncating mid-construct is where "different but still valid"
-// and "smaller corpus, bigger program" become easy to hit. So this needs
-// to be in place BEFORE the generator grows — a contract that silently
-// lapses leaves every future finding arriving as an unreduced program
-// with no shrinker to reduce it.
-//
-// # Why AST nodes and not source length
-//
-// Source length is the wrong measure, and measuring it produces a false
-// failure. On seed 0, truncating 116 -> 115 bytes swaps a parameter's
-// type from `u8` to `i32` — the exhaustion fallback correctly takes the
-// 0th option, which simply has a wider NAME. The program is structurally
-// simpler and one character longer:
-//
-//	116: function gen_f2(p0: i64[], p1: u8,  p2: i32): i32 { return p2; }
-//	115: function gen_f2(p0: i64[], p1: i32, p2: i32): i32 { return p1; }
-//
-// The generator never promised byte-monotone text, and contorting it to
-// order type names by width would be satisfying the metric rather than
-// the contract. What the shrinker needs is that the PROGRAM collapses —
-// fewer declarations, shallower nesting, less recursion — so the property
-// counts AST nodes. That is insensitive to leaf-name width and is what
-// "smoothly collapses" actually means.
-//
-// # Why all three entry points
-//
-// Each byte-driven entry point has productions the others do not — the
-// runnable and printable mains draw their locals from their own pools
-// and the printable one emits observation statements no free-form
-// program contains. Checking only GenBytes left the two corpora the
-// differential oracles actually shrink unproven.
 func TestGenBytesShrinkIsMonotonicAndValid(t *testing.T) {
 	gens := []struct {
 		name string
@@ -1165,13 +851,6 @@ func TestGenBytesShrinkIsMonotonicAndValid(t *testing.T) {
 		{"GenMainBytes", fernsmith.GenMainBytes},
 		{"GenPrintableMainBytes", fernsmith.GenPrintableMainBytes},
 	}
-	// One type-check per truncation point per seed per entry point: the
-	// full sweep is tens of thousands of them, which does not belong in
-	// a default `go test ./internal/testing/fernsmith`. Two seeds each always
-	// run, because a contract nothing checks is a contract that lapses —
-	// not a token sample, since seed 0 alone found every flip-site
-	// defect this property was written for. The dedicated test-fernsmith
-	// workflow sets RUN_SHRINK_PROPERTY=1 for the rest.
 	seeds := uint64(2)
 	if os.Getenv("RUN_SHRINK_PROPERTY") == "1" {
 		seeds = sweepN(t, 24)
@@ -1180,8 +859,6 @@ func TestGenBytesShrinkIsMonotonicAndValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FERNSMITH_SHRINK_SHARD: %v", err)
 	}
-	// Seeds are independent, so each is a parallel subtest: the sweep is
-	// CPU-bound and three entry points alone leave a core idle.
 	for _, g := range gens {
 		t.Run(g.name, func(t *testing.T) {
 			t.Parallel()
@@ -1194,10 +871,6 @@ func TestGenBytesShrinkIsMonotonicAndValid(t *testing.T) {
 					r := rand.New(rand.NewPCG(seed, 0x5eed))
 					corpus := randBytes(r, 192)
 
-					// prev is the program from the NEXT-larger corpus, so each
-					// step asserts against its immediate neighbour rather than a
-					// distant sample — a single uphill step is enough to break
-					// convergence.
 					prevSrc := g.gen(corpus)
 					prevNodes, err := astNodeCount(t, prevSrc)
 					if err != nil {
@@ -1222,8 +895,6 @@ func TestGenBytesShrinkIsMonotonicAndValid(t *testing.T) {
 	}
 }
 
-// parseShard reads an `I/N` shard selector: the caller takes the seeds with
-// `seed % N == I`. Empty selects everything.
 func parseShard(raw string) (shard, nshard uint64, err error) {
 	if raw == "" {
 		return 0, 1, nil
@@ -1272,14 +943,6 @@ func TestParseShard(t *testing.T) {
 	}
 }
 
-// astNodeCount type-checks src and returns the size of its AST as parsed,
-// before constant folding. It is the structural size measure the shrink
-// property is stated in; an error means the generated program is not valid,
-// which is itself a contract breach. The count has to be taken before the
-// fold: folding deletes the dead arm of an `if` on a literal condition, so
-// a truncation that only simplified `!(true && true)` to `!(!true)` would
-// otherwise read as GROWTH, the kept arm counted against the deleted one,
-// for a step that made the source strictly smaller.
 func astNodeCount(t *testing.T, src string) (int, error) {
 	t.Helper()
 	dir := t.TempDir()
@@ -1302,10 +965,6 @@ func astNodeCount(t *testing.T, src string) (int, error) {
 	return n, nil
 }
 
-// TestGenDeferBodyHasNoTry: a deferred action has no caller to propagate a
-// failure to, so the checker refuses `?` inside one, and a defer generated in
-// an Option- or Result-returning function must not draw it. Seed 321 is the
-// GenMain program the self-host differential legs first refused for it.
 func TestGenDeferBodyHasNoTry(t *testing.T) {
 	src := fernsmith.GenMain(321)
 	if err := checkGenerated(t, src); err != nil {
@@ -1344,10 +1003,6 @@ func TestGenDeferBodyHasNoTry(t *testing.T) {
 	}
 }
 
-// Every structural move ShrinkMainBytes makes, deleting a helper or a
-// statement or hoisting an expression, leaves a corpus whose program still
-// type-checks. A corpus offers hundreds of moves; eight spread across them
-// are checked.
 func TestMainBytesReductionsAreValid(t *testing.T) {
 	checked := 0
 	for seed := uint64(0); seed < sweepN(t, 8); seed++ {
@@ -1367,9 +1022,6 @@ func TestMainBytesReductionsAreValid(t *testing.T) {
 	}
 }
 
-// A failure only main's last statements show is out of truncation's reach,
-// since the helpers ahead of main hold the bytes main reads; ShrinkMainBytes
-// deletes the helpers and the statements before it as well.
 func TestShrinkMainBytesReachesPastTruncation(t *testing.T) {
 	mainOf := func(src string) string { return src[strings.Index(src, "\nfunction main"):] }
 	fails := func(data []byte) bool { return strings.Contains(mainOf(fernsmith.GenMainBytes(data)), "while (") }
@@ -1419,19 +1071,6 @@ func TestShrinkMainBytesReachesPastTruncation(t *testing.T) {
 	}
 }
 
-// TestGenReachesOwnershipShapes pins how often GenMain produces the shapes
-// added for the rc and layout paths: a struct field that owns a box, a local
-// of a program-declared array type, a projection through a nested value, a
-// functional update, the ownership cluster and its reassignment of a shared
-// value, a fuel-bounded recursive helper and its self-call, the state fold,
-// the closure cluster, the user trait's impls, calls and dyn cluster (a trait
-// object in a struct field and in a tuple, an `as?` downcast), the associated
-// function, generic trait and associated-type trait beside it, the
-// own-receiver cluster, and the generic struct and enum cluster.
-// Each floor is about half the rate measured over
-// 1024 seeds (in parentheses), so a change that leaves a shape technically
-// reachable but rare fails here rather than quietly thinning what the oracles
-// judge.
 func TestGenReachesOwnershipShapes(t *testing.T) {
 	const seeds = 1024
 	landmarks := []struct {

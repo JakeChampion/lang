@@ -1,10 +1,10 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// The HAMT shape: a NON-uniform enum (Leaf is a 16-byte box, Br 24)
-// is owned by default too — each consuming arm frees the box at its
-// own variant's size — and the wrapper takes the root out of the
-// handle before descending.
+
+
+
+
+
+
+
 struct CK { bucket: i32, id: i32 }
 enum H { E, L(i32, CK, i32), Br(i32, H[]) }
 struct PM { root: H }

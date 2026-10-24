@@ -1,6 +1,6 @@
-// Every handle operation with no value to return answers Result[void, IoError],
-// the shape remove_file has, so a write, a close and a remove compose through
-// `?` in one function (#12669).
+
+
+
 
 function kind(e: IoError): string {
   match (e) {
@@ -16,7 +16,7 @@ function kind(e: IoError): string {
   }
 }
 
-// The success path: every step answers Ok, so control reaches the end.
+
 function save_and_remove(path: string, body: string): Result[void, IoError] {
   let w: Writer = open_writer(path)?;
   w.write(body)?;
@@ -28,8 +28,8 @@ function save_and_remove(path: string, body: string): Result[void, IoError] {
   return Ok(());
 }
 
-// The error path: the write after the close fails with EBADF, and `?` hands
-// that back before remove_file runs.
+
+
 function write_after_close(path: string): Result[void, IoError] {
   let w: Writer = open_writer(path)?;
   w.close()?;
@@ -59,7 +59,7 @@ function main(): i32 {
       report("save and remove", save_and_remove(dir + "/saved.txt", "hello"));
       report("saved.txt removed again", remove_file(dir + "/saved.txt"));
       report("write after close", write_after_close(dir + "/late.txt"));
-      // The early return left late.txt for this remove to find.
+
       report("late.txt left behind", remove_file(dir + "/late.txt"));
       report("remove dir", remove_dir(dir));
       return 0;

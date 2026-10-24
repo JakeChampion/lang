@@ -8,11 +8,6 @@ import (
 	"testing"
 )
 
-// A `for` over an append-built array of structs with an rc field keeps the
-// array's element walk, so the element boxes and their `ops` buffers come back
-// (#10161). The loop var is a borrow the loop ends before the exit sweep runs.
-// A row that is not `balanced` lets an element or its buffer outlive the loop;
-// it pins that the answer stays right under the sanitizer.
 const forArrStructDecls = `struct St { ops: i32[], n: i32 }
 function build(): St[] {
     let hold: St[] = [];
@@ -132,8 +127,6 @@ func TestSelfHostForArrStructReleaseWasm(t *testing.T) {
 	}
 }
 
-// forArrStructSanitizerFault: a sanitizer report other than a leak, or any
-// report at all when the row must balance.
 func forArrStructSanitizerFault(stderr string, balanced bool) bool {
 	for _, line := range strings.Split(stderr, "\n") {
 		if strings.HasPrefix(line, "fern-sanitizer:") && (balanced || !strings.HasPrefix(line, "fern-sanitizer: leak ")) {

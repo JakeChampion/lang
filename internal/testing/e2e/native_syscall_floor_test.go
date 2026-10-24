@@ -11,14 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The runtime's raw floor — `__syscall3` … `__syscall6`, `__store_u8` —
-// through the `fern` CLI on each Linux target (#9853), the names and shapes
-// the asmcore helpers are written on, so a socket primitive is one Fern body
-// rather than assembly per backend. The probe maps a file at a nonzero offset through
-// `__syscall6`, reads it back through `__load_u8`, unmaps and closes through
-// `__syscall3`, pins the signed -errno of a bad descriptor, and round-trips
-// bytes through `__store_u8`. A leg whose ISA this host cannot run is
-// skipped, as its siblings are; the CI matrix runs each on its own host.
 func TestNativeSyscallFloor(t *testing.T) {
 	fern := e2eharness.RuntimeCLI(t)
 	x86, x86ok := x86Runner()
@@ -51,8 +43,6 @@ func TestNativeSyscallFloor(t *testing.T) {
 	}
 }
 
-// The Darwin leg of the same probe, on the macOS lane: XNU's numbers, the
-// number in x16, and the carry-flagged errno the emitter negates.
 func TestArm64DarwinNativeSyscallFloor(t *testing.T) {
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 		t.Skip("requires the Apple Silicon execution lane")
@@ -72,8 +62,6 @@ func TestArm64DarwinNativeSyscallFloor(t *testing.T) {
 	}
 }
 
-// wasm has no kernel: a program that reaches the syscall floor is refused
-// at compile time, naming the callee, rather than linked against nothing.
 func TestSyscallFloorRefusedOnWasm(t *testing.T) {
 	fern := e2eharness.RuntimeCLI(t)
 	dir := t.TempDir()

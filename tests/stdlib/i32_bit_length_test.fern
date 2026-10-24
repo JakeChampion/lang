@@ -1,15 +1,6 @@
 import "std/test";
 import "std/i32";
 
-// tests/stdlib/i32_bit_length_test.fern — pure-Fern coverage of
-// std/i32.bit_length: the number of bits needed to represent the MAGNITUDE |n|
-// (highest set bit + 1). Covers zero, small values, powers of two and their
-// neighbours, negatives (magnitude), i32::MAX, and the i32::MIN widen-to-i64
-// edge. Kept as its own suite so the self-host merged bundle stays under the
-// asm_ir IR budget; uses assert_true (no scalar assert_eq[i32]). The Go-side
-// TestI32BitLength pins these across all four backends; this is the
-// migration-shaped companion.
-
 function test_zero(): test.TestOutcome {
   return test.assert_true(0.bit_length() == 0);
 }
@@ -19,11 +10,10 @@ function test_one(): test.TestOutcome {
 }
 
 function test_five(): test.TestOutcome {
-  return test.assert_true(5.bit_length() == 3);  // 101
+  return test.assert_true(5.bit_length() == 3);
 }
 
 function test_powers(): test.TestOutcome {
-  // 255 (11111111) -> 8; 256 (1_00000000) -> 9.
   if (255.bit_length() != 8) {
     return test.fail("255");
   }
@@ -31,7 +21,6 @@ function test_powers(): test.TestOutcome {
 }
 
 function test_negative(): test.TestOutcome {
-  // Uses the magnitude, so -5 matches 5.
   return test.assert_true((0 - 5).bit_length() == 3);
 }
 
@@ -40,7 +29,6 @@ function test_max(): test.TestOutcome {
 }
 
 function test_min(): test.TestOutcome {
-  // i32::MIN magnitude is 2^31 -> 32 bits.
   let min: i32 = 0 - 2147483647 - 1;
   return test.assert_true(min.bit_length() == 32);
 }

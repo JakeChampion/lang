@@ -1,12 +1,12 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// An enum's drop recursed once per level of its own type, so the last
-// reference to a 300k-node list overflowed the stack on every backend.
-// A variant's last self-typed payload is now the next turn of a loop
-// in the drop (#9046). The shared tail checks that loop stops at a
-// node someone else still holds, and the tree that a non-tail child
-// still recurses.
+
+
+
+
+
+
+
+
+
 enum L { Nil, Cons(i32, L) }
 enum T { Leaf, Node(T, i32, T) }
 @noinline

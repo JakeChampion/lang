@@ -8,15 +8,6 @@ import (
 	"testing"
 )
 
-// A borrowed array handed to a call the frame outlives is bracketed — retained
-// before, released after — only where the callee may grow it in place
-// (ssaunits.grows_buffer). `scan` hands its table to two byte scans and to a
-// function that only reads it, once per loop turn, and carries neither half of
-// the bracket. `widen` hands its array to one that appends to it, and keeps the
-// bracket: the exit code is what says the append copied rather than growing
-// the caller's buffer under it.
-//
-// Through the CLI, since the bracket is the semantic lowering's (ssarc).
 const lentArrayBracketProg = `@noinline function reads(o: u8[]): i32 { return o.len(); }
 @noinline function grows(o: u8[]): i32 { let x: u8[] = o.append(1 as u8); return x.len(); }
 @noinline function scan(s: string, set: u8[]): i32 {
@@ -83,8 +74,6 @@ func TestSelfHostLentArrayBracket(t *testing.T) {
 	}
 }
 
-// lentArrayBody is the CLI's listing of `name` from its label to its first
-// return.
 func lentArrayBody(t *testing.T, asm, name string) string {
 	t.Helper()
 	m := regexp.MustCompile(`(?s)\n__fn_` + name + `\.r:\n(.*?)\n\s+ret\n`).FindStringSubmatch(asm)

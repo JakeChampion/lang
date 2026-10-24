@@ -12,15 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExternBoolRecordFieldCustomProvider is the P4c bool-record-field gate
-// (docs/WIT-BRING-YOUR-OWN.md): a `bool` field in an `@import` record, both as a
-// param and a result. A WIT bool flattens to a single i32 (param) and is one
-// byte in the canonical record memory layout (result); a Fern bool is 0/1 in a
-// 4-byte slot, so the field helpers treat bool as an unsigned 8-bit
-// (`i32.load8_u`, canonical size 1). Verifies both directions round-trip.
-//
-// mk: func(n: s32) -> flag returns { on: (n odd), n } (bool field in a result);
-// rd: func(f: flag) -> s32 returns f.on ? f.n : -f.n (bool field in a param).
 func TestExternBoolRecordFieldCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -47,8 +38,6 @@ func TestExternBoolRecordFieldCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export sink; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// mk returns the record indirectly (on:bool@0, n:s32@4) via cabi_realloc,
-	// on = n&1. rd receives the record flattened to (on:i32, n:i32).
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)
   (global $h (mut i32) (i32.const 1024))

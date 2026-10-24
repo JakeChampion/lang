@@ -2,13 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/i64.sqrt_floor / is_power_of_2 /
-// is_perfect_square — the i64 siblings of the std/i32 predicates, exact into
-// the i64 range where the i32 versions would overflow. sqrt_floor is Newton's
-// method (floor of √n), is_power_of_2 is the n&(n-1) bit trick, and
-// is_perfect_square is sqrt_floor(n)²==n. Returns 42 iff every check holds
-// across interp / x86-64 / wasm / arm64; each leg skips itself when its
-// toolchain is absent.
 const i64RootsProg = `
 import "std/i64" as i64m;
 function main(): i32 {

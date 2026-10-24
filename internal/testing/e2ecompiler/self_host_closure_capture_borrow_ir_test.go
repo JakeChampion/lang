@@ -7,16 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostClosureCaptureBorrowIRX86_64 pins the #4354 borrow fix for
-// hoisted-closure capture extracts. make_clo_func synthesizes each capture
-// read as `let <cap> = __env[1+i]` at the top of a `$clo`/`$wrap` body; the
-// lambda's exit dec-sweep treated those as OWNED array locals and
-// shallow-dec'd them on EVERY call — but the env box owns the references,
-// so an rc==1 capture was freed out from under the box's owner on the
-// first call (a per-call use-after-free; 2 underflow ticks on the 2-call
-// escaping shape below, on unmodified pre-fix main). The fix had lower_func
-// register env-extract names as "ENVCAP:" borrows for the sweep to skip —
-// a borrow is not released by the borrower.
 func TestSelfHostClosureCaptureBorrowIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -48,10 +38,6 @@ func TestSelfHostClosureCaptureBorrowIRX86_64(t *testing.T) {
 		}
 	}
 
-	// ESCAPING closure called twice through a fn-typed param: pre-fix each
-	// call's exit sweep dec'd the extracted xs — the first freed it live
-	// (rc==1), the second ticked the detector. Post-fix: underflow 0 and
-	// the value still correct.
 	run(t, `function call2(f: () => i32): i32 { return f() + f(); }
 function go(k: i32): i32 {
     let xs: i32[] = [k, k + 1];
@@ -64,8 +50,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`, "escaping-capture-borrow-detector-zero", 0)
 
-	// ALIAS shape (the #4557 fix routes it onto the hoisted path): both
-	// names call the same env; the extract borrow must survive both calls.
 	run(t, `function go(k: i32): i32 {
     let xs: i32[] = [k, k + 1];
     let c = () => xs[0] + xs[1];
@@ -81,9 +65,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`, "alias-capture-borrow-detector-zero", 0)
 
-	// CHURN: 6000 iterations across two heap-bump measurements — detector
-	// zero AND flat (the borrow exclusion must not reintroduce the env or
-	// capture leak the #4552 slice closed for approved closures).
 	run(t, `function go(k: i32): i32 {
     let xs: i32[] = [k, k + 1];
     let c = () => xs[0] + xs[1];
@@ -107,7 +88,6 @@ function main(): i32 {
 }`, "alias-capture-churn-flat-detector-zero", 0)
 }
 
-// TestSelfHostClosureCaptureBorrowIRArm64: the escaping shape under qemu.
 func TestSelfHostClosureCaptureBorrowIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

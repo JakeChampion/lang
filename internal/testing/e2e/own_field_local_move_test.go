@@ -5,17 +5,6 @@ import (
 	"testing"
 )
 
-// #10084 — a field read out of an owned struct into a local, `let a = s.a`
-// or `let S { a, b, n } = s`, is moved out of the box when nothing after it
-// reads the field again. The local is then the array's only holder, so a
-// `.with` on it writes in place instead of copying the whole buffer.
-//
-// The two loops print how many allocations their 1000 updates made: none for
-// either form, since the `let` form's spread and the pattern form's
-// construction both reuse the box. Each copied the 256-element array as well
-// before the move. The shared case checks the other arm of the runtime test: with the
-// box aliased, the field is retained, not emptied, and the alias keeps its
-// values.
 const ownFieldLocalMoveSrc = `import "std/i64";
 
 struct S { a: i64[], b: string[], n: i32 }
@@ -77,8 +66,6 @@ func TestOwnFieldLocalMove(t *testing.T) {
 	}{
 		{"x86_64", runLeakCheckX86_64, true},
 		{"arm64", runLeakCheckArm64, true},
-		// The wasm heap does not count allocations the same way, so
-		// only the values and the census are checked there.
 		{"wasm", func(t *testing.T, src string) (string, string, int) {
 			return runLeakCheckWasm(t, src, false)
 		}, false},

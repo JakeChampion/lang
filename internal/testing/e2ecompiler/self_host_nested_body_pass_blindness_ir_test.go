@@ -9,40 +9,10 @@ import (
 	"testing"
 )
 
-// nestedBodyPassBlindnessCases pin front-end passes that walked a flat
-// statement list and never reached the bodies nested inside it (#7199, the
-// #7174 / #6993 family).
-//
-// Each defect was invisible at top level and only appeared one block down: the
-// same program with the construct unwrapped compiles correctly on every path.
-//
-//  1. An UNANNOTATED fn-valued local or array one block down — a plain `if`
-//     is enough — must still be typed as fn values. Typed wrong, the array
-//     lowering const-CALLS each element and `fns[0]()` calls an integer as a
-//     code pointer: the binary SIGSEGVs (139) where the interpreter
-//     answers 42. The annotation must be ABSENT for this to probe anything:
-//     `let fns: (() => i32)[]` types the elements without the inference.
-//
-//  2. settle_block — descended into a lambda but passed empty name/type lists,
-//     so neither the lambda's own params nor the enclosing locals it captures
-//     were in scope for literal settling. A literal assigned to an `f64` param
-//     settled as an integer and the compiled binary read the raw i32 bit
-//     pattern as a denormal: 0 where the interpreter gives 3, silently. A
-//     method call resolves only from the receiver's ANNOTATION, so for a
-//     CAPTURED receiver that annotation lives in the enclosing scope and its
-//     arguments went unsettled too. An annotated local in the same lambda was
-//     always correct, which pins the gap to the dropped scope, not the descent.
-//
-// The third defect in #7199 (resolve_labels_block) has its case here too: a
-// `continue outer` degrading to the innermost loop hangs the compiled binary
-// forever, which no timeout in the suite would attribute correctly.
-//
-// Exit 0 is correct; each nonzero code names the check that failed.
 var nestedBodyPassBlindnessCases = []struct {
 	name string
 	src  string
 }{
-	// An UNANNOTATED fn array, one `if` deep.
 	{"fn-array-in-if", `function mk(): i32 { return 42; }
 function mk2(): i32 { return 7; }
 
@@ -56,7 +26,6 @@ function main(): i32 {
     return 92;
 }
 `},
-	// An unannotated fn LOCAL, one `if` deep.
 	{"fn-local-in-if", `function mk(): i32 { return 42; }
 
 function main(): i32 {
@@ -68,8 +37,6 @@ function main(): i32 {
     return 91;
 }
 `},
-	// An unannotated fn array inside a lambda body — the expression-hosted
-	// statement list.
 	{"fn-array-in-lambda", `function mk(): i32 { return 42; }
 function mk2(): i32 { return 7; }
 
@@ -82,7 +49,6 @@ function main(): i32 {
     return 0;
 }
 `},
-	// An unannotated fn local two levels down, through a loop then an if.
 	{"fn-local-in-while-if", `function mk(): i32 { return 42; }
 
 function main(): i32 {
@@ -98,7 +64,6 @@ function main(): i32 {
     return 91;
 }
 `},
-	// settle: a literal assigned to the lambda's own f64 PARAM.
 	{"lambda-f64-param-literal", `function main(): i32 {
     let f: (f64) => i32 = (x: f64): i32 => {
         x = 3;
@@ -108,8 +73,6 @@ function main(): i32 {
     return f(1.0);
 }
 `},
-	// settle control: an annotated LOCAL in the same lambda was always correct,
-	// so this passes either side of the fix and isolates the param scope.
 	{"lambda-f64-local-control", `function main(): i32 {
     let f: () => i32 = (): i32 => {
         let y: f64 = 3;
@@ -119,9 +82,6 @@ function main(): i32 {
     return f();
 }
 `},
-	// settle: a method call on a CAPTURED annotated local. The receiver type
-	// comes from `acc`'s annotation in the ENCLOSING scope, so dropping that
-	// scope leaves Acc.bump unresolved and its `2` unsettled in an f64 param.
 	{"lambda-captured-receiver", `struct Acc { v: f64 }
 
 function (a: Acc) bump(d: f64): f64 { return a.v + d; }
@@ -134,8 +94,6 @@ function main(): i32 {
     return 90;
 }
 `},
-	// The same capture two lambdas deep: the inner body only has a scope to
-	// inherit if the outer one was given one.
 	{"lambda-captured-receiver-nested", `struct Acc { v: f64 }
 
 function (a: Acc) bump(d: f64): f64 { return a.v + d; }
@@ -151,10 +109,6 @@ function main(): i32 {
     return 90;
 }
 `},
-	// Shadowing: the param is appended after the inherited locals and
-	// settle_local_type scans from the end, so `acc.bump(2)` inside the lambda
-	// must settle against Ctr.bump's i32 param, not the captured Acc.bump's
-	// f64 one. Inheriting the enclosing scope must not outrank a param.
 	{"lambda-param-shadows-capture", `struct Acc { v: f64 }
 
 function (a: Acc) bump(d: f64): f64 { return a.v + d; }
@@ -174,7 +128,6 @@ function main(): i32 {
     return 91;
 }
 `},
-	// resolve_labels regression guard: `break outer` must leave the OUTER loop.
 	{"labeled-break-in-lambda", `function main(): i32 {
     let f: () => i32 = (): i32 => {
         let n: i32 = 0;
@@ -191,8 +144,6 @@ function main(): i32 {
     return 0;
 }
 `},
-	// Control: the same fn-array shape at TOP level, which always worked. It
-	// pins that the new descent did not disturb the flat path it already had.
 	{"fn-array-top-level-control", `function mk(): i32 { return 42; }
 function mk2(): i32 { return 7; }
 
@@ -205,8 +156,6 @@ function main(): i32 {
 `},
 }
 
-// TestSelfHostNestedBodyPassBlindnessIRX86_64 runs each case through the
-// self-hosted x86-64 IR driver, pinned to the "ir" path.
 func TestSelfHostNestedBodyPassBlindnessIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -240,7 +189,6 @@ func TestSelfHostNestedBodyPassBlindnessIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostNestedBodyPassBlindnessIRArm64 is the arm64 leg, run under qemu.
 func TestSelfHostNestedBodyPassBlindnessIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -264,8 +212,6 @@ func TestSelfHostNestedBodyPassBlindnessIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostNestedBodyPassBlindnessIRWasm is the wasm leg. Both passes live in
-// parser.fern, so the blindness was backend-independent.
 func TestSelfHostNestedBodyPassBlindnessIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host nested-body-pass-blindness wasm IR e2e")

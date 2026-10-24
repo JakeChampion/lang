@@ -4,8 +4,6 @@ package interp
 
 import "syscall"
 
-// A host without raw sockets: the option names are inert and the
-// address queries answer ENOSYS, like every socket call there.
 const (
 	solSocket   = 0
 	soKeepalive = 0

@@ -7,11 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostArm64Adrp byte-checks the @PAGE/@PAGEOFF addressing encoders
-// added in slice 3f of arm64_encode.fern — adrp, the page-delta / page-off
-// math, and the adrp/ldr patch splicers — against the ground-truth
-// little-endian encodings, run through the self-host wasm pipeline. Exit 0
-// = all checks pass; a failing check returns its 1-based id.
 func TestSelfHostArm64Adrp(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host arm64 adrp e2e")
@@ -39,24 +34,10 @@ func TestSelfHostArm64Adrp(t *testing.T) {
 	}
 }
 
-// TestSelfHostArm64DarwinMachODataRuns is the end-to-end proof of
-// @PAGE/@PAGEOFF data addressing — the arm64 counterpart of the x86 rodata
-// test, and the first use of macho.fern's macho_data_vaddr (the
-// SegmentAddrs parity). A Fern program lays a `.quad 42` in __DATA, loads
-// its address with `adrp x1, answer@PAGE` + `ldr x0, [x1, answer@PAGEOFF]`
-// (the immediates computed from the fixed segment addresses macho.fern
-// uses), and exits with the loaded value. A wrong page delta / page off, or
-// a wrong __DATA base, would not exit 42. macho.fern wraps it into an
-// ad-hoc-signed Mach-O — no clang/ld64/codesign.
 func TestSelfHostArm64DarwinMachODataRuns(t *testing.T) {
 	assertMachORuns(t, machoRun{name: "data42", main: arm64MachODataDriverMain, wantExit: 42, wantData: true})
 }
 
-// arm64AdrpSelfTestMain asserts the adrp encoder, the page-delta/page-off
-// math, and the adrp/ldr patch splicers. The address pair models the
-// no-data... here the data layout: adrp at 0x100000310, target __DATA at
-// 0x100004000 -> page delta 4, page off 0. Each `return N` is a distinct
-// failing-check id (0 = all pass).
 const arm64AdrpSelfTestMain = `
 function main(): i32 {
     // adrp x1, #4 -> 0x90000021 -> 21 00 00 90
@@ -83,10 +64,6 @@ function main(): i32 {
 }
 `
 
-// arm64MachODataDriverMain assembles `adrp x1, answer@PAGE; ldr x0, [x1,
-// answer@PAGEOFF]; exit(x0)` over a `.quad 42` in __DATA. The adrp/ldr
-// immediates are computed from macho.fern's fixed segment addresses
-// (macho_text_vaddr / macho_data_vaddr), then patched in.
 const arm64MachODataDriverMain = `
 function main(): i32 {
     let code: i32[] = [];

@@ -2,10 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/glob across backends: `*` staying within
-// a path segment, `?`, `**` crossing separators (with the zero-directory
-// elision), and `[...]` classes with ranges + negation. Returns 42 iff
-// every case holds. Each leg skips itself when its toolchain is absent.
 const globProg = `
 import "std/glob" as glob;
 function y(p: string, t: string): boolean { return glob.glob_match(p, t); }

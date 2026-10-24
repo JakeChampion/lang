@@ -1,10 +1,10 @@
-// std/array's max_by / min_by under a three-way comparator. Empty gives None;
-// ties keep the first extremum.
-// A minimal inline body, so this pins the lowering of its shape rather than
-// the shipped module.
-//
-// ties keep the FIRST extremum: two elements share length 4; max returns the
-// earlier one (tag 10), not tag 11.
+
+
+
+
+
+
+
 function max_by[T](xs: T[], cmp: (T, T) => i32): Option[T] { if (xs.len() == 0) { return None; } let best: T = xs[0]; let i: i32 = 1; while (i < xs.len()) { if (cmp(xs[i], best) > 0) { best = xs[i]; } i = i + 1; } return Some(best); }
 struct R { tag: i32, w: string }
 function cmp_len(a: R, b: R): i32 { return a.w.len() - b.w.len(); }

@@ -1,18 +1,3 @@
-// date.fern — GNU-compatible `date`.
-//
-//   date [OPTION]... [+FORMAT]
-//   date [-u|--utc|--universal] [MMDDhhmm[[CC]YY][.ss]]
-//
-// One instant, chosen by the options — the clock, `-d STRING` through
-// the date grammar in `lib/datetime`, `-r FILE`'s modification time,
-// `--resolution`'s tick, or each line of `-f FILE` in turn — and one
-// format, `+FORMAT` or the one `-I`, `-R` and `--rfc-3339` stand for,
-// rendered by `lib/timefmt`'s strftime in the local zone `-u` may
-// replace with UTC.
-//
-// `-s STRING` and the operand form set the system clock to the instant
-// they parse, and print it whether or not the kernel allowed the change;
-// a refusal is `cannot set date: <strerror>` and exit 1, as GNU's is.
 import "std/string";
 import "std/array";
 import "std/io_buffered";
@@ -175,8 +160,6 @@ function rfc_email_format(): string {
   return "%a, %d %b %Y %H:%M:%S %z";
 }
 
-// The `-I` spellings, `hours` and `minutes` first because `--rfc-3339`
-// takes only the last three.
 function time_spec_names(): string[] {
   return ["hours", "minutes", "date", "seconds", "ns"];
 }
@@ -189,8 +172,6 @@ function rfc_3339_formats(): string[] {
   return ["%Y-%m-%d", "%Y-%m-%d %H:%M:%S%:z", "%Y-%m-%d %H:%M:%S.%N%:z"];
 }
 
-// `adjust_resolution(fmt)` — every `%-N` becomes `%9N`, `%6N` or
-// whatever width the clock's resolution needs.
 function adjust_resolution(fmt: string): string {
   let out: string = "";
   let i: i32 = 0;
@@ -213,7 +194,6 @@ function adjust_resolution(fmt: string): string {
   return out + slice_unchecked(fmt, start, fmt.len());
 }
 
-// The fraction digits a resolution of `res` nanoseconds has.
 function res_width(res: i64): i32 {
   let digits: i32 = 9;
   let r: i64 = 10 as i64;
@@ -224,22 +204,13 @@ function res_width(res: i64): i32 {
   return digits;
 }
 
-// What the run prints with: the zone, the TZ value the debug trace
-// names, the format, and whether the trace is wanted.
 struct Show { zone: tz.Zone, tzstring: string, has_tz: boolean, format: string, debug: boolean }
 
-// `show_date(o, s, sec, nsec)` — one formatted line, the format
-// announced first under --debug.
-//
-// The newline is not part of the format and is written whatever the
-// format did: an instant localtime refuses still ends a line, and so
-// does a format that renders to nothing.
 function show_date(o: io_buffered.BufWriter, s: Show, sec: i64, nsec: i64): (boolean, io_buffered.BufWriter) {
   let w: io_buffered.BufWriter = o;
   if (s.debug) {
     w = gnu.error_out(w, "output format: " + gnu.quote(s.format));
   }
-  // localtime refuses an instant whose year does not fit an int.
   let year: i64 = s.zone.local_fields(sec).year - 1900 as i64;
   if (year > 2147483647 as i64 || year < 0 as i64 - 2147483648 as i64) {
     w = gnu.error_out(w, "time " + gnu.quote(sec.to_string()) + " is out of range");
@@ -249,7 +220,6 @@ function show_date(o: io_buffered.BufWriter, s: Show, sec: i64, nsec: i64): (boo
   return (true, gnu.put(w, "\n"));
 }
 
-// Emit the trace before buffered stdout, preserving raw failure tails.
 function trace_bytes(r: datetime.ByteResult): void {
   if (r.result.dbg.len() == 0 && r.tail.len() == 0) {
     return;
@@ -264,8 +234,6 @@ function parse_bytes(s: Show, text: [u8], hint: i64): datetime.ByteResult {
   return datetime.parse_full_bytes(text, s.zone, s.tzstring, s.has_tz, ns / (1000000000 as i64), ns % (1000000000 as i64), hint, s.debug);
 }
 
-// `batch(o, s, name)` — `-f FILE`: each line parsed and printed, a
-// line that does not parse costing the status and not the run.
 function batch(o: io_buffered.BufWriter, s: Show, name: string): (boolean, io_buffered.BufWriter) {
   let w: io_buffered.BufWriter = o;
   let shown: string = name;
@@ -290,7 +258,6 @@ function batch(o: io_buffered.BufWriter, s: Show, name: string): (boolean, io_bu
     lr = next.1;
     match (next.0) {
       Some(full) => {
-        // A C string ends at the first NUL, and so does the line.
         let line: [u8] = full[:];
         let nul: i32 = __memchr_bytes(full, 0, 0);
         if (nul >= 0) {

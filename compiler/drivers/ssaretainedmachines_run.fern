@@ -1,6 +1,3 @@
-// The x86-64 text machines over the retained runtime helpers. They run apart
-// from ssaretained_run because the sanitizer keeps every freed block, and the
-// two together outgrow a 16 GB runner.
 import "../asmcore";
 import "./ssaretainedprogram" as retained;
 import "./ssadecrementtexts" as decrementtexts;

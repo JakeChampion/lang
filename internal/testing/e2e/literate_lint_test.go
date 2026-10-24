@@ -9,8 +9,6 @@ import (
 	"testing"
 )
 
-// A defined-but-unreferenced chunk produces a non-fatal stderr warning
-// (compile/check still succeeds) — the unused-chunk lint.
 func TestLiterateUnusedChunkWarning(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
@@ -31,7 +29,6 @@ func TestLiterateUnusedChunkWarning(t *testing.T) {
 	}
 }
 
-// A document with every chunk reachable emits no warning.
 func TestLiterateNoUnusedWarningWhenClean(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()

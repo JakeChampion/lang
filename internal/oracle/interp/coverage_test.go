@@ -10,36 +10,12 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/ast"
 )
 
-// TestInterpHandlesEveryASTNode is the essential "no silent
-// gaps" guarantee for the tree-walking interpreter. Three times
-// during the fernsmith / differential-oracle work the interp
-// errored on an AST node every other backend supports — FString
-// (PR #597), MapLit + Map methods (PR #610), and FuncDecl /
-// Lambda (PR #618). Each was a `"unsupported expression %T"`
-// panic the fuzz oracle hit before the codegen path it was
-// trying to exercise even ran.
-//
-// This test enumerates every concrete AST type that can show
-// up post-parser + post-checker and asserts the interpreter
-// can evaluate at least one minimal program containing that
-// node. Adding a new AST variant forces an entry here (or an
-// explicit Skip with a noted reason).
-//
-// The list MUST stay in sync with the `isExpr()` / `isStmt()`
-// implementations in internal/syntax/ast/ast.go. The sentinel
-// assertions at the bottom of this file fail the suite if a
-// new variant is added without a matching coverage entry.
 func TestInterpHandlesEveryASTNode(t *testing.T) {
-	// Each case names the AST node it exercises and a minimal
-	// program whose `main()` returns / produces a value that
-	// includes that node somewhere in the AST. The skip
-	// reason is documented inline when applicable.
 	cases := []struct {
-		node string // AST type the case exercises
-		src  string // minimal program
-		skip string // non-empty = expected to be unsupported
+		node string
+		src  string
+		skip string
 	}{
-		// Expressions.
 		{node: "NumberLit", src: `function main(): i32 { return 42; }`},
 		{node: "CastExpr", src: `function main(): i64 { let n: i32 = 7; return n as i64; }`},
 		{node: "BoolLit", src: `function main(): boolean { return true; }`},
@@ -90,7 +66,6 @@ function main(): i32 { let p: P = P { x: 3, y: 4 }; return p.y; }`},
     let add1: (i32) => i32 = (x: i32): i32 => { return x + 1; };
     return add1(41);
 }`},
-		// Statements.
 		{node: "Block", src: `function main(): i32 { { let n: i32 = 7; return n; } }`},
 		{node: "If", src: `function main(): i32 { if (true) { return 1; } return 2; }`},
 		{node: "IfLet", src: `function main(): i32 {
@@ -136,9 +111,6 @@ function main(): i32 { let p: P = P { x: 3, y: 4 }; return p.y; }`},
     n = 7;
     return n;
 }`,
-		// Defer doesn't affect the returned value in Lang
-		// (semantics: return value is evaluated before defers
-		// run) — body just exists to exercise the AST node.
 		},
 		{node: "Var", src: `function main(): i32 { let x: i32 = 7; return x; }`},
 		{node: "Destructure", src: `function main(): i32 { let t: (i32, i32) = (3, 4); let (a, b) = t; return a + b; }`},
@@ -168,17 +140,10 @@ function main(): i32 {
 			if c.src == "" {
 				t.Fatalf("%s: missing src", c.node)
 			}
-			// modload (not bare parser.Parse) so the FString case's
-			// `import "std/i32";` resolves — the auto-prelude is gone,
-			// so .to_string() is in scope only when imported.
 			prog, _, err := modload.LoadSource(c.src)
 			if err != nil {
 				t.Fatalf("load: %v\nsrc:\n%s", err, c.src)
 			}
-			// Run the checker so method-call rewrites, FString
-			// desugaring, and variant-call IsVariantCall flags
-			// land before interp dispatch. This matches the
-			// `cmd/fern` script-mode pipeline.
 			if _, err := checker.Check(prog); err != nil {
 				t.Fatalf("check: %v\nsrc:\n%s", err, c.src)
 			}
@@ -195,12 +160,6 @@ function main(): i32 {
 		})
 	}
 
-	// Tripwire: assert this list stays in sync with the AST
-	// `isExpr()` / `isStmt()` declarations. If a new variant
-	// is added to internal/syntax/ast/ast.go without a coverage entry
-	// here, the test fails with a clear "missing case for X"
-	// message rather than the interp silently swallowing
-	// programs that hit the new shape.
 	covered := map[string]bool{}
 	for _, c := range cases {
 		covered[c.node] = true
@@ -217,16 +176,7 @@ function main(): i32 {
 	}
 }
 
-// allExprNodeNames returns the type names of every ast.Expr
-// implementation. Built by walking the package's isExpr() set
-// — these are the unexported tag methods that seal ast.Expr,
-// so this list IS the universe.
 func allExprNodeNames() []string {
-	// One sample of each ast.Expr — must include every variant
-	// declared in ast.go. The compiler will fail to build this
-	// slice if a referenced type is removed, which is the
-	// intended behaviour for "find every place this node is
-	// known".
 	samples := []ast.Expr{
 		(*ast.NumberLit)(nil),
 		(*ast.CastExpr)(nil),
@@ -256,7 +206,6 @@ func allExprNodeNames() []string {
 	}
 	out := make([]string, 0, len(samples))
 	for _, s := range samples {
-		// `*ast.NumberLit` → "NumberLit"
 		full := typeName(s)
 		if i := strings.LastIndex(full, "."); i >= 0 {
 			full = full[i+1:]
@@ -266,7 +215,6 @@ func allExprNodeNames() []string {
 	return out
 }
 
-// allStmtNodeNames is the Stmt parallel of allExprNodeNames.
 func allStmtNodeNames() []string {
 	samples := []ast.Stmt{
 		(*ast.Block)(nil),
@@ -295,10 +243,6 @@ func allStmtNodeNames() []string {
 	return out
 }
 
-// typeName returns the trailing identifier from Go's `%T` output
-// (e.g. `*ast.NumberLit` → "NumberLit"). The wrapper exists so
-// the all*NodeNames helpers stay focused on the AST surface
-// they're enumerating.
 func typeName(v interface{}) string {
 	return strings.TrimPrefix(fmt.Sprintf("%T", v), "*")
 }

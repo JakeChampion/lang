@@ -1,17 +1,11 @@
 package component
 
-// compose_tcp.go holds the core-import signature constants for the
-// TCP-server surface (tcp_listen / tcp_accept / tcp_recv_into / tcp_send_bytes /
-// tcp_close) and the shared repeatI32 helper. The unified composer
-// (compose_unified.go) declares each tcp method as a gImport lowering
-// over these; ensureTcp (compose_general.go) surfaces the shared types.
-
 var (
-	composeTcpCreateParams     = []byte{0x7f, 0x7f}       // (family, retptr)
-	composeTcpSelfRetParams    = []byte{0x7f, 0x7f}       // (self, retptr)
-	composeTcpSelfI32RetParams = []byte{0x7f, 0x7f, 0x7f} // (self, bool | enum, retptr)
-	composeTcpSelfI64RetParams = []byte{0x7f, 0x7e, 0x7f} // (self, u64, retptr)
-	composeTcpStartBindParams  = repeatI32(15)            // self, network, disc, 11 flat, retptr
+	composeTcpCreateParams     = []byte{0x7f, 0x7f}
+	composeTcpSelfRetParams    = []byte{0x7f, 0x7f}
+	composeTcpSelfI32RetParams = []byte{0x7f, 0x7f, 0x7f}
+	composeTcpSelfI64RetParams = []byte{0x7f, 0x7e, 0x7f}
+	composeTcpStartBindParams  = repeatI32(15)
 )
 
 func repeatI32(n int) []byte {

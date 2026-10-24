@@ -7,29 +7,11 @@ import (
 	"testing"
 )
 
-// tostrScalarReclaimCases pin #6599: `let s: string = i.to_string()` on a SCALAR
-// receiver frees its box, as the free-function spelling `n.to_string()` does.
-// On a STRING receiver `.to_string()` returns the receiver itself, so freeing
-// the result would release a box the source still owns; on a scalar it is the
-// decimal-text builtin returning a fresh sole-owned box. It matters out of
-// proportion to the shape because every `f"{x}"` desugars to `x.to_string()`.
-//
-// Measured with FERN_LEAKCHECK=1 (allocs/frees/live_bytes), 200 iterations,
-// self-host x86-64 — `__heap_bump_bytes()` deltas cannot see this, see #5474's
-// retraction:
-//
-//	let s = i.to_string()   400/398/32     bounded, before and after (control)
-//	let s = i.to_string()      400/0/6400  -> 400/398/32
-//
-// The credit tests the RECEIVER's type, not the result's (a string either
-// way), and an UNKNOWN receiver type is refused rather than assumed scalar —
-// the wrong answer on this side is an over-release, not a leak.
 var tostrScalarReclaimCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// The reproducer: a scalar receiver, re-declared per iteration, borrow-only use.
 	{"tostr-scalar-loop-local", `import "std/i32";
 function main(): i32 {
     let acc: i32 = 0;
@@ -44,9 +26,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// A scalar PARAM receiver. The receiver-type test reads declared types, and a
-	// parameter is a declaration that never appears as a `let` in the body;
-	// refused, this shape leaked 12800 over 400 rounds on x86-64, 9600 on wasm.
 	{"tostr-scalar-param-receiver", `import "std/i32";
 function fmt(n: i32): i32 {
     let s: string = n.to_string();
@@ -63,10 +42,6 @@ function main(): i32 {
     if (b2 - b1 >= 2048) { return 98; }
     return 0;
 }`, 0},
-	// PARAM negative: reading parameters' types must not widen the credit past
-	// the type test. A struct param whose user `to_string` returns an
-	// ALIAS of a field the receiver still owns is refused for the same reason the
-	// local-receiver case above is — the declared type is not a scalar.
 	{"tostr-param-user-method-uncredited", `import "std/i32";
 ` + strProbeHelpers + `import "std/i32";
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
@@ -87,8 +62,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// CONTROL: the free-function spelling was already credited and must stay bounded,
-	// so a regression here means the shared gates moved rather than this class.
 	{"tostr-freefn-control", `import "std/i32";
 function main(): i32 {
     let acc: i32 = 0;
@@ -103,8 +76,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// VALUE guard: the credited box must not be freed while still readable. 200 rounds
-	// of len("0".."199") = 10*1 + 90*2 + 100*3 = 490, %251 = 239.
 	{"tostr-scalar-value-exact", `import "std/i32";
 function main(): i32 {
     let acc: i32 = 0;
@@ -119,11 +90,6 @@ function main(): i32 {
     if (acc != 239) { return 97; }
     return 0;
 }`, 0},
-	// STRING-RECEIVER negative: the identity case must not be released. It leaks by
-	// design (both the literal source and the aliasing result), and the point of
-	// the case is that the source is still readable afterwards with the detector
-	// at zero. Releasing either would double-release one box. 200 rounds of 2 =
-	// 400, %251 = 149, %97 = 52.
 	{"tostr-string-recv-uncredited", `import "std/i32";
 import "std/string";
 function main(): i32 {
@@ -141,10 +107,6 @@ function main(): i32 {
     if (acc != 149) { return 97; }
     return 52;
 }`, 52},
-	// #10369: a scalar `.to_string()` local stored in a struct FIELD. The
-	// construction retains the box and the struct's field drop gives it back, so the
-	// local keeps its own credit only if it earns the field credit every other fresh
-	// string local gets; without it the store read as an escape and every box leaked.
 	{"tostr-scalar-struct-field", `import "std/i32";
 import "std/string";
 struct Rec { name: string }
@@ -164,8 +126,6 @@ function main(): i32 {
     if (b2 - b1 >= 2048) { return 98; }
     return 0;
 }`, 0},
-	// #10369: the same local reassigned into an alias (`t = s`), which retains and
-	// shares the credit only when the source is a credited fresh string local.
 	{"tostr-scalar-alias-reassign", `import "std/i32";
 import "std/string";
 function main(): i32 {
@@ -185,9 +145,6 @@ function main(): i32 {
     if (b2 - b1 >= 2048) { return 98; }
     return 0;
 }`, 0},
-	// VALUE guard for the field credit: a record built from a `.to_string()` local
-	// before the loop is read after it, so a release of the source that took the
-	// field's share with it shows as a wrong value or an underflow.
 	{"tostr-scalar-field-read-after-loop", `import "std/i32";
 import "std/string";
 struct Rec { name: string }
@@ -207,9 +164,6 @@ function main(): i32 {
     if (first.len() != 4) { return 97; }
     return 0;
 }`, 0},
-	// STRING-RECEIVER negative for the field and reassign credits: the result is the
-	// receiver's own box, so neither credit may reach it. 200 rounds of 2+2 = 800,
-	// %251 = 47.
 	{"tostr-string-recv-field-uncredited", `import "std/i32";
 import "std/string";
 struct Rec { name: string }
@@ -230,8 +184,6 @@ function main(): i32 {
     if (acc != 47) { return 97; }
     return 52;
 }`, 52},
-	// The receiver-typed `join` and `trim` locals are fresh string locals on the same
-	// terms, so they earn the same field and alias-reassign credits.
 	{"join-strarr-field-and-reassign", `import "std/array";
 struct Rec { name: string }
 function main(): i32 {
@@ -276,7 +228,6 @@ function main(): i32 {
     if (b2 - b1 >= 2048) { return 98; }
     return 0;
 }`, 0},
-	// ESCAPE negative: the credited local is returned, so it must NOT be freed.
 	{"tostr-scalar-escape-return-safe", `import "std/i32";
 function mk(n: i32): string { let s: string = n.to_string(); return s; }
 function main(): i32 {
@@ -287,13 +238,6 @@ function main(): i32 {
     if (acc != 239) { return 97; }
     return 0;
 }`, 0},
-	// A scalar `to_string` local that is itself a `to_string` receiver: the
-	// string receiver's result is the receiver itself, so the pair shares one box
-	// and neither release may double-free it. The row pins the shape (bounded
-	// heap, no underflow, exact value), not which reclaim gate decided it;
-	// TestSelfHostStrarrFieldToString witnesses the scalar `.to_string()`
-	// admission. 980 from the first loop plus 18890 from the
-	// second, %251 = 41.
 	{"tostr-scalar-then-string-recv", `import "std/i32";
 import "std/string";
 function main(): i32 {
@@ -317,8 +261,6 @@ function main(): i32 {
 }`, 0},
 }
 
-// TestSelfHostTostrScalarReclaimIRX86_64 drives the cases through the self-hosted
-// x86-64 compiler (asm_load_run), heap-bump + underflow guarded.
 func TestSelfHostTostrScalarReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	l := newStdlibLoader(t)
@@ -345,9 +287,6 @@ func TestSelfHostTostrScalarReclaimIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostTostrScalarReclaimWasmIR drives the same cases through the self-hosted
-// wasm backend (asm_load_run -target wasm32-wasi), where a string box carries an rc header and an over-release ticks
-// the underflow counter (exit 99) instead of passing silently.
 func TestSelfHostTostrScalarReclaimWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host to_string reclaim wasm IR e2e")

@@ -9,8 +9,6 @@ import (
 	"unsafe"
 )
 
-// hostBirth is statx(2)'s stx_btime for path, zero when the filesystem does
-// not record one — what a FileStat's btime / btime_nsec must read.
 func hostBirth(t *testing.T, path string) (int64, int64) {
 	t.Helper()
 	sysStatx := uintptr(291)
@@ -33,7 +31,6 @@ func hostBirth(t *testing.T, path string) (int64, int64) {
 	return *(*int64)(unsafe.Pointer(&buf[80])), int64(*(*uint32)(unsafe.Pointer(&buf[88])))
 }
 
-// hostDevs is (st_dev, st_rdev) as the host's own stat(2) reports them.
 func hostDevs(t *testing.T, path string) (int64, int64) {
 	t.Helper()
 	var st syscall.Stat_t

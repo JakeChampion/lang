@@ -9,17 +9,6 @@ import (
 	"testing"
 )
 
-// A trait's default body runs the functions the TRAIT's module named,
-// wherever the impl was written (#8484). Before this the clone the
-// checker drops into each impl carried bare names resolved in the
-// implementing module: a default could not reach its own module's
-// helpers at all, and where the implementer happened to declare the same
-// name it captured the call — a library's default silently running
-// consumer code, with no diagnostic.
-
-// traitDefaultHijackProject is the issue's repro. `secret_helper` exists
-// in both modules; the default was written against lib's, which returns
-// 41, so `greet()` is 42 and never 901.
 var traitDefaultHijackProject = map[string]string{
 	"lib.fern": `pub function secret_helper(): i32 { return 41; }
 pub trait Greet {
@@ -35,9 +24,6 @@ impl lib.Greet for R {
 function main(): i32 { let r: R = R { n: 1 }; return r.greet(); }`,
 }
 
-// traitDefaultPrivateHelperProject: the helper the default calls is not
-// `pub`. It is the trait module's own source, so it is in reach — and
-// the implementer's same-named function must not stand in for it.
 var traitDefaultPrivateHelperProject = map[string]string{
 	"lib.fern": `function private_helper(): i32 { return 41; }
 pub trait Greet {
@@ -53,10 +39,6 @@ impl lib.Greet for R {
 function main(): i32 { let r: R = R { n: 1 }; return r.greet(); }`,
 }
 
-// traitDefaultGenericProject: a generic trait whose defaults call each
-// other, build a struct literal from their own module, and reach a
-// module the implementer never imported. main.fern shadows every one of
-// those names. 41 + 42 + 40 + 41 = 164.
 var traitDefaultGenericProject = map[string]string{
 	"deep.fern": `pub function d(): i32 { return 41; }`,
 	"lib.fern": `import "./deep";
@@ -82,11 +64,6 @@ function main(): i32 {
 }`,
 }
 
-// traitDefaultSameModuleProject: the trait is implemented beside its own
-// declaration. The default body mangles to that module's prefix, which
-// is what its helpers were renamed to, so the impl still resolves.
-// traitDefaultDynProject reaches the inherited default through a `dyn`, which
-// dispatches only to methods recorded as the trait's: 41 + the tag 1 = 42.
 var traitDefaultDynProject = map[string]string{
 	"lib.fern": `pub function base(): i32 { return 41; }
 pub trait Greet {
@@ -115,9 +92,6 @@ impl Greet for S { function tag(self: Self): i32 { return self.v; } }`,
 function main(): i32 { let s: lib.S = lib.S { v: 1 }; return s.greet(); }`,
 }
 
-// traitDefaultParametricImplProject: a PARAMETRIC impl inherits the
-// default, so the clone goes through monomorphisation as well as the
-// hoist. 1 + 41 = 42.
 var traitDefaultParametricImplProject = map[string]string{
 	"lib.fern": `pub function base(): i32 { return 41; }
 pub trait Sized2 {
@@ -163,9 +137,6 @@ func TestInterpTraitDefaultBodyResolvesInDeclaringModule(t *testing.T) {
 	}
 }
 
-// The same programs compiled: by codegen time the default is an ordinary
-// receiver method, so what is at stake is which callee the body was mangled
-// to.
 func TestX86_64TraitDefaultBodyResolvesInDeclaringModule(t *testing.T) {
 	for _, tc := range traitDefaultProjects {
 		t.Run(tc.name, func(t *testing.T) {
@@ -177,9 +148,6 @@ func TestX86_64TraitDefaultBodyResolvesInDeclaringModule(t *testing.T) {
 	}
 }
 
-// A default body reaching a builtin is the trait author's I/O, so the
-// capability report charges it to the package that DECLARED the trait,
-// not the one that adopted it by writing an `impl` (#8450).
 func TestCapabilitiesChargeTraitDefaultToDeclaringPackage(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()

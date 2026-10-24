@@ -5,53 +5,32 @@ import (
 	"testing"
 )
 
-// valueBlockWidthIRCases pin that a value-position `if`/`match` bound to a
-// 64-bit binding keeps its width — #6468.
-//
-// The desugared IIFE's return-type tag comes from a syntax-only classifier
-// (if_expr_rt), which has no function table, so an arm that CALLS anything and
-// an arm that is an enum payload binding both fall to "i32". The tag then
-// contradicted the body, and being non-empty it also stopped the return-type
-// inference revisiting the lambda, so the module bailed off the IR path
-// ("did not lower: `return` of ident `w`"). The binding's annotation is the
-// authority the classifier lacks.
-//
-// The exit code is asserted, not just that the module lowered: a compile-only
-// assertion passes on a silent miscompile.
 var valueBlockWidthIRCases = []struct {
 	name string
 	src  string
 	exit int
 }{
-	// The reduced repro: a payload arm and a call arm, neither of which names a
-	// width. The None arm is taken.
 	{"i64-call-arm", `function widen(v: i64): i64 { return v; }
 function main(): i32 {
     let x: i64 = (match ((1i64) /? (0i64)) { Some(w) => w, None => widen(5000000000i64) });
     return (x / 1000000000i64) as i32;
 }`, 5},
-	// The same shape with the PAYLOAD arm taken, so the width has to survive on
-	// the binding that the classifier could not read either.
 	{"i64-payload-arm", `function widen(v: i64): i64 { return v; }
 function main(): i32 {
     let x: i64 = (match ((9000000000i64) /? (2i64)) { Some(w) => w, None => widen(0i64) });
     return (x / 1000000000i64) as i32;
 }`, 4},
-	// u64 takes the same route as i64 — the annotation is read, not assumed.
 	{"u64-call-arm", `function ident_u(v: u64): u64 { return v; }
 function main(): i32 {
     let x: u64 = (match ((1u64) /? (0u64)) { Some(w) => w, None => ident_u(9000000000u64) });
     return (x / 1000000000u64) as i32;
 }`, 9},
-	// Control: a WIDE LITERAL arm already named the width, so this shape lowered
-	// before the annotation was consulted and must keep doing so.
 	{"wide-literal-arm-control", `function main(): i32 {
     let x: i64 = (match ((1i64) /? (0i64)) { Some(w) => w, None => 5000000000i64 });
     return (x / 1000000000i64) as i32;
 }`, 5},
 }
 
-// TestSelfHostValueBlockWidthIRX86_64 drives the production x86-64 IR path.
 func TestSelfHostValueBlockWidthIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -79,9 +58,6 @@ func TestSelfHostValueBlockWidthIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostValueBlockWidthIRArm64 — the arm64 counterpart. The tag is set in
-// the shared parser, so arm64 picks it up unchanged; running it is what proves
-// that rather than assuming it.
 func TestSelfHostValueBlockWidthIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -108,9 +84,6 @@ func TestSelfHostValueBlockWidthIRArm64(t *testing.T) {
 	}
 }
 
-// A literal local a block tail returns takes the width its destination reads
-// it at (an annotated `let`, a parameter, a return), as it does outside a
-// block, so the arithmetic on it runs at that width.
 const valueBlockLiteralLocalWidthSrc = `function wide(n: u64): u64 { return n / 1000000000u64; }
 function f(): i64 { return { let z = 2; z * 1000000000 }; }
 function main(): i32 {
@@ -120,8 +93,6 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostValueBlockLiteralLocalWidth goes through the production CLI:
-// the emit drivers do not run the checker's literal settlement.
 func TestSelfHostValueBlockLiteralLocalWidth(t *testing.T) {
 	if want := interpExit(t, buildLangBinForInterp(t), valueBlockLiteralLocalWidthSrc); want != 115 {
 		t.Fatalf("interpreter exit %d, want 115", want)
@@ -136,9 +107,6 @@ func TestSelfHostValueBlockLiteralLocalWidth(t *testing.T) {
 	}
 }
 
-// A literal local read beside a wide literal takes the destination's width too
-// (#10595): `big` is past i64-max, so it is right only when the product runs
-// at u64. `m` is i32-min, an i32 literal local.
 const wideLiteralLocalWidthSrc = `function giga(n: u64): u64 { return n / 1000000000u64; }
 function exa(n: u64): u64 { return n / 1000000000000000000u64; }
 function main(): i32 {

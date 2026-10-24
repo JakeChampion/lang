@@ -11,10 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// lexErrorCases each hold one lex error. Before #12685 the self-host's lexer
-// stopped at it and the parser read the stop as the end of the file, so at top
-// level `-check` accepted the program with everything after the error dropped,
-// and inside a body the truncation surfaced as an unrelated E052.
 var lexErrorCases = []struct{ name, src string }{
 	{"hash-top-level", "function main(): i32 { return 3; }\n# stray\nfunction helper(): i32 { return 0; }\n"},
 	{"hash-in-body", "function main(): i32 {\n  let x: i32 = 1;\n  # x;\n  return x;\n}\n"},
@@ -56,15 +52,8 @@ var lexErrorCases = []struct{ name, src string }{
 	{"invalid-four-byte-lead", "// \xf5\x80\x80\x80\n"},
 }
 
-// diagHeader is one diagnostic's header with the file path removed:
-// `LINE:COL: error[CODE]: MESSAGE`.
 var diagHeader = regexp.MustCompile(`(?m)^\S+?:(\d+:\d+: error(\[[A-Z]\d+\])?: .*)$`)
 
-// TestSelfHostCheckReportsLexErrors is the differential for #12685: `-check`
-// refuses a program holding a lex error with that error alone, and both front
-// ends report it identically — position, code and message. Native's lexer
-// fails before its parser starts, so a second diagnostic from the self-host
-// would be a report about the truncated file rather than the source.
 func TestSelfHostCheckReportsLexErrors(t *testing.T) {
 	cli := e2eharness.SelfHostCLI(t)
 	root := e2eharness.SelfHostStdlibRoot(t)
@@ -87,8 +76,6 @@ func TestSelfHostCheckReportsLexErrors(t *testing.T) {
 	}
 }
 
-// onlyDiag runs a `-check`, which must fail with exactly one diagnostic, and
-// returns that diagnostic's header without the file path.
 func onlyDiag(t *testing.T, who string, cmd *exec.Cmd) string {
 	t.Helper()
 	out, err := cmd.CombinedOutput()

@@ -2,21 +2,12 @@ package constfold
 
 import "testing"
 
-// The substituter's STATEMENT switch had the same hole its expression switch
-// was already patched for (#5477): a const referenced from a form it did not
-// visit survived as a bare Ident and reached the checker as "E001: undefined
-// identifier" for a const plainly in scope.
-//
-// Each case here fails on the un-patched walk and is a shape real code writes:
-// found while porting native's assert elision to the self-host, where
-// `parser.ORIGIN_ASSERT` inside a match arm would not resolve (#7157).
 func TestSubstituteReachesEveryStatementForm(t *testing.T) {
 	cases := []struct {
 		name string
 		body string
 	}{
 		{
-			// The statement match — MatchExpr was handled, this was not.
 			name: "match-arm-body",
 			body: "match (n) { 0 => { return LIMIT; }, _ => { return 0; } }\n    return 0;",
 		},

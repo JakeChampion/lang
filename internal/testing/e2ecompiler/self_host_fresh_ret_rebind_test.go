@@ -8,33 +8,6 @@ import (
 	"testing"
 )
 
-// --- The REBOUND fresh-ret-call struct local ---------------------------------
-//
-// `let s: S = mk(i); s = mk(i + 1);` — a struct local bound from a producer call
-// and then reassigned. The rebind releases the old box plus its rc fields; missed,
-// they leaked on every rebind (800 allocs / 0 frees over 200 rounds).
-// `literal_init_control` is the literal-bound spelling, `let s: S = S { .. }`,
-// under the identical rebind.
-//
-// `alias_into_container` appends the old value to a live `S[]` before the
-// rebind, so releasing at the rebind would free a box the container still
-// points at; its exit code guards that, and it balances.
-//
-// `field_moved_out` balances: `let held: string = s.name` takes its own count
-// on the field (#10371), so the deep drop of the orphaned box leaves `held`
-// live, and its readback after `churn` proves it.
-//
-// A `return` is not such an alias, so `rebind_then_return` balances: nothing
-// reads the orphaned box after the rebind, and the returned one is the
-// caller's to release.
-//
-// No `want` was read off the self-host run under test. The U-shaped rows are
-// wrong-ANSWER probes as well as census rows: each reads its held string back
-// after `churn` has had the chance to reuse anything freed too early, and
-// returns -1 on a short read, so the run answers 100 rather than balancing
-// quietly. The census alone cannot separate a correct release from an
-// over-release — both read allocs == frees.
-
 const freshRetRebindDecl = `struct S { name: string, n: i32 }
 function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }
 function mk(i: i32): S { return S { name: w("k"), n: i }; }
@@ -45,7 +18,6 @@ function churn(i: i32): i32 {
 }
 `
 
-// The plain driver: 200 rounds, no readback assertion.
 const freshRetRebindMain = `
 function main(): i32 {
     let acc: i32 = 0; let r: i32 = 0;
@@ -54,8 +26,6 @@ function main(): i32 {
     return acc % 83;
 }`
 
-// The readback driver: a round returning -1 (a string that came back short)
-// answers 100, so an over-release is a wrong ANSWER and not just a count.
 const freshRetRebindCheckedMain = `
 function main(): i32 {
     let acc: i32 = 0; let r: i32 = 0; let bad: i32 = 0;
@@ -74,7 +44,6 @@ type freshRetRebindCase struct {
 func freshRetRebindCases() []freshRetRebindCase {
 	return []freshRetRebindCase{
 		{
-			// The shape: producer-call init, producer-call rebind.
 			name: "call_init_rebind",
 			src: freshRetRebindDecl + `function round(i: i32): i32 {
     let s: S = mk(i);
@@ -84,8 +53,6 @@ func freshRetRebindCases() []freshRetRebindCase {
 			want: 79,
 		},
 		{
-			// Same local, rebound from a struct LITERAL instead. The init is what
-			// was excluded, so both rebind spellings leaked identically.
 			name: "call_init_literal_rebind",
 			src: freshRetRebindDecl + `function round(i: i32): i32 {
     let s: S = mk(i);
@@ -95,9 +62,6 @@ func freshRetRebindCases() []freshRetRebindCase {
 			want: 79,
 		},
 		{
-			// The control that was ALWAYS clean: literal init under the identical
-			// rebind. It is the row that localises a regression to the collector
-			// this change touched rather than to the shared gate below it.
 			name: "literal_init_control",
 			src: freshRetRebindDecl + `function round(i: i32): i32 {
     let s: S = S { name: w("k"), n: i };
@@ -107,9 +71,6 @@ func freshRetRebindCases() []freshRetRebindCase {
 			want: 79,
 		},
 		{
-			// A struct with NO rc fields at all: the box itself is what leaked,
-			// freed by a shallow dec. Its producer allocates a string internally,
-			// so the census still has something to count.
 			name: "scalar_struct_rebind",
 			src: `struct N { a: i32, n: i32 }
 function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }
@@ -122,8 +83,6 @@ function round(i: i32): i32 {
 			want: 79,
 		},
 		{
-			// An ARRAY field: the rebind must reach the deep field drop, not just
-			// the box dec — 1600/400 before.
 			name: "arr_field_rebind",
 			src: `struct A { f: string[], n: i32 }
 function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }
@@ -139,8 +98,6 @@ function round(i: i32): i32 {
 			want: 81,
 		},
 		{
-			// Three generations inside a loop, so the rebind release runs on a box
-			// the previous iteration produced rather than on the init's.
 			name: "loop_rebind",
 			src: freshRetRebindDecl + `function round(i: i32): i32 {
     let s: S = mk(i);
@@ -153,9 +110,6 @@ function round(i: i32): i32 {
 			want: 56,
 		},
 		{
-			// The old value is in a live container when the rebind
-			// orphans it. Releasing there frees a box `keep` still points at, so
-			// the readback is what proves the refusal is required.
 			name: "alias_into_container",
 			src: freshRetRebindDecl + `function round(i: i32): i32 {
     let s: S = mk(i);
@@ -169,8 +123,6 @@ function round(i: i32): i32 {
 			want: 56,
 		},
 		{
-			// A field carried out of the box the rebind orphans holds its own
-			// count, so the deep drop leaves the buffer `held` still reads.
 			name: "field_moved_out",
 			src: freshRetRebindDecl + `function round(i: i32): i32 {
     let s: S = mk(i);
@@ -183,10 +135,6 @@ function round(i: i32): i32 {
 			want: 56,
 		},
 		{
-			// The local escapes, but the box the rebind orphans is dead at that
-			// point and the returned one belongs to the caller, so the chain
-			// balances. The readback is what separates that from an
-			// over-release, since both read allocs == frees.
 			name: "rebind_then_return",
 			src: freshRetRebindDecl + `function build(i: i32): S {
     let s: S = mk(i);
@@ -204,8 +152,6 @@ function round(i: i32): i32 {
 	}
 }
 
-// TestSelfHostFreshRetRebindX86_64 — a fresh-ret-call struct local keeps its
-// reclaim credit across a rebind, with the aliasing shape still refused.
 func TestSelfHostFreshRetRebindX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -240,10 +186,6 @@ func TestSelfHostFreshRetRebindX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostFreshRetRebindSanitizeX86_64 — the same cases recompiled under
-// FERN_SANITIZE, which is what reports an over-release rather than a leak. The
-// census leg above cannot: a correct fix and a premature free both read
-// allocs == frees.
 func TestSelfHostFreshRetRebindSanitizeX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -263,8 +205,6 @@ func TestSelfHostFreshRetRebindSanitizeX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostFreshRetRebindWasmIR — the wasm sibling. Exit code only; the wasm
-// leg carries no leak census.
 func TestSelfHostFreshRetRebindWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping fresh-ret rebind wasm IR e2e")
@@ -303,7 +243,6 @@ func TestSelfHostFreshRetRebindWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostFreshRetRebindIRArm64 — the arm64 sibling under qemu.
 func TestSelfHostFreshRetRebindIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

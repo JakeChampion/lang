@@ -5,13 +5,6 @@ import "std/headers";
 import "std/mock_platform";
 import "std/net";
 
-// tests/stdlib/http_forwarded_test.fern — std/http/forwarded: RFC 7239's
-// own examples read, the malformed forms refused, elements written back;
-// the client walked back from the connection's peer past trusted proxies,
-// a forged hop left of them ignored, the peer itself when it is not a
-// proxy or the field does not parse; the X-Forwarded-* fields when asked;
-// and std/net's address blocks.
-
 function req(fields: string[]): HttpRequest {
   let r: HttpRequest = http.request("GET", "/");
   let i: i32 = 0;
@@ -59,8 +52,6 @@ function hops_of(fields: string[]): string {
   }
 }
 
-// RFC 7239 §4 and §7's examples, a parameter name in any case, an
-// extension parameter skipped, and every line's elements in order.
 function test_rfc_examples(): test.TestOutcome {
   let got: string = hops_of(["Forwarded", "for=\"_gazonk\""]);
   got = got + hops_of(["Forwarded", "For=\"[2001:db8:cafe::17]:4711\""]);
@@ -69,15 +60,11 @@ function test_rfc_examples(): test.TestOutcome {
   return test.assert_eq(got, "[_gazonk - - -][[2001:db8:cafe::17]:4711 - - -][192.0.2.60 203.0.113.43 - http][192.0.2.43 - - -][198.51.100.17 - - -][unknown - - -]");
 }
 
-// A quoted value may hold `,` and `;`; an obfuscated port; a host as given.
 function test_quoting(): test.TestOutcome {
   let got: string = hops_of(["Forwarded", "for=192.0.2.1;host=\"a.example;b,c\", for=\"unknown:_p1\""]);
   return test.assert_eq(got, "[192.0.2.1 - a.example;b,c -][unknown:_p1 - - -]");
 }
 
-// An IPv6 node unquoted, a parameter twice, a port of six digits, a bad
-// scheme, an empty value, a bare `_`, a pair with no `=`, and an IPv6
-// address where IPv4 must be: each makes the whole list unread.
 function test_malformed(): test.TestOutcome {
   let got: string = "";
   for v in ["for=[2001:db8::1]", "for=192.0.2.1;for=192.0.2.2", "for=\"192.0.2.1:123456\"", "proto=1http", "for=", "for=\"_\"", "for", "for=\"2001:db8::1\"", "for=192.0.2.1, by"] {
@@ -86,8 +73,6 @@ function test_malformed(): test.TestOutcome {
   return test.assert_eq(got, "malformed malformed malformed malformed malformed malformed malformed malformed malformed ");
 }
 
-// Writing: `for`, `by`, `host`, `proto` in order, a value that is not a
-// token quoted, which reads back the same.
 function test_write(): test.TestOutcome {
   let h: forwarded.Hop = forwarded.Hop { ...forwarded.hop(), from: forwarded.node_parse("[2001:db8::1]:443"), host: Some("example.com"), proto: Some("https") };
   let obf: forwarded.Hop = forwarded.Hop { ...forwarded.hop(), from: forwarded.node_parse("_x"), by: forwarded.node_parse("192.0.2.9") };
@@ -118,20 +103,14 @@ function client_of(peer: string, blocks: string[], fields: string[]): string {
   return shown(forwarded.client(req(fields), m, trusted(blocks)));
 }
 
-// A peer that is not a proxy is the client, whatever the field says.
 function test_untrusted_peer(): test.TestOutcome {
   return test.assert_eq(client_of("203.0.113.9:5000", ["10.0.0.0/8"], ["Host", "shop.example", "Forwarded", "for=192.0.2.60;proto=https"]), "203.0.113.9:5000 - shop.example");
 }
 
-// Behind a trusted proxy, the client is the node its element names, with
-// the scheme and host it used.
 function test_one_proxy(): test.TestOutcome {
   return test.assert_eq(client_of("10.0.0.5:4000", ["10.0.0.0/8"], ["Host", "internal", "Forwarded", "for=192.0.2.60;proto=https;host=shop.example"]), "192.0.2.60 https shop.example");
 }
 
-// Two trusted proxies are walked past; a hop the client forged left of
-// them is never reached; when every node is trusted, the first hop is the
-// client.
 function test_chain_and_forgery(): test.TestOutcome {
   let chain: string = client_of("10.0.0.5:1", ["10.0.0.0/8"], ["Forwarded", "for=198.51.100.7;proto=https", "Forwarded", "for=10.0.0.9;proto=http"]);
   let forged: string = client_of("10.0.0.5:1", ["10.0.0.0/8"], ["Forwarded", "for=10.9.9.9, for=192.0.2.60;proto=https"]);
@@ -139,8 +118,6 @@ function test_chain_and_forgery(): test.TestOutcome {
   return test.assert_eq(chain + " | " + forged + " | " + all, "198.51.100.7 https - | 192.0.2.60 https - | 10.0.0.1 - -");
 }
 
-// A malformed field leaves the trusted peer as the client; an obfuscated
-// client has no address; a platform that knows no peer trusts nothing.
 function test_edges(): test.TestOutcome {
   let bad: string = client_of("10.0.0.5:1", ["10.0.0.0/8"], ["Forwarded", "for=192.0.2.60;for=192.0.2.61"]);
   let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
@@ -157,8 +134,6 @@ function test_edges(): test.TestOutcome {
   return test.assert_eq(bad + " | " + node(hidden.node) + " " + no_ip.to_string() + " | " + unknown, "10.0.0.5:1 - - | _hidden true | - - h");
 }
 
-// X-Forwarded-For only when asked and no Forwarded field was sent, its
-// proto and host paired from the right or given to every hop.
 function test_legacy(): test.TestOutcome {
   let t: forwarded.Trust = forwarded.Trust { ...trusted(["10.0.0.0/8"]), legacy: true };
   let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
@@ -171,7 +146,6 @@ function test_legacy(): test.TestOutcome {
   return test.assert_eq(on + " | " + off + " | " + both + " | " + v6, "203.0.113.1 https shop.example | 10.0.0.5:1 - - | 192.0.2.60 - - | [2001:db8::8]:443 - -");
 }
 
-// `trust` names the first block that does not parse.
 function test_trust_errors(): test.TestOutcome {
   match (forwarded.trust(["10.0.0.0/8", "10.0.0.1/8"])) {
     Ok(t) => {
@@ -201,9 +175,6 @@ function in_block(block: string, ip: string): string {
   }
 }
 
-// Blocks at their edges, each family against the other, a v4-mapped
-// address against an IPv4 block and IPv4 addresses against v4-mapped and
-// IPv6 blocks, /0 and a single address.
 function test_prefix(): test.TestOutcome {
   let got: string = in_block("172.16.0.0/12", "172.31.255.255") + " " + in_block("172.16.0.0/12", "172.32.0.0") + " " + in_block("2001:db8::/32", "2001:db8:ffff::1") + " " + in_block("2001:db8::/32", "2001:db9::1");
   got = got + " " + in_block("10.0.0.0/8", "::ffff:10.1.2.3") + " " + in_block("10.0.0.0/8", "2001:db8::1") + " " + in_block("0.0.0.0/0", "203.0.113.1") + " " + in_block("192.0.2.7", "192.0.2.8");
@@ -212,7 +183,6 @@ function test_prefix(): test.TestOutcome {
   return test.assert_eq(got, "true false true false true false true false true bad-block false true true false true true false");
 }
 
-// The element a proxy appends for the request it received.
 function test_hop_of(): test.TestOutcome {
   let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
   m.peer_set("192.0.2.7:5000");
@@ -250,10 +220,6 @@ function bytes_of(xs: i32[]): u8[] {
   return out;
 }
 
-// Version 1: TCP4, TCP6 and UNKNOWN, the length up to the CRLF, a header not
-// all here, and what is not a header or not a valid one: either address
-// unreadable or of the other family, either port out of range or written
-// with a leading zero.
 function test_proxy_v1(): test.TestOutcome {
   let got: string = "";
   for t in ["PROXY TCP4 192.0.2.1 198.51.100.2 56324 443\r\nGET /", "PROXY TCP6 2001:db8::1 2001:db8::2 4000 443\r\n", "PROXY UNKNOWN\r\n", "PROXY TCP4 192.0", "PRO", "GET / HTTP/1.1\r\n", "PROXY TCP4 192.0.2.1 198.51.100.2 99999 443\r\n", "PROXY TCP4 2001:db8::1 2001:db8::2 1 2\r\n", "PROXY TCP4 192.0.2.1 198.51.100.2 1\r\n", "PROXY TCP4 192.0.2.1 999.999.999.999 56324 443\r\n", "PROXY TCP4 192.0.2.1 2001:db8::2 56324 443\r\n", "PROXY TCP4 192.0.2.1 198.51.100.2 56324 99999\r\n", "PROXY TCP4 192.0.2.1 198.51.100.2 0080 443\r\n", "PROXY TCP4 192.0.2.1 198.51.100.2 0 443\r\n"] {
@@ -266,10 +232,6 @@ function test_proxy_v1(): test.TestOutcome {
   return test.assert_eq(got + proxied(long.bytes()), "192.0.2.1:56324 45 | [2001:db8::1]:4000 45 | - 15 | short | short | bad | bad | bad | bad | bad | bad | bad | bad | 192.0.2.1:0 41 | bad");
 }
 
-// Version 2: PROXY over IPv4 and IPv6, a TLV after the addresses skipped,
-// LOCAL naming no source, a header not all here, a bad version, a
-// transport other than stream, datagram or unspecified, and an
-// unspecified transport naming no source.
 function test_proxy_v2(): test.TestOutcome {
   let sig: i32[] = [13, 10, 13, 10, 0, 13, 10, 81, 85, 73, 84, 10];
   let v4: i32[] = sig.concat([33, 17, 0, 12, 192, 0, 2, 1, 198, 51, 100, 2, 220, 4, 1, 187]);

@@ -4,11 +4,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostEnumMethodWasmIR is the wasm sibling of
-// TestSelfHostEnumMethodX86IR: enum-receiver typing, including an
-// unannotated enum binding, lives in the target-independent lowering, so the
-// wasm IR backend gets it for free. Each case asserts the
-// oracle exit code from the IR-emitted module (<= 125 for WASI proc_exit).
 func TestSelfHostEnumMethodWasmIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range enumMethodIRCases {
