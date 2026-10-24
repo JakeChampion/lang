@@ -20566,10 +20566,12 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
           return ctx.ofuncs.ctors.has(cid.name) || util.has_str(ctx.fresh, cid.name);
         },
         ast.ExprFieldAccess(mfa) => {
-          // A method is reached through its SPELLING here, because the
-          // self-host does not mangle at parse time; ow_fresh_methods settles
-          // which spellings cannot hand a receiver or an argument back.
-          return util.has_str(ctx.fresh_methods, mfa.field);
+          for ns in ow_type_namespaces(check_expr(mfa.obj, ctx.scope)) {
+            if (util.has_str(ctx.fresh_methods, ns + "." + mfa.field)) {
+              return true;
+            }
+          }
+          return false;
         },
         _ => {
           return false;
@@ -22277,8 +22279,10 @@ function ow_type_namespaces(t: typeinfo.Type): string[] {
       return out;
     },
     _ => {
-      let none: string[] = [];
-      return none;
+      if (!is_unknown(t)) {
+        return [ow_receiver_ns(type_label(t))];
+      }
+      return [];
     }
   }
   let none: string[] = [];
@@ -22758,12 +22762,7 @@ function ow_fresh_owners(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.Na
   return out;
 }
 
-// ow_fresh_methods names the method SPELLINGS whose result cannot alias the
-// receiver or an argument. A method call is reached by spelling alone here, so
-// a spelling several methods share is admitted only when NONE of them can hand
-// a borrow back. ow_call_may_borrow already treats every method callee as able
-// to, so one pass over the settled `borrows` is enough — a method reached only
-// through another method is pessimistic already.
+// Method freshness belongs to the receiver namespace and method name.
 function ow_fresh_methods(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.NameIndex, borrows: util.NameIndex): string[] {
   let out: string[] = [];
   let refused: string[] = [];
@@ -22774,10 +22773,11 @@ function ow_fresh_methods(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.N
     if (!ow_type_is_pointer(fn.ret_type, ofuncs)) {
       continue;
     }
+    let key: string = ow_receiver_ns(fn.receiver_type) + "." + fn.name;
     if (ow_func_result_borrows(fn, mod, ofuncs, borrows, builtins)) {
-      refused = refused.append(fn.name);
+      refused = refused.append(key);
     } else {
-      out = out.append(fn.name);
+      out = out.append(key);
     }
   }
   let kept: string[] = [];
