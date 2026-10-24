@@ -42,15 +42,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Two jobs per host: `heavy` is internal/syntax/printer, 350-390 s
-          # of serial tests that cannot t.Parallel; `rest` is the other
-          # packages. One job was 10 minutes on x86 with the heavy packages
-          # sharing four cores with everything else.
-          - { runner: ubuntu-24.04,     host: x86_64,  group: heavy }
-          - { runner: ubuntu-24.04,     host: x86_64,  group: rest }
-          - { runner: ubuntu-24.04-arm, host: aarch64, group: heavy }
-          - { runner: ubuntu-24.04-arm, host: aarch64, group: rest }
-    name: test-units-${{ matrix.host }}-${{ matrix.group }}
+          # Corpus workers use separate processes because printer checks share AST globals.
+          - { runner: ubuntu-24.04,     host: x86_64,  group: heavy, shard: 0, nshard: 4 }
+          - { runner: ubuntu-24.04,     host: x86_64,  group: heavy, shard: 1, nshard: 4 }
+          - { runner: ubuntu-24.04,     host: x86_64,  group: heavy, shard: 2, nshard: 4 }
+          - { runner: ubuntu-24.04,     host: x86_64,  group: heavy, shard: 3, nshard: 4 }
+          - { runner: ubuntu-24.04,     host: x86_64,  group: rest,  shard: 0, nshard: 1 }
+          - { runner: ubuntu-24.04-arm, host: aarch64, group: heavy, shard: 0, nshard: 4 }
+          - { runner: ubuntu-24.04-arm, host: aarch64, group: heavy, shard: 1, nshard: 4 }
+          - { runner: ubuntu-24.04-arm, host: aarch64, group: heavy, shard: 2, nshard: 4 }
+          - { runner: ubuntu-24.04-arm, host: aarch64, group: heavy, shard: 3, nshard: 4 }
+          - { runner: ubuntu-24.04-arm, host: aarch64, group: rest,  shard: 0, nshard: 1 }
+    name: test-units-${{ matrix.host }}-${{ matrix.group }}${{ matrix.group == 'heavy' && format('-shard{0}', matrix.shard) || '' }}
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
@@ -137,6 +140,7 @@ jobs:
         # those two gates by design and must not be asked to require them.
         env:
           FERN_CI_UNIT_PACKAGE_GROUP: ${{ matrix.group }}
+          FERN_PRINTER_CORPUS_SHARD: "${{ matrix.shard }}/${{ matrix.nshard }}"
           FERN_REQUIRE_ARM64_TOOLING: "1"
           FERN_REQUIRE_X86_64_TOOLING: ${{ matrix.host == 'x86_64' && '1' || '' }}
           # internal/testing/tv's tests prove with z3, which setup-fern installs.
@@ -169,7 +173,7 @@ jobs:
         # default: a binary that default kills reports whichever cases were in
         # flight as failures with no output and an unknown elapsed, so the lane
         # names tests that did not fail and never names the wall it hit. The
-        # longest package here is internal/syntax/printer at ~6m30s.
+        # printer corpus is partitioned across four workers on each host.
         run: |
           # shellcheck disable=SC2046 # the package list is deliberately word-split
           gotestsum --format pkgname-and-test-fails -- -timeout 25m \

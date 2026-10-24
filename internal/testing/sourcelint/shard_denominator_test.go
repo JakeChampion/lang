@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-var shardEnvs = []string{"DIFF_ORACLE_SHARD", "FERNSMITH_SHRINK_SHARD"}
+var shardEnvs = []string{"DIFF_ORACLE_SHARD", "FERNSMITH_SHRINK_SHARD", "FERN_PRINTER_CORPUS_SHARD"}
 
 func TestShardDenominatorMatchesMatrix(t *testing.T) {
 	for _, env := range shardEnvs {

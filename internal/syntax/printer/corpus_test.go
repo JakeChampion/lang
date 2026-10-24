@@ -32,7 +32,13 @@ func corpusFiles(t *testing.T, root string) []string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return files
+	shard := printerCorpusShard(t)
+	selected := shard.files(files)
+	if len(selected) == 0 {
+		t.Fatalf("corpus shard %d/%d selected no files", shard.index, shard.count)
+	}
+	t.Logf("corpus shard %d/%d: %d of %d files", shard.index, shard.count, len(selected), len(files))
+	return selected
 }
 
 func formatSource(src string) (string, error) {
@@ -74,7 +80,8 @@ func TestFormatCorpusOutputTypeChecks(t *testing.T) {
 		}
 		checked++
 	}
-	if checked < 300 {
+	t.Logf("checked %d formatted programs", checked)
+	if checked < printerCorpusShard(t).minimumChecked() {
 		t.Errorf("only %d of %d corpus files compiled as written; the gate is asserting far less than it looks like", checked, len(files))
 	}
 }

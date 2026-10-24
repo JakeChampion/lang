@@ -160,6 +160,8 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 			delete(freshInitLocal, name)
 		}
 	}
+	var fieldSelections map[string]int
+	var fieldReads map[[2]string]int
 	unpackInitLocal := map[string]bool{}
 	ast.Walk(body, func(n ast.Node) bool {
 		v, isVar := n.(*ast.Var)
@@ -174,24 +176,20 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 		if !isID || !freshInitLocal[hid.Name] {
 			return true
 		}
-		reads, selections, mentions := 0, 0, 0
-		ast.Walk(body, func(m ast.Node) bool {
-			switch x := m.(type) {
-			case *ast.FieldAccess:
-				if id, ok := x.Target.(*ast.Ident); ok && id.Name == hid.Name {
-					selections++
-					if x.Field == fa.Field {
-						reads++
+		if fieldSelections == nil {
+			fieldSelections = map[string]int{}
+			fieldReads = map[[2]string]int{}
+			ast.Walk(body, func(m ast.Node) bool {
+				if field, ok := m.(*ast.FieldAccess); ok {
+					if root, ok := field.Target.(*ast.Ident); ok {
+						fieldSelections[root.Name]++
+						fieldReads[[2]string{root.Name, field.Field}]++
 					}
 				}
-			case *ast.Ident:
-				if x.Name == hid.Name {
-					mentions++
-				}
-			}
-			return true
-		})
-		if reads == 1 && selections == mentions {
+				return true
+			})
+		}
+		if fieldReads[[2]string{hid.Name, fa.Field}] == 1 && fieldSelections[hid.Name] == occurrences[hid.Name] {
 			unpackInitLocal[v.Name] = true
 		}
 		return true
