@@ -122,6 +122,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<47 pub function (xs: T[]) to_json[T: Json](): string>>
 
+<<Optional JSON values>>
+
 <<48 pub trait FromJson>>
 
 <<49 pub function json_kind(v: JsonValue): string>>
@@ -2314,6 +2316,27 @@ pub function (xs: T[]) to_json[T: Json](): string {
   }
   out = out.append(93 as u8);
   return string_from_bytes_unchecked(out);
+}
+```
+
+### Optional values
+
+An absent value encodes as JSON null. A present value uses the codec of its element type.
+
+```fern
+<<Optional JSON values>>=
+// An absent value maps to JSON null. Present values keep their own codec.
+impl[T: Json] Json for Option[T] {
+  function to_json(self: Option[T]): string {
+    match (self) {
+      Some(inner) => {
+        return inner.to_json();
+      },
+      None => {
+        return "null";
+      }
+    }
+  }
 }
 ```
 

@@ -26,6 +26,7 @@ var stdlibMethodIndex = map[string]map[string]string{
 		"ok_or_else":     "std/option",
 		"or":             "std/option",
 		"or_else":        "std/option",
+		"to_json":        "std/json",
 		"transpose":      "std/option",
 		"unwrap_or":      "std/option",
 		"unwrap_or_else": "std/option",

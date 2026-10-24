@@ -241,6 +241,11 @@ pub(package) function helper(n: i32): i32 { return n + 1; }
 pub function api(n: i32): i32 { return helper(n); }
 function main(): i32 { return api(1); }
 `},
+	{"export-attribute", `@export("fern:test/math", "add")
+pub function add(x: i32, y: i32): i32 { return x + y; }
+@export("fern:test/math", "zero")
+function zero(): i32 { return 0; }
+`},
 	{"inline-hints", `@inline
 function inc(n: i32): i32 { return n + 1; }
 @noinline

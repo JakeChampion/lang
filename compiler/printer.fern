@@ -3384,6 +3384,11 @@ function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[
         f = cf;
       } else {
         let fd: parser.FuncDecl = mod.funcs[idxs[di]];
+        for binding in mod.exports {
+          if (binding.func_name == fd.name && !binding.c_abi) {
+            chunks = chunks.append("@export(" + quote_string(binding.iface) + ", " + quote_string(binding.wit) + ")\n");
+          }
+        }
         let has_hint: boolean = hint_cursor < hints.len()
           && hints[hint_cursor].line == fd.line && hints[hint_cursor].col == fd.col;
         let never: boolean = false;

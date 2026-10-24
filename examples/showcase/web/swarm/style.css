@@ -1,0 +1,94 @@
+.swarm-page {
+  --accent: #6d57a4;
+}
+.swarm-stage {
+  position: relative;
+  background: #090e22;
+  border-radius: 24px;
+  overflow: hidden;
+  border: 1px solid #403e67;
+  box-shadow: 0 20px 70px #29305022;
+}
+.swarm-stage canvas {
+  display: block;
+  width: 100%;
+  height: min(62vh, 660px);
+  min-height: 320px;
+  touch-action: none;
+}
+.swarm-stage canvas:focus-visible {
+  outline: 3px solid #c7b4ff;
+  outline-offset: -5px;
+}
+.swarm-caption {
+  position: absolute;
+  inset: auto 25px 20px;
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  font: 10px var(--mono, monospace);
+  letter-spacing: 0.14em;
+  color: #cac2e5;
+  pointer-events: none;
+}
+.swarm-controls {
+  flex-wrap: wrap;
+  gap: 22px;
+}
+.swarm-controls label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+.swarm-controls input {
+  max-width: 150px;
+  accent-color: #6d57a4;
+}
+.swarm-controls select {
+  padding: 8px;
+  border: 1px solid #cfc8d8;
+  background: transparent;
+  border-radius: 8px;
+}
+.swarm-readings {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  border-block: 1px solid var(--line, #ddd7cc);
+  padding: 24px 0;
+  margin: 10px 0 20px;
+  gap: 20px;
+}
+.swarm-readings b {
+  display: block;
+  font-size: 28px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.swarm-readings span {
+  font: 9px monospace;
+  letter-spacing: 0.1em;
+  color: #6a6275;
+}
+.swarm-page .app-intro em {
+  color: #6d57a4;
+}
+@media (max-width: 650px) {
+  .swarm-readings {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  .swarm-caption {
+    inset: auto 16px 18px;
+    font-size: 8px;
+  }
+  .swarm-caption span:last-child {
+    max-width: 145px;
+    text-align: right;
+  }
+  .swarm-stage canvas {
+    min-height: 340px;
+  }
+  .swarm-controls .button-group {
+    flex-wrap: wrap;
+  }
+}

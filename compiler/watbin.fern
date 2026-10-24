@@ -1351,6 +1351,9 @@ function mem_load_opcode(op: string): i32 {
   if (op == "i64.load") {
     return 41;
   }
+  if (op == "f32.load") {
+    return 42;
+  }
   if (op == "f64.load") {
     return 43;
   }
@@ -1375,6 +1378,9 @@ function mem_store_opcode(op: string): i32 {
   }
   if (op == "i64.store") {
     return 55;
+  }
+  if (op == "f32.store") {
+    return 56;
   }
   if (op == "f64.store") {
     return 57;

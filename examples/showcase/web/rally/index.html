@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Rally · Fern, in action</title>
+    <link rel="stylesheet" href="/assets/showcase.css" />
+  </head>
+  <body class="app-page rally-page">
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="app-nav">
+      <a class="brand" href="/"
+        ><span class="brand-mark" aria-hidden="true">✳</span> fern<span
+          class="brand-suffix"
+        >
+          / in action</span
+        ></a
+      >
+      <nav>
+        <a href="/">All examples</a
+        ><a href="/_src/showcase/rally.fern">View source ↗</a>
+      </nav>
+    </header>
+    <main id="main">
+      <div class="app-heading">
+        <section class="app-intro">
+          <div class="eyebrow">02 / REAL-TIME PLAY</div>
+          <h1><em>Rally.</em></h1>
+          <p>Play Pong against the server, or invite another player.</p>
+          <div class="tech-chips">
+            <span>WebSocket</span><span>Server-owned physics</span
+            ><span>Shared game rooms</span>
+          </div>
+        </section>
+        <div id="connection" class="status" role="status">
+          Connecting to the court
+        </div>
+      </div>
+      <div class="game-layout">
+        <div>
+          <div class="court-wrap">
+            <canvas
+              id="court"
+              width="960"
+              height="540"
+              aria-label="Paddle game. Move with W and S, arrow keys, or drag a finger or pointer on the court."
+            ></canvas>
+            <div id="court-message" class="court-message">
+              <strong>A worthy opponent awaits.</strong
+              ><span
+                >Start a rally. Move with ↑ ↓, W S, or drag on the court.</span
+              >
+            </div>
+          </div>
+          <div class="toolbar">
+            <div class="button-group">
+              <button class="button primary" id="start">Start rally →</button
+              ><button class="button" id="pause">Pause</button
+              ><button class="button" id="reset">Reset score</button>
+            </div>
+            <div class="game-stats">
+              <span><b id="latency">—</b>ROUND TRIP / MS</span
+              ><span><b id="server-time">—</b>SERVER STEP / MS</span
+              ><span><b id="seat">—</b>YOUR PADDLE</span>
+            </div>
+          </div>
+        </div>
+        <aside class="game-sidebar">
+          <div>
+            <div class="eyebrow">THE SCOREBOARD</div>
+            <h2 style="margin-top: 12px">Score</h2>
+          </div>
+          <div class="game-score">
+            <span><small>LEFT</small><b id="score-left">0</b></span
+            ><span><small>RIGHT</small><b id="score-right">0</b></span>
+          </div>
+          <hr />
+          <p id="opponent">
+            You are playing Fern. The server moves the other paddle and checks
+            every collision.
+          </p>
+          <div class="button-group">
+            <button id="solo" class="button small">Play the server</button
+            ><button id="duo" class="button small">Invite a friend ↗</button>
+          </div>
+          <p id="invite" class="invite-box" hidden>
+            <a id="invite-link" href="#"></a>
+            <button
+              id="copy-room"
+              class="button small"
+              style="margin-top: 10px"
+            >
+              Copy invite
+            </button>
+          </p>
+          <hr />
+          <p>
+            Use <span class="key">↑</span><span class="key">↓</span> or
+            <span class="key">W</span><span class="key">S</span>. On a touch
+            screen, drag your paddle on the court.
+          </p>
+        </aside>
+      </div>
+      <details class="how-it-works">
+        <summary>How it works</summary>
+        <p>
+          The browser sends paddle targets through a WebSocket. Fern limits
+          movement, advances the ball, checks collisions, and returns the shared
+          game state. The browser predicts your paddle immediately and
+          reconciles each reply. Inputs never wait for a round trip. Two players
+          use the same room. A quiet room does no simulation work. Rooms are
+          held in this server process and reset on restart.
+        </p>
+        <a href="/_src/showcase/rally.fern">Read the game server ↗</a>
+      </details>
+    </main>
+    <footer class="app-footer">
+      <span>Built with Fern.</span><a href="/_src/">Read the source ↗</a>
+    </footer>
+    <script type="module" src="./app.mjs"></script>
+  </body>
+</html>

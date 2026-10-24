@@ -318,13 +318,12 @@ func TestSelfHostEmbedCarriesTheStdlib(t *testing.T) {
 	}
 
 	src := filepath.Join(dir, "embed_stdlib.fern")
-	prog := "function main(): i32 {\n" +
+	prog := "import \"std/string\";\nfunction main(): i32 {\n" +
 		"    let n: i32 = 0;\n" +
 		"    let io_len: i32 = 0;\n" +
 		"    for a in __fern_assets() {\n" +
-		"        let name: string = a.0;\n" +
-		"        if ((name.len() >= 5 && slice_unchecked(name, name.len() - 5, name.len()) == \".fern\") || (name.len() >= 8 && slice_unchecked(name, name.len() - 8, name.len()) == \".fern.md\")) { n = n + 1; }\n" +
-		"        if (name == \"std/io.fern.md\") { io_len = a.1.len(); }\n" +
+		"        if (a.0.ends_with(\".fern\") || a.0.ends_with(\".fern.md\")) { n = n + 1; }\n" +
+		"        if (a.0 == \"std/io.fern.md\") { io_len = a.1.len(); }\n" +
 		"    }\n" +
 		"    if (n < 60) { return 1; }\n" +
 		"    if (io_len < 100) { return 2; }\n" +
@@ -343,7 +342,7 @@ func TestSelfHostEmbedCarriesTheStdlib(t *testing.T) {
 	switch code := run.ProcessState.ExitCode(); code {
 	case 0:
 	case 1:
-		t.Fatalf("fewer than 60 .fern or .fern.md modules reached the binary — the walk lost files\n%s", out)
+		t.Fatalf("fewer than 60 Fern modules reached the binary — the walk lost files\n%s", out)
 	case 2:
 		t.Fatalf("std/io.fern.md arrived with no contents — the walk kept names but not bytes\n%s", out)
 	default:

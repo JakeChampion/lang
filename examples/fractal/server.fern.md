@@ -1,3 +1,31 @@
+# Fractal: expose a numerical renderer over HTTP
+
+This controller connects the Mandelbrot renderer to HTTP tiles and WebSocket delivery.
+The numerical modules remain ordinary Fern files so benchmarks can test their kernels directly.
+Follow their import links to inspect the perturbation, series, and escape-time algorithms.
+
+This document is the source program. Fern expands the named sections in `<<*>>` before compilation.
+The HTML source view links each section and each local import.
+
+```fern
+<<*>>=
+<<Renderer state>>
+<<Measure a render>>
+<<Serve tiles and sockets>>
+<<Handle socket requests>>
+<<Parse typed requests>>
+<<Cancel obsolete work>>
+<<Report work and identify the binary>>
+<<Mount the standalone application>>
+```
+
+## Renderer state
+
+The state records completed tiles, active renders, connections, and elapsed work.
+A render version identifies the binary so immutable tile URLs remain safe across deployments.
+
+```fern
+<<Renderer state>>=
 import "std/http";
 import "std/http/router";
 import "std/http/static";
@@ -57,7 +85,15 @@ pub function stats(instance: string, started_ms: i64, binary_bytes: i64, version
     cancelled: cell_new([] as string[]),
   };
 }
+```
 
+## Measure a render
+
+A rendered tile includes elapsed time and its numerical statistics.
+Track active work around the renderer call so cancellation and errors also release the active count.
+
+```fern
+<<Measure a render>>=
 function (state: Stats) view(now_ms: i64): StatsView {
   return StatsView {
     instance: state.instance,
@@ -92,7 +128,15 @@ function (state: Stats) render(z: i32, x: i64, y: i64, key: Option[string]): Res
   state.render_ns.set(state.render_ns.get() + elapsed_ns);
   return Ok(Rendered { tile: tile, elapsed_ns: elapsed_ns });
 }
+```
 
+## Serve tiles and sockets
+
+HTTP provides cacheable PNG tiles. WebSocket supplies a multiplexed binary delivery path.
+The controller validates coordinates before work. Responses report timing and instance identity.
+
+```fern
+<<Serve tiles and sockets>>=
 pub function routes[P: platform.Platform](state: Stats, web: string, sources: source.Page[]): router.Router[P] {
   let app: router.Router[P] = router.new[P]();
   app = app.get("/tile/{version}/{z}/{x}/{y}", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => tile(state, req, params));
@@ -158,7 +202,15 @@ function tile(state: Stats, req: HttpRequest, params: router.Params): Result[Htt
   response = response.with_header("X-Fern-Renderer", state.render_version);
   return Ok(response.with_header("X-Fern-Iterations", rendered.tile.iterations.to_string()));
 }
+```
 
+## Handle socket requests
+
+Each connection owns a session identifier. The server counts connection open and close events.
+Text requests carry an identifier and tile coordinates. Replies prefix PNG data with that identifier.
+
+```fern
+<<Handle socket requests>>=
 function session(state: Stats, session_id: string): websocket.Handlers {
   return websocket.Handlers {
     open: (connection: websocket.Conn): void => {
@@ -199,7 +251,15 @@ function on_message(state: Stats, session_id: string, connection: websocket.Conn
     }
   }
 }
+```
 
+## Parse typed requests
+
+A parse failure is a `RequestError` with a cause. No integer sentinel represents failure.
+Parse into wide integers, check coordinate limits, then convert to the wire identifier type.
+
+```fern
+<<Parse typed requests>>=
 pub struct TileRequest { id: u32, z: i32, x: i64, y: i64 }
 
 pub enum RequestError {
@@ -267,7 +327,16 @@ function coordinate(params: router.Params, name: string): Result[i64, http.HttpE
 }
 
 pub enum TokenError { InvalidSession, InvalidID(parse.IntError), InvalidIDRange }
+```
 
+## Cancel obsolete work
+
+Cancellation keys combine a validated session and request identifier.
+The renderer periodically checks the cancellation set and task state. Yield points let cancellation requests run.
+A stopped render returns a typed error and does not increase the completed tile count.
+
+```fern
+<<Cancel obsolete work>>=
 pub function request_key(session_id: string, id: string): Result[string, TokenError] {
   if (session_id.len() < 16 || session_id.len() > 64) {
     return Err(InvalidSession);
@@ -310,7 +379,15 @@ function request_stopped(state: Stats, key: Option[string], next_yield: Cell[i64
     }
   }
 }
+```
 
+## Report work and identify the binary
+
+Map renderer errors to HTTP status codes at the boundary. Server-Timing reports elapsed work.
+The executable hash gives tile URLs a stable build identity.
+
+```fern
+<<Report work and identify the binary>>=
 function render_http_error(error: fractal.RenderError): http.HttpError {
   match (error) {
     fractal.RenderError.Cancelled => {
@@ -370,12 +447,40 @@ function own_binary(): (i64, string) {
   return (0, crypto.sha256_hex(text.as_bytes()).take(24));
 }
 
+// The standalone entry also mounts the app at the showcase path.
+// Legacy endpoints remain available for existing API clients.
+```
+
+## Mount the standalone application
+
+The standalone entry also serves the UI at `/fractal/`. The showcase uses the inner router.
+The standalone server retains unprefixed API routes for the numerical and cancellation test harnesses.
+
+```fern
+<<Mount the standalone application>>=
+pub function mounted_routes[P: platform.Platform](state: Stats, web: string, sources: source.Page[]): router.Router[P] {
+  let inner: router.Router[P] = routes[P](state, web, sources);
+  let app: router.Router[P] = router.new[P]();
+  app = app.get("/{$}", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(http.redirect("/fractal/")));
+  app = app.get("/fractal", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(http.redirect("/fractal/")));
+  app = app.route("/fractal/{path...}", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => {
+    let response: HttpResponse = inner.handle(HttpRequest { ...req, path: req.path.drop(8) }, plat);
+    if let Some(location) = response.headers.get("Location") {
+      if (location.starts_with("/tile/")) {
+        response = response.with_header("Location", "/fractal" + location);
+      }
+    }
+    return Ok(response);
+  });
+  return app.route("/{path...}", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(inner.handle(req, plat)));
+}
+
 function main(): i32 {
   let identity: (i64, string) = own_binary();
   let state: Stats = stats(hex6(random_i32()), now_unix_ms(), identity.0, identity.1);
   match (source.load(".")) {
     Ok(sources) => {
-      let handler: (HttpRequest, platform.Host) => HttpResponse = routes[platform.Host](state, "web", sources).handler();
+      let handler: (HttpRequest, platform.Host) => HttpResponse = mounted_routes[platform.Host](state, "web", sources).handler();
       return serve.run_shutdown(PORT, serve.config(), handler, (reason: string): void => eprint("server: stopped, " + reason));
     },
     Err(message) => {
@@ -384,3 +489,4 @@ function main(): i32 {
     }
   }
 }
+```

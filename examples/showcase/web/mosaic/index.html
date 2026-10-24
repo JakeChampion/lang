@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Mosaic · Fern, in action</title>
+    <link rel="stylesheet" href="/assets/showcase.css" />
+  </head>
+  <body class="app-page mosaic-page">
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="app-nav">
+      <a class="brand" href="/"
+        ><span class="brand-mark" aria-hidden="true">✳</span> fern<span
+          class="brand-suffix"
+        >
+          / in action</span
+        ></a
+      >
+      <nav>
+        <a href="/">All examples</a
+        ><a href="/_src/showcase/mosaic.fern">View source ↗</a>
+      </nav>
+    </header>
+    <main id="main">
+      <div class="app-heading">
+        <section class="app-intro">
+          <div class="eyebrow">03 / MAKE IT TOGETHER</div>
+          <h1>Shared <em>pixel canvas.</em></h1>
+          <p>
+            Pick a color and draw. Anyone with the room link can edit this
+            board.
+          </p>
+          <div class="tech-chips">
+            <span>WebSocket</span><span>Immediate local paint</span
+            ><span>Revision journal</span>
+          </div>
+        </section>
+        <div class="status" id="connection" role="status">
+          Opening the canvas
+        </div>
+      </div>
+      <div class="mosaic-layout">
+        <aside class="palette-panel">
+          <h2>Brush color</h2>
+          <div class="palette" id="palette" aria-label="Brush color"></div>
+          <label><input id="grid" type="checkbox" /> Show the grid</label>
+          <p class="fine-print">
+            Drag to draw. Use arrow keys and Space on the canvas to paint with a
+            keyboard.
+          </p>
+        </aside>
+        <section>
+          <div class="mosaic-stage">
+            <canvas
+              id="board"
+              width="1024"
+              height="640"
+              tabindex="0"
+              aria-label="Shared 64 by 40 pixel canvas. Arrow keys move the cursor. Space or Enter paints a pixel."
+              >An interactive shared pixel canvas. Download a PNG below to view
+              the current board.</canvas
+            >
+            <div class="mosaic-meta">
+              <span id="room-label">ROOM / COMMONS</span
+              ><span class="coord" id="coordinate">64 × 40 PIXELS</span
+              ><span id="revision">REVISION / —</span>
+            </div>
+          </div>
+          <div class="toolbar">
+            <div class="button-group">
+              <button class="button primary" id="share">
+                Share this canvas ↗</button
+              ><a
+                class="button"
+                id="export"
+                href="/mosaic/export.png?room=commons"
+                download="fern-mosaic.png"
+                >Download PNG ↓</a
+              ><button class="button" id="new-room">Start a new canvas</button>
+            </div>
+            <span id="sync" class="fine-print" role="status"
+              >Draw to start.</span
+            >
+          </div>
+          <div class="game-stats">
+            <span><b id="latency">—</b>ROUND TRIP / MS</span
+            ><span><b id="server-time">—</b>SERVER STEP / MS</span>
+          </div>
+          <p class="mosaic-help">
+            This room is shared by everyone with its link. The last write wins.
+            Boards live in this server process and reset on restart.
+          </p>
+        </section>
+      </div>
+      <details class="how-it-works">
+        <summary>How it works</summary>
+        <p>
+          The browser displays each stroke immediately and sends bounded JSON
+          over a WebSocket. Fern validates every pixel, updates the board, and
+          pushes revisions to the room. Several strokes can travel before a
+          reply arrives. A reconnect receives a full snapshot. PNG export uses
+          Fern's own encoder.
+        </p>
+        <a href="/_src/showcase/mosaic.fern">Read the collaboration server ↗</a>
+      </details>
+    </main>
+    <footer class="app-footer">
+      <span>Built with Fern.</span><a href="/_src/">Read the source ↗</a>
+    </footer>
+    <script type="module" src="./app.mjs"></script>
+  </body>
+</html>

@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestSelfHostImportedCastTypes(t *testing.T) {
+func TestSelfHostImportedCastTypeQualification(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	reference := buildLangBinForInterp(t)
 	cases := []struct{ name, library, main string }{
