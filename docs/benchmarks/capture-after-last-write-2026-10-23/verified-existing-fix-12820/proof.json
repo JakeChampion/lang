@@ -1,0 +1,29 @@
+{
+  "main_commit": "8207edece5bcf7bb94bc5f4192024abc94c367d4",
+  "fix_commit": "bae69fe1673f05e2d14c7314c262fe809ee856b5",
+  "compiler_sha256": "66c80da3991b7e8d7413d16cb3e9016c9afa8b4677740067ee3f12b6cd665d29",
+  "source_sha256": "50dda3ac6bb158e6f8f1ff0cb3cb19a6b20f8939310de5f1db69f219a56a88ca",
+  "runs": [
+    {
+      "target": "x86-64-linux",
+      "exit": 0,
+      "allocations_during_updates": 0,
+      "stdout": "",
+      "stderr": "leakcheck: allocs=0 frees=0 live_bytes=0\n"
+    },
+    {
+      "target": "arm64-linux",
+      "exit": 0,
+      "allocations_during_updates": 0,
+      "stdout": "",
+      "stderr": "leakcheck: allocs=0 frees=0 live_bytes=0\n"
+    },
+    {
+      "target": "wasm32-wasi",
+      "exit": 0,
+      "allocations_during_updates": 0,
+      "stdout": "",
+      "stderr": "leakcheck: allocs=0 frees=0 live_bytes=0\n"
+    }
+  ]
+}

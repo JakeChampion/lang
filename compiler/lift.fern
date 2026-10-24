@@ -8,6 +8,7 @@ import "./checker";
 import "./typeinfo";
 import "./callsubst";
 import "./capturebox";
+import "./captureflow";
 import "./irtables";
 
 function split_type_list(csv: string): string[] {
@@ -3625,7 +3626,7 @@ function box_wide_captures(fd: parser.FuncDecl, gfns: string[], structs: irtable
 function box_mutated_scalar_captures(fd: parser.FuncDecl, gfns: string[], structs: irtables.StructTab, mfuncs: MFuncs): parser.FuncDecl {
   let otargets: string[] = irtables.body_assign_targets(fd.body);
   let dvars: string[] = body_var_decl_names(fd.body);
-  let acc: BoxScan = box_scan_stmts(fd.body, fd, structs, mfuncs, otargets, dvars, BoxScan { names: [], types: [] });
+  let acc: BoxScan = box_scan_stmts(fd.body, fd, structs, mfuncs, otargets, dvars, captureflow.root(otargets, fd.body), BoxScan { names: [], types: [] });
   let boxed: string[] = acc.names;
   let btypes: string[] = acc.types;
   if (boxed.len() == 0) {
@@ -3715,7 +3716,8 @@ function first_var_site(stmts: ast.Stmt[], name: string): string {
 
 struct BoxScan { names: string[], types: string[] }
 
-function box_scan_stmts(stmts: ast.Stmt[], fd: parser.FuncDecl, structs: irtables.StructTab, mfuncs: MFuncs, otargets: string[], dvars: string[], acc: BoxScan): BoxScan {
+function box_scan_stmts(stmts: ast.Stmt[], fd: parser.FuncDecl, structs: irtables.StructTab, mfuncs: MFuncs, otargets: string[], dvars: string[], future: captureflow.Scope, acc: BoxScan): BoxScan {
+  let writes: captureflow.Writes = captureflow.block(stmts, future);
   let boxed: string[] = acc.names;
   let btypes: string[] = acc.types;
   let i: i32 = 0;
@@ -3755,24 +3757,24 @@ function box_scan_stmts(stmts: ast.Stmt[], fd: parser.FuncDecl, structs: irtable
         nested = box_nested_lambdas(e2.value, nested);
       },
       ast.StmtIf(f) => {
-        let a1: BoxScan = box_scan_stmts(f.then_body, fd, structs, mfuncs, otargets, dvars, BoxScan { names: boxed, types: btypes });
-        let a2: BoxScan = box_scan_stmts(f.else_body, fd, structs, mfuncs, otargets, dvars, a1);
+        let a1: BoxScan = box_scan_stmts(f.then_body, fd, structs, mfuncs, otargets, dvars, captureflow.following(writes, i, false), BoxScan { names: boxed, types: btypes });
+        let a2: BoxScan = box_scan_stmts(f.else_body, fd, structs, mfuncs, otargets, dvars, captureflow.following(writes, i, false), a1);
         boxed = a2.names;
         btypes = a2.types;
       },
       ast.StmtWhile(w) => {
-        let aw: BoxScan = box_scan_stmts(w.body, fd, structs, mfuncs, otargets, dvars, BoxScan { names: boxed, types: btypes });
+        let aw: BoxScan = box_scan_stmts(w.body, fd, structs, mfuncs, otargets, dvars, captureflow.loop_following(writes, i, body_var_decl_names(w.body)), BoxScan { names: boxed, types: btypes });
         boxed = aw.names;
         btypes = aw.types;
       },
       ast.StmtFor(fo) => {
-        let af: BoxScan = box_scan_stmts(fo.body, fd, structs, mfuncs, otargets, dvars, BoxScan { names: boxed, types: btypes });
+        let af: BoxScan = box_scan_stmts(fo.body, fd, structs, mfuncs, otargets, dvars, captureflow.loop_following(writes, i, body_var_decl_names(fo.body)), BoxScan { names: boxed, types: btypes });
         boxed = af.names;
         btypes = af.types;
       },
       ast.StmtMatch(m) => {
         for arm in m.arms {
-          let am: BoxScan = box_scan_stmts(arm.body, fd, structs, mfuncs, otargets, dvars, BoxScan { names: boxed, types: btypes });
+          let am: BoxScan = box_scan_stmts(arm.body, fd, structs, mfuncs, otargets, dvars, captureflow.following(writes, i, false), BoxScan { names: boxed, types: btypes });
           boxed = am.names;
           btypes = am.types;
         }
@@ -3781,14 +3783,12 @@ function box_scan_stmts(stmts: ast.Stmt[], fd: parser.FuncDecl, structs: irtable
     }
     let ni: i32 = 0;
     while (ni < nested.len()) {
-      let nacc: BoxScan = box_apply_lambda(nested[ni], true, fd, structs, mfuncs, otargets, dvars, BoxScan { names: boxed, types: btypes });
+      let nacc: BoxScan = box_apply_lambda(nested[ni], true, fd, structs, mfuncs, otargets, dvars, captureflow.following(writes, i, true), BoxScan { names: boxed, types: btypes });
       boxed = nacc.names;
       btypes = nacc.types;
       ni = ni + 1;
     }
     if (lam_ok) {
-      let caps: string[] = lambda_captures(lam, fd);
-      let wtargets: string[] = irtables.lambda_write_targets(lam.body);
       let esc: boolean = true;
       if (bname.len() > 0) {
         esc = false;
@@ -3800,27 +3800,16 @@ function box_scan_stmts(stmts: ast.Stmt[], fd: parser.FuncDecl, structs: irtable
           esci = esci + 1;
         }
       }
-      let ci: i32 = 0;
-      while (ci < caps.len()) {
-        let cn: string = caps[ci];
-        let ct: string = lambda_capture_type(lam, cn);
-        if (ct.len() > 0 && util.index_of_str(wtargets, cn) >= 0 && util.index_of_str(boxed, cn) < 0) {
-          boxed = boxed.append(cn);
-          btypes = btypes.append(ct);
-        } else if (esc && ct.len() > 0 && util.index_of_str(otargets, cn) >= 0
-          && util.index_of_str(dvars, cn) >= 0 && util.index_of_str(boxed, cn) < 0) {
-          boxed = boxed.append(cn);
-          btypes = btypes.append(ct);
-        }
-        ci = ci + 1;
-      }
+      let applied: BoxScan = box_apply_lambda(lam, esc, fd, structs, mfuncs, otargets, dvars, captureflow.following(writes, i, true), BoxScan { names: boxed, types: btypes });
+      boxed = applied.names;
+      btypes = applied.types;
     }
     i = i + 1;
   }
   return BoxScan { names: boxed, types: btypes };
 }
 
-function box_apply_lambda(lam: ast.ExprLambda, esc: boolean, fd: parser.FuncDecl, structs: irtables.StructTab, mfuncs: MFuncs, otargets: string[], dvars: string[], acc: BoxScan): BoxScan {
+function box_apply_lambda(lam: ast.ExprLambda, esc: boolean, fd: parser.FuncDecl, structs: irtables.StructTab, mfuncs: MFuncs, otargets: string[], dvars: string[], future: captureflow.Scope, acc: BoxScan): BoxScan {
   let boxed: string[] = acc.names;
   let btypes: string[] = acc.types;
   let caps: string[] = lambda_captures(lam, fd);
@@ -3832,7 +3821,7 @@ function box_apply_lambda(lam: ast.ExprLambda, esc: boolean, fd: parser.FuncDecl
     if (ct.len() > 0 && util.index_of_str(wtargets, cn) >= 0 && util.index_of_str(boxed, cn) < 0) {
       boxed = boxed.append(cn);
       btypes = btypes.append(ct);
-    } else if (esc && ct.len() > 0 && util.index_of_str(otargets, cn) >= 0
+    } else if (esc && ct.len() > 0 && capture_reassigned(ct, cn, otargets, future)
       && util.index_of_str(dvars, cn) >= 0 && util.index_of_str(boxed, cn) < 0) {
       boxed = boxed.append(cn);
       btypes = btypes.append(ct);
@@ -3840,6 +3829,10 @@ function box_apply_lambda(lam: ast.ExprLambda, esc: boolean, fd: parser.FuncDecl
     ci = ci + 1;
   }
   return BoxScan { names: boxed, types: btypes };
+}
+
+function capture_reassigned(ty: string, name: string, all: string[], future: captureflow.Scope): boolean {
+  return captureflow.written(future, name) || is_wide_cap_type(ty) && util.index_of_str(all, name) >= 0;
 }
 
 function box_nested_lambdas(e: ast.Expr, acc: ast.ExprLambda[]): ast.ExprLambda[] {

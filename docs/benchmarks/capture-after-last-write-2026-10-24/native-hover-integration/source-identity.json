@@ -1,0 +1,18 @@
+{
+  "packaged_source": "f25bf39ecba3171ae1b3698d91ac8b745ed5d1ff",
+  "bootstrap_source": "f25bf39ecba3171ae1b3698d91ac8b745ed5d1ff",
+  "measured_source": "5d4dd36f62d792e27c57db48e180ad444eff0b41",
+  "previous_bootstrap_source": "5d4dd36f62d792e27c57db48e180ad444eff0b41",
+  "source_sha256": "57fe3622b91fd74f6e401e91e9dc7b88cec7fc1680ed49bad81686b6b5aefc34",
+  "source_files": 497,
+  "native_images_sha256": [
+    "0648bc174b2420ad063f85bd38a4386e7cd80c1e49066ff1c875d172a7513822",
+    "3abcae01dc938975608d1bb34765a9abff968b94146332c37a1a81a72c0cb5e6",
+    "3abcae01dc938975608d1bb34765a9abff968b94146332c37a1a81a72c0cb5e6"
+  ],
+  "all_three_compiler_images_identical": true,
+  "only_library_change": "Restore the i32.to_string doc comment; all other compiler and library bytes are unchanged.",
+  "go_changes_equal_standard_gofmt": [],
+  "all_test_and_conformance_files_unchanged": true,
+  "dependency_base": "fix/scalar-record-leaves-publish"
+}

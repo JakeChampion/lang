@@ -1,0 +1,6 @@
+WARNING /workspace/scratch/lang-defer-capture-cells/new-comments-final.txt:par1 [rule 3.5] "enclosing": an "-ing" form is permitted only in a technical name.
+WARNING /workspace/scratch/lang-defer-capture-cells/new-comments-final.txt:par5 [rule 3.5] "binding": an "-ing" form is permitted only in a technical name.
+
+Result: 0 errors, 2 warnings.
+The text obeys the STE structural rules that this tool can check.
+This tool cannot make sure that each word has its approved meaning.

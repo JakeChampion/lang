@@ -7095,12 +7095,6 @@ func (i *Interp) evalCall(c *ast.Call, env *env) (Value, error) {
 				return &Enum{EnumName: ed.Name, VariantName: id.Name, Index: idx, Payloads: args}, nil
 			}
 		}
-		if id.Name == "__arr_set_len" && len(c.Args) == 2 {
-			return i.arrSetLen(c.Args[0], args, env)
-		}
-		if b, ok := i.Builtins[id.Name]; ok {
-			return b.Fn(i, args)
-		}
 		if v, ok := env.get(id.Name); ok {
 			switch fv := v.(type) {
 			case Func:
@@ -7110,6 +7104,13 @@ func (i *Interp) evalCall(c *ast.Call, env *env) (Value, error) {
 			}
 			return nil, fmt.Errorf("calling non-function %q (%T)", id.Name, v)
 		}
+		if id.Name == "__arr_set_len" && len(c.Args) == 2 {
+			return i.arrSetLen(c.Args[0], args, env)
+		}
+		if b, ok := i.Builtins[id.Name]; ok {
+			return b.Fn(i, args)
+		}
+
 		if fn, ok := i.Funcs[id.Name]; ok {
 			return i.callFunc(fn, args)
 		}

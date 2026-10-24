@@ -1,0 +1,6 @@
+{
+  "measured_source": "fd6dae1372db4886ca574645370b80eb98583a87",
+  "formatted_source": "5d4dd36f62d792e27c57db48e180ad444eff0b41",
+  "change": "Remove one empty line in compiler/lift.fern; all other inputs unchanged.",
+  "all_three_compiler_images_identical": true
+}
