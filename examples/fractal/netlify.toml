@@ -2,6 +2,11 @@
 [build]
   command = "./build.sh"
   publish = "public"
+  # The compiler, stdlib, and showcase live outside this base directory.
+  ignore = "exit 1"
+
+[build.environment]
+  NODE_VERSION = "24"
 
 [functions]
   directory = "netlify/functions"

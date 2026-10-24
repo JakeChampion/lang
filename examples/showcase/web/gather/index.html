@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <link rel="icon" href="/favicon.svg" />
+    <title>Gather · Fern multiplayer arena</title>
+    <link rel="stylesheet" href="/assets/showcase.css" />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body class="app-page gather-page">
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="app-nav">
+      <a class="brand" href="/"
+        ><span class="brand-mark" aria-hidden="true">✳</span> fern<span
+          class="brand-suffix"
+        >
+          / in action</span
+        ></a
+      >
+      <nav>
+        <a href="/">All examples</a
+        ><a href="/_src/showcase/gather.fern">View source ↗</a>
+      </nav>
+    </header>
+    <main id="main">
+      <div class="app-heading">
+        <section class="app-intro">
+          <div class="eyebrow">08 / HUNDREDS IN ONE WORLD</div>
+          <h1>Gather <em>together.</em></h1>
+          <p>
+            Collect seeds with up to 512 players in one arena. Reach the team
+            goal before the round ends.
+          </p>
+          <div class="tech-chips">
+            <span>512 seats</span><span>Binary WebSocket</span
+            ><span>Shared snapshots</span><span>Server-owned physics</span>
+          </div>
+        </section>
+        <div id="connection" class="status" role="status">
+          Join the arena to play
+        </div>
+      </div>
+      <section class="gather-player" aria-label="Multiplayer arena">
+        <div class="gather-hud">
+          <div><b id="players">0 / 512</b><span>PARTICIPANTS</span></div>
+          <div><b id="score">0 / 2048</b><span>TEAM SCORE</span></div>
+          <div><b id="time">2:00</b><span id="round">ROUND 1</span></div>
+          <div><b id="personal">0</b><span>YOUR SEEDS</span></div>
+        </div>
+        <div class="arena-wrap">
+          <canvas
+            id="arena"
+            width="1024"
+            height="640"
+            tabindex="0"
+            aria-label="Shared seed arena. Touch or click a destination, or drag to steer. Arrow keys and WASD also move your player."
+          ></canvas>
+          <div class="arena-message" id="arena-message">
+            <strong>One arena. Up to 512 players.</strong
+            ><span
+              >Touch a destination or drag to steer. Collect the gold
+              seeds.</span
+            >
+          </div>
+        </div>
+        <div class="toolbar">
+          <div class="button-group">
+            <button class="button primary" id="join">Join arena →</button
+            ><button class="button" id="share">Share arena ↗</button>
+          </div>
+          <div class="game-stats">
+            <span><b id="latency">—</b>ROUND TRIP / MS</span
+            ><span><b id="server-time">—</b>INPUT ACCEPT / MS</span
+            ><span><b id="rate">—</b>SNAPSHOTS / SEC</span>
+          </div>
+        </div>
+        <div class="gather-bottom">
+          <div>
+            <h2>Round leaders</h2>
+            <ol id="leaders">
+              <li>Join to see the arena.</li>
+            </ol>
+          </div>
+          <p id="instruction">
+            Your player has a white outline. Touch a seed or destination to move
+            there. Nearby seeds snap to your touch. A new round starts ten
+            seconds after the current one ends.
+          </p>
+        </div>
+      </section>
+      <p class="fine-print">
+        Participant counts reflect live connections. The arena runs in one
+        server process and resets on restart. Multiple instances need connection
+        affinity.
+      </p>
+      <details class="how-it-works">
+        <summary>How it works</summary>
+        <p>
+          Fern validates destinations, limits movement speed, and checks seed
+          collection. An 8 × 8 grid limits collision checks. A shared clock
+          creates ten binary snapshots per second. Every connection uses the
+          same snapshot bytes. Slow connections skip older snapshots. The
+          browser predicts local movement and extrapolates nearby movement for
+          at most 150 milliseconds.
+        </p>
+        <a href="/_src/showcase/gather.fern">Read the arena server ↗</a> ·
+        <a href="/_src/showcase/web/gather/protocol.mjs"
+          >Read the binary protocol ↗</a
+        >
+      </details>
+    </main>
+    <footer class="app-footer">
+      <span>Built with Fern.</span><a href="/_src/">Read the source ↗</a>
+    </footer>
+    <script type="module" src="./app.mjs"></script>
+  </body>
+</html>

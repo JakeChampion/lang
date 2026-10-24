@@ -20,15 +20,16 @@ function test_imports(): test.TestOutcome {
     html.starts_with("  ") && html.contains("href=\"/_src/fractal.fern\"")
       && html.contains("<span class=\"s\">&quot;./fractal&quot;</span></a>")
       && html.contains("<span class=\"k\">as</span> tiles;") && html.contains("<span class=\"c\">// use the renderer</span>")
-      && source.highlight("import\t\"std/binary\";").contains("/internal/stdlib/std/binary.fern\""),
+      && source.highlight("import\t\"std/binary\";").contains("/internal/stdlib/std/binary.fern.md\""),
   );
 }
 
 function test_import_targets(): test.TestOutcome {
   return test.assert_true(
     source.import_href("././source.fern").unwrap_or("") == "/_src/source.fern"
-      && source.import_href("std/http").unwrap_or("") == "https://github.com/JakeChampion/lang/blob/main/internal/stdlib/std/http.fern"
+      && source.import_href("std/http").unwrap_or("") == "https://github.com/JakeChampion/lang/blob/main/internal/stdlib/std/http.fern.md"
       && source.import_href("../../compiler/weave").unwrap_or("") == "https://github.com/JakeChampion/lang/blob/main/compiler/weave.fern"
+      && source.import_href("std/option").unwrap_or("").ends_with("/std/option.fern.md")
       && source.import_href("./missing").is_none() && source.import_href("../../../etc/passwd").is_none(),
   );
 }

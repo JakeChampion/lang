@@ -119,3 +119,61 @@ html, body {
 .timings summary { cursor: pointer; }
 .timings b { color: var(--text); font-family: var(--mono); }
 .timings p { margin: 5px 0 0; }
+
+.viewer-controls {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 2000;
+  display: flex;
+  gap: 8px;
+}
+.panels-hidden #intro,
+.panels-hidden #stats,
+.panels-hidden #feed {
+  display: none;
+}
+#feed {
+  bottom: 80px;
+}
+.leaflet-bottom.leaflet-left {
+  bottom: 60px;
+}
+@media (max-width: 760px) {
+  .viewer-controls {
+    right: 12px;
+    bottom: 12px;
+  }
+  .leaflet-control-zoom {
+    display: block;
+  }
+  .leaflet-bottom.leaflet-left {
+    bottom: 110px;
+  }
+  #where {
+    bottom: 64px;
+  }
+  #stats {
+    bottom: 108px;
+  }
+  .toggle button,
+  .places button {
+    min-height: 44px;
+  }
+  #intro {
+    max-height: calc(100dvh - 180px);
+    overflow: auto;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+  }
+}
+@media (pointer: coarse) {
+  .leaflet-control-zoom a {
+    width: 44px;
+    height: 44px;
+    line-height: 44px;
+  }
+}

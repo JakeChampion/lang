@@ -1,0 +1,5 @@
+# The build compiles this module from swarm.fern.md.
+/web/swarm/kernel.wasm
+/web/swarm/kernel.wasm.br
+/web/swarm/kernel.wasm.gz
+/web/swarm/kernel.wasm.zst

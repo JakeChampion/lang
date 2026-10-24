@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Swarm · Fern, in your browser</title>
+    <link rel="stylesheet" href="/assets/showcase.css" />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body class="app-page swarm-page">
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="app-nav">
+      <a class="brand" href="/"
+        ><span class="brand-mark" aria-hidden="true">✳</span> fern<span
+          class="brand-suffix"
+        >
+          / in action</span
+        ></a
+      >
+      <nav>
+        <a href="/">All examples</a
+        ><a href="/_src/showcase/swarm.fern">View source ↗</a>
+      </nav>
+    </header>
+    <main id="main">
+      <div class="app-heading">
+        <section class="app-intro">
+          <div class="eyebrow">07 / FERN IN YOUR BROWSER</div>
+          <h1>Fern in <em>WebAssembly.</em></h1>
+          <p>
+            An interactive particle field and synthesizer. Fern computes the
+            positions and audio. WebGL and Web Audio handle output.
+          </p>
+          <div class="tech-chips">
+            <span>Fern → Wasm</span><span>WebGL</span
+            ><span>Web Audio + worker</span><span>No simulation requests</span>
+          </div>
+        </section>
+        <div class="status" id="connection" role="status">
+          Load the Fern kernel
+        </div>
+      </div>
+      <div class="swarm-player">
+        <div class="swarm-stage">
+          <canvas
+            id="field"
+            tabindex="0"
+            aria-label="Interactive particle field. Touch or drag to move the field. Select Attract, Repel, or Free flow. Arrow keys also move the attractor. Space pauses the field."
+            >Your browser needs Canvas to display the particle field.</canvas
+          >
+          <div class="swarm-caption" aria-hidden="true">
+            <span>FERN / WEBASSEMBLY</span
+            ><span id="gesture">TOUCH OR DRAG TO MOVE THE FIELD</span>
+          </div>
+        </div>
+        <div class="toolbar swarm-controls">
+          <div class="button-group">
+            <button class="button primary" id="pause">Pause field</button
+            ><button class="button" id="reset">Reset field</button
+            ><button class="button" id="audio">Enable audio ♫</button>
+          </div>
+          <label
+            >Particles
+            <input
+              id="density"
+              type="range"
+              min="512"
+              max="16384"
+              step="512"
+              value="4096"
+            /><output id="count" for="density">4,096</output></label
+          ><label
+            >Interaction
+            <select id="interaction">
+              <option value="1">Attract</option>
+              <option value="-1">Repel</option>
+              <option value="0">Free flow</option>
+            </select></label
+          ><label
+            >Tone
+            <select id="tone">
+              <option value="165">E · warm</option>
+              <option value="220" selected>A · clear</option>
+              <option value="330">E · bright</option>
+            </select></label
+          >
+        </div>
+        <div class="swarm-readings">
+          <div><b id="fps">—</b><span>DISPLAY / FPS</span></div>
+          <div><b id="kernel-time">—</b><span>FERN KERNEL / MS</span></div>
+          <div><b id="wasm-size">—</b><span>WASM / KiB</span></div>
+          <div><b id="memory">—</b><span>LINEAR MEMORY / KiB</span></div>
+          <div><b id="renderer">—</b><span>RENDERER</span></div>
+        </div>
+      </div>
+      <p class="fine-print">
+        The field follows a procedural flow, with no saved simulation history.
+        Pause stops its animation loop. Audio starts only after your click. No
+        microphone access.
+      </p>
+      <details class="how-it-works">
+        <summary>How it works</summary>
+        <p>
+          The same literate Fern module compiles to native code or a Wasm core
+          module. Two scalar exports compute particle coordinates and PCM audio
+          samples. Calls allocate no heap memory. JavaScript reuses one graphics
+          buffer. WebGL draws the points, and a worker prepares audio through
+          the same Fern kernel. The server delivers the files and receives no
+          particle updates.
+        </p>
+        <a href="/_src/showcase/swarm.fern">Read the browser kernel ↗</a> ·
+        <a href="/_src/showcase/web/swarm/app.mjs">Read the WebGL host ↗</a>
+      </details>
+    </main>
+    <footer class="app-footer">
+      <span>Built with Fern.</span><a href="/_src/">Read the source ↗</a>
+    </footer>
+    <script type="module" src="./app.mjs"></script>
+  </body>
+</html>

@@ -69,9 +69,10 @@ func TestSelfHostFmtLiterate(t *testing.T) {
 	bin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
 
 	docs := map[string]string{
-		"several-chunks":  fmtLiterateDoc,
-		"unclosed-fence":  "intro\n\n```fern\n<<*>>=\nfunction   main( ):i32{return 0;}\n",
-		"only-references": "# Root\n\n```fern\n<<*>>=\n<<a>>\n```\n\n```fern\n<<a>>=\n```\n",
+		"export-attribute": "# Export\n\n```fern\n<<*>>=\n@export(\"fern:test/math\", \"add\")\npub function add(x:i32,y:i32):i32{return x+y;}\n```\n",
+		"several-chunks":   fmtLiterateDoc,
+		"unclosed-fence":   "intro\n\n```fern\n<<*>>=\nfunction   main( ):i32{return 0;}\n",
+		"only-references":  "# Root\n\n```fern\n<<*>>=\n<<a>>\n```\n\n```fern\n<<a>>=\n```\n",
 	}
 	for _, rel := range []string{
 		"examples/literate/doctest_demo.fern.md",

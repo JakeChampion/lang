@@ -9081,7 +9081,7 @@ function lret_stmts(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): util.Diag[
       ast.StmtMatch(m) => {
         out = util.append_diags(out, lret_expr(m.scrutinee, cur, unions, ""));
         for arm in m.arms {
-          out = util.append_diags(out, lret_stmts(arm.body, cur, unions));
+          out = util.append_diags(out, lret_stmts(arm.body, annotate_arm_scope(arm, cur, check_expr(m.scrutinee, cur)), unions));
         }
       },
       ast.StmtDefer(d) => {

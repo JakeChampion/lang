@@ -3665,7 +3665,7 @@ function lsp_ref_doc(s: Server, q: Asked, at: RefDoc, m: i32): RefDoc {
     return at;
   }
   let path: string = lsp_module_doc(s, q.d, m, q.path);
-  let stdlib: boolean = m > 0 && m <= q.d.files.len() && util.str_has_prefix(q.d.files[m - 1], "stdlib://");
+  let stdlib: boolean = util.str_has_prefix(display_path(path, s.root), "stdlib://") || m > 0 && m <= q.d.files.len() && util.str_has_prefix(q.d.files[m - 1], "stdlib://");
   if (path == q.path) {
     return RefDoc { m: m, uri: q.uri, text: q.text, stdlib: stdlib };
   }
