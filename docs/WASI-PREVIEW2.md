@@ -2,6 +2,8 @@
 
 Status: [record] complete.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 > The migration is done: `fern -target wasm32-wasi` and
 > `-target wasm32-wasi-http` compose Component Model components **natively** in
 > Go (`internal/wasm/component`), with no `wasm-tools` shell-out and no

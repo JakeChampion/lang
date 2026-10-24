@@ -32,11 +32,49 @@ function main(): i32 {
 }
 `},
 	{"generic-supertraits", `trait Child[U]: api.Parent[Option[U], (string, u8)] + Marker {}`},
+	{"nested-match-value-early-return", `struct P { x: i32 }
+enum H { S(P), N }
+enum Outer { A(H), B }
+function whole(h: H): i32 {
+  return match (h) { S(w @ P { x }) => { return w.x + x; }, N => 0 };
+}
+function nested(o: Outer): i32 {
+  let value = match (o) { A(S(p)) => { return p.x; }, _ => 0 };
+  return value + 1;
+}
+function main(): i32 { return whole(H.S(P { x: 1 })) + nested(Outer.B); }
+`},
 	{"nested-whole-struct-pattern", `struct P { x: i32 }
 enum H { S(P) }
 function f(h: H): i32 { return match (h) { S(w @ P { x }) => w.x + x }; }
 function main(): i32 { return 0; }
 `},
+	{"tuple-binding-trailing-comment", "function main(): i32 {\n  let (a, b) = (1, 2); // pair\n  return a + b;\n}\n"},
+	{"checked-trait-cast", `trait Named {
+  function name(self: Self): string;
+}
+struct Square { side: i32 }
+impl Named for Square {
+  function name(self: Self): string { return "square"; }
+}
+function recover(value: dyn Named): Option[Square] {
+  return value as? Square;
+}
+`},
+	{"checked-numeric-casts", `function narrow(value: i64): Option[u8] {
+  return (value + 1i64) as? u8;
+}
+function chained(value: i32): Option[u8] {
+  return (value as i64) as? u8;
+}
+function unwrap(value: i64): Option[u8] {
+  let smaller = (value as? u32)?;
+  return smaller as? u8;
+}
+`},
+	// A binding's annotation types a lambda that writes no return type; the
+	// compile parse stamps the return type onto the lambda, and -fmt must print
+	// the lambda as written (#12359).
 	{"lambda-return-as-written", fmtLambdaAsWrittenSrc},
 	{"opaque-struct-kept", "pub opaque struct A { a: i32 }\npub(package) opaque struct B { b: i32 }\n@must_consume pub opaque struct C { c: i32 }\ntrait Default { function default(): Self; }\n@derive(Default) opaque struct D { d: i32 }\nfunction main(): i32 { return 0; }\n"},
 	{"omitted-return-type-as-written", "function helper() {}\n\nfunction main(): i32 {\n  return 0;\n}\n"},

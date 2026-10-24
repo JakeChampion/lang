@@ -2,6 +2,8 @@
 
 Status: [tracker] living per-feature, per-backend audit matrix and audit log.
 
+Dated entries preserve their original results. Descriptions of the retired Go emitters and their tests are historical.
+
 This document is the **living record** of an ongoing audit of every
 built-in language feature and every standard-library function in Fern.
 The goal: confirm each feature works **correctly on every backend of the
@@ -87,7 +89,7 @@ Blank = not yet confirmed on that backend.
 ## A. Built-in language features
 
 Self-host (**S**) verification for §A landed via
-`internal/testing/e2e/self_host_audit_builtins_test.go` (per-feature isolated
+`internal/testing/e2ecompiler/self_host_audit_builtins_test.go` (per-feature isolated
 programs through the self-hosted x86-64 driver + CI-gated arm64); native
 (**I/X/A/W**) via the `audit_core_builtins` fixture (all four backends).
 
@@ -171,7 +173,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | `remove_file` / `remove_dir_all` | | | | | | ⬜ | |
 | `temp_dir(prefix)` | | | | | | ⬜ | |
 | `subprocess(...)` | | | | | | ⬜ | |
-| `sleep_ms` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | all backends ([#2843](https://github.com/JakeChampion/lang/issues/2843)); self-host **IR path** lowers it on x86-64, arm64 and wasm; native wasm landed in [#7947](https://github.com/JakeChampion/lang/issues/7947) — preview-1 `poll_oneoff` on one monotonic-clock subscription, preview-2 subscribe-duration + block + drop (`internal/codegen/wasmbin/wasi_sleep_test.go`) |
+| `sleep_ms` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | all backends ([#2843](https://github.com/JakeChampion/lang/issues/2843)); self-host **IR path** lowers it on x86-64, arm64 and wasm; native wasm landed in [#7947](https://github.com/JakeChampion/lang/issues/7947) — preview-1 `poll_oneoff` on one monotonic-clock subscription, preview-2 subscribe-duration + block + drop (`internal/testing/e2ecompiler/self_host_sleep_ms_ir_test.go`) |
 | `now_unix_ms` / `monotonic_ns` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | both ✅ all backends; `monotonic_ns` native x86-64/arm64 runtimes added ([#2843](https://github.com/JakeChampion/lang/issues/2843)); self-host **IR path** lowers both on x86-64/arm64 (wasm routes via the AST path) |
 | `now_ns` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | wall-clock nanoseconds (i64); native interp + x86-64 + arm64 runtimes added (previously wasm-only); self-host x86-64/arm64 now emit it on both the AST and IR paths (wasm routes via the AST path) |
 | `random_bytes` / `random_i32` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | length + usable value; `random_bytes(n): u8[]` (#5714) |
@@ -231,7 +233,7 @@ records their bugs in the audit log.
 | `std/http` | | | | | | ⬜ | |
 | `std/serve` | | | | | | ⬜ | |
 | `std/headers` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `HeaderMap` case-insensitive get/get_all/append/set over two parallel string[] fields — native via `headers_map` fixture (all four backends); self-host via the IR path (x86-64 + wasm): `TestSelfHostHeadersIR` — struct with string[] fields, functional struct-spread update, `string[].append`, indexed string-field compares, `Option[string]` `Some`/`None` + payload-binding `match`, chained struct-returning receiver methods, and the `(h) len()` receiver method (the `append-len` case — pins the [#3478](https://github.com/JakeChampion/lang/issues/3478) fix) (inlined as `Headers` + a lookup-slice `lower`, since `HeaderMap` is a reserved builtin name + the importless driver has no `.to_lower()`) |
-| `std/stream` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | In-memory Stream with immutable byte data and cursor. read_all_string returns validated Option[string] plus the advanced cursor; malformed text is rejected. Actual module coverage on bootstrap interp/x86/ARM/wasm/Darwin and primary compiler x86/ARM/wasm: TestSelfHostStreamIR and StreamUTF8Program. The previous copied Buf fixture is retired. read_line still needs a separate malformed-text error contract. |
+| `std/stream` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | In-memory ByteStream with immutable byte data and cursor. read_all_string returns validated Option[string] plus the advanced cursor; malformed text is rejected. Actual module coverage on bootstrap interp/x86/ARM/wasm/Darwin and primary compiler x86/ARM/wasm: TestSelfHostStreamIR and StreamUTF8Program. The previous copied Buf fixture is retired. read_line still needs a separate malformed-text error contract. |
 | `std/time` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | is_leap_year/days_in_month/date_make/format_iso — `audit_std_time`; self-host via the IR path: pure-i32 helpers (`TestSelfHostTimeIR`) + the **Date civil-date methods** (Hinnant days_from_civil/civil_from_days, is_valid/add_days/days_since/weekday/day_of_year/format_iso — `TestSelfHostTimeDateIR`, oracle-checked, struct ctor + field access + struct-returning fn + receiver methods) + `date_parse_iso` `Option[Date]` parse (`TestSelfHostTimeParseIR`, `Some`/`None` ctor + payload-binding `match`) + `format_rfc3339` / `instant_parse_rfc3339` (`TestSelfHostTimeRfc3339IR`, **i64 `sec` struct field** — i64 arithmetic/casts + `Some(Instant{ sec: <i64> })`) + `add_span` / `add_duration` / `duration_since` / `days_until` (`TestSelfHostTimeSpanIR`, **8-field Span by-value param** + i64+nsec carry/borrow) + the Zoned / TimeZone surface (`in_zone` / `to_datetime` / `timezone_iana` — `TestSelfHostTimeZonedIR`, **nested structs** `Zoned{instant,zone}` / `DateTime{date,time}` + `Option[TimeZone]`) |
 | `std/task` | | | | | | ⬜ | |
 | `std/mock_platform` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | a recording `platform.Platform`: handed to a handler in place of the host, its capability methods append to the mock's own `Cell[string]` instead of reaching the host, and `calls()` parses that log back into `MockCall[]` (`record` / `call_count` / `reset` / `has_call` / `find_call` inspect it) — native via the `mock_platform_log` fixture, which drives a real `handle(req, plat)` on interp / x86-64 / arm64 / wasm; self-host via the IR path (x86-64 + wasm): `TestSelfHostMockPlatformIR` — struct with a `Cell[string]` field, accumulating into that cell, byte indexing + `slice_unchecked` over the log, building an array-of-struct from the parse, indexed array-of-struct reads, membership scan, and `find_call`'s `Option[MockCall]` (Option of a struct) + payload-binding `match` (inlined as `MPlat`/`MCall`, since both are reserved builtin type names) |
@@ -375,7 +377,7 @@ had no `\r` case at all, turning a carriage return into the letter `r`.
 Each assembler grew a `*_gas_escape` helper decoding one to three octal digits
 the way GAS does, shared by that file's decoders. The two remain hand-mirrored
 copies — the assemblers are deliberately import-free — which is why the arm64
-half is now pinned against `internal/native/arm64` rather than against its twin.
+half is now pinned against the retired Go ARM64 assembler rather than against its twin.
 
 Nothing caught it because nothing in the corpus puts a control byte in a
 literal: the three common ones have single-letter escapes, and a high byte like
@@ -385,9 +387,8 @@ was a five-byte blob with an interior NUL.
 
 Tests: `internal/testing/e2ecompiler/self_host_string_escape_test.go`. The x86-64 half
 compiles and RUNS the probe under both compilers and compares the bytes it
-prints; the arm64 half compares assembled `.rodata` against
-`internal/native/arm64` on identical GAS text, needing no qemu — the layer the
-bug is in. Verified red before the fix (6 of 10 rows on arm64) and green after.
+prints. The ARM64 test compared assembled `.rodata` bytes against the
+retired Go assembler. Both received the same GAS text and needed no emulator. Verified red before the fix (6 of 10 rows on arm64) and green after.
 
 ### 2026-09-01 — `strbuf_*` implemented in the native wasm backend (#7947)
 
@@ -409,8 +410,7 @@ through the two-word string tag — heap-form bytes move with one `memory.copy`,
 inline/SSO bytes come out through `__fern_str_byte` — the same split
 `__str_concat` makes.
 
-The completeness gate that would have caught this is
-`internal/codegen/wasmbin/provided_lowering_test.go`:
+The retired Go emitter had a runtime signature test for this gap:
 `TestProvidedSigsAgreeWithWasmRuntime` checks arity only for helpers wasmbin
 already has and skips names it does not know, so a builtin with no lowering at
 all passed it silently. The new tests assert every callee in the verifier's
@@ -497,12 +497,13 @@ refused the program outright:
     native assembler: arm64: branch to "__drop_struct_asmcore__EmitState"
     spans 33891495 instructions — outside the signed 26-bit range
 
-Not one bad commit: the driver's executable segment was 127.5 MB of a
-128 MB limit *before* the addition that tipped it, so essentially any
-growth would have done it. `internal/native/arm64/veneer.go` now does what
-a linker does — plants an `adrp`/`add`/`br x17` trampoline within range of
-the call site and retargets the branch at it, iterating to a fixed point
-because splicing shifts the code after it. Trampolines are grouped into
+The driver's executable segment was already 127.5 MB against a 128 MB limit.
+The addition triggered the failure. The retired Go assembler inserted an
+`adrp`/`add`/`br x17` trampoline within range of the call site.
+It retargeted the branch and iterated to a fixed point, because insertions
+shifted later code.
+
+Trampolines are grouped into
 islands headed by a hop-over `b`, placed at the ends of `.text` wherever
 the ends can reach (prepending shifts everything uniformly, appending
 shifts nothing), with interior islands only once `.text` outgrows them.
@@ -520,8 +521,8 @@ it): `TestSelfHostArm64ModloadNativeBuild` builds it for arm64, needing no
 aarch64 toolchain since the assembler and linker are pure Go, and runs it
 where the cross toolchain and qemu are installed. `TestVeneerRealImm26Ceiling` runs a program with a genuinely
 >128 MB span between a call and its callee, and the rest of
-`internal/native/arm64/veneer_test.go` exercises anchoring, dedupe, and
-index remapping against a shortened span.
+the retired veneer unit tests checked anchor placement, duplicate elimination
+and index updates with a short reach.
 
 `FERN_ARM64_VENEER_REACH=<instructions>` shrinks the span the assembler
 assumes, so every ordinary program's calls get veneered and the existing
@@ -924,7 +925,7 @@ native arm64 backend emitted every function into one monolithic `.text` input
 section. A single object whose `.text` exceeds 128 MiB therefore can't be
 veneered and won't link.
 
-Fix (native `internal/codegen/arm64`): emit each function into its own
+The retired Go ARM64 emitter changed as follows: emit each function into its own
 `.section .text.<name>,"ax",@progbits` (the `-ffunction-sections` shape). `ld`
 now veneers every cross-function call that's out of range, lifting the effective
 limit from ±128 MiB to the ±4 GiB ADRP range — so the self-host binary (and any
@@ -933,7 +934,7 @@ arm64 program) can keep growing. ELF/Linux only: the arm64-darwin Mach-O path
 uses `__TEXT,__text`) is left unchanged (gated on `!g.darwin`).
 
 Gated by `TestArm64FunctionSectionsELF` / `…DarwinUnaffected`
-(`internal/codegen/arm64`); the full `internal/codegen/arm64` package, every
+in the retired Go emitter. Its package tests, every
 `TestArm64*` native-qemu e2e, `TestSelfHostAsmArm64`, and
 `TestArm64DarwinNativeMachO` stay green. This retires the per-feature
 `.text`-shaving the `subprocess` increment needed; future IR-widening no longer
@@ -2980,7 +2981,7 @@ Row flipped to ✅.
 The `__heap_bump_bytes()` builtin — the bump allocator's high-water mark (cursor
 − region base; 0 before the first allocation) — had no self-host IR lowering and
 bailed the whole module to the legacy AST emitter. Native handles it on every
-backend (`internal/oracle/ir` → `__fern_heap_bump_bytes`), so this was a goal-1
+backend (the retired Go IR called `__fern_heap_bump_bytes`), so this was a goal-1
 IR-subset gap. New `ir.op_heap_bump_bytes`, recognised in `irlower.lower_expr`,
 emitted inline by each backend from its own heap cursor: x86-64 `__fern_heap_ptr
 − &__fern_heap` (the static heap symbol; `cmovne`-guarded so a still-zero cursor
@@ -3238,7 +3239,7 @@ generic-`Iterator[T]` caveat is updated accordingly.
 ### 2026-06-20 — core/iter: numeric Iterator trait + Range on native and the self-host IR path ([#2686](https://github.com/JakeChampion/lang/issues/2686))
 
 First slice of the iterator protocol (the trait-spine epic #2691 step 6, and the
-open tail of the Range issue #2699). New `internal/stdlib/core/iter.fern`: a
+open tail of the Range issue #2699). New `internal/stdlib/core/iter.fern.md`: a
 numeric (i32) `Iterator` trait — `next(self): Option[(i32, Self)]`, value-
 semantic (advancing yields a fresh iterator, no interior mutation) — an integer
 `Range` (`[lo, hi)`) implementing it, a `range(lo, hi)` constructor, and eager
@@ -3493,8 +3494,8 @@ value = a small deterministic int, oracle-checked against the interpreter). It
 exercises scalar (`i32[]`) and pointer (`string[]`) array build via `.append`,
 in-place element rewrite via `.with`, indexed scalar + string-byte reads,
 `.len()`, numeric `<`/`>` comparisons, and the nested-`while` insertion-sort
-shift — all already lower, so no compiler change. The sort surface is inlined
-verbatim from `internal/stdlib/std/sort.fern` (the single-program driver
+shift — all already lower, so no compiler change. This historical test used
+an inlined copy of the retired sort module (the single-program driver
 resolves no imports); the case-insensitive `string_cmp_ci` / `*_ci` sorts and
 the `own` in-place sorts are out of scope (they depend on a char `.to_lower()`
 and the affine `own`-parameter path respectively). `std/sort` S column flipped
@@ -3601,7 +3602,7 @@ i64[] / f64[] already rode the 8-byte-element path (`op_arr_make_i64` + the
   and the return-type registry — separate increments). The change only affects
   slots that are `is_arr && is_u64` (i.e. u64[]), which never reached IR before, so
   no self-host source changes classification and the Stage-2 fixpoint holds.
-- **Tests.** `internal/testing/e2e/self_host_u64_array_ir_test.go` —
+- **Tests.** `internal/testing/e2ecompiler/self_host_u64_array_ir_test.go` —
   `TestSelfHostU64ArrayIR{X86_64,Wasm}`, 7 cases each routing-pinned `"ir"` and
   oracle-checked (len, index, iterate, alias, 8-byte wide-value, u64[] param, plus
   an i64[] regression guard).
@@ -3629,7 +3630,7 @@ the self-host IR path. Previously a self-referential struct fell to the AST emit
   types go through the `Ty` **union** (`TyOption { inner: Ty }`), handled as a
   nominal-enum field — not a struct back-edge — so no self-host source struct
   changes classification and the Stage-2 byte-identical fixpoint holds.
-- **Tests.** `internal/testing/e2e/self_host_selfref_struct_ir_test.go` —
+- **Tests.** `internal/testing/e2ecompiler/self_host_selfref_struct_ir_test.go` —
   `TestSelfHostSelfrefStructIR{X86_64,Wasm}`, 7 cases (bind + scalar read, empty /
   filled `Node[]` length, element field read, children-sum loop, struct as
   param/return, mutual recursion), each routing-pinned `"ir"` and oracle-checked.
@@ -3865,7 +3866,7 @@ low-value div/rem), oracle-checked against the interpreter. Fixpoint intact.
 ### 2026-06-14 — std/base64 via the self-host IR path (coverage)
 
 Same vehicle as the std/hex coverage: `TestSelfHostBase64IR` compiles the real
-`internal/stdlib/std/base64.fern` source concatenated with a main (single-module,
+`internal/stdlib/std/base64.fern.md` source concatenated with a main (single-module,
 no imports), routing-pinned to `"ir"` and oracle-checked on x86-64 + wasm (verified
 on arm64 via qemu): `encode` (padded + exact-multiple inputs, output
 digit), `decode`, and encode→decode round-trips. Coverage-only, no compiler
@@ -3876,7 +3877,7 @@ change. std/base64 S column flipped to ✅.
 Confirmed `std/hex` (`encode` / `decode`) lowers through the self-host IR
 path end-to-end, now that the wasm `string_from_bytes_unchecked` / `arr_push` helper-gate
 fixes unblocked the byte→string primitives it builds on. `TestSelfHostHexIR`
-compiles the REAL `internal/stdlib/std/hex.fern` source concatenated with a main
+compiles the REAL `internal/stdlib/std/hex.fern.md` source concatenated with a main
 (the single-module trick the std/json self-host test uses — std/hex has no
 imports), routing-pinned to `"ir"` and oracle-checked on x86-64 + wasm (verified
 on arm64 via qemu too): encode length / digit, decode length / char, and
@@ -4361,7 +4362,7 @@ Author note: module-level free functions are called qualified
 `repeat` / `pad_start` / `split`, with result strings compared directly. ✅ on
 interp / x86-64 / arm64 / wasm.
 
-**Self-host:** already covered by `internal/testing/e2e/self_host_string_test.go`, which
+**Self-host:** already covered by `internal/testing/e2ecompiler/self_host_string_test.go`, which
 bundles the full std/string and exercises the same core methods (index_of /
 trim / upper / lower / contains / starts_with / replace / repeat / split) — so
 no new self-host test was needed. The §D std/string row is promoted from 🔄 to
@@ -4379,7 +4380,7 @@ arm64 / wasm — a 4-backend differential check that these heavily-used pure
 functions agree everywhere.
 
 **Self-host arm (x86-64 + CI-gated arm64):** new test
-`internal/testing/e2e/self_host_audit_stdarray_test.go` broadens the std/array bundle
+`internal/testing/e2ecompiler/self_host_audit_stdarray_test.go` broadens the std/array bundle
 coverage (sum / product / sorted_asc / max) beyond the existing single gcd_all
 case; std/math is already covered by `self_host_math_test.go`. All green.
 
@@ -4395,7 +4396,7 @@ the array-reduction `max`/`min` are receiver methods.
 (usable). ✅ on interp / x86-64 / arm64 / wasm.
 
 **Self-host arm (x86-64):** new test
-`internal/testing/e2e/self_host_audit_platform_test.go` — the above plus `monotonic_ns`
+`internal/testing/e2ecompiler/self_host_audit_platform_test.go` — the above plus `monotonic_ns`
 and `sleep_ms`. All 6 pass.
 
 **Finding — `monotonic_ns` + `sleep_ms` unimplemented on native code-gen
@@ -4443,7 +4444,7 @@ higher-order, tail-call at depth 5000). ✅ on interp / x86-64 / arm64 / wasm,
 and both clear the wasm owned-vs-borrow differential gate.
 
 **Self-host arm (x86-64 + CI-gated arm64):** new test
-`internal/testing/e2e/self_host_audit_numgen_test.go` — 17 isolated programs covering
+`internal/testing/e2ecompiler/self_host_audit_numgen_test.go` — 17 isolated programs covering
 all of the above. All pass on the self-hosted compiler.
 
 **Notes (no bugs filed):**
@@ -4471,7 +4472,7 @@ concat / `==`/`!=` / byte index / slice `s[i:j]` (an `Option[str]` since
 string keys. ✅ on interp / x86-64 / arm64 / wasm.
 
 **Self-host arm (x86-64 + CI-gated arm64):** new test
-`internal/testing/e2e/self_host_audit_data_test.go` — the same as 13 isolated programs.
+`internal/testing/e2ecompiler/self_host_audit_data_test.go` — the same as 13 isolated programs.
 All pass on the self-hosted compiler.
 
 **Finding — `Array.with` in-place reuse is unsound when the receiver stays live
@@ -4498,7 +4499,7 @@ payloads (incl. unit variants), `match` statement + expression, tuples + `.0`/`.
 interp / x86-64 / arm64 / wasm.
 
 **Self-host arm (x86-64 + CI-gated arm64):** new test
-`internal/testing/e2e/self_host_audit_types_test.go` — the same as 12 isolated programs.
+`internal/testing/e2ecompiler/self_host_audit_types_test.go` — the same as 12 isolated programs.
 All pass on the self-hosted compiler.
 
 **Finding — struct-field immutability not enforced on self-host
@@ -4551,7 +4552,7 @@ half-open ranges, `match` (multiple literal arms + wildcard), `break` /
 `continue`, and nested blocks. ✅ on interp / x86-64 / arm64 / wasm.
 
 **Self-host arm (x86-64 + CI-gated arm64):** new test
-`internal/testing/e2e/self_host_audit_builtins_test.go` — the same built-ins as isolated
+`internal/testing/e2ecompiler/self_host_audit_builtins_test.go` — the same built-ins as isolated
 per-feature programs. 17 features pass on the self-hosted compiler. **Three
 genuine self-host gaps surfaced** (native handles all three on every backend),
 each filed as an issue and held out of the executed table:
@@ -4620,7 +4621,7 @@ backends** (arm64 re-added to its `backends` sidecar).
 was on the wrong layer — the *helpers* were the problem after all): on the
 two-word string ABI (arm64-`TwoWordOverride`), `string_from_bytes_unchecked` allocated its
 heap buffer with **plain `__fern_alloc`** instead of `__fern_alloc_rc1`
-(`internal/codegen/arm64/arm64.go`, the `UseTwoWordStrings` branch). A plain
+(the retired Go ARM64 emitter, the `UseTwoWordStrings` branch). A plain
 buffer carries **no rc header** (no live rc at `data-8`, no payload size at
 `data-4`). When the resulting string was later dropped by `__fern_str_dec`
 — which reads the rc at `data-8` and, at rc==1, `box_free`s using the size at

@@ -5,6 +5,8 @@ of it is built. Epic #6506 (the freestanding core) is the prerequisite and is
 in flight; this doc is what comes after it and what it must not paint into a
 corner.
 
+This plan names historical or proposed source paths. The reference documentation identifies current files.
+
 ## The decision
 
 Fern targets the whole stack. Not "hosted, plus a freestanding library shape for

@@ -6,10 +6,8 @@ function of the compiler compiling itself goes through it; the default on
 both native ISAs since 2026-09-18; **the only emitter on them since
 2026-09-22**, when the stack machine's per-function driver was deleted.
 Owner: compiler / self-host. This is the register-allocating SSA backend
-track of #4112; the Go compiler's half, `internal/codegen/{arm64ssa,x86_64ssa}`,
-was deleted in step 5 of `docs/NATIVE-RETIREMENT.md`, so this is the only
-register path. The
-measurements are in `docs/ssa-log/` (the entries whose names carry
+track of #4112. Step 5 of `docs/NATIVE-RETIREMENT.md` removed the Go SSA
+emitters. This is the only register path. The measurements are in `docs/ssa-log/` (the entries whose names carry
 `selfhost-ssa-backend`).
 
 ## What it is
@@ -172,7 +170,7 @@ Measured 2026-09-23 against the same tree without it, x86-64:
 | of which `pushq` / `addq $n, %rsp` | 50,825 / 33,809 | 31,463 / 21,501 |
 | stage-2 compiler binary | 10,863,416 B | 10,736,144 B (-1.2%) |
 | stage-2 compiler compiling `ssa.fern`, Ir | 4,034 M | 3,971 M (-1.6%) |
-| `bench/call_overhead`, Ir | 22.0 M | 17.9 M (-18.9%) |
+| `bench/call_overhead.fern`, Ir | 22.0 M | 17.9 M (-18.9%) |
 | `tokenize` / `sort_ints` / `enum_match` / `record_update` | | -4.5% / -4.5% / -3.1% / -1.9% |
 
 The compiler's values mostly live across calls in callee-saved registers,
@@ -646,9 +644,9 @@ compiler is converging on (`docs/NATIVE-CONVERGENCE.md`), so the order is:
   `wasmssa` was retired for the same reason (#9397). An optimisation wasm
   should share lands in the IR layer (`ir.fern`, #6638), where all three
   emitters read it.
-- **The native compiler has no SSA backend.** `internal/codegen/{arm64ssa,x86_64ssa}`
-  went in step 5 of `docs/NATIVE-RETIREMENT.md`, once the self-host
-  bootstrapped without them; `cmd/fern -backend` accepts only `flat`.
+- **The Go oracle emits no code.** The Go SSA emitters were removed in
+  step 5 of `docs/NATIVE-RETIREMENT.md`. The CLI routes target builds to
+  the self-hosted compiler and its target-specific backend.
 
 ## The target
 

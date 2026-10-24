@@ -1,0 +1,6 @@
+=== RUN   TestSelfHostCheckerFallbackHint
+=== RUN   TestSelfHostCheckerFallbackHint/map-iter-cursor
+--- PASS: TestSelfHostCheckerFallbackHint (3.08s)
+    --- PASS: TestSelfHostCheckerFallbackHint/map-iter-cursor (0.57s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	3.094s

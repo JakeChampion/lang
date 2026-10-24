@@ -7,6 +7,8 @@ stays colorless, the worker's reactor drives them. This document says what
 that cost, where each piece lives, and in what order it landed. §4 is the
 record per slice; §5 holds the one question left open.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 ## 1. What P3 has to deliver
 
 From #9857 and #9851 §5:

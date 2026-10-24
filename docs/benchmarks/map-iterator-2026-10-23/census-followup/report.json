@@ -1,0 +1,91 @@
+{
+  "fixture_source_matches": "87bf48b1c362b37b2374abc943447b19efea5223",
+  "measurement_source": "5531cdfeddf0d90a6c6faf7842aa42a2edb9e053",
+  "complete": true,
+  "runs": [
+    {
+      "family": "map",
+      "fixture": "map_iterator_protocol",
+      "producer_stage": "stage1",
+      "producer_sha256": "c1a0e145c04460b0fac2f6c71eb2538e97320826fa334a8f99fafe6fd21c9654",
+      "source_sha256": "147ee3bd78b2474ff8ebd8cdc688ef2188d7fcc52ea1399083778e0a43939f28",
+      "arguments": [
+        "/workspace/scratch/lang-map-iterator/path-helper-integration/bootstrap/stage1",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-new-fixture-census-20261024/map_iterator_protocol-stage1",
+        "/workspace/lang-grammar-publish/conformance/cases/map_iterator_protocol/main.fern",
+        "/workspace/lang-grammar-publish/internal/stdlib"
+      ],
+      "build_exit": 0,
+      "exit": 0,
+      "trace_events": 166,
+      "unpaired_allocations": 0,
+      "seconds": 0.34619244300120044
+    },
+    {
+      "family": "map",
+      "fixture": "map_iterator_protocol",
+      "producer_stage": "stage3",
+      "producer_sha256": "9b9d2d318938c173e624382e94d77e69c8d633f1a36330cc9970e0da4933b042",
+      "source_sha256": "147ee3bd78b2474ff8ebd8cdc688ef2188d7fcc52ea1399083778e0a43939f28",
+      "arguments": [
+        "/workspace/scratch/lang-map-iterator/path-helper-integration/bootstrap/stage3",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-new-fixture-census-20261024/map_iterator_protocol-stage3",
+        "/workspace/lang-grammar-publish/conformance/cases/map_iterator_protocol/main.fern",
+        "/workspace/lang-grammar-publish/internal/stdlib"
+      ],
+      "build_exit": 0,
+      "exit": 0,
+      "trace_events": 166,
+      "unpaired_allocations": 0,
+      "seconds": 0.2598190249991603
+    },
+    {
+      "family": "map",
+      "fixture": "iterator_nested_tuple_adapter",
+      "producer_stage": "stage1",
+      "producer_sha256": "c1a0e145c04460b0fac2f6c71eb2538e97320826fa334a8f99fafe6fd21c9654",
+      "source_sha256": "ed0c7fa47c8ac2c4e93eae398dcef99824f1fc745652ffc3d18576b14e4253fc",
+      "arguments": [
+        "/workspace/scratch/lang-map-iterator/path-helper-integration/bootstrap/stage1",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-new-fixture-census-20261024/iterator_nested_tuple_adapter-stage1",
+        "/workspace/lang-grammar-publish/conformance/cases/iterator_nested_tuple_adapter/main.fern",
+        "/workspace/lang-grammar-publish/internal/stdlib"
+      ],
+      "build_exit": 0,
+      "exit": 0,
+      "trace_events": 44,
+      "unpaired_allocations": 0,
+      "seconds": 0.19380402599927038
+    },
+    {
+      "family": "map",
+      "fixture": "iterator_nested_tuple_adapter",
+      "producer_stage": "stage3",
+      "producer_sha256": "9b9d2d318938c173e624382e94d77e69c8d633f1a36330cc9970e0da4933b042",
+      "source_sha256": "ed0c7fa47c8ac2c4e93eae398dcef99824f1fc745652ffc3d18576b14e4253fc",
+      "arguments": [
+        "/workspace/scratch/lang-map-iterator/path-helper-integration/bootstrap/stage3",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-new-fixture-census-20261024/iterator_nested_tuple_adapter-stage3",
+        "/workspace/lang-grammar-publish/conformance/cases/iterator_nested_tuple_adapter/main.fern",
+        "/workspace/lang-grammar-publish/internal/stdlib"
+      ],
+      "build_exit": 0,
+      "exit": 0,
+      "trace_events": 44,
+      "unpaired_allocations": 0,
+      "seconds": 0.18282571300369455
+    }
+  ]
+}

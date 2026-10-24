@@ -1,0 +1,427 @@
+{
+  "fixture_source_matches": "1e184c49aad40f7e8d84c0e7fc45423d4425056f",
+  "measurement_source": "5531cdfeddf0d90a6c6faf7842aa42a2edb9e053",
+  "complete": true,
+  "runs": [
+    {
+      "family": "grammar",
+      "fixture": "control_value_array",
+      "producer_stage": "stage1",
+      "producer_sha256": "64d0054b523d2e5fa80729b1b921126c1a956e856dbf94f48235e23415659c2c",
+      "source_sha256": "387f8b94c95dee254b24d3ff2437a6189cb67ef137eea3a263cf58d8f043f80a",
+      "arguments": [
+        "/workspace/scratch/lang-grammar/path-helper-integration/bootstrap/stage1",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-new-fixture-census-20261024/control_value_array-stage1",
+        "/workspace/lang-grammar-publish/conformance/cases/control_value_array/main.fern",
+        "/workspace/lang-grammar-publish/internal/stdlib"
+      ],
+      "build_exit": 0,
+      "exit": 0,
+      "trace_events": 0,
+      "unpaired_allocations": 0,
+      "seconds": 0.052043268995475955
+    },
+    {
+      "family": "grammar",
+      "fixture": "control_value_array",
+      "producer_stage": "stage3",
+      "producer_sha256": "489e47e90393b87a746fd6d685f778cd258d65a3fa85e974eaa139e3e59841b4",
+      "source_sha256": "387f8b94c95dee254b24d3ff2437a6189cb67ef137eea3a263cf58d8f043f80a",
+      "arguments": [
+        "/workspace/scratch/lang-grammar/path-helper-integration/bootstrap/stage3",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-new-fixture-census-20261024/control_value_array-stage3",
+        "/workspace/lang-grammar-publish/conformance/cases/control_value_array/main.fern",
+        "/workspace/lang-grammar-publish/internal/stdlib"
+      ],
+      "build_exit": 0,
+      "exit": 0,
+      "trace_events": 0,
+      "unpaired_allocations": 0,
+      "seconds": 0.05129411400412209
+    },
+    {
+      "family": "grammar",
+      "fixture": "control_value_basic",
+      "producer_stage": "stage1",
+      "producer_sha256": "64d0054b523d2e5fa80729b1b921126c1a956e856dbf94f48235e23415659c2c",
+      "source_sha256": "f4887652e33cde0abbf02d014a6e80ea04131574e249e25e29644b933c8c3db4",
+      "arguments": [
+        "/workspace/scratch/lang-grammar/path-helper-integration/bootstrap/stage1",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-new-fixture-census-20261024/control_value_basic-stage1",
+        "/workspace/lang-grammar-publish/conformance/cases/control_value_basic/main.fern",
+        "/workspace/lang-grammar-publish/internal/stdlib"
+      ],
+      "build_exit": 0,
+      "exit": 0,
+      "trace_events": 0,
+      "unpaired_allocations": 0,
+      "seconds": 0.02050819600117393
+    },
+    {
+      "family": "grammar",
+      "fixture": "control_value_basic",
+      "producer_stage": "stage3",
+      "producer_sha256": "489e47e90393b87a746fd6d685f778cd258d65a3fa85e974eaa139e3e59841b4",
+      "source_sha256": "f4887652e33cde0abbf02d014a6e80ea04131574e249e25e29644b933c8c3db4",
+      "arguments": [
+        "/workspace/scratch/lang-grammar/path-helper-integration/bootstrap/stage3",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-new-fixture-census-20261024/control_value_basic-stage3",
+        "/workspace/lang-grammar-publish/conformance/cases/control_value_basic/main.fern",
+        "/workspace/lang-grammar-publish/internal/stdlib"
+      ],
+      "build_exit": 0,
+      "exit": 0,
+      "trace_events": 0,
+      "unpaired_allocations": 0,
+      "seconds": 0.021832737998920493
+    },
+    {
+      "family": "grammar",
+      "fixture": "control_value_diverge",
+      "producer_stage": "stage1",
+      "producer_sha256": "64d0054b523d2e5fa80729b1b921126c1a956e856dbf94f48235e23415659c2c",
+      "source_sha256": "ffddbb9091e2c61bdd627a275e094f6cd32f350084815a3ea1faeb15d9c52a3a",
+      "arguments": [
+        "/workspace/scratch/lang-grammar/path-helper-integration/bootstrap/stage1",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-new-fixture-census-20261024/control_value_diverge-stage1",
+        "/workspace/lang-grammar-publish/conformance/cases/control_value_diverge/main.fern",
+        "/workspace/lang-grammar-publish/internal/stdlib"
+      ],
+      "build_exit": 0,
+      "exit": 0,
+      "trace_events": 0,
+      "unpaired_allocations": 0,
+      "seconds": 0.020660244997998234
+    },
+    {
+      "family": "grammar",
+      "fixture": "control_value_diverge",
+      "producer_stage": "stage3",
+      "producer_sha256": "489e47e90393b87a746fd6d685f778cd258d65a3fa85e974eaa139e3e59841b4",
+      "source_sha256": "ffddbb9091e2c61bdd627a275e094f6cd32f350084815a3ea1faeb15d9c52a3a",
+      "arguments": [
+        "/workspace/scratch/lang-grammar/path-helper-integration/bootstrap/stage3",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-new-fixture-census-20261024/control_value_diverge-stage3",
+        "/workspace/lang-grammar-publish/conformance/cases/control_value_diverge/main.fern",
+        "/workspace/lang-grammar-publish/internal/stdlib"
+      ],
+      "build_exit": 0,
+      "exit": 0,
+      "trace_events": 0,
+      "unpaired_allocations": 0,
+      "seconds": 0.019044110005779658
+    },
+    {
+      "family": "grammar",
+      "fixture": "control_value_enum_once",
+      "producer_stage": "stage1",
+      "producer_sha256": "64d0054b523d2e5fa80729b1b921126c1a956e856dbf94f48235e23415659c2c",
+      "source_sha256": "6f6e76d3e5eb29b24a6e8f9cc378dd3f3f00bb8a90f87065cc0e023f77819623",
+      "arguments": [
+        "/workspace/scratch/lang-grammar/path-helper-integration/bootstrap/stage1",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-new-fixture-census-20261024/control_value_enum_once-stage1",
+        "/workspace/lang-grammar-publish/conformance/cases/control_value_enum_once/main.fern",
+        "/workspace/lang-grammar-publish/internal/stdlib"
+      ],
+      "build_exit": 0,
+      "exit": 0,
+      "trace_events": 0,
+      "unpaired_allocations": 0,
+      "seconds": 0.022828221997770015
+    },
+    {
+      "family": "grammar",
+      "fixture": "control_value_enum_once",
+      "producer_stage": "stage3",
+      "producer_sha256": "489e47e90393b87a746fd6d685f778cd258d65a3fa85e974eaa139e3e59841b4",
+      "source_sha256": "6f6e76d3e5eb29b24a6e8f9cc378dd3f3f00bb8a90f87065cc0e023f77819623",
+      "arguments": [
+        "/workspace/scratch/lang-grammar/path-helper-integration/bootstrap/stage3",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-new-fixture-census-20261024/control_value_enum_once-stage3",
+        "/workspace/lang-grammar-publish/conformance/cases/control_value_enum_once/main.fern",
+        "/workspace/lang-grammar-publish/internal/stdlib"
+      ],
+      "build_exit": 0,
+      "exit": 0,
+      "trace_events": 0,
+      "unpaired_allocations": 0,
+      "seconds": 0.023561258996778633
+    },
+    {
+      "family": "grammar",
+      "fixture": "control_value_flow",
+      "producer_stage": "stage1",
+      "producer_sha256": "64d0054b523d2e5fa80729b1b921126c1a956e856dbf94f48235e23415659c2c",
+      "source_sha256": "921ffffc4068e6146977a461b411bd6fe6d7494f6e33ccbca1b5446bdeffd0d6",
+      "arguments": [
+        "/workspace/scratch/lang-grammar/path-helper-integration/bootstrap/stage1",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-new-fixture-census-20261024/control_value_flow-stage1",
+        "/workspace/lang-grammar-publish/conformance/cases/control_value_flow/main.fern",
+        "/workspace/lang-grammar-publish/internal/stdlib"
+      ],
+      "build_exit": 0,
+      "exit": 0,
+      "trace_events": 0,
+      "unpaired_allocations": 0,
+      "seconds": 0.01938399400387425
+    },
+    {
+      "family": "grammar",
+      "fixture": "control_value_flow",
+      "producer_stage": "stage3",
+      "producer_sha256": "489e47e90393b87a746fd6d685f778cd258d65a3fa85e974eaa139e3e59841b4",
+      "source_sha256": "921ffffc4068e6146977a461b411bd6fe6d7494f6e33ccbca1b5446bdeffd0d6",
+      "arguments": [
+        "/workspace/scratch/lang-grammar/path-helper-integration/bootstrap/stage3",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-new-fixture-census-20261024/control_value_flow-stage3",
+        "/workspace/lang-grammar-publish/conformance/cases/control_value_flow/main.fern",
+        "/workspace/lang-grammar-publish/internal/stdlib"
+      ],
+      "build_exit": 0,
+      "exit": 0,
+      "trace_events": 0,
+      "unpaired_allocations": 0,
+      "seconds": 0.018776696000713855
+    },
+    {
+      "family": "grammar",
+      "fixture": "control_value_lambda_tails",
+      "producer_stage": "stage1",
+      "producer_sha256": "64d0054b523d2e5fa80729b1b921126c1a956e856dbf94f48235e23415659c2c",
+      "source_sha256": "711183b0276fd083f52fd7879b973cefc3ac761730c75871477814f5f0c2efb3",
+      "arguments": [
+        "/workspace/scratch/lang-grammar/path-helper-integration/bootstrap/stage1",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-new-fixture-census-20261024/control_value_lambda_tails-stage1",
+        "/workspace/lang-grammar-publish/conformance/cases/control_value_lambda_tails/main.fern",
+        "/workspace/lang-grammar-publish/internal/stdlib"
+      ],
+      "build_exit": 0,
+      "exit": 0,
+      "trace_events": 2,
+      "unpaired_allocations": 0,
+      "seconds": 0.024235816999862436
+    },
+    {
+      "family": "grammar",
+      "fixture": "control_value_lambda_tails",
+      "producer_stage": "stage3",
+      "producer_sha256": "489e47e90393b87a746fd6d685f778cd258d65a3fa85e974eaa139e3e59841b4",
+      "source_sha256": "711183b0276fd083f52fd7879b973cefc3ac761730c75871477814f5f0c2efb3",
+      "arguments": [
+        "/workspace/scratch/lang-grammar/path-helper-integration/bootstrap/stage3",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-new-fixture-census-20261024/control_value_lambda_tails-stage3",
+        "/workspace/lang-grammar-publish/conformance/cases/control_value_lambda_tails/main.fern",
+        "/workspace/lang-grammar-publish/internal/stdlib"
+      ],
+      "build_exit": 0,
+      "exit": 0,
+      "trace_events": 2,
+      "unpaired_allocations": 0,
+      "seconds": 0.02112749600200914
+    },
+    {
+      "family": "grammar",
+      "fixture": "control_value_literal_once",
+      "producer_stage": "stage1",
+      "producer_sha256": "64d0054b523d2e5fa80729b1b921126c1a956e856dbf94f48235e23415659c2c",
+      "source_sha256": "1571065073dd25737d7fb7d615cf7538e33dc43d675dc35eda733ebea7674dd8",
+      "arguments": [
+        "/workspace/scratch/lang-grammar/path-helper-integration/bootstrap/stage1",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-new-fixture-census-20261024/control_value_literal_once-stage1",
+        "/workspace/lang-grammar-publish/conformance/cases/control_value_literal_once/main.fern",
+        "/workspace/lang-grammar-publish/internal/stdlib"
+      ],
+      "build_exit": 0,
+      "exit": 0,
+      "trace_events": 0,
+      "unpaired_allocations": 0,
+      "seconds": 0.022098246998211835
+    },
+    {
+      "family": "grammar",
+      "fixture": "control_value_literal_once",
+      "producer_stage": "stage3",
+      "producer_sha256": "489e47e90393b87a746fd6d685f778cd258d65a3fa85e974eaa139e3e59841b4",
+      "source_sha256": "1571065073dd25737d7fb7d615cf7538e33dc43d675dc35eda733ebea7674dd8",
+      "arguments": [
+        "/workspace/scratch/lang-grammar/path-helper-integration/bootstrap/stage3",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-new-fixture-census-20261024/control_value_literal_once-stage3",
+        "/workspace/lang-grammar-publish/conformance/cases/control_value_literal_once/main.fern",
+        "/workspace/lang-grammar-publish/internal/stdlib"
+      ],
+      "build_exit": 0,
+      "exit": 0,
+      "trace_events": 0,
+      "unpaired_allocations": 0,
+      "seconds": 0.02386006500455551
+    },
+    {
+      "family": "grammar",
+      "fixture": "control_value_nested",
+      "producer_stage": "stage1",
+      "producer_sha256": "64d0054b523d2e5fa80729b1b921126c1a956e856dbf94f48235e23415659c2c",
+      "source_sha256": "ad5ff892be779954aeef88ebba83f9af01cc5e49c7fd093c0301f204182c8520",
+      "arguments": [
+        "/workspace/scratch/lang-grammar/path-helper-integration/bootstrap/stage1",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-new-fixture-census-20261024/control_value_nested-stage1",
+        "/workspace/lang-grammar-publish/conformance/cases/control_value_nested/main.fern",
+        "/workspace/lang-grammar-publish/internal/stdlib"
+      ],
+      "build_exit": 0,
+      "exit": 0,
+      "trace_events": 0,
+      "unpaired_allocations": 0,
+      "seconds": 0.021610108997265343
+    },
+    {
+      "family": "grammar",
+      "fixture": "control_value_nested",
+      "producer_stage": "stage3",
+      "producer_sha256": "489e47e90393b87a746fd6d685f778cd258d65a3fa85e974eaa139e3e59841b4",
+      "source_sha256": "ad5ff892be779954aeef88ebba83f9af01cc5e49c7fd093c0301f204182c8520",
+      "arguments": [
+        "/workspace/scratch/lang-grammar/path-helper-integration/bootstrap/stage3",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-new-fixture-census-20261024/control_value_nested-stage3",
+        "/workspace/lang-grammar-publish/conformance/cases/control_value_nested/main.fern",
+        "/workspace/lang-grammar-publish/internal/stdlib"
+      ],
+      "build_exit": 0,
+      "exit": 0,
+      "trace_events": 0,
+      "unpaired_allocations": 0,
+      "seconds": 0.022190810996107757
+    },
+    {
+      "family": "grammar",
+      "fixture": "control_value_statement_arms",
+      "producer_stage": "stage1",
+      "producer_sha256": "64d0054b523d2e5fa80729b1b921126c1a956e856dbf94f48235e23415659c2c",
+      "source_sha256": "35a0af4d16929f43e9098cefe986c92420ffd65f2e97d83d487846f007b849c9",
+      "arguments": [
+        "/workspace/scratch/lang-grammar/path-helper-integration/bootstrap/stage1",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-new-fixture-census-20261024/control_value_statement_arms-stage1",
+        "/workspace/lang-grammar-publish/conformance/cases/control_value_statement_arms/main.fern",
+        "/workspace/lang-grammar-publish/internal/stdlib"
+      ],
+      "build_exit": 0,
+      "exit": 0,
+      "trace_events": 0,
+      "unpaired_allocations": 0,
+      "seconds": 0.18176028699963354
+    },
+    {
+      "family": "grammar",
+      "fixture": "control_value_statement_arms",
+      "producer_stage": "stage3",
+      "producer_sha256": "489e47e90393b87a746fd6d685f778cd258d65a3fa85e974eaa139e3e59841b4",
+      "source_sha256": "35a0af4d16929f43e9098cefe986c92420ffd65f2e97d83d487846f007b849c9",
+      "arguments": [
+        "/workspace/scratch/lang-grammar/path-helper-integration/bootstrap/stage3",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-new-fixture-census-20261024/control_value_statement_arms-stage3",
+        "/workspace/lang-grammar-publish/conformance/cases/control_value_statement_arms/main.fern",
+        "/workspace/lang-grammar-publish/internal/stdlib"
+      ],
+      "build_exit": 0,
+      "exit": 0,
+      "trace_events": 0,
+      "unpaired_allocations": 0,
+      "seconds": 0.1695884090004256
+    },
+    {
+      "family": "grammar",
+      "fixture": "control_value_string",
+      "producer_stage": "stage1",
+      "producer_sha256": "64d0054b523d2e5fa80729b1b921126c1a956e856dbf94f48235e23415659c2c",
+      "source_sha256": "e071dc95437d06471571667c061248d79488a0f84cd5b4cbc66665cc3353ab93",
+      "arguments": [
+        "/workspace/scratch/lang-grammar/path-helper-integration/bootstrap/stage1",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-new-fixture-census-20261024/control_value_string-stage1",
+        "/workspace/lang-grammar-publish/conformance/cases/control_value_string/main.fern",
+        "/workspace/lang-grammar-publish/internal/stdlib"
+      ],
+      "build_exit": 0,
+      "exit": 0,
+      "trace_events": 0,
+      "unpaired_allocations": 0,
+      "seconds": 0.02454346800368512
+    },
+    {
+      "family": "grammar",
+      "fixture": "control_value_string",
+      "producer_stage": "stage3",
+      "producer_sha256": "489e47e90393b87a746fd6d685f778cd258d65a3fa85e974eaa139e3e59841b4",
+      "source_sha256": "e071dc95437d06471571667c061248d79488a0f84cd5b4cbc66665cc3353ab93",
+      "arguments": [
+        "/workspace/scratch/lang-grammar/path-helper-integration/bootstrap/stage3",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-new-fixture-census-20261024/control_value_string-stage3",
+        "/workspace/lang-grammar-publish/conformance/cases/control_value_string/main.fern",
+        "/workspace/lang-grammar-publish/internal/stdlib"
+      ],
+      "build_exit": 0,
+      "exit": 0,
+      "trace_events": 0,
+      "unpaired_allocations": 0,
+      "seconds": 0.02245436899829656
+    }
+  ]
+}

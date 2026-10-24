@@ -1,0 +1,12 @@
+WARNING /workspace/scratch/lang-lossless-widening/new-comments.txt:par9 [rule 3.5] "widening": an "-ing" form is permitted only in a technical name.
+WARNING /workspace/scratch/lang-lossless-widening/new-comments.txt:par11 [rule 3.5] "checking": an "-ing" form is permitted only in a technical name.
+WARNING /workspace/scratch/lang-lossless-widening/new-comments.txt:par12 [rule 3.5] "widening": an "-ing" form is permitted only in a technical name.
+WARNING /workspace/scratch/lang-lossless-widening/new-comments.txt:par14 [rule 3.5] "existing": an "-ing" form is permitted only in a technical name.
+WARNING /workspace/scratch/lang-lossless-widening/new-comments.txt:par17 [rule 3.5] "wrapping": an "-ing" form is permitted only in a technical name.
+WARNING /workspace/scratch/lang-lossless-widening/new-comments.txt:par17 [rule 3.5] "changing": an "-ing" form is permitted only in a technical name.
+WARNING docs/ssa-log/2026-10-23-lossless-numeric-conversions.md:par4 [rule 3.5] "lowering": an "-ing" form is permitted only in a technical name.
+WARNING docs/ssa-log/2026-10-23-lossless-numeric-conversions.md:par5 [rule 3.5] "existing": an "-ing" form is permitted only in a technical name.
+
+Result: 0 errors, 8 warnings.
+The text obeys the STE structural rules that this tool can check.
+This tool cannot make sure that each word has its approved meaning.

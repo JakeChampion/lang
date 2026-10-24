@@ -2,39 +2,46 @@ import "std/stream";
 import "std/i32";
 import "core/int";
 
-
-
-
-
-
 function main(): i32 {
-
-    let s: Stream = stream.stream_from_string("ab\r\ncd\nef");
-    print(s.len().to_string());
-    let cur: Stream = s;
-    let done: boolean = false;
-    while (!done) {
-        let (line, next) = cur.read_line();
-        match (line) {
-            Some(l) => { print(l); cur = next; },
-            None => { print("EOF"); done = true; },
-        }
+  let s: ByteStream = stream.stream_from_string("ab\r\ncd\nef");
+  print(s.len().to_string());
+  let cur: ByteStream = s;
+  let done: boolean = false;
+  while (!done) {
+    let (line, next) = cur.read_line();
+    match (line) {
+      Some(l) => {
+        print(l);
+        cur = next;
+      },
+      None => {
+        print("EOF");
+        done = true;
+      }
     }
+  }
 
-
-    let b: Stream = stream.stream_from_string("XYZ123");
-    let (ob, b2) = b.read_byte();
-    match (ob) {
-        Some(v) => { print(v.to_string()); },
-        None => { print("none"); },
+  let b: ByteStream = stream.stream_from_string("XYZ123");
+  let (ob, b2) = b.read_byte();
+  match (ob) {
+    Some(v) => {
+      print(v.to_string());
+    },
+    None => {
+      print("none");
     }
-    let (chunk, b3) = b2.read_n(2);
-    print(string_from_bytes_unchecked(chunk));
-    print(b3.remaining().to_string());
-    let (rest, b4) = b3.read_all_string();
-    match (rest) {
-        Some(text) => { print(text); },
-        None => { return 1; },
+  }
+  let (chunk, b3) = b2.read_n(2);
+  print(string_from_bytes_unchecked(chunk));
+  print(b3.remaining().to_string());
+  let (rest, b4) = b3.read_all_string();
+  match (rest) {
+    Some(text) => {
+      print(text);
+    },
+    None => {
+      return 1;
     }
-    return 0;
+  }
+  return 0;
 }

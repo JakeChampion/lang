@@ -144,10 +144,9 @@ default-correct unless we have a specific reason to deviate.
   fuses them, allocation traps when it doesn't; without an
   aggressive inliner we'd ship code that looks fast but isn't, so
   eager combinators + pipe is safer until the IR can fuse. The IR
-  now fuses (#9731, `internal/oracle/ir/array_fusion.go`) — `map` and
-  `filter` stages into a `fold` or `reduce` become one loop with no
-  intermediate and, because the pass runs before
-  `Defunctionalise`, no per-element indirect call either. So the
+  now fuses these stages in `compiler/semfuse.fern`. A `map` or `filter`
+  chain into a `fold` or `reduce` becomes one loop without intermediate
+  arrays. The fused loop also avoids the adapter's per-element calls. So the
   "looks fast but isn't" objection no longer applies to those
   operators.
   The stance still stands, for the narrower reason that the fused
@@ -211,7 +210,13 @@ Five PRs, each shippable. Breaking changes are fine — single user.
   sub-i32 machinery as historical record.
 - Default literal type stays `i32`. Literals are polymorphic in
   expected-type context: `let x: i64 = 1` works without a cast.
-- Explicit conversion only (`x as i64`); no implicit widening.
+- Lossless numeric conversions are implicit (#12696).
+  `i32` converts to `i64`, `u8` to `u32`/`u64`/`i32`/`i64`,
+  `u32` to `u64`/`i64`, and `f32` to `f64`.
+  Assignments, arguments, returns, constructor payloads, fields,
+  array literal elements, and operators use these conversions.
+  Conversions that can lose values require `as`.
+  Stored containers retain their element types.
 - `f32` (existing) and `f64` (new); f64 is the default and primary
   float (#5363). The `float` alias this once added was deleted
   (#12700): `f64` is the one spelling.
@@ -565,15 +570,10 @@ Deferred to a follow-up:
     Stress-tested with 100+ entries through inserts /
     updates / interleaved deletes / re-inserts on both
     i32-keyed and string-keyed maps.
-  - **Cursor iteration shipped.** `m.iter()` returns a
-    `MapIter[K, V]` that holds a pointer back to the kv
-    buffer plus a current entry index. The struct is
-    allocated once per loop; each step is just a load
-    plus arithmetic. The API is `it.has_next()`,
-    `it.key()`, `it.value()`, `it.advance()`. Iteration
-    walks entries in insertion order (preserved up to any
-    deletes; swap-with-last `delete` reorders past the
-    deleted slot).
+  - **Map iteration.** `m.iter()` returns an owned snapshot implementing
+    `iter.Iterator[(K, V)]`. It supports `next`, `for` and iterator adapters.
+    Iterator copies advance independently. Later Map updates do not change
+    the snapshot. Direct `for (k, v) in m` reads matching key and value columns.
   - **Wide V via boxing shipped.** `Map[K, i64]` /
     `Map[K, f64]` now work end-to-end. The shared wat
     helpers stay i32-stride; the IR allocates an 8-byte
@@ -582,8 +582,7 @@ Deferred to a follow-up:
     `m.get(k)` translates the helper's `Option[i32-cell-ptr]`
     return into a fresh wide-payload `Option[V]` inline,
     `m.get_or(k, fallback)` boxes the fallback + unboxes
-    the result, and `MapIter.value()` unboxes the helper's
-    cell pointer. `m.values()` is intercepted at the IR layer
+    the result. `m.values()` is intercepted at the IR layer
     (`emitWideMapValues`) — for wide V the IR walks the
     entries, follows each cell pointer, and `__memcpy`s the
     8 payload bytes into a real wide-stride `i64[]` / `f64[]`
@@ -794,7 +793,7 @@ Deferred to a follow-up:
   `slice_escape_diags` in `compiler/checker.fern` —
   and the self-host port is held to byte-for-byte code parity
   with the Go checker by the differential gate in
-  `internal/testing/e2e/self_host_checker_codes_test.go`. `fern -explain
+  `internal/testing/e2ecompiler/self_host_checker_codes_test.go`. `fern -explain
   E063` prints the full rationale.
 - (The `number` deprecation alias has already been dropped
   — see PR 1's status block.)
@@ -976,17 +975,16 @@ to smallest. Status pending unless marked.
   all use the form.
 
 - **Drop `__array_append_T` from user surface — shipped.**
-  `arr.push(v)` is a generic method on `T[]`. The checker
+  `arr.append(v)` is a generic method on `T[]`. The checker
   treats `Array` like a one-type-param generic struct:
   receiver-Args flow into the `__method_<Type>_<name>`
   substitution path that Map's methods already use, so
-  `string[].push(v)` checks `v` as string while
-  `JsonValue[].push(v)` checks it as JsonValue.
+  `string[].append(v)` checks `v` as string while
+  `JsonValue[].append(v)` checks it as JsonValue.
 
-  Lowering happens inline at the IR layer (`emitArrayPush`
-  in `internal/oracle/ir/ir.go`) — one block of code emits the
-  alloc + memcpy + width-correct tail store for every stride
-  class (1 / 2 / 4 / 8 bytes; integer + float). Earlier
+  `builtin_append` in `compiler/semsource.fern` uses the array's element
+  type. The target code uses that type for the tail store and copies.
+  Earlier
   shape used 5 nearly-identical Fern-prelude functions
   (`__array_append_string` / `_i64` / `_f64` / `_u8` /
   `_u16`), 5 mangled FuncSigs, 5 codegen aliases, 5
@@ -1070,8 +1068,8 @@ to smallest. Status pending unless marked.
   a concrete-float partner before requireFloat fires.
 
   Concrete-int **variables** (e.g. `let x: i32; x + 1.5f32`)
-  still error — no implicit widening. Only literals get the
-  promotion.
+  still error. Typed integers require an explicit cast to float.
+  Only literals get this integer to float promotion.
 
 - ~~**Bug: formatter eats `defer r.close();`**~~ — **fixed.**
   The statement-printer switch has a `case *ast.Defer` arm
@@ -1204,9 +1202,9 @@ tests.
     (overflow, `+`-prefixed). Internal accumulator is i64
     so the bound check against the signed-i32 range
     (`-2^31..=2^31-1`) is exact. **Migrated to the Fern
-    prelude** in PR 174 — was ~190 lines of hand-written
-    wat, now ~25 lines of Fern code in
-    `internal/prelude/prelude.fern`.
+    prelude** in PR 174, which replaced about 190 lines of WAT with
+    about 25 lines of Fern at that time. The current implementation is
+    in `internal/stdlib/std/string.fern.md`.
   - **`s.parse_float()` shipped.** `string` method returning
     `Option[f64]` (originally f32; flipped with the #5363
     f64-default decision). Grammar: `[-]<digits>[.<digits>]
@@ -1305,136 +1303,21 @@ tests.
     matching Go's `encoding/json` and most strict UTF-8
     emitters. Whitespace between tokens follows the spec.
 
-## Stdlib implementation strategy: hand-written wat vs IR-routed
+## Standard-library implementation strategy
 
-Two flavours of stdlib helper coexist:
+Public library code lives in `internal/stdlib`. Programs declare their
+module imports. The retired auto-injected prelude is not part of this model.
+`docs/PRELUDE-TO-MODULES.md` describes the module contract.
 
-1. **Runtime core (hand-written wat).** `__fern_alloc`,
-   `__str_eq`, `__str_slice`, `__slice_idx_*`, the Map's hash
-   mix + open-addressing core, `arena_save` / `arena_restore`,
-   the int formatter, and the wasi imports. Hand-written wat
-   in `internal/codegen/wasm/wasm.go`. The IR sees only the
-   call sites (`OpCallDirect "name"`); helper bodies bypass
-   the IR entirely.
+The self-hosted compiler processes library bodies through the same typed
+semantic pipeline as user functions. The shared source phase is in
+`compiler/semsource.fern`. The runtime also has private target-specific
+leaves. `docs/SELFHOST-SEMANTIC-SOURCE.md` describes that boundary.
+The Go oracle checks and interprets source. Target builds use the self-hosted
+compiler, so they share its runtime and backend implementations.
 
-2. **Fern prelude (IR-routed).** `internal/prelude/prelude.fern`
-   — a small embedded source file parsed at checker startup
-   and prepended to the user's program. Goes through the
-   regular parser → checker → IR → codegen pipeline like any
-   user code, so it picks up IR-level optimisations (peephole,
-   dce, future inlining) and works on any backend without
-   backend-specific shims. Method receivers in the prelude
-   can be built-in scalar types (`function (s: string)
-   is_empty(): boolean { return len(s) == 0; }`) and the
-   receiver-hoisting + dispatch path treats them the same
-   way as struct/enum methods.
-
-Migration is incremental: each high-level helper moves from
-wat to prelude on its own; the runtime core stays in wat
-because the operations needed (memory.copy, memory.grow, raw
-loads/stores, hash mixing) aren't expressible at the Fern
-level today.
-
-**Performance comparison** (rough, based on the existing
-helpers):
-
-| Aspect                          | Hand-written wat   | IR-routed Fern    |
-|---------------------------------|--------------------|-------------------|
-| Tight loops (memcpy, scan, hash) | optimal           | within 10%, maybe |
-| Tiny helpers (`s.is_empty()`)    | direct one-op     | call overhead     |
-| Recursive walkers (json encoder) | one alloc per buf | match-arm + heap  |
-| IR optimisations (peephole, dce) | invisible         | applied           |
-| Cross-target (wasm + arm64)      | duplicate per backend | one source    |
-| Maintainability                  | verbose, fiddly   | concise           |
-
-The wins from IR-routing are **maintainability + cross-target
-portability**, not raw performance. For most helpers the
-generated code is comparable; for hot paths (the Map runtime,
-hash mixing, the bump allocator) hand-written wat is meaningfully
-faster because we control the exact ops without going through
-the Fern's abstraction layers.
-
-**Migration path** (split into per-helper PRs):
-
-1. ✅ **Phase A: prelude infrastructure + first migration.**
-   `internal/prelude/prelude.go` embeds the `prelude.fern`
-   source via `//go:embed`; `injectPrelude` parses it on
-   each `checker.Check` call and appends the decls to
-   `prog.Funcs` (with `IsPrelude=true` for filtering in
-   tests / dump tools). Method-receiver type-checking
-   extended to accept `string`, `i8/i16/i32/i64/u8/u16/u32/u64`,
-   and `f32/f64` receivers — built-in scalar receivers go
-   through the same hoisting + dispatch as struct / enum
-   methods. First migration: `s.is_empty()` — was 11 lines
-   of hand-written wat, now 3 lines of Fern.
-2. **Phase B: migrate higher-level stdlib.** `parse_int`,
-   `parse_float`, `s.repeat`, `url_encode`, `url_decode`,
-   `query_parse`, `url_parse`, `json_encode`, `json_parse`,
-   `f32.to_string`, `f64.to_string` — all shipped on a
-   per-PR cadence. Phase B continued with the string
-   methods: `starts_with`, `ends_with`, `contains`,
-   `index_of`, `trim` (slice-based, no allocation), then
-   `to_lower`, `to_upper`, `bytes` (allocation-based,
-   built on the new `__alloc_u8` primitive), then `split`
-   and `replace` (variable-length result, built on
-   `__array_append_string` + concat). The supporting
-   `__is_ascii_ws` and `__bytes_eq` wat helpers retired
-   together with the migrations — every string method
-   that has a wat helper has now moved, except
-   `as_bytes` (which still needs slice-header alloc the
-   prelude doesn't yet expose).
-3. **Bridge functions for wasm intrinsics shipped.**
-   `__memcpy(dst, src, n)`, `__memset(dst, b, n)`, and
-   `__alloc_u8(n): u8[]` are thin wat-shim wrappers around
-   wasm's bulk-memory `memory.copy` / `memory.fill` plus a
-   tiny `__fern_alloc` + length-prefix sealer. Signatures
-   registered in the checker so the prelude can call them
-   like any builtin. Drives buffer-management code that
-   doesn't yet have a clean Fern-level shape — the
-   remaining wat string methods (`to_lower`, `to_upper`,
-   `bytes`) migrated using these primitives, then the Map
-   runtime followed (~1184 wat lines → ~280 Fern lines).
-   The map's `__method_Map_*` calls keep their type-rich
-   FuncSigs registrations (the language doesn't yet have
-   generic methods on a generic struct), with a codegen
-   alias that rewrites each call to its concrete `_impl`
-   counterpart in the prelude — same pattern as the
-   `__array_append_jsonvalue → __array_append_string`
-   alias. Native backends provide `__memcpy` / `__memset` /
-   `__alloc` directly (arm64 inlines them as small leaf
-   functions; wasm wraps `memory.copy` / `memory.fill`).
-
-   Drive-by escape hatch: `[u8]` slice and `u8[]` owned
-   array now cast to `i32` to recover the data pointer.
-   Slice cast loads the i32 at slice+0 (the data_ptr field
-   of the `{data_ptr, len}` slice header); array cast is a
-   no-op since an owned-array value already IS the data
-   pointer (length lives at data-4). Together with the
-   bulk-memory shims this is enough to express growable-
-   buffer scratch code in Fern without dropping into wat.
-
-**Why not migrate everything at once:**
-
-- Fern is missing some primitives the prelude would want
-  for the most aggressive helpers: `i32 ↔ f32` bit-cast (for
-  the float formatter's exponent bit pattern), `memory.copy`
-  shim (for the json buffer). Add these incrementally.
-- The IR inliner now handles small functions with internal
-  control flow + non-recursive direct calls (extended in
-  the post-Map-runtime cleanup so the migrated prelude's
-  prefix / scan / hash helpers actually inline). Bodies up
-  to 80 ops with internal `if` / `while` / `return` substitute
-  cleanly; the wrapper-block + br-translation shape lets
-  early returns fall through to the caller's continuation.
-  Recursion + closure-call ops still disqualify. Compounds
-  for every hot prelude helper — `__substr_eq`, `__map_hash`,
-  the small char classifiers — that previously paid full
-  call overhead per use.
-- Each migration removes per-PR risk: the migrated helper is
-  validated against the existing test suite (no behavior
-  change), so the wat → Fern transition is observable only
-  in the wasm size + readability of the source, not in the
-  user-visible behavior.
+The [original implementation strategy](records/stdlib-implementation-strategy-2026-10-23.md)
+preserves the former Go emitter and prelude migration notes as history.
 
 ## Open questions to settle as we go
 

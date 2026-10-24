@@ -9,6 +9,8 @@ built under it on 2026-09-16: loop-body code quality, not coverage.
 **Next decision point:** not a date — which of those two tracks to fund.
 **Owner:** compiler / IR.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 Read "Where this stands (2026-09-15)" below FIRST. It corrects two things in
 the 2026-09-02 section above: that section says tripwires 1–3 are unfired (one
 has), and it quotes the benchmark geomean as evidence against the backend when

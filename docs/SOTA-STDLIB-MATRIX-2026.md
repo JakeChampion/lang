@@ -78,10 +78,10 @@ are independent build items again, and the question per row is no longer
   its vector length is the INPUT, not the NEEDLE. That is why `memcmp` is
   DEFERRED rather than blocked — needles are short in nearly every real caller,
   so the compare fits in one vector and the cost is call overhead.
-- **What does the kernel cost?** Not the vector body. Six ASSEMBLERS: the three
-  in `internal/native` plus one per self-host backend written in Fern
-  (`x86_native.fern`, `arm64_native.fern`, `watbin.fern`). Each of the three
-  shipped kernels paid that separately and it dominated each time.
+- **What does the kernel cost?** Each target needs instruction support.
+  The in-process encoders are `compiler/x86_native.fern`,
+  `compiler/arm64_native.fern` and `compiler/watbin.fern`. The Go encoders
+  from the original measurements are retired.
 
 Where a technique has a **SWAR** variant (SIMD-within-a-register, over a plain
 64-bit word), the row still says so. SWAR needs no kernel at all and typically
@@ -102,10 +102,15 @@ Section M of the published list (atomics, MCS locks, Chase-Lev deques, MPMC
 queues) and every "parallel *x*" row are downstream of a threading model that
 does not exist and has not been decided. See `docs/MULTICORE-RESEARCH.md`.
 
-**4. Six backends, so an intrinsic is never one change.** Any new primitive
-lowered as an IR op needs `internal/oracle/ir` plus x86-64, arm64 and wasm on the
-native side, *and* `asm_ir.fern` / `asm_arm64_ir.fern` / `wasm_ir.fern` on the
-self-host side, plus the interpreter, or it is a parity gap. This is why
+**4. Three target families need consistent semantics.**
+A new primitive needs its typed operation in `compiler/ssasem.fern`.
+The shared source phase is in `compiler/semsource.fern`.
+Implementations must cover x86-64, ARM64 and Wasm.
+
+The interpreter must agree. The Go oracle checks source semantics and emits
+no code.
+
+This is why
 "just use `ROL`" is a project and `count_ones` took a whole pass. Budget
 accordingly; a stdlib-only SWAR version that captures 80% is often the right
 first move, and the bit-counting work is the worked example (SWAR first,
@@ -409,7 +414,7 @@ the argument for the foundations list further down.
 | 92 | Compiler AST | runtime | **SHIPPED** — arena, and it is the motivating workload |
 | 93 | Scratch memory | runtime | **SHIPPED** |
 | 94 | SmallVec | — | GAP — inline storage for small arrays, phase 3 |
-| 95 | SmallString | `internal/fernstring` | **SHIPPED** — SSO, see `docs/SSO-PLAN.md` |
+| 95 | SmallString | `compiler/ssastringvalue.fern` | **SHIPPED** — SSO, see `docs/SSO-PLAN.md` |
 | 96 | SmallMap | `core/map` | **SHIPPED** — the ≤ 8 scan path |
 | 97 | Object allocation | runtime | **SHIPPED** — bump pointer |
 | 98 | GC young generation | — | **N/A:no-tracing-GC** — Perceus RC, not generational |
@@ -867,7 +872,7 @@ its entries are N/A or already shipped; what remains, reordered by
 | 5 | **Table-driven byte classification** (67, 83–86, 65, 66) | The surviving piece of the simdjson lesson; one idiom, six call sites, ingest path and compiler both benefit |
 | 6 | **The raw-load decision** (fdn. 11) | One decision, six blocked rows behind it |
 | 7 | **Float accuracy contract** (§B) | The only backend-observable *correctness* divergence in the matrix |
-| 8 | **Magic-number constant division** (8, 11, 12) | One `internal/oracle/ir` peephole every backend inherits; pays out on every constant divide, and unblocks Lemire int→string |
+| 8 | **Magic-number constant division** (8, 11, 12) | Shared constant-division optimisation can serve every backend and support Lemire integer formatting |
 | 9 | **Benchmark harness** (fdn. 12) | Makes every other row provable |
 | 10 | **The vector surface** (§R) | Highest ceiling, highest cost; deliberately not first |
 
@@ -889,9 +894,8 @@ column precisely so that check is a single `grep`.
 
 **Verdicts are claims, and claims get checked by reading code.** Every SHIPPED
 and N/A above was verified by reading the module, not inferred from a
-changelog: `std/time` really does use Hinnant's algorithms, `std/crypto` really
-does stop at SHA-256, `internal/oracle/ir` really has no vector type, `log2` really is
-`log(x)/ln2`, `sort_i32_inplace_asc` really is quadratic. Two rows changed
+changelog: the source available at that date supplied the evidence. Those examples
+are historical. Recheck each verdict against current `main`. Two rows changed
 verdict during this pass purely from reading — UTF-8 validation is a branch
 ladder rather than the DFA the blueprint records (row 67, BLOCKED → GAP), and
 integer sort is worse than "comparison sort" (row 47). Both had stood as

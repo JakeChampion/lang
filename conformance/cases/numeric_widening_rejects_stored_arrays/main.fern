@@ -1,0 +1,7 @@
+function f(values: i32[]): i64[][] {
+  return [values];
+}
+
+function main(): i32 {
+  return 0;
+}

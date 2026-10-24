@@ -3,6 +3,8 @@
 Status: [research] how Koka, Lean 4 and Roc implement async, and which mechanism
 fits Fern; input to the async direction, not a commitment.
 
+This study names historical or proposed source paths. The reference documentation identifies current files.
+
 Companion to `CONCURRENCY-RESEARCH.md`. That doc surveyed the
 *menu* (Erlang, Go, Rust, Pony, Loom, Kotlin, Trio, Zig, OCaml 5,
 Inko, Verona) and landed on a recommendation: **colorless

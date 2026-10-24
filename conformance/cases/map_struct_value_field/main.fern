@@ -12,22 +12,26 @@ import "core/int";
 struct Box { n: i32, tag: string }
 
 function main(): i32 {
-    let m: Map[i32, Box] = map_new(8);
-    m = m.insert(1, Box { n: 10, tag: "a" });
-    m = m.insert(2, Box { n: 20, tag: "b" });
+  let m: Map[i32, Box] = map_new(8);
+  m = m.insert(1, Box { n: 10, tag: "a" });
+  m = m.insert(2, Box { n: 20, tag: "b" });
 
+  if (m.get_or(1, Box { n: 0 - 1, tag: "" }).n != 10) {
+    return 1;
+  }
+  if (m.get_or(9, Box { n: 0 - 1, tag: "" }).n != 0 - 1) {
+    return 2;
+  }
 
-    if (m.get_or(1, Box { n: 0 - 1, tag: "" }).n != 10) { return 1; }
-    if (m.get_or(9, Box { n: 0 - 1, tag: "" }).n != 0 - 1) { return 2; }
+  // Iterator tuple values preserve record fields.
+  let total: i32 = 0;
+  let it = m.iter();
+  for (__mapkey_it, __mapvalue_it) in it {
+    total = total + __mapvalue_it.n;
+  }
+  if (total != 30) {
+    return 3;
+  }
 
-
-    let total: i32 = 0;
-    let it = m.iter();
-    while (it.has_next()) {
-        total = total + it.value().n;
-        it.advance();
-    }
-    if (total != 30) { return 3; }
-
-    return 0;
+  return 0;
 }

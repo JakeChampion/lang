@@ -6,6 +6,8 @@ live roadmap is `CLAUDE.md` plus the GitHub issue tracker — roadmap-shaped
 residue from this doc is consolidated in
 [#4368](https://github.com/JakeChampion/lang/issues/4368).
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 Captures the state of the codebase as of 2026-05-15. Combines
 two audits — current tech debt (what's wrong / behind / risky)
 and self-hosting readiness (what's missing to rewrite the

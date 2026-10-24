@@ -2,6 +2,8 @@
 
 Status: [record] audit snapshot of 72 Go test files; the counts and several paths (such as `internal/codegen`) are out of date.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 The pure-Fern test runner (`internal/stdlib/std/test.fern`,
 TAP-13) was built so the project's regression suite can
 eventually run without a Go dependency — landing point

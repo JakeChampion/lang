@@ -1,0 +1,13 @@
+{
+  "source_commit": "55bb31bd2cd4faf1aaaf1d59d6c1f6498a1e6b83",
+  "focused_cases": 98,
+  "focused_skips": 0,
+  "go_cases": 2563,
+  "go_skips": 3,
+  "go_packages": 5,
+  "matrix_commands": 88,
+  "matrix_balanced_executions": 24,
+  "profile_commands": 18,
+  "profile_balanced_executions": 9,
+  "strict_size_gates": 11
+}

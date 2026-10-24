@@ -5,6 +5,8 @@ encoding is SHIPPED on arm64**, verified across the codegen unit tests,
 string/SSO e2e, cross-backend differential parity, and the full e2e suite
 (EXIT=0). The §0–§9 arc below is that implementation record.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 **x86-64 is NOT on the two-word ABI.** It has inline SSO, but in the
 single-word LSB-tagged form (`ssoTagBit`, 7-byte cap, in
 the Go x86-64 emitter, deleted in #11557): it never sets `ast.TwoWordOverride`, so

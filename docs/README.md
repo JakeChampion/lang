@@ -199,7 +199,7 @@ which ones.
 | `SELFHOST-RC-PLAN-PROMOTION.md` | [record] | A proposal to replace the shape-enumerated rc credit table with a promoted ownership plan; the table went with the AST lowering. |
 | `SELFHOST-REFERENCE-LIFETIMES.md` | [record] | The landing of `ssalive.fern`'s dependency-aware SSA liveness. |
 | `SELFHOST-SEMANTIC-PROJECTIONS.md` | [record] | The first landing of `ssasem.fern`'s typed semantic values and exact type identity. |
-| `TYPED-AVAILABILITY-VALUES.md` | [record] | A slice of the Go typed-ownership pilot (`internal/semir`); the pilot was deleted. |
+| `TYPED-AVAILABILITY-VALUES.md` | [record] | A slice of the retired Go typed-ownership pilot. |
 | `TYPED-BINDING-PLACES.md` | [record] | A slice of the Go typed-ownership pilot: typed binding places and an initialization verifier; deleted. |
 | `TYPED-CLEANUP-REGIONS.md` | [record] | Cleanup regions for the Go typed-ownership pilot; deleted. |
 | `TYPED-OWNERSHIP-IR-MIGRATION.md` | [record] | The typed ownership IR migration and its Go ARM64 pilot; the self-host typed lowering now produces every body. |
@@ -303,4 +303,5 @@ Dated records live in topic directories, named `YYYY-MM-DD-slug.md`. In
 | `benchmarks/` | The scripts and frozen inputs behind the measured reports. |
 | `measurements/` | Raw measurement output the reports cite. |
 | `contexts/` | Spec summaries of the FIP and runtime experiments. |
+| `records/` | Retired architecture sections preserved from current references. |
 | `proposals/` | The Fern Proposal draw list and settled rulings (FERN-PROPOSALS.md). |

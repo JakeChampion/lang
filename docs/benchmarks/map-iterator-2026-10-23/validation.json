@@ -1,0 +1,27 @@
+{
+  "source_commit": "2669c6a5d740583e24d17ffbf9abd865d5b54476",
+  "base_commit": "55e8bdc33ffe5c27c6418ac83cc50f0e11b56a82",
+  "source_sha256": "2957aeba4e47bf9f3383a96ea95cdd66698fb37df1a245361d7631dc4addc1ad",
+  "bootstrap_recorded_git_head": "55e8bdc33ffe5c27c6418ac83cc50f0e11b56a82",
+  "bootstrap_input": "Uncommitted source at the recorded base. Its complete compiler and stdlib digest equals source_commit.",
+  "stage0_sha256": "80667735ba7936ace5f1925ec03bcdde5a1bfe36aaa3c9f7e080fdecdcaf24ee",
+  "oracle_sha256": "a09589df89506287a995887632b6e015ab19f9af2239145b01ce03aa659a518b",
+  "stage3_sha256": "74ce4a8e132ca6fbcf1c0f3a39ca742382cc8094013d0dedfd1de416d0d40ebb",
+  "feature_checks": 80,
+  "go_e2e_seconds": 162.482,
+  "go_e2e_arguments": [
+    "go",
+    "test",
+    "-p",
+    "1",
+    "./internal/testing/e2ecompiler",
+    "-run",
+    "^(TestSelfHostMapIter|TestSelfHostMapPrograms|TestSelfHostSSAKindRegistry|TestSelfHostTyFromRef)",
+    "-count=1"
+  ],
+  "fmt_files": 1176,
+  "vet_exit": 0,
+  "comments_ste_errors": 0,
+  "comments_ste_warnings": 0,
+  "source_patch_sha256": "e864300d61c5e167c6fa3270180885caca6904a9345138ea1a88c5ec7a73eee6"
+}

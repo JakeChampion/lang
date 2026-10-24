@@ -1,0 +1,153 @@
+{
+  "source_commit": "feedc9050efb5017d83423c8b782ba24e9f66f5c",
+  "dependency_base": "1284b139bd8211475dbccf7fcde4e424e1ad1065",
+  "source_sha256": "b18ca1715846d5a0faac6b4a6f4220c4af97f251335f8c40dfe4cb80d8855009",
+  "source_files": 498,
+  "native_sha256": "b71a022817dc777f2639236e097241074deb59faa7a612e68dc5a1fb04bab4c9",
+  "tests": [
+    {
+      "file": "regressions.jsonl",
+      "source": "866e4a26f33821249b6ed6ae7d182266d86a73c6",
+      "runs": 36,
+      "passed": 36,
+      "skips": 0,
+      "packages": 1
+    },
+    {
+      "file": "go-regressions.jsonl",
+      "source": "866e4a26f33821249b6ed6ae7d182266d86a73c6",
+      "runs": 2066,
+      "passed": 2066,
+      "skips": 0,
+      "packages": 2
+    }
+  ],
+  "matrix_commands": 33,
+  "balanced_censuses": 9,
+  "inputs_and_logs": 84,
+  "patch_excludes": [
+    "docs/benchmarks"
+  ],
+  "artifacts": [
+    {
+      "path": "source-files.json",
+      "bytes": 78405,
+      "sha256": "03cfd505862ddff927867333ad0ab7113c387a5d9dd9a05c6c621ccb62ba1e04"
+    },
+    {
+      "path": "change.patch.gz",
+      "bytes": 1655,
+      "sha256": "30a34e7b105ce1363a461a28ae262fd2366f7b6e5c95443c3a8da3a8d4cba3db"
+    },
+    {
+      "path": "bootstrap/bootstrap.json.gz",
+      "bytes": 394,
+      "sha256": "3c8f05ee528075ff1132ca0139971b3e3a9b65f76c69ba25baf62fb04d94c932"
+    },
+    {
+      "path": "bootstrap/stage1.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "bootstrap/stage2.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "bootstrap/stage3.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "regressions.jsonl.gz",
+      "bytes": 2957,
+      "sha256": "ed946f4adfa267b453727c00081a04d66d42713cbc4c86b12fdbd3ee21691c45"
+    },
+    {
+      "path": "go-regressions.jsonl.gz",
+      "bytes": 124230,
+      "sha256": "531f0b72f95f02f43fdad474fad3ae9fb4fb91fa941cfb110d9e8b8c8895e240"
+    },
+    {
+      "path": "oracle-version.txt.gz",
+      "bytes": 363,
+      "sha256": "b571494790dd7d1b52cc534f96c3854ae5256c4934403af817e5fc515bdd1da8"
+    },
+    {
+      "path": "baseline-reported-cases.json.gz",
+      "bytes": 751,
+      "sha256": "54f6961d241f064a4ac1cbe2addc89d227579ce97cad3f40f6881c6693fa519b"
+    },
+    {
+      "path": "matrix.py.gz",
+      "bytes": 1151,
+      "sha256": "7791fcc08c9a4a562f7880d1daad057ed0273210be6d3367b5f3b279e63cda53"
+    },
+    {
+      "path": "matrix.json.gz",
+      "bytes": 1551,
+      "sha256": "b44d0fc664c9d678803def91bc9628a8be92326ce293411848ecb2e14eac1c31"
+    },
+    {
+      "path": "matrix.log.gz",
+      "bytes": 227,
+      "sha256": "3475fe218bfd7a0baf9e472c7f2e4131d26da1ea47ca809c26bc7727e752d180"
+    },
+    {
+      "path": "driver-builds.json.gz",
+      "bytes": 1009,
+      "sha256": "6bbc534c0269f199ed96d08d8302d4414f415143fe1dcdc218230c408ff697ba"
+    },
+    {
+      "path": "driver-sizes.txt.gz",
+      "bytes": 162,
+      "sha256": "d6d776fc15a9e28f960757d33d75933f6dc45bb4e8eb8a23da2fa8e982ed8cda"
+    },
+    {
+      "path": "driver-gate.log.gz",
+      "bytes": 347,
+      "sha256": "5276122b1e06b63d0a4523b73b79e9d01ae8d35d0d5024d09fc9ba29dc3bbba1"
+    },
+    {
+      "path": "check-sizes.py.gz",
+      "bytes": 865,
+      "sha256": "b75e26d1f7a92b802a87c09588da8245bfa28e8a5de5711c50f78296d1a8a0bb"
+    },
+    {
+      "path": "sizes.log.gz",
+      "bytes": 179,
+      "sha256": "b9eeec6f7e9e29c5f0c6474aefe3cd405e1305993d6aea0e89557303a59bdf10"
+    },
+    {
+      "path": "format.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "gofmt.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "vet.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "source-identity.json.gz",
+      "bytes": 222,
+      "sha256": "96fe55a2eb5a2d6748514ce2ab62af3864acce09cf6355acf40400ce935332c7"
+    },
+    {
+      "path": "record-proofs.py.gz",
+      "bytes": 1944,
+      "sha256": "8d34f1ff3b6c68f3401e07fde109e13b882840a7c1eeb67dd1495bf634c3583c"
+    },
+    {
+      "path": "execution-inputs-logs.tar.gz",
+      "bytes": 1896,
+      "sha256": "5eb9324dab888de90f9e38f9112e20ef65cd9a3aaca0362193c1802dab125db6"
+    }
+  ]
+}

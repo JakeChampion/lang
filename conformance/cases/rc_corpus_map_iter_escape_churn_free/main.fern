@@ -15,23 +15,33 @@
 import "core/int";
 import "core/map";
 import "std/string";
+
 function mk(): i32 {
-    let m: Map[string, i32] = map_new(8);
-    m = m.insert("longkeyaaaaaaaaaaaaaa1", 10);
-    m = m.insert("longkeyaaaaaaaaaaaaaa2", 20);
-    let keys_acc: string[] = [];
-    let vsum: i32 = 0;
-    for (k, v) in m { keys_acc = keys_acc.append(k); vsum = vsum + v; }
-    let am: Map[i32, i32[]] = map_new(8);
-    am = am.insert(1, [100, 200]);
-    let outer: i32[][] = [];
-    let it = am.iter();
-    while (it.has_next()) { outer = outer.append(it.value()); it.advance(); }
-    return keys_acc.len() + vsum + outer[0][0];
+  let m: Map[string, i32] = map_new(8);
+  m = m.insert("longkeyaaaaaaaaaaaaaa1", 10);
+  m = m.insert("longkeyaaaaaaaaaaaaaa2", 20);
+  let keys_acc: string[] = [];
+  let vsum: i32 = 0;
+  for (k, v) in m {
+    keys_acc = keys_acc.append(k);
+    vsum = vsum + v;
+  }
+  let am: Map[i32, i32[]] = map_new(8);
+  am = am.insert(1, [100, 200]);
+  let outer: i32[][] = [];
+  let it = am.iter();
+  for (__mapkey_it, __mapvalue_it) in it {
+    outer = outer.append(__mapvalue_it);
+  }
+  return keys_acc.len() + vsum + outer[0][0];
 }
+
 function main(): i32 {
-    let total: i32 = 0;
-    let k: i32 = 0;
-    while (k < 500) { total = total + mk(); k = k + 1; }
-    return (total - 66000) + __rc_underflow_count();
+  let total: i32 = 0;
+  let k: i32 = 0;
+  while (k < 500) {
+    total = total + mk();
+    k = k + 1;
+  }
+  return total - 66000 + __rc_underflow_count();
 }

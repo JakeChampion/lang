@@ -27,8 +27,8 @@ function test_bytes_body(): test.TestOutcome {
 }
 
 function test_stream_body_from_its_cursor(): test.TestOutcome {
-  let s: Stream = stream.stream_from_bytes("skip me".bytes());
-  let taken: (u8[], Stream) = s.read_n(5);
+  let s: ByteStream = stream.stream_from_bytes("skip me".bytes());
+  let taken: (u8[], ByteStream) = s.read_n(5);
   let resp: HttpResponse = http.stream(200, taken.1);
   if (resp.body_len() != 2) {
     return test.fail("len: " + resp.body_len().to_string());

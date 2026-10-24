@@ -10,6 +10,8 @@ import path — was **kept** and became the implementation of
 `Future[T]`. Read the redesign doc first; treat the CPS-surface parts
 of this plan as historical.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 Companion to the research docs `ASYNC-IMPLEMENTATION-RESEARCH.md`
 (Koka / Lean 4 / Roc / AOT+WASM mechanics) and
 `CONCURRENCY-RESEARCH.md` (the menu + the chosen surface). Those

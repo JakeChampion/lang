@@ -2,6 +2,8 @@
 
 Status: [record] proposal, unstarted (0/5 steps), and not tracked by an issue.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 > Two measured attempts at step 1 (2026-05-28 and 2026-05-31, both recorded
 > below) each regressed code size, and the second diagnosed why: `keyKind`
 > reaches `__map_hash` as a runtime parameter loaded from the Map buffer,

@@ -1,0 +1,67 @@
+{
+  "source_commit": "f6de48388f5afd9bcd01403ad424465b98de91e1",
+  "native_checkpoint": "5531cdfeddf0d90a6c6faf7842aa42a2edb9e053",
+  "prior_source": "e195d3b14115941fd89583206eb72e50a6f5c4b2",
+  "stages": [
+    {
+      "stage": "stage1",
+      "bytes": 14412016,
+      "sha256": "64d0054b523d2e5fa80729b1b921126c1a956e856dbf94f48235e23415659c2c",
+      "byte_identical_to_prior": true
+    },
+    {
+      "stage": "stage2",
+      "bytes": 14419568,
+      "sha256": "489e47e90393b87a746fd6d685f778cd258d65a3fa85e974eaa139e3e59841b4",
+      "byte_identical_to_prior": true
+    },
+    {
+      "stage": "stage3",
+      "bytes": 14419568,
+      "sha256": "489e47e90393b87a746fd6d685f778cd258d65a3fa85e974eaa139e3e59841b4",
+      "byte_identical_to_prior": true
+    }
+  ],
+  "unchanged_source_paths": [
+    "internal/syntax",
+    "internal/check",
+    "internal/oracle",
+    "internal/pkg",
+    "cmd",
+    "conformance",
+    "spec",
+    "site",
+    "internal/stdlib",
+    "bootstrap/stage0.lock"
+  ],
+  "native_source_sha256": "415930a844bfdcf848fb2ec9ae892ceeb53e5dc23f83653b82bdce8fabf4f69c",
+  "go_oracle_sha256": "ba7e42e72f2c19037376784ddd5568306ff04a22d753c9a57be2863ca41b8caa",
+  "matrix_commands": 190,
+  "diagnostic_commands": 54,
+  "checks": [
+    {
+      "suite": "source-guards",
+      "source_scope": "current",
+      "cases": 4,
+      "intentional_skips": 0
+    },
+    {
+      "suite": "sourcelint-final",
+      "source_scope": "current",
+      "cases": 195,
+      "intentional_skips": 0
+    },
+    {
+      "suite": "compiler-followup",
+      "source_scope": "e195d3b14115941fd89583206eb72e50a6f5c4b2",
+      "cases": 563,
+      "intentional_skips": 0
+    },
+    {
+      "suite": "go-regressions",
+      "source_scope": "e195d3b14115941fd89583206eb72e50a6f5c4b2",
+      "cases": 3234,
+      "intentional_skips": 11
+    }
+  ]
+}

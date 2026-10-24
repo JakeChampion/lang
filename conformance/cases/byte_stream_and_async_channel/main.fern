@@ -1,0 +1,61 @@
+import "std/stream" as bytes;
+
+struct Stream { value: i32 }
+
+@import("test:dep/d", "body")
+async function channel(): Stream[u8];
+
+function default(value: i32): Option[u8] {
+  return value as? u8;
+}
+
+function main(): i32 {
+  let reader: ByteStream = bytes.stream_from_string("abc");
+  let first = reader.read_byte();
+  match (first.0) {
+    Some(value) => {
+      if (value != 97) {
+        return 1;
+      }
+    },
+    None => {
+      return 2;
+    }
+  }
+  let tail = first.1.read_all_string();
+  match (tail.0) {
+    Some(text) => {
+      if (text != "bc") {
+        return 3;
+      }
+    },
+    None => {
+      return 8;
+    }
+  }
+  if (tail.1.pos != 3) {
+    return 3;
+  }
+  let local: Stream = Stream { value: 7 };
+  if (local.value != 7) {
+    return 4;
+  }
+  match (default(255)) {
+    Some(value) => {
+      if (value != 255u8) {
+        return 5;
+      }
+    },
+    None => {
+      return 6;
+    }
+  }
+  match (default(256)) {
+    None => {},
+    Some(_) => {
+      return 7;
+    }
+  }
+  print("byte stream");
+  return 0;
+}

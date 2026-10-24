@@ -87,12 +87,12 @@ function test_body_stream_starts_at_the_beginning(): test.TestOutcome {
 }
 
 function test_empty_body_is_an_empty_stream(): test.TestOutcome {
-  let s: Stream = parsed("").body_stream();
+  let s: ByteStream = parsed("").body_stream();
   return test.assert_eq(s.len(), 0);
 }
 
 function test_read_line_walks_the_body(): test.TestOutcome {
-  let s: Stream = parsed("alpha\nbeta\ngamma").body_stream();
+  let s: ByteStream = parsed("alpha\nbeta\ngamma").body_stream();
   let seen: string = "";
   let n: i32 = 0;
   while (n < 4) {
@@ -194,7 +194,7 @@ function test_sourced_read_all_joins_the_chunks(): test.TestOutcome {
 }
 
 function test_sourced_read_line_spans_chunks(): test.TestOutcome {
-  let s: Stream = stream.stream_from_source(scripted(["al", "pha\r\nbe", "ta\n", "gam", "ma"]));
+  let s: ByteStream = stream.stream_from_source(scripted(["al", "pha\r\nbe", "ta\n", "gam", "ma"]));
   let seen: string = "";
   let n: i32 = 0;
   while (n < 5) {
@@ -254,7 +254,7 @@ function option_text(o: Option[string]): string {
 }
 
 function test_sourced_read_byte_ends(): test.TestOutcome {
-  let s: Stream = stream.stream_from_source(scripted(["x"]));
+  let s: ByteStream = stream.stream_from_source(scripted(["x"]));
   let (first, s2) = s.read_byte();
   let (second, s3) = s2.read_byte();
   let got: string = "";
@@ -333,7 +333,7 @@ function test_read_some_answers_each_chunk(): test.TestOutcome {
     },
     fault: cell_new(0), send: (bytes: u8[]): i32 => 0,
   };
-  let s: Stream = stream.stream_from_source(src);
+  let s: ByteStream = stream.stream_from_source(src);
   let (first, s1) = s.read_some();
   let (second, s2) = s1.read_some();
   let (third, s3) = s2.read_some();

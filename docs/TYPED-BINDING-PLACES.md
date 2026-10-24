@@ -2,6 +2,8 @@
 
 Status: [record] slice of the Go typed-ownership pilot (`internal/semir`), deleted 2026-10-04.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 The opt-in typed pipeline now separates source name resolution from binding
 value-flow construction. This is a prerequisite for the conditional availability
 contract in [typed cleanup regions](TYPED-CLEANUP-REGIONS.md), not its activation

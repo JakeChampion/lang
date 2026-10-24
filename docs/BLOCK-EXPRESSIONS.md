@@ -83,7 +83,7 @@ Backend support:
   `s_return(tail)` that irlower's `lower_value_tail` lowers. A lone
   trailing expression with no leading statements stays `[s_return(expr)]`,
   byte-identical to the single-expr branch. Coverage:
-  `internal/testing/e2e/self_host_block_expr_ir_test.go` (x86-64 + wasm IR).
+  `internal/testing/e2ecompiler/self_host_block_expr_ir_test.go` (x86-64 + wasm IR).
 
 ## Semantics
 
@@ -132,10 +132,9 @@ Backend support:
 | Parser | `parser.parseBranchBody` + `branchStmtStart`, wired into `parseIfExpr` and the `match`-expr arm body (`internal/syntax/parser/parser.go`) |
 | Checker | `checker.checkBlockExpr` (child scope → statements → tail type); no-tail → **E061** unless the statements diverge (`stmtsDiverge`) → `never`; `assignable` / `unifyIfArms` / match-arm unifiers fold `never`; numeric settle / `postSettleType` recurse into `Tail` (`internal/check/checker/checker.go`) |
 | Interp | `*ast.BlockExpr` arm in `evalExpr` — child env, exec statements, eval tail; a non-normal `r.flow` unwinds as a `controlFlowSignal` that `execStmt` catches (`internal/oracle/interp/interp.go`) |
-| Compiled lowering | `*ast.BlockExpr` arm in `(*builder).expr` — lower `Stmts` via `b.stmt`, then `Tail` via `b.expr` as the result; a nil (diverging) `Tail` lowers the statements only, leaving the enclosing store unreachable (`internal/oracle/ir/ir.go`) |
 | Self-host parse | `parse_branch_body` + `branch_stmt_start`, wired into `parse_if_chain` and the match-expr arm body (`compiler/parser.fern`) |
-| Self-host lower | `lower_value_tail` — leading statements then the value-producing terminal (`compiler/irlower.fern`) |
-| Other passes | `monomorph`, `closureconv`, `boxcapture`, `modload`, `shadowrename`, `treeshake`, `printer`, `format` each recurse into `Stmts` + `Tail` |
+| Compiled value blocks | The `value_block` route processes the statements before the final value (`compiler/semsource.fern`). Every `-target` build uses this compiler. |
+| Other passes | The Go syntax visitors (`internal/syntax/ast/walk.go`) and self-hosted visitors (`compiler/astwalk.fern`) traverse the block contents. |
 
 ## Landed (`#4405`)
 

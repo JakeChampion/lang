@@ -9,6 +9,8 @@ component-model-async import path) are kept — see *Keep / cut* below.
 Written with no users in the field, so we were free to remove the
 `concurrent` / `await` / `race` surface rather than evolve it.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 ## TL;DR
 
 Fern accidentally grew **two** async systems:

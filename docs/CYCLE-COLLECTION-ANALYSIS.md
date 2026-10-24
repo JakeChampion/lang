@@ -5,6 +5,8 @@ Status: [record] design analysis; its recommendation was adopted and the cycle
 is no longer constructible (2026-08-06 update below). No compiler code changed
 by this doc.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 > **UPDATE (2026-06-02): `state { }` and the persistent heap are
 > gone.** This analysis repeatedly frames process-lifetime cycles
 > around `state { }` module variables and proposes collectors

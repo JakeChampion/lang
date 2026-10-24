@@ -1,0 +1,1066 @@
+[
+  {
+    "name": "map_iter_struct_value-Go-check",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/committed-oracle",
+      "-check",
+      "/workspace/lang-map-iterator-current/conformance/cases/map_iter_struct_value/main.fern"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "map_iter_struct_value-self-check",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/argument-diags-validation/bootstrap/stage3",
+      "-check",
+      "/workspace/lang-map-iterator-current/conformance/cases/map_iter_struct_value/main.fern",
+      "/workspace/lang-map-iterator-current/internal/stdlib"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "map_iter_struct_value-Go-interp",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/committed-oracle",
+      "-interp",
+      "/workspace/lang-map-iterator-current/conformance/cases/map_iter_struct_value/main.fern"
+    ],
+    "expected_exit": 42,
+    "exit": 42,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "map_iter_struct_value-self-interp",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/argument-diags-validation/bootstrap/stage3",
+      "-interp",
+      "/workspace/lang-map-iterator-current/conformance/cases/map_iter_struct_value/main.fern",
+      "/workspace/lang-map-iterator-current/internal/stdlib"
+    ],
+    "expected_exit": 42,
+    "exit": 42,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "map_iter_struct_value-compile-x86-64-linux",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/argument-diags-validation/bootstrap/stage3",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/scratch/lang-map-iterator/map_iter_struct_value-x86-64-linux",
+      "/workspace/lang-map-iterator-current/conformance/cases/map_iter_struct_value/main.fern",
+      "/workspace/lang-map-iterator-current/internal/stdlib"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "map_iter_struct_value-run-x86-64-linux",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/map_iter_struct_value-x86-64-linux"
+    ],
+    "expected_exit": 42,
+    "exit": 42,
+    "stdout": "",
+    "stderr": "leakcheck: allocs=26 frees=26 live_bytes=0\n"
+  },
+  {
+    "name": "map_iter_struct_value-compile-arm64-linux",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/argument-diags-validation/bootstrap/stage3",
+      "-target",
+      "arm64-linux",
+      "-o",
+      "/workspace/scratch/lang-map-iterator/map_iter_struct_value-arm64-linux",
+      "/workspace/lang-map-iterator-current/conformance/cases/map_iter_struct_value/main.fern",
+      "/workspace/lang-map-iterator-current/internal/stdlib"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "map_iter_struct_value-run-arm64-linux",
+    "args": [
+      "qemu-aarch64",
+      "/workspace/scratch/lang-map-iterator/map_iter_struct_value-arm64-linux"
+    ],
+    "expected_exit": 42,
+    "exit": 42,
+    "stdout": "",
+    "stderr": "leakcheck: allocs=26 frees=26 live_bytes=0\n"
+  },
+  {
+    "name": "map_iter_struct_value-compile-wasm32-wasi",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/argument-diags-validation/bootstrap/stage3",
+      "-target",
+      "wasm32-wasi",
+      "-o",
+      "/workspace/scratch/lang-map-iterator/map_iter_struct_value-wasm32-wasi",
+      "-emit",
+      "command-module",
+      "/workspace/lang-map-iterator-current/conformance/cases/map_iter_struct_value/main.fern",
+      "/workspace/lang-map-iterator-current/internal/stdlib"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "map_iter_struct_value-run-wasm32-wasi",
+    "args": [
+      "wasmtime",
+      "run",
+      "/workspace/scratch/lang-map-iterator/map_iter_struct_value-wasm32-wasi"
+    ],
+    "expected_exit": 42,
+    "exit": 42,
+    "stdout": "",
+    "stderr": "leakcheck: allocs=26 frees=26 live_bytes=0\n"
+  },
+  {
+    "name": "map_iter_unannotated-Go-check",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/committed-oracle",
+      "-check",
+      "/workspace/lang-map-iterator-current/conformance/cases/map_iter_unannotated/main.fern"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "map_iter_unannotated-self-check",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/argument-diags-validation/bootstrap/stage3",
+      "-check",
+      "/workspace/lang-map-iterator-current/conformance/cases/map_iter_unannotated/main.fern",
+      "/workspace/lang-map-iterator-current/internal/stdlib"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "map_iter_unannotated-Go-interp",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/committed-oracle",
+      "-interp",
+      "/workspace/lang-map-iterator-current/conformance/cases/map_iter_unannotated/main.fern"
+    ],
+    "expected_exit": 42,
+    "exit": 42,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "map_iter_unannotated-self-interp",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/argument-diags-validation/bootstrap/stage3",
+      "-interp",
+      "/workspace/lang-map-iterator-current/conformance/cases/map_iter_unannotated/main.fern",
+      "/workspace/lang-map-iterator-current/internal/stdlib"
+    ],
+    "expected_exit": 42,
+    "exit": 42,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "map_iter_unannotated-compile-x86-64-linux",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/argument-diags-validation/bootstrap/stage3",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/scratch/lang-map-iterator/map_iter_unannotated-x86-64-linux",
+      "/workspace/lang-map-iterator-current/conformance/cases/map_iter_unannotated/main.fern",
+      "/workspace/lang-map-iterator-current/internal/stdlib"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "map_iter_unannotated-run-x86-64-linux",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/map_iter_unannotated-x86-64-linux"
+    ],
+    "expected_exit": 42,
+    "exit": 42,
+    "stdout": "",
+    "stderr": "leakcheck: allocs=18 frees=18 live_bytes=0\n"
+  },
+  {
+    "name": "map_iter_unannotated-compile-arm64-linux",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/argument-diags-validation/bootstrap/stage3",
+      "-target",
+      "arm64-linux",
+      "-o",
+      "/workspace/scratch/lang-map-iterator/map_iter_unannotated-arm64-linux",
+      "/workspace/lang-map-iterator-current/conformance/cases/map_iter_unannotated/main.fern",
+      "/workspace/lang-map-iterator-current/internal/stdlib"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "map_iter_unannotated-run-arm64-linux",
+    "args": [
+      "qemu-aarch64",
+      "/workspace/scratch/lang-map-iterator/map_iter_unannotated-arm64-linux"
+    ],
+    "expected_exit": 42,
+    "exit": 42,
+    "stdout": "",
+    "stderr": "leakcheck: allocs=18 frees=18 live_bytes=0\n"
+  },
+  {
+    "name": "map_iter_unannotated-compile-wasm32-wasi",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/argument-diags-validation/bootstrap/stage3",
+      "-target",
+      "wasm32-wasi",
+      "-o",
+      "/workspace/scratch/lang-map-iterator/map_iter_unannotated-wasm32-wasi",
+      "-emit",
+      "command-module",
+      "/workspace/lang-map-iterator-current/conformance/cases/map_iter_unannotated/main.fern",
+      "/workspace/lang-map-iterator-current/internal/stdlib"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "map_iter_unannotated-run-wasm32-wasi",
+    "args": [
+      "wasmtime",
+      "run",
+      "/workspace/scratch/lang-map-iterator/map_iter_unannotated-wasm32-wasi"
+    ],
+    "expected_exit": 42,
+    "exit": 42,
+    "stdout": "",
+    "stderr": "leakcheck: allocs=18 frees=18 live_bytes=0\n"
+  },
+  {
+    "name": "map_str_iter-Go-check",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/committed-oracle",
+      "-check",
+      "/workspace/lang-map-iterator-current/conformance/cases/map_str_iter/main.fern"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "map_str_iter-self-check",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/argument-diags-validation/bootstrap/stage3",
+      "-check",
+      "/workspace/lang-map-iterator-current/conformance/cases/map_str_iter/main.fern",
+      "/workspace/lang-map-iterator-current/internal/stdlib"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "map_str_iter-Go-interp",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/committed-oracle",
+      "-interp",
+      "/workspace/lang-map-iterator-current/conformance/cases/map_str_iter/main.fern"
+    ],
+    "expected_exit": 60,
+    "exit": 60,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "map_str_iter-self-interp",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/argument-diags-validation/bootstrap/stage3",
+      "-interp",
+      "/workspace/lang-map-iterator-current/conformance/cases/map_str_iter/main.fern",
+      "/workspace/lang-map-iterator-current/internal/stdlib"
+    ],
+    "expected_exit": 60,
+    "exit": 60,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "map_str_iter-compile-x86-64-linux",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/argument-diags-validation/bootstrap/stage3",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/scratch/lang-map-iterator/map_str_iter-x86-64-linux",
+      "/workspace/lang-map-iterator-current/conformance/cases/map_str_iter/main.fern",
+      "/workspace/lang-map-iterator-current/internal/stdlib"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "map_str_iter-run-x86-64-linux",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/map_str_iter-x86-64-linux"
+    ],
+    "expected_exit": 60,
+    "exit": 60,
+    "stdout": "",
+    "stderr": "leakcheck: allocs=13 frees=13 live_bytes=0\n"
+  },
+  {
+    "name": "map_str_iter-compile-arm64-linux",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/argument-diags-validation/bootstrap/stage3",
+      "-target",
+      "arm64-linux",
+      "-o",
+      "/workspace/scratch/lang-map-iterator/map_str_iter-arm64-linux",
+      "/workspace/lang-map-iterator-current/conformance/cases/map_str_iter/main.fern",
+      "/workspace/lang-map-iterator-current/internal/stdlib"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "map_str_iter-run-arm64-linux",
+    "args": [
+      "qemu-aarch64",
+      "/workspace/scratch/lang-map-iterator/map_str_iter-arm64-linux"
+    ],
+    "expected_exit": 60,
+    "exit": 60,
+    "stdout": "",
+    "stderr": "leakcheck: allocs=13 frees=13 live_bytes=0\n"
+  },
+  {
+    "name": "map_str_iter-compile-wasm32-wasi",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/argument-diags-validation/bootstrap/stage3",
+      "-target",
+      "wasm32-wasi",
+      "-o",
+      "/workspace/scratch/lang-map-iterator/map_str_iter-wasm32-wasi",
+      "-emit",
+      "command-module",
+      "/workspace/lang-map-iterator-current/conformance/cases/map_str_iter/main.fern",
+      "/workspace/lang-map-iterator-current/internal/stdlib"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "map_str_iter-run-wasm32-wasi",
+    "args": [
+      "wasmtime",
+      "run",
+      "/workspace/scratch/lang-map-iterator/map_str_iter-wasm32-wasi"
+    ],
+    "expected_exit": 60,
+    "exit": 60,
+    "stdout": "",
+    "stderr": "leakcheck: allocs=13 frees=13 live_bytes=0\n"
+  },
+  {
+    "name": "map_struct_value_field-Go-check",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/committed-oracle",
+      "-check",
+      "/workspace/lang-map-iterator-current/conformance/cases/map_struct_value_field/main.fern"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "map_struct_value_field-self-check",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/argument-diags-validation/bootstrap/stage3",
+      "-check",
+      "/workspace/lang-map-iterator-current/conformance/cases/map_struct_value_field/main.fern",
+      "/workspace/lang-map-iterator-current/internal/stdlib"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "map_struct_value_field-Go-interp",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/committed-oracle",
+      "-interp",
+      "/workspace/lang-map-iterator-current/conformance/cases/map_struct_value_field/main.fern"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "map_struct_value_field-self-interp",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/argument-diags-validation/bootstrap/stage3",
+      "-interp",
+      "/workspace/lang-map-iterator-current/conformance/cases/map_struct_value_field/main.fern",
+      "/workspace/lang-map-iterator-current/internal/stdlib"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "map_struct_value_field-compile-x86-64-linux",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/argument-diags-validation/bootstrap/stage3",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/scratch/lang-map-iterator/map_struct_value_field-x86-64-linux",
+      "/workspace/lang-map-iterator-current/conformance/cases/map_struct_value_field/main.fern",
+      "/workspace/lang-map-iterator-current/internal/stdlib"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "map_struct_value_field-run-x86-64-linux",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/map_struct_value_field-x86-64-linux"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": "leakcheck: allocs=10 frees=10 live_bytes=0\n"
+  },
+  {
+    "name": "map_struct_value_field-compile-arm64-linux",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/argument-diags-validation/bootstrap/stage3",
+      "-target",
+      "arm64-linux",
+      "-o",
+      "/workspace/scratch/lang-map-iterator/map_struct_value_field-arm64-linux",
+      "/workspace/lang-map-iterator-current/conformance/cases/map_struct_value_field/main.fern",
+      "/workspace/lang-map-iterator-current/internal/stdlib"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "map_struct_value_field-run-arm64-linux",
+    "args": [
+      "qemu-aarch64",
+      "/workspace/scratch/lang-map-iterator/map_struct_value_field-arm64-linux"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": "leakcheck: allocs=10 frees=10 live_bytes=0\n"
+  },
+  {
+    "name": "map_struct_value_field-compile-wasm32-wasi",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/argument-diags-validation/bootstrap/stage3",
+      "-target",
+      "wasm32-wasi",
+      "-o",
+      "/workspace/scratch/lang-map-iterator/map_struct_value_field-wasm32-wasi",
+      "-emit",
+      "command-module",
+      "/workspace/lang-map-iterator-current/conformance/cases/map_struct_value_field/main.fern",
+      "/workspace/lang-map-iterator-current/internal/stdlib"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "map_struct_value_field-run-wasm32-wasi",
+    "args": [
+      "wasmtime",
+      "run",
+      "/workspace/scratch/lang-map-iterator/map_struct_value_field-wasm32-wasi"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": "leakcheck: allocs=10 frees=10 live_bytes=0\n"
+  },
+  {
+    "name": "rc_corpus_map_iter_escape_churn_free-Go-check",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/committed-oracle",
+      "-check",
+      "/workspace/lang-map-iterator-current/conformance/cases/rc_corpus_map_iter_escape_churn_free/main.fern"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "rc_corpus_map_iter_escape_churn_free-self-check",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/argument-diags-validation/bootstrap/stage3",
+      "-check",
+      "/workspace/lang-map-iterator-current/conformance/cases/rc_corpus_map_iter_escape_churn_free/main.fern",
+      "/workspace/lang-map-iterator-current/internal/stdlib"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "rc_corpus_map_iter_escape_churn_free-Go-interp",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/committed-oracle",
+      "-interp",
+      "/workspace/lang-map-iterator-current/conformance/cases/rc_corpus_map_iter_escape_churn_free/main.fern"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "rc_corpus_map_iter_escape_churn_free-self-interp",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/argument-diags-validation/bootstrap/stage3",
+      "-interp",
+      "/workspace/lang-map-iterator-current/conformance/cases/rc_corpus_map_iter_escape_churn_free/main.fern",
+      "/workspace/lang-map-iterator-current/internal/stdlib"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "rc_corpus_map_iter_escape_churn_free-compile-x86-64-linux",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/argument-diags-validation/bootstrap/stage3",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/scratch/lang-map-iterator/rc_corpus_map_iter_escape_churn_free-x86-64-linux",
+      "/workspace/lang-map-iterator-current/conformance/cases/rc_corpus_map_iter_escape_churn_free/main.fern",
+      "/workspace/lang-map-iterator-current/internal/stdlib"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "rc_corpus_map_iter_escape_churn_free-run-x86-64-linux",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/rc_corpus_map_iter_escape_churn_free-x86-64-linux"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": "leakcheck: allocs=7000 frees=7000 live_bytes=0\n"
+  },
+  {
+    "name": "rc_corpus_map_iter_escape_churn_free-compile-arm64-linux",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/argument-diags-validation/bootstrap/stage3",
+      "-target",
+      "arm64-linux",
+      "-o",
+      "/workspace/scratch/lang-map-iterator/rc_corpus_map_iter_escape_churn_free-arm64-linux",
+      "/workspace/lang-map-iterator-current/conformance/cases/rc_corpus_map_iter_escape_churn_free/main.fern",
+      "/workspace/lang-map-iterator-current/internal/stdlib"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "rc_corpus_map_iter_escape_churn_free-run-arm64-linux",
+    "args": [
+      "qemu-aarch64",
+      "/workspace/scratch/lang-map-iterator/rc_corpus_map_iter_escape_churn_free-arm64-linux"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": "leakcheck: allocs=7000 frees=7000 live_bytes=0\n"
+  },
+  {
+    "name": "rc_corpus_map_iter_escape_churn_free-compile-wasm32-wasi",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/argument-diags-validation/bootstrap/stage3",
+      "-target",
+      "wasm32-wasi",
+      "-o",
+      "/workspace/scratch/lang-map-iterator/rc_corpus_map_iter_escape_churn_free-wasm32-wasi",
+      "-emit",
+      "command-module",
+      "/workspace/lang-map-iterator-current/conformance/cases/rc_corpus_map_iter_escape_churn_free/main.fern",
+      "/workspace/lang-map-iterator-current/internal/stdlib"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "rc_corpus_map_iter_escape_churn_free-run-wasm32-wasi",
+    "args": [
+      "wasmtime",
+      "run",
+      "/workspace/scratch/lang-map-iterator/rc_corpus_map_iter_escape_churn_free-wasm32-wasi"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": "leakcheck: allocs=7000 frees=7000 live_bytes=0\n"
+  },
+  {
+    "name": "rc_corpus_map_iter_string_kv_retain_churn_free-Go-check",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/committed-oracle",
+      "-check",
+      "/workspace/lang-map-iterator-current/conformance/cases/rc_corpus_map_iter_string_kv_retain_churn_free/main.fern"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "rc_corpus_map_iter_string_kv_retain_churn_free-self-check",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/argument-diags-validation/bootstrap/stage3",
+      "-check",
+      "/workspace/lang-map-iterator-current/conformance/cases/rc_corpus_map_iter_string_kv_retain_churn_free/main.fern",
+      "/workspace/lang-map-iterator-current/internal/stdlib"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "rc_corpus_map_iter_string_kv_retain_churn_free-Go-interp",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/committed-oracle",
+      "-interp",
+      "/workspace/lang-map-iterator-current/conformance/cases/rc_corpus_map_iter_string_kv_retain_churn_free/main.fern"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "rc_corpus_map_iter_string_kv_retain_churn_free-self-interp",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/argument-diags-validation/bootstrap/stage3",
+      "-interp",
+      "/workspace/lang-map-iterator-current/conformance/cases/rc_corpus_map_iter_string_kv_retain_churn_free/main.fern",
+      "/workspace/lang-map-iterator-current/internal/stdlib"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "rc_corpus_map_iter_string_kv_retain_churn_free-compile-x86-64-linux",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/argument-diags-validation/bootstrap/stage3",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/scratch/lang-map-iterator/rc_corpus_map_iter_string_kv_retain_churn_free-x86-64-linux",
+      "/workspace/lang-map-iterator-current/conformance/cases/rc_corpus_map_iter_string_kv_retain_churn_free/main.fern",
+      "/workspace/lang-map-iterator-current/internal/stdlib"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "rc_corpus_map_iter_string_kv_retain_churn_free-run-x86-64-linux",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/rc_corpus_map_iter_string_kv_retain_churn_free-x86-64-linux"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": "leakcheck: allocs=6600 frees=6600 live_bytes=0\n"
+  },
+  {
+    "name": "rc_corpus_map_iter_string_kv_retain_churn_free-compile-arm64-linux",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/argument-diags-validation/bootstrap/stage3",
+      "-target",
+      "arm64-linux",
+      "-o",
+      "/workspace/scratch/lang-map-iterator/rc_corpus_map_iter_string_kv_retain_churn_free-arm64-linux",
+      "/workspace/lang-map-iterator-current/conformance/cases/rc_corpus_map_iter_string_kv_retain_churn_free/main.fern",
+      "/workspace/lang-map-iterator-current/internal/stdlib"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "rc_corpus_map_iter_string_kv_retain_churn_free-run-arm64-linux",
+    "args": [
+      "qemu-aarch64",
+      "/workspace/scratch/lang-map-iterator/rc_corpus_map_iter_string_kv_retain_churn_free-arm64-linux"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": "leakcheck: allocs=6600 frees=6600 live_bytes=0\n"
+  },
+  {
+    "name": "rc_corpus_map_iter_string_kv_retain_churn_free-compile-wasm32-wasi",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/argument-diags-validation/bootstrap/stage3",
+      "-target",
+      "wasm32-wasi",
+      "-o",
+      "/workspace/scratch/lang-map-iterator/rc_corpus_map_iter_string_kv_retain_churn_free-wasm32-wasi",
+      "-emit",
+      "command-module",
+      "/workspace/lang-map-iterator-current/conformance/cases/rc_corpus_map_iter_string_kv_retain_churn_free/main.fern",
+      "/workspace/lang-map-iterator-current/internal/stdlib"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "rc_corpus_map_iter_string_kv_retain_churn_free-run-wasm32-wasi",
+    "args": [
+      "wasmtime",
+      "run",
+      "/workspace/scratch/lang-map-iterator/rc_corpus_map_iter_string_kv_retain_churn_free-wasm32-wasi"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": "leakcheck: allocs=6600 frees=6600 live_bytes=0\n"
+  },
+  {
+    "name": "map_iterator_protocol-Go-check",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/committed-oracle",
+      "-check",
+      "/workspace/lang-map-iterator-current/conformance/cases/map_iterator_protocol/main.fern"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "map_iterator_protocol-self-check",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/argument-diags-validation/bootstrap/stage3",
+      "-check",
+      "/workspace/lang-map-iterator-current/conformance/cases/map_iterator_protocol/main.fern",
+      "/workspace/lang-map-iterator-current/internal/stdlib"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "map_iterator_protocol-Go-interp",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/committed-oracle",
+      "-interp",
+      "/workspace/lang-map-iterator-current/conformance/cases/map_iterator_protocol/main.fern"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "map_iterator_protocol-self-interp",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/argument-diags-validation/bootstrap/stage3",
+      "-interp",
+      "/workspace/lang-map-iterator-current/conformance/cases/map_iterator_protocol/main.fern",
+      "/workspace/lang-map-iterator-current/internal/stdlib"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "map_iterator_protocol-compile-x86-64-linux",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/argument-diags-validation/bootstrap/stage3",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/scratch/lang-map-iterator/map_iterator_protocol-x86-64-linux",
+      "/workspace/lang-map-iterator-current/conformance/cases/map_iterator_protocol/main.fern",
+      "/workspace/lang-map-iterator-current/internal/stdlib"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "map_iterator_protocol-run-x86-64-linux",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/map_iterator_protocol-x86-64-linux"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": "leakcheck: allocs=83 frees=83 live_bytes=0\n"
+  },
+  {
+    "name": "map_iterator_protocol-compile-arm64-linux",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/argument-diags-validation/bootstrap/stage3",
+      "-target",
+      "arm64-linux",
+      "-o",
+      "/workspace/scratch/lang-map-iterator/map_iterator_protocol-arm64-linux",
+      "/workspace/lang-map-iterator-current/conformance/cases/map_iterator_protocol/main.fern",
+      "/workspace/lang-map-iterator-current/internal/stdlib"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "map_iterator_protocol-run-arm64-linux",
+    "args": [
+      "qemu-aarch64",
+      "/workspace/scratch/lang-map-iterator/map_iterator_protocol-arm64-linux"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": "leakcheck: allocs=83 frees=83 live_bytes=0\n"
+  },
+  {
+    "name": "map_iterator_protocol-compile-wasm32-wasi",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/argument-diags-validation/bootstrap/stage3",
+      "-target",
+      "wasm32-wasi",
+      "-o",
+      "/workspace/scratch/lang-map-iterator/map_iterator_protocol-wasm32-wasi",
+      "-emit",
+      "command-module",
+      "/workspace/lang-map-iterator-current/conformance/cases/map_iterator_protocol/main.fern",
+      "/workspace/lang-map-iterator-current/internal/stdlib"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "map_iterator_protocol-run-wasm32-wasi",
+    "args": [
+      "wasmtime",
+      "run",
+      "/workspace/scratch/lang-map-iterator/map_iterator_protocol-wasm32-wasi"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": "leakcheck: allocs=83 frees=83 live_bytes=0\n"
+  },
+  {
+    "name": "iterator_nested_tuple_adapter-Go-check",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/committed-oracle",
+      "-check",
+      "/workspace/lang-map-iterator-current/conformance/cases/iterator_nested_tuple_adapter/main.fern"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "iterator_nested_tuple_adapter-self-check",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/argument-diags-validation/bootstrap/stage3",
+      "-check",
+      "/workspace/lang-map-iterator-current/conformance/cases/iterator_nested_tuple_adapter/main.fern",
+      "/workspace/lang-map-iterator-current/internal/stdlib"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "iterator_nested_tuple_adapter-Go-interp",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/committed-oracle",
+      "-interp",
+      "/workspace/lang-map-iterator-current/conformance/cases/iterator_nested_tuple_adapter/main.fern"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "iterator_nested_tuple_adapter-self-interp",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/argument-diags-validation/bootstrap/stage3",
+      "-interp",
+      "/workspace/lang-map-iterator-current/conformance/cases/iterator_nested_tuple_adapter/main.fern",
+      "/workspace/lang-map-iterator-current/internal/stdlib"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "iterator_nested_tuple_adapter-compile-x86-64-linux",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/argument-diags-validation/bootstrap/stage3",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/scratch/lang-map-iterator/iterator_nested_tuple_adapter-x86-64-linux",
+      "/workspace/lang-map-iterator-current/conformance/cases/iterator_nested_tuple_adapter/main.fern",
+      "/workspace/lang-map-iterator-current/internal/stdlib"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "iterator_nested_tuple_adapter-run-x86-64-linux",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/iterator_nested_tuple_adapter-x86-64-linux"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": "leakcheck: allocs=22 frees=22 live_bytes=0\n"
+  },
+  {
+    "name": "iterator_nested_tuple_adapter-compile-arm64-linux",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/argument-diags-validation/bootstrap/stage3",
+      "-target",
+      "arm64-linux",
+      "-o",
+      "/workspace/scratch/lang-map-iterator/iterator_nested_tuple_adapter-arm64-linux",
+      "/workspace/lang-map-iterator-current/conformance/cases/iterator_nested_tuple_adapter/main.fern",
+      "/workspace/lang-map-iterator-current/internal/stdlib"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "iterator_nested_tuple_adapter-run-arm64-linux",
+    "args": [
+      "qemu-aarch64",
+      "/workspace/scratch/lang-map-iterator/iterator_nested_tuple_adapter-arm64-linux"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": "leakcheck: allocs=22 frees=22 live_bytes=0\n"
+  },
+  {
+    "name": "iterator_nested_tuple_adapter-compile-wasm32-wasi",
+    "args": [
+      "/workspace/scratch/lang-map-iterator/argument-diags-validation/bootstrap/stage3",
+      "-target",
+      "wasm32-wasi",
+      "-o",
+      "/workspace/scratch/lang-map-iterator/iterator_nested_tuple_adapter-wasm32-wasi",
+      "-emit",
+      "command-module",
+      "/workspace/lang-map-iterator-current/conformance/cases/iterator_nested_tuple_adapter/main.fern",
+      "/workspace/lang-map-iterator-current/internal/stdlib"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "iterator_nested_tuple_adapter-run-wasm32-wasi",
+    "args": [
+      "wasmtime",
+      "run",
+      "/workspace/scratch/lang-map-iterator/iterator_nested_tuple_adapter-wasm32-wasi"
+    ],
+    "expected_exit": 0,
+    "exit": 0,
+    "stdout": "",
+    "stderr": "leakcheck: allocs=22 frees=22 live_bytes=0\n"
+  }
+]

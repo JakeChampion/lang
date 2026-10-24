@@ -2,6 +2,8 @@
 
 Status: [record] never adopted; the Go `internal/ssa` layer and native backends it targeted were deleted in 2026-10.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 > **2026-09-15: still PROPOSED, and the case for it has grown.** The
 > re-evaluation date passed without a call; see `docs/SSA-DECISION.md` →
 > "Where this stands (2026-09-15)".

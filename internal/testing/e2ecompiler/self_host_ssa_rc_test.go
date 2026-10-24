@@ -296,19 +296,7 @@ function main(): i32 {
     let genericPlan = ssaunits.plan(genericFunc, [2], ssaunits.no_view());
     if (!genericPlan.ok) { eprint(genericPlan.why); return 7; }
     if (!ssarc.lower(genericFunc, [2], genericPlan, irtables.struct_tab_empty(), ssaunits.no_grows(), util.name_index([]), ssaunits.no_view(), suspend.none()).ok) { return 8; }
-    // A map cursor holds a unit of its map, so the planner admits it exactly
-    // when it admits the map: a key or a value record with no schema in the
-    // table refuses the cursor as it refuses the map.
-    let cursorType: typeinfo.Type = typeinfo.TypeStruct { name: "MapIter", args: [typeinfo.TypeStruct { name: "Missing", args: [] }, typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false }] };
-    let cursorFunc = ssasem.Func { source_positions: ssasem.no_source(),  envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: g, values: [cursorType], params: [cursorType], result: cursorType, records: semrecords.no_records(), enums: [], calls: [] };
-    let cursorMap: typeinfo.Type = typeinfo.TypeMap { key: typeinfo.TypeStruct { name: "Missing", args: [] }, value: typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false } };
-    let cursorMapPlan = ssaunits.plan(ssasem.Func { ...cursorFunc, values: [cursorMap], params: [cursorMap], result: cursorMap }, [2], ssaunits.no_view());
-    let cursorPlan = ssaunits.plan(cursorFunc, [2], ssaunits.no_view());
-    if (cursorMapPlan.ok || cursorPlan.ok || cursorPlan.why != cursorMapPlan.why) { eprint(cursorPlan.why); return 211; }
-    let valueCursorType: typeinfo.Type = typeinfo.TypeStruct { name: "MapIter", args: [typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false }, typeinfo.TypeStruct { name: "Missing", args: [] }] };
-    let valueCursorFunc = ssasem.Func { ...cursorFunc, values: [valueCursorType], params: [valueCursorType], result: valueCursorType };
-    if (ssaunits.plan(valueCursorFunc, [2], ssaunits.no_view()).ok) { return 213; }
-    // So does a wide array field. The walk visits only the REFERENCE
+    // A wide array field is supported. The walk visits only the REFERENCE
     // fields, and an array of scalars has no element to visit, so it needs its
     // own box released and nothing more.
     let wideField = semrecords.Record { views: false, nests_func: false, ty: recordType, fields: [semrecords.Field { name: "xs", ty: f.result },

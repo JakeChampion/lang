@@ -4531,8 +4531,6 @@ pub struct TyMapStr { val: Ty }
 
 pub struct TyMapI32 { val: Ty }
 
-pub struct TyMapIter { val: Ty }
-
 pub struct TyCell { val: Ty }
 
 pub struct TyStructNamed { name: string }
@@ -4540,7 +4538,7 @@ pub struct TyStructNamed { name: string }
 pub type Ty = TyI32 | TyU8 | TyU32 | TyU64 | TyI64 | TyUsize | TyBool | TyString | TyF64 | TyStruct
   | TyTuple | TyUnknown | TyArray | TyArrayI32 | TyArrayU32 | TyArrayU64 | TyArrayI64
   | TyArrayString | TyFnAny | TyMapAny | TyOption | TyResult | TyFn | TyMapStr | TyMapI32
-  | TyMapIter | TyCell | TyStructNamed;
+  | TyCell | TyStructNamed;
 
 pub function ty_named(name: string): Ty {
   return TyStructNamed { name: name };
@@ -4654,10 +4652,6 @@ pub function ty_map_i32(x: Ty): Ty {
   return TyMapI32 { val: x };
 }
 
-pub function ty_mapiter(x: Ty): Ty {
-  return TyMapIter { val: x };
-}
-
 pub function ty_cell(x: Ty): Ty {
   return TyCell { val: x };
 }
@@ -4763,9 +4757,6 @@ pub function ty_ord(t: Ty): i32 {
     TyMapI32(_) => {
       return 23;
     },
-    TyMapIter(_) => {
-      return 24;
-    },
     TyStructNamed(_) => {
       return 25;
     },
@@ -4836,18 +4827,6 @@ pub function is_map(t: Ty): boolean {
       return true;
     },
     TyMapI32(_) => {
-      return true;
-    },
-    _ => {
-      return false;
-    }
-  }
-  return false;
-}
-
-pub function is_mapiter(t: Ty): boolean {
-  match (t) {
-    TyMapIter(_) => {
       return true;
     },
     _ => {
@@ -5088,18 +5067,6 @@ pub function fn_ret(t: Ty): Ty {
   return ty_unknown();
 }
 
-pub function mapiter_val(t: Ty): Ty {
-  match (t) {
-    TyMapIter(x) => {
-      return x.val;
-    },
-    _ => {
-      return ty_unknown();
-    }
-  }
-  return ty_unknown();
-}
-
 pub function map_val(t: Ty): Ty {
   match (t) {
     TyMapStr(x) => {
@@ -5192,9 +5159,6 @@ pub function ty_tag(t: Ty): string {
     TyMapI32(x) => {
       return "mapI:" + ty_tag(x.val);
     },
-    TyMapIter(x) => {
-      return "mapiter:" + ty_tag(x.val);
-    },
     TyCell(x) => {
       return "cell:" + ty_tag(x.val);
     },
@@ -5257,16 +5221,6 @@ pub function ty_eq(a: Ty, b: Ty): boolean {
         }
       }
     },
-    TyMapIter(x) => {
-      match (b) {
-        TyMapIter(y) => {
-          return ty_eq(x.val, y.val);
-        },
-        _ => {
-          return false;
-        }
-      }
-    },
     TyCell(x) => {
       match (b) {
         TyCell(y) => {
@@ -5322,12 +5276,7 @@ pub function ty_from_ref(t: parser.TypeRef): Ty {
     return ty_unknown();
   }
   if (t.args.len() > 0) {
-    if (t.base == "MapIter") {
-      if (t.args.len() >= 2) {
-        return ty_mapiter(ty_from_ref(t.args[1]));
-      }
-      return ty_mapiter(ty_unknown());
-    }
+    // Map[V] / Result[T] with only ONE arg (no comma in the
     if (t.base == "Map") {
       if (t.args.len() >= 2 && ty_is_i32(ty_from_ref(t.args[0]))) {
         return ty_map_i32(ty_from_ref(t.args[1]));
@@ -5526,18 +5475,7 @@ function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: Emi
     }
     return ty_array();
   }
-  if (is_map(rt) && fa.field == "iter") {
-    return ty_mapiter(map_val(rt));
-  }
-  if (is_mapiter(rt) && fa.field == "has_next") {
-    return ty_bool();
-  }
-  if (is_mapiter(rt) && fa.field == "key") {
-    return ty_string();
-  }
-  if (is_mapiter(rt) && fa.field == "value") {
-    return mapiter_val(rt);
-  }
+
   if ((is_int_tag(rt) || ty_is_string(rt)) && fa.field == "to_string") {
     return ty_string();
   }

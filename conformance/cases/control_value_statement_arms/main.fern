@@ -1,0 +1,37 @@
+import "std/i32";
+
+struct Point { x: i32, y: i32 }
+
+enum E { A(i32), B }
+
+function main(): i32 {
+  match (E.A(2)) {
+    E.A(v) => {
+      print(v.to_string());
+    },
+    _ => {
+      print("bad");
+    }
+  }
+  match ((1, 2)) {
+    (1, x) => {
+      print(x.to_string());
+    },
+    _ => {}
+  }
+  let p = Point { x: 2, y: 3 };
+  match (p) {
+    Point { x, y } => {
+      print((x + y).to_string());
+    }
+  }
+  match (1) {
+    1 => {
+      if (true) {
+        print("ok");
+      }
+    },
+    _ => {}
+  }
+  return 0;
+}

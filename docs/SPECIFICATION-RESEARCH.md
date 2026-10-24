@@ -5,6 +5,8 @@ exists to answer "would a spec pay for itself, and if so what kind?"
 before any of it is built. Claims about Fern's current state were
 checked against the code, not the docs.
 
+This study names historical or proposed source paths. The reference documentation identifies current files.
+
 Companion reading: `docs/NATIVE-CONVERGENCE.md` (the freeze that gives
 this work a deadline), `docs/TEST-GATES.md` (what is and is not gated
 today), `docs/LANGUAGE-REVIEW-2026-07.md` §Soundness ("this is a type

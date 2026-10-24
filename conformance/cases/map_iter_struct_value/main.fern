@@ -4,6 +4,7 @@
 
 
 import "core/map";
+import "core/iter";
 import "core/cmp";
 
 struct Item { qty: i32, name: string }
@@ -12,50 +13,52 @@ struct Item { qty: i32, name: string }
 struct Sku { code: i32 }
 
 function main(): i32 {
-    let m: Map[i32, Item] = map_new(8);
-    m = m.insert(1, Item { qty: 10, name: "a" });
-    m = m.insert(2, Item { qty: 20, name: "bb" });
+  let m: Map[i32, Item] = map_new(8);
+  m = m.insert(1, Item { qty: 10, name: "a" });
+  m = m.insert(2, Item { qty: 20, name: "bb" });
 
+  // An inferred iterator preserves its value record fields.
+  let it = m.iter();
+  let qty: i32 = 0;
+  let chars: i32 = 0;
+  for (__mapkey_it, __mapvalue_it) in it {
+    qty = qty + __mapvalue_it.qty;
+    chars = chars + __mapvalue_it.name.len();
+  }
+  if (qty != 30) {
+    return 1;
+  }
+  if (chars != 3) {
+    return 2;
+  }
 
-    let it = m.iter();
-    let qty: i32 = 0;
-    let chars: i32 = 0;
-    while (it.has_next()) {
-        qty = qty + it.value().qty;
-        chars = chars + it.value().name.len();
-        it.advance();
-    }
-    if (qty != 30) { return 1; }
-    if (chars != 3) { return 2; }
+  // An explicit iterator type also preserves the value fields.
+  let it2: iter.ArrayIter[(i32, Item)] = m.iter();
+  let viaBind: i32 = 0;
+  for (__mapkey_it2, __mapvalue_it2) in it2 {
+    let v = __mapvalue_it2;
+    viaBind = viaBind + v.qty;
+  }
+  if (viaBind != 30) {
+    return 3;
+  }
 
+  // The get_or case also preserves the value type.
+  if (m.get_or(1, Item { qty: 0, name: "" }).qty != 10) {
+    return 4;
+  }
 
-    let it2: MapIter[i32, Item] = m.iter();
-    let viaBind: i32 = 0;
-    while (it2.has_next()) {
-        let v = it2.value();
-        viaBind = viaBind + v.qty;
-        it2.advance();
-    }
-    if (viaBind != 30) { return 3; }
+  // Tuple keys and values retain their record types.
+  let byKey: Map[Sku, Item] = map_new(8);
+  byKey = byKey.insert(Sku { code: 5 }, Item { qty: 7, name: "z" });
+  let it3 = byKey.iter();
+  let keyed: i32 = 0;
+  for (__mapkey_it3, __mapvalue_it3) in it3 {
+    keyed = keyed + __mapkey_it3.code + __mapvalue_it3.qty;
+  }
+  if (keyed != 12) {
+    return 5;
+  }
 
-
-    if (m.get_or(1, Item { qty: 0, name: "" }).qty != 10) { return 4; }
-
-
-
-
-
-
-
-    let byKey: Map[Sku, Item] = map_new(8);
-    byKey = byKey.insert(Sku { code: 5 }, Item { qty: 7, name: "z" });
-    let it3 = byKey.iter();
-    let keyed: i32 = 0;
-    while (it3.has_next()) {
-        keyed = keyed + it3.key().code + it3.value().qty;
-        it3.advance();
-    }
-    if (keyed != 12) { return 5; }
-
-    return 42;
+  return 42;
 }

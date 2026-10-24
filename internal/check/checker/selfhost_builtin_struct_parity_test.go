@@ -46,7 +46,7 @@ func TestSelfHostBuiltinStructsMatchChecker(t *testing.T) {
 			}
 			if checked < m.min {
 				t.Errorf("only %d builtin structs were compared in %s; it should mirror at least "+
-					"HeaderMap, Stream, HttpRequest and HttpResponse", checked, filepath.Base(m.path))
+					"HeaderMap, ByteStream, HttpRequest and HttpResponse", checked, filepath.Base(m.path))
 			}
 		})
 	}

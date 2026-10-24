@@ -3,6 +3,8 @@
 Status: [research] survey of how other languages bootstrapped a self-hosted
 compiler; the strategy it recommended is now `docs/BOOTSTRAP.md`.
 
+This study names historical or proposed source paths. The reference documentation identifies current files.
+
 `ROADMAP-AND-SELF-HOSTING.md ▸ Part 2` covers *what's missing*
 from Fern to make a self-host viable (union sugar, sort,
 process spawn, etc.). It does *not* cover the orthogonal

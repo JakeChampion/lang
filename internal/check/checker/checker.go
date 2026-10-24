@@ -48,22 +48,23 @@ func (e *Error) Labels() []diag.Label {
 var _ diag.FileSetter = (*Error)(nil)
 
 type Info struct {
-	VarTypes            map[*ast.Var]ast.Type
-	Target              string
-	IntrinsicCalls      map[*ast.Call]IntrinsicCall
-	StatefulHandler     bool
-	BoxedCells          map[string]bool
-	Locals              map[*ast.FuncDecl][]*ast.Var
-	FuncSigs            map[string]*ast.FuncType
-	OwnFuncs            map[string][]bool
-	Structs             map[string]*ast.StructDecl
-	Enums               map[string]*ast.EnumDecl
-	Resources           map[string]*ast.ResourceDecl
-	Methods             map[string]string
-	TraitMethods        map[string]string
-	MethodOwners        map[string][]string
-	MethodInsts         map[string][]string
-	MethodDeclSites     map[string]ast.Position
+	VarTypes        map[*ast.Var]ast.Type
+	Target          string
+	IntrinsicCalls  map[*ast.Call]IntrinsicCall
+	StatefulHandler bool
+	BoxedCells      map[string]bool
+	Locals          map[*ast.FuncDecl][]*ast.Var
+	FuncSigs        map[string]*ast.FuncType
+	OwnFuncs        map[string][]bool
+	Structs         map[string]*ast.StructDecl
+	Enums           map[string]*ast.EnumDecl
+	Resources       map[string]*ast.ResourceDecl
+	Methods         map[string]string
+	TraitMethods    map[string]string
+	MethodOwners    map[string][]string
+	MethodInsts     map[string][]string
+	MethodDeclSites map[string]ast.Position
+	// the inline-IR `Array.push`, and the built-in string
 	MethodSources       map[string]string
 	ModuleImports       map[string]map[string]bool
 	DirectImports       map[string]map[string]bool
@@ -230,7 +231,7 @@ func builtinEnumDecls() []*ast.EnumDecl {
 			Variants: []ast.EnumVariant{
 				{Name: "BodyText", Payloads: []ast.Type{ast.StringType{}}},
 				{Name: "BodyBytes", Payloads: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}}},
-				{Name: "BodyStream", Payloads: []ast.Type{ast.StructType{Name: "Stream"}}},
+				{Name: "BodyStream", Payloads: []ast.Type{ast.StructType{Name: "ByteStream"}}},
 				{Name: "BodyFile", Payloads: []ast.Type{ast.StringType{}}},
 				{Name: "BodyChunks", Payloads: []ast.Type{ast.StructType{Name: "ChunkProducer"}}},
 				{Name: "BodyFileRanges", Payloads: []ast.Type{ast.StringType{}, ast.ArrayType{Elem: ast.NumberType{Width: 64, Signed: true}}, ast.ArrayType{Elem: ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}}}},
@@ -258,7 +259,9 @@ func builtinStructDecls() []*ast.StructDecl {
 			Fields: []ast.Param{
 				{Name: "method", Type: ast.StringType{}},
 				{Name: "path", Type: ast.StringType{}},
-				{Name: "body", Type: ast.StructType{Name: "Stream"}},
+				// `body` is a ByteStream, not a string: an upload is
+				{Name: "body", Type: ast.StructType{Name: "ByteStream"}},
+				// trailers@+24; ByteStream and HeaderMap are each a 4-byte
 				{Name: "headers", Type: ast.StructType{Name: "HeaderMap"}},
 				{Name: "trailers", Type: ast.StructType{Name: "HeaderMap"}},
 			},
@@ -281,7 +284,7 @@ func builtinStructDecls() []*ast.StructDecl {
 			},
 		},
 		{
-			Name: "Stream",
+			Name: "ByteStream",
 			Fields: []ast.Param{
 				{Name: "data", Type: ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
 				{Name: "pos", Type: ast.NumberType{}},
@@ -470,16 +473,6 @@ func builtinStructDecls() []*ast.StructDecl {
 			TypeParams: []string{"K", "V"},
 			Fields: []ast.Param{
 				{Name: "data", Type: ast.NumberType{}},
-			},
-		},
-		{
-			Name:       "MapIter",
-			TypeParams: []string{"K", "V"},
-			Fields: []ast.Param{
-				{Name: "data", Type: ast.NumberType{Width: 64}},
-				{Name: "i", Type: ast.NumberType{}},
-				{Name: "pad", Type: ast.NumberType{}},
-				{Name: "map", Type: ast.NumberType{Width: 64}},
 			},
 		},
 		{
@@ -2050,10 +2043,8 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	registerMapMethod("remove", []ast.Type{keyParam}, mapKV)
 	registerMapMethod("clear", nil, mapKV)
 	registerMapMethod("get_or", []ast.Type{keyParam, valueParam}, valueParam)
-	mapIterKV := ast.StructType{Name: "MapIter", Args: []ast.Type{keyParam, valueParam}}
-	registerMapMethod("iter", nil, mapIterKV)
-	c.info.Methods["Map.insert"] = "__method_Map_set"
-	c.info.Methods["Map.cleared"] = "__method_Map_clear"
+	c.info.Methods["Map.insert"] = "__method_Map_set"    // m.insert(k, v) — value-returning set
+	c.info.Methods["Map.cleared"] = "__method_Map_clear" // m.cleared() — value-returning clear
 
 	arrayElemParam := ast.ParamType{Name: "T"}
 	c.info.Methods["Array.push"] = "__method_Array_push"
@@ -2110,17 +2101,6 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{cellT, cellParam},
 		Result: ast.VoidType{},
 	}
-
-	registerMapIterMethod := func(methodName string, params []ast.Type, result ast.Type) {
-		mangled := "__method_MapIter_" + methodName
-		c.info.Methods["MapIter."+methodName] = mangled
-		fullParams := append([]ast.Type{mapIterKV}, params...)
-		c.info.FuncSigs[mangled] = &ast.FuncType{Params: fullParams, Result: result}
-	}
-	registerMapIterMethod("has_next", nil, ast.BoolType{})
-	registerMapIterMethod("key", nil, keyParam)
-	registerMapIterMethod("value", nil, valueParam)
-	registerMapIterMethod("advance", nil, ast.VoidType{})
 
 	registerStringMethod := func(methodName string, params []ast.Type, result ast.Type) {
 		mangled := "__method_string_" + methodName
@@ -2369,7 +2349,11 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 				}
 				typeName = n
 			}
-			if kind, other := c.methodDeclConflict(typeName, fn.Name, fn.ImplTrait); kind != declOK {
+			methodName := fn.Name
+			if typeName == "Map" && methodName == "__iterator" {
+				methodName = "iter"
+			}
+			if kind, other := c.methodDeclConflict(typeName, methodName, fn.ImplTrait); kind != declOK {
 				if kind == declDup {
 					c.errfCode(fn.P, "E006", "method %q on %s redeclared", fn.Name, typeName)
 				} else {
@@ -2379,8 +2363,8 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 				hoistReceiver(fn)
 				continue
 			}
-			simpleName := fn.Name
-			mangled := c.mangleMethodName("__method_", typeName, simpleName, fn.ImplTrait)
+			simpleName := methodName
+			mangled := c.mangleMethodName("__method_", typeName, fn.Name, fn.ImplTrait)
 			fn.Name = mangled
 			fn.MethodRecv = typeName
 			fn.MethodSimpleName = simpleName
@@ -2814,6 +2798,12 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		return e
 	})
 
+	ast.RewriteProgramExprs(prog, func(e ast.Expr) ast.Expr {
+		if cast := c.numericCasts[e]; cast != nil {
+			return cast
+		}
+		return e
+	})
 	return c.info, nil
 }
 
@@ -5250,7 +5240,11 @@ func isScalarBuiltinMethod(mangled string) bool {
 }
 
 type checker struct {
-	entryModule       string
+	entryModule string
+	// Retain source types until contextual settlement selects conversions.
+	// Apply the casts after checking so every consumer sees the same AST.
+	numericTypes      map[ast.Expr]ast.Type
+	numericCasts      map[ast.Expr]*ast.CastExpr
 	callee            ast.Expr
 	funcSources       map[string]string
 	consts            map[string]*ast.ConstDecl
@@ -5616,7 +5610,7 @@ func (c *checker) cellNominalRisk(t ast.Type, name string, args []ast.Type, own 
 	if len(args) == 0 && slices.Contains(own, name) {
 		return nil
 	}
-	if name == "Cell" || name == "MapIter" {
+	if name == "Cell" {
 		return t
 	}
 	if _, ok := c.info.Resources[name]; ok {
@@ -7387,6 +7381,8 @@ func storesArgument(name string, i int) bool {
 }
 
 func (c *checker) argOK(arg *ast.Expr, want, got ast.Type, own bool) bool {
+	c.settleNumeric(*arg, want)
+	got = c.postSettleType(*arg, got)
 	if !c.argAssignable(want, got, own) {
 		return false
 	}
@@ -7491,6 +7487,9 @@ func (c *checker) assignable(dst, src ast.Type) bool {
 
 func (c *checker) assignableWith(dst, src ast.Type, dynBox bool) bool {
 	if ast.Equal(dst, src) {
+		return true
+	}
+	if dynBox && losslessNumericWiden(src, dst) {
 		return true
 	}
 	if _, ok := src.(ast.NeverType); ok {
@@ -8457,9 +8456,6 @@ func (c *checker) typeHoldsView(t ast.Type, seen map[string]bool) bool {
 			}
 		}
 	case ast.StructType:
-		if v.Name == "MapIter" {
-			return true
-		}
 		if seen[v.Name] {
 			return false
 		}
@@ -8584,101 +8580,6 @@ func (c *checker) typeReachesFunc(t ast.Type, seen map[string]bool) bool {
 func (c *checker) checkEscapes(prog *ast.Program) {
 	c.checkSliceEscapes(prog)
 	c.checkStrEscapes(prog)
-	c.checkCursorEscapes(prog)
-}
-
-func (c *checker) checkCursorEscapes(prog *ast.Program) {
-	envs, order := c.escapeEnvs(prog, mentionsMapIter)
-	for _, fn := range order {
-		env := envs[fn]
-		sources := bindingSources(fn)
-		forEachReturn(fn, func(ret *ast.Return) {
-			if returnsLocalCursor(ret.Value, env, sources) {
-				c.errfCode(ret.P, "E065", "returning a `MapIter` over a function-local map: the map is reclaimed when %q returns, leaving the cursor reading freed storage — return the map and iterate it in the caller, or iterate a map the caller passed in", fn.Name)
-			}
-		})
-	}
-}
-
-func mentionsMapIter(t ast.Type) bool {
-	switch x := t.(type) {
-	case ast.StructType:
-		return x.Name == "MapIter"
-	case ast.ArrayType:
-		return mentionsMapIter(x.Elem)
-	case ast.TupleType:
-		for _, e := range x.Elems {
-			if mentionsMapIter(e) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func returnsLocalCursor(e ast.Expr, env *escapeEnv, sources map[string][]ast.Expr) bool {
-	switch x := e.(type) {
-	case *ast.Call:
-		if id, ok := x.Callee.(*ast.Ident); ok && id.Name == "__method_Map_iter" && len(x.Args) == 1 {
-			return !lentPlace(x.Args[0], env)
-		}
-	case *ast.ArrayLit:
-		return anyLocalCursor(x.Elems, env, sources)
-	case *ast.TupleLit:
-		return anyLocalCursor(x.Elems, env, sources)
-	case *ast.Ident:
-		if env.visiting[x.Name] {
-			return false
-		}
-		env.visiting[x.Name] = true
-		defer delete(env.visiting, x.Name)
-		return anyLocalCursor(sources[x.Name], env, sources)
-	}
-	return false
-}
-
-func anyLocalCursor(es []ast.Expr, env *escapeEnv, sources map[string][]ast.Expr) bool {
-	for _, e := range es {
-		if returnsLocalCursor(e, env, sources) {
-			return true
-		}
-	}
-	return false
-}
-
-func bindingSources(fn *ast.FuncDecl) map[string][]ast.Expr {
-	out := map[string][]ast.Expr{}
-	if fn.Body == nil {
-		return out
-	}
-	ast.Walk(fn.Body, func(n ast.Node) bool {
-		switch x := n.(type) {
-		case *ast.Var:
-			if x.Init != nil {
-				out[x.Name] = append(out[x.Name], x.Init)
-			}
-		case *ast.Assign:
-			if id, ok := x.Target.(*ast.Ident); ok {
-				out[id.Name] = append(out[id.Name], x.Value)
-			}
-		}
-		return true
-	})
-	return out
-}
-
-func lentPlace(e ast.Expr, env *escapeEnv) bool {
-	for {
-		switch x := e.(type) {
-		case *ast.FieldAccess:
-			e = x.Target
-		case *ast.Ident:
-			_, ok := env.params[x.Name]
-			return ok
-		default:
-			return false
-		}
-	}
 }
 
 type escapeEnv struct {
@@ -9809,7 +9710,7 @@ func (c *checker) checkBlockExpr(n *ast.BlockExpr, parent *scope) ast.Type {
 			return ast.NeverType{}
 		}
 		c.errfCode(n.P, "E061", "block-expression has no trailing value (its last element is a `;`-terminated statement); a value is required here — drop the trailing `;` to make the final expression the block's value")
-		return ast.VoidType{}
+		return nil
 	}
 	return c.checkExpr(n.Tail, s)
 }
@@ -11523,15 +11424,19 @@ func (c *checker) checkLiteralMatchExpr(n *ast.MatchExpr, tagT ast.Type, s *scop
 		if _, ok := armT.(ast.NeverType); ok {
 			return
 		}
+		if unified := scalarNumericJoin(result, armT); unified != nil {
+			result = unified
+			return
+		}
 		if unified := unifyIfArms(result, armT); unified != nil {
 			result = unified
 			return
 		}
 		if c.assignable(armT, result) {
+			result = armT
 			return
 		}
 		if c.assignable(result, armT) {
-			result = armT
 			return
 		}
 		c.errfCode(p, "E031", "match arms have incompatible types: %s vs %s", result, armT)
@@ -11622,21 +11527,25 @@ func (c *checker) checkTupleMatchExpr(n *ast.MatchExpr, tup ast.TupleType, s *sc
 		if _, ok := armT.(ast.NeverType); ok {
 			return
 		}
+		if unified := scalarNumericJoin(result, armT); unified != nil {
+			result = unified
+			return
+		}
 		if unified := unifyIfArms(result, armT); unified != nil {
 			result = unified
 			return
 		}
 		if c.assignable(armT, result) {
+			result = armT
 			return
 		}
 		if c.assignable(result, armT) {
-			result = armT
 			return
 		}
 		c.errfCode(p, "E031", "match arms have incompatible types: %s vs %s", result, armT)
 	}
-	for _, arm := range n.Arms {
-		if sawIrrefutable {
+	for i, arm := range n.Arms {
+		if sawIrrefutable && !(n.Origin == ast.OriginIfLet && i == len(n.Arms)-1 && arm.IsWildcard) {
 			c.errfCode(arm.P, "E026", "arm is unreachable — a preceding arm matches every value")
 		}
 		if arm.IsWildcard {
@@ -11716,6 +11625,10 @@ func (c *checker) checkStructMatchExpr(n *ast.MatchExpr, st ast.StructType, s *s
 			result = armT
 			return
 		}
+		if unified := scalarNumericJoin(result, armT); unified != nil {
+			result = unified
+			return
+		}
 		if unified := unifyIfArms(result, armT); unified != nil {
 			result = unified
 			return
@@ -11731,8 +11644,8 @@ func (c *checker) checkStructMatchExpr(n *ast.MatchExpr, st ast.StructType, s *s
 			c.errfCode(p, "E031", "match arms have incompatible types: %s vs %s", result, armT)
 		}
 	}
-	for _, arm := range n.Arms {
-		if sawIrrefutable {
+	for i, arm := range n.Arms {
+		if sawIrrefutable && !(n.Origin == ast.OriginIfLet && i == len(n.Arms)-1 && arm.IsWildcard) {
 			c.errfCode(arm.P, "E026", "arm is unreachable — a preceding arm matches every value")
 		}
 		if arm.IsWildcard {
@@ -11866,6 +11779,10 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 		}
 		if result == nil {
 			result = armT
+			return
+		}
+		if unified := scalarNumericJoin(result, armT); unified != nil {
+			result = unified
 			return
 		}
 		if unified := unifyIfArms(result, armT); unified != nil {
@@ -12397,6 +12314,18 @@ func (c *checker) constType(cd *ast.ConstDecl) ast.Type {
 }
 
 func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
+	t := c.checkExprInner(e, s)
+	switch t.(type) {
+	case ast.NumberType, ast.FloatType:
+		if c.numericTypes == nil {
+			c.numericTypes = make(map[ast.Expr]ast.Type)
+		}
+		c.numericTypes[e] = t
+	}
+	return c.postNumericType(e, t)
+}
+
+func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 	switch n := e.(type) {
 	case *ast.NumberLit:
 		if (n.ExceedsI64 || n.ExceedsU64) && !c.wideSeen[n] {
@@ -12703,6 +12632,10 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				continue
 			}
 			if ast.Equal(t, elemT) {
+				continue
+			}
+			if unified := scalarNumericJoin(elemT, t); unified != nil {
+				elemT = unified
 				continue
 			}
 			if unified := unifyIfArms(elemT, t); unified != nil {
@@ -13023,7 +12956,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 						if !ok || destArgs == nil {
 							continue
 						}
-						if resultPayloadWidens(vr.enumName, pinned, destArgs[i]) {
+						if losslessNumericWiden(pinned, destArgs[i]) {
 							numericConflict = true
 							destArgs = nil
 						}
@@ -13973,6 +13906,9 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		tt := c.checkExpr(n.Then, s)
 		et := c.checkExpr(n.Else, s)
 		result := unifyIfArms(tt, et)
+		if result == nil {
+			result = scalarNumericJoin(tt, et)
+		}
 		if tt != nil && et != nil && result == nil {
 			c.errfCode(n.P, "E031", "if-expression branches differ: %s vs %s", tt, et)
 			result = tt
@@ -14365,7 +14301,8 @@ func (c *checker) requireInteger(p ast.Position, t ast.Type, op string) {
 }
 
 func isRuntimeGenericStruct(name string) bool {
-	return name == "Map" || name == "MapIter" || name == "Cell"
+	// Map uses one struct and helper set across all (K, V) via a
+	return name == "Map" || name == "Cell"
 }
 
 func (c *checker) stampStructTypeArgs(e ast.Expr, dst ast.Type) {
@@ -14558,6 +14495,26 @@ func betterRefinement(existing, candidate ast.Type) bool {
 }
 
 func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
+	if from := c.numericTypes[e]; losslessNumericWiden(from, hint) {
+		if c.numericCasts == nil {
+			c.numericCasts = make(map[ast.Expr]*ast.CastExpr)
+		}
+		c.numericCasts[e] = &ast.CastExpr{P: e.Pos(), Inner: e, Target: hint, InnerType: from}
+		return
+	}
+	if isInteger(hint) || isFloat(hint) {
+		switch n := e.(type) {
+		case *ast.IfExpr:
+			c.settleNumeric(n.Then, hint)
+			c.settleNumeric(n.Else, hint)
+		case *ast.MatchExpr:
+			for _, arm := range n.Arms {
+				if arm != nil {
+					c.settleNumeric(arm.Body, hint)
+				}
+			}
+		}
+	}
 	if block, ok := e.(*ast.BlockExpr); ok {
 		if block.Tail != nil {
 			c.settleNumeric(block.Tail, hint)
@@ -14599,12 +14556,7 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 		c.settleFloat(e, hn)
 	case ast.ArrayType:
 		if al, ok := e.(*ast.ArrayLit); ok {
-			if c.elemSettleable(al.ElemType, hn.Elem) {
-				al.ElemType = hn.Elem
-				for _, el := range al.Elems {
-					c.settleNumeric(el, hn.Elem)
-				}
-			}
+			c.settleArrayLiteral(al, hn.Elem)
 		} else if call, ok := e.(*ast.Call); ok {
 			c.settleGenericCallByHint(call, hint)
 		} else if ie, ok := e.(*ast.IfExpr); ok {
@@ -14624,12 +14576,7 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 		}
 	case ast.SliceType:
 		if al, ok := e.(*ast.ArrayLit); ok {
-			if c.elemSettleable(al.ElemType, hn.Elem) {
-				al.ElemType = hn.Elem
-				for _, el := range al.Elems {
-					c.settleNumeric(el, hn.Elem)
-				}
-			}
+			c.settleArrayLiteral(al, hn.Elem)
 		} else if call, ok := e.(*ast.Call); ok {
 			c.settleGenericCallByHint(call, hint)
 		} else if ie, ok := e.(*ast.IfExpr); ok {
@@ -15064,6 +15011,9 @@ func (c *checker) promoteIntLiterals(e ast.Expr, t ast.Type) {
 func isVariantCall(c *ast.Call) bool { return c.IsVariantCall }
 
 func (c *checker) postSettleType(e ast.Expr, prior ast.Type) ast.Type {
+	if cast := c.numericCasts[e]; cast != nil {
+		return cast.Target
+	}
 	if holdsPolymorphicNumeric(prior) {
 		if t := c.settledProjectionType(e); t != nil {
 			return t
@@ -15663,13 +15613,16 @@ func commonFloatWidth(lt, rt ast.Type) (ast.FloatType, bool) {
 	if rn.Polymorphic && !ln.Polymorphic {
 		return ln, true
 	}
-	if ln.NormalWidth() != rn.NormalWidth() {
-		return ast.FloatType{}, false
+	if rn.NormalWidth() > ln.NormalWidth() {
+		return rn, true
 	}
 	return ln, true
 }
 
 func (c *checker) widenIntOperand(slot *ast.Expr, srcT, targetT ast.NumberType) {
+	if c.numericCasts[*slot] != nil {
+		return
+	}
 	if srcT.Polymorphic || targetT.Polymorphic {
 		return
 	}
@@ -15688,6 +15641,9 @@ func (c *checker) widenIntOperand(slot *ast.Expr, srcT, targetT ast.NumberType) 
 	}
 }
 
+// commonIntegerWidth selects the smallest integer type that holds both
+// operand ranges. Literals take the concrete operand's type first.
+// Pointer arithmetic retains its separate conversion rules.
 func commonIntegerWidth(lt, rt ast.Type) (ast.NumberType, bool) {
 	ln, lOk := lt.(ast.NumberType)
 	rn, rOk := rt.(ast.NumberType)
@@ -15707,6 +15663,11 @@ func commonIntegerWidth(lt, rt ast.Type) (ast.NumberType, bool) {
 		return rn, true
 	}
 	if ln.IsSigned() != rn.IsSigned() {
+		for _, candidate := range []ast.NumberType{{Width: 32, Signed: true}, {Width: 64, Signed: true}} {
+			if (ast.Equal(ln, candidate) || losslessNumericWiden(ln, candidate)) && (ast.Equal(rn, candidate) || losslessNumericWiden(rn, candidate)) {
+				return candidate, true
+			}
+		}
 		return ast.NumberType{}, false
 	}
 	if ln.NormalWidth() == rn.NormalWidth() {

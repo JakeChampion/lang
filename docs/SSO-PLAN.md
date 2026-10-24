@@ -2,6 +2,8 @@
 
 Status: [record] historical migration roadmap for the Go backends' string representation.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 > **Inline SSO is live on every backend; the two-word ABI is not.**
 > wasm32 (`SSO-TWOWORD-EXEC.md`) and arm64 (`SSO-NATIVE-FLIP-STATUS.md`,
 > 2026-06-03) carry the two-word ABI + top-bit-tagged inline encoding;

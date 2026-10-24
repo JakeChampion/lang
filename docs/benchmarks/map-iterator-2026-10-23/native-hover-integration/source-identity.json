@@ -1,0 +1,21 @@
+{
+  "packaged_source": "6e33a468fe0eddcaf0cc1779fbdc2485b833a5cf",
+  "bootstrap_source": "df0660a2e0a840d90a3be1c6939d4c366cd4ffbe",
+  "measured_source": "55bb31bd2cd4faf1aaaf1d59d6c1f6498a1e6b83",
+  "previous_bootstrap_source": "55bb31bd2cd4faf1aaaf1d59d6c1f6498a1e6b83",
+  "source_sha256": "285e7c475bc272b336cb7445172f6aefdf41c56ce25155cbeed6bda956fa1fa7",
+  "source_files": 497,
+  "native_images_sha256": [
+    "c1a0e145c04460b0fac2f6c71eb2538e97320826fa334a8f99fafe6fd21c9654",
+    "9b9d2d318938c173e624382e94d77e69c8d633f1a36330cc9970e0da4933b042",
+    "9b9d2d318938c173e624382e94d77e69c8d633f1a36330cc9970e0da4933b042"
+  ],
+  "all_three_compiler_images_identical": true,
+  "only_library_change": "Restore the i32.to_string doc comment; all other compiler and library bytes are unchanged.",
+  "go_changes_equal_standard_gofmt": [
+    "internal/check/checker/checker.go",
+    "internal/oracle/treeshake/treeshake.go"
+  ],
+  "all_test_and_conformance_files_unchanged": true,
+  "dependency_base": "fix/validate-os-text-publish"
+}

@@ -77,7 +77,7 @@ DestructurePos
             = IDENT | '_' | DestructureList ;
 
 StructDecl  = [ 'opaque' ] 'struct' IDENT [ TypeParams ] '{' { FieldDecl } '}' [ ';' ] ;
-FieldDecl   = [ Visibility ] IDENT ':' Type [ ',' | ';' ] ;
+FieldDecl   = IDENT ':' Type [ ',' | ';' ] ;
 
 EnumDecl    = 'enum' IDENT [ TypeParams ] '{' [ VariantList ] '}' [ ';' ] ;
 VariantList = Variant { ',' Variant } [ ',' ] ;
@@ -150,8 +150,11 @@ Block       = '{' { Stmt } '}' ;
 # A block in expression position may end in an unterminated expression,
 # which is its value. Statement blocks may not, so the two are distinct
 # rules rather than one permissive one. A trailing `match` or `if … else`
-# whose branches are all blocks that give no value is a Stmt, not the Expr.
-ValueBlock  = '{' { Stmt } [ Expr ] '}' ;
+# whose branches give no value remains a statement in a lambda body.
+ValueBlock  = '{' ValueBlockItems ;
+# Check the complete value tail before a statement can take its prefix.
+ValueBlockItems
+            = '}' | Expr '}' | ( ExprStmt | Stmt ) ValueBlockItems ;
 
 Stmt        = Block
             | LabeledLoop
@@ -192,8 +195,8 @@ ForInit     = LetNoSemi | Assign ;
 # token after the matching ')' is `in`.
 ForBinding  = BindPattern | IDENT ;
 
-MatchStmt   = 'match' '(' Expr ')' '{' { MatchArm } '}' [ ';' ] ;
-MatchArm    = ArmPatterns [ 'when' Expr ] '=>' ArmBody [ ',' ] ;
+MatchStmt   = 'match' '(' Expr ')' '{' [ MatchArm { ',' MatchArm } [ ',' ] ] '}' [ ';' ] ;
+MatchArm    = ArmPatterns [ 'when' Expr ] '=>' ArmBody ;
 ArmPatterns = Pattern { '|' Pattern } ;
 ArmBody     = ValueBlock | Expr ;
 
@@ -205,8 +208,27 @@ ArmBody     = ValueBlock | Expr ;
 # match arm does: `if let` and `let … else` both consume the shared pattern
 # grammar, and the `else` block is what a miss runs.
 LetStmt     = LetNoSemi ';'
-            | 'let' ArmPatterns '=' Expr 'else' Block ';'
+            | 'let' LetElsePatterns '=' Expr 'else' Block ';'
             ;
+# A leading tuple or bare record field pattern selects an unconditional
+# binding. A plain name before '=' also binds unconditionally.
+# Qualified field patterns can name enum variants and admit a miss branch.
+LetElsePatterns
+            = LetElseHead { '|' Pattern } ;
+LetElseHead = LetElseAt
+            | VariantPattern
+            | LiteralPattern
+            | QualifiedFieldPattern
+            | QualifiedPatternName
+            | IDENT '|' Pattern
+            ;
+LetElseAt   = IDENT '@' ( VariantPattern | LiteralPattern
+                        | QualifiedFieldPattern | BindingPattern ) ;
+QualifiedFieldPattern
+            = QualifiedPatternName '{' [ StructPatFields ] '}' ;
+QualifiedPatternName
+            = ( PrimitiveType | IDENT ) '.' IDENT { '.' IDENT } ;
+
 LetNoSemi   = 'let' BindPattern '=' Expr
             | 'let' IDENT [ ':' Type ] '=' Expr
             ;
@@ -371,10 +393,11 @@ NoStructPrimary
             | Name
             ;
 
-IfExpr      = 'if' '(' Expr ')' ValueBlock 'else' ( IfExpr | ValueBlock ) ;
-MatchExpr   = 'match' '(' Expr ')' '{' { MatchExprArm } '}' ;
+IfExpr      = 'if' ( '(' Expr ')' | 'let' ArmPatterns '=' NoStructExpr )
+              ValueBlock 'else' ( IfExpr | ValueBlock ) ;
+MatchExpr   = 'match' '(' Expr ')' '{' [ MatchExprArm { ',' MatchExprArm } [ ',' ] ] '}' ;
 MatchExprArm
-            = ArmPatterns [ 'when' Expr ] '=>' ( ValueBlock | Expr ) [ ',' ] ;
+            = ArmPatterns [ 'when' Expr ] '=>' ( ValueBlock | Expr ) ;
 
 # `function` opens a declaration and nothing else: the anonymous
 # `function (x: T): R { … }` expression was retired in #2673, and writing one

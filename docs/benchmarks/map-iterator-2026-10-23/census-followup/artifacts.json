@@ -1,0 +1,104 @@
+{
+  "files": [
+    {
+      "path": "map_iterator_protocol-stage1-build.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "map_iterator_protocol-stage1-build.stderr.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "map_iterator_protocol-stage1.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "map_iterator_protocol-stage1.stderr.gz",
+      "bytes": 879,
+      "sha256": "dd9e12e53148dbf1f5f610ecc7ae67dd0c6a93dd43ab5c26c3fe456cbe7bdcb3"
+    },
+    {
+      "path": "map_iterator_protocol-stage3-build.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "map_iterator_protocol-stage3-build.stderr.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "map_iterator_protocol-stage3.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "map_iterator_protocol-stage3.stderr.gz",
+      "bytes": 879,
+      "sha256": "dd9e12e53148dbf1f5f610ecc7ae67dd0c6a93dd43ab5c26c3fe456cbe7bdcb3"
+    },
+    {
+      "path": "iterator_nested_tuple_adapter-stage1-build.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "iterator_nested_tuple_adapter-stage1-build.stderr.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "iterator_nested_tuple_adapter-stage1.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "iterator_nested_tuple_adapter-stage1.stderr.gz",
+      "bytes": 299,
+      "sha256": "a8ab80e89bc0db2f3d15cf99ccbb92e2fe8a548aeae7e18fca30d994c2865e40"
+    },
+    {
+      "path": "iterator_nested_tuple_adapter-stage3-build.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "iterator_nested_tuple_adapter-stage3-build.stderr.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "iterator_nested_tuple_adapter-stage3.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "iterator_nested_tuple_adapter-stage3.stderr.gz",
+      "bytes": 299,
+      "sha256": "a8ab80e89bc0db2f3d15cf99ccbb92e2fe8a548aeae7e18fca30d994c2865e40"
+    },
+    {
+      "path": "report.json",
+      "bytes": 3632,
+      "sha256": "55dc80587b935166d87d42a1171d3434c2252af973dc475ec3ee11e5820ad325"
+    },
+    {
+      "path": "measure.py.gz",
+      "bytes": 1467,
+      "sha256": "3c41405909a200154df305052fd83fb90819c6680e3fc57d39d96a868cb98317"
+    },
+    {
+      "path": "sourcelint.jsonl.gz",
+      "bytes": 13428,
+      "sha256": "ff4f08783d27448628cca8fa0bb850885db8bbbc7ce465f212e568200f266421"
+    }
+  ],
+  "sourcelint": {
+    "cases": 195,
+    "failures": 0,
+    "skips": 0
+  }
+}

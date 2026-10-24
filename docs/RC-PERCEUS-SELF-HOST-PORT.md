@@ -7,6 +7,8 @@ Follow-ups were tracked in the goal-2 port slices
 retirement) and [#4402](https://github.com/JakeChampion/lang/issues/4402)
 (missing optimisations); the old coarse tracker #2857 is closed.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 Started 2026-06-07 as the design and implementation tracker.
 Goal: bring the native compiler's Perceus reference-counting +
 compile-time memory optimisation to the self-hosted Fern compiler

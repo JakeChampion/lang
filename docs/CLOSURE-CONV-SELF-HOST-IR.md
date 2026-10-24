@@ -10,6 +10,8 @@ env and box `[fnptr, caps…]` at the call site; gated x86-64 + wasm by
 capture-borrow fix (#4354). Phase 3 (fn-values in method / struct-field /
 tuple-element positions) is the remaining extension.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 ## 1. The gap
 
 | form | routes today |

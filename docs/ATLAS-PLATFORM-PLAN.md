@@ -4,6 +4,8 @@ Status: [plan] decision record + sequenced plan (2026-08-06), partly landed (§4
 it is the platform-layer companion to `docs/SOTA-STDLIB-BLUEPRINT.md`, which
 surveys the *algorithms*. This document is about the *substrate* they need.
 
+This plan names historical or proposed source paths. The reference documentation identifies current files.
+
 The input was an external blueprint ("Project Atlas") for a state-of-the-art
 systems language: twelve phases, from a portable SIMD layer and CPU dispatcher
 through allocators, strings, collections, concurrency, io_uring, compression,
