@@ -74,6 +74,7 @@ A reverse proxy must preserve the browser value and overwrite that proxy header.
 
 The Netlify site keeps `examples/fractal` as its build base.
 Its build script verifies the repository bootstrap pin and builds the current compiler from source.
+The build disables the default Netlify directory filter. Compiler, stdlib, and sibling application changes also need a new build.
 The current compiler builds the showcase and browser Wasm module. The script then prepares assets and the container function archive.
 
 ## State and measurements
