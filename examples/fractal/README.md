@@ -7,12 +7,12 @@ From the repository root, compile and run the server:
 
 ```sh
 make build
-bin/fern -target x86-64-linux -O -o examples/fractal/server examples/fractal/server.fern
+bin/fern -target x86-64-linux -O -o examples/fractal/server examples/fractal/server.fern.md
 cd examples/fractal
 ./server
 ```
 
-Open <http://localhost:8080>.
+Open <http://localhost:8080/fractal/>.
 Use `-target arm64-linux` or `-target arm64-darwin` for those hosts.
 
 `fractal.fern` selects the renderer and applies the palette.
@@ -20,7 +20,7 @@ Use `-target arm64-linux` or `-target arm64-darwin` for those hosts.
 `linear.fern` builds reference orbits and linear skips.
 `series.fern` builds the shared Taylor prefix.
 
-`server.fern` contains the routes, statistics, and WebSocket protocol.
+`server.fern.md` contains the routes, statistics, and WebSocket protocol.
 `std/png`, `std/binary`, and `std/parse` supply the reusable codecs and integer parser.
 `source.fern` serves the source browser at `/_src/`.
 `web/` contains the browser assets.
@@ -30,8 +30,9 @@ It builds the checkout compiler first, so new FIP contracts do not depend on the
 
 ## Source browser
 
-Open `/_src/` for the file index or `/_src/server.fern` for a module.
-The pages include syntax colors, line anchors such as `#L42`, and links for imports.
+Open `/_src/` for the file index or `/_src/server.fern` for the server lesson.
+The pages include syntax colors and links for imports.
+Ordinary modules have line anchors such as `#L42`. The literate server has explanations and linked code sections.
 Local imports open another source page.
 Standard library and compiler imports link to their source in the repository.
 
@@ -175,3 +176,9 @@ The numerical check compares 12,015 points with a 113-bit oracle.
 Its points include random samples, analytic boundaries, tile edges, and alternate reference centers.
 PNG tests decode all filter and compression pairs with an independent decoder on all three targets.
 They also check raw fast DEFLATE streams through empty, short, and 32 KiB window cases.
+
+## Web showcase
+
+The Netlify build now serves the six-application [Fern showcase](../showcase/README.md).
+The fractal application lives at `/fractal/`. The homepage lists all applications.
+The standalone literate server also mounts its interface at `/fractal/`.

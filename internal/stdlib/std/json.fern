@@ -1945,6 +1945,20 @@ pub function (xs: T[]) to_json[T: Json](): string {
   return string_from_bytes_unchecked(out);
 }
 
+// An absent value maps to JSON null. Present values keep their own codec.
+impl[T: Json] Json for Option[T] {
+  function to_json(self: Option[T]): string {
+    match (self) {
+      Some(inner) => {
+        return inner.to_json();
+      },
+      None => {
+        return "null";
+      }
+    }
+  }
+}
+
 pub trait FromJson {
   function from_json_value(v: JsonValue): Result[Self, string];
 }

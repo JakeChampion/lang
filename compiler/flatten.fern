@@ -1000,7 +1000,15 @@ pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
       };
     },
     ast.ExprUnary(u) => {
-      return ast.ExprUnary { op: u.op, operand: rewrite_expr(u.operand, ctx), line: u.line, col: u.col, ty: u.ty };
+      // Cast targets carry type spellings inside the operator, not a TypeRef.
+      // Qualify those names with the same module context as field annotations.
+      let op: string = u.op;
+      if (parser.is_cast_op(op)) {
+        op = "as_" + rewrite_type_name(slice_unchecked(op, 3, op.len()) + "", ctx);
+      } else if (util.str_has_prefix(op, "as?_")) {
+        op = "as?_" + rewrite_type_name(slice_unchecked(op, 4, op.len()) + "", ctx);
+      }
+      return ast.ExprUnary { ...u, op: op, operand: rewrite_expr(u.operand, ctx) };
     },
     ast.ExprIndex(x) => {
       return ast.ExprIndex {

@@ -78,6 +78,9 @@ function __media_type(content_type: string): string {
 }
 
 function __eligible(resp: HttpResponse, o: Options): boolean {
+  if (!__whole(resp.body)) {
+    return false;
+  }
   if (resp.status == 206 || http.http_bodiless(resp.status) || resp.headers.has("Content-Encoding")) {
     return false;
   }
@@ -86,7 +89,7 @@ function __eligible(resp: HttpResponse, o: Options): boolean {
   }
   match (resp.headers.get("Content-Type")) {
     Some(ct) => {
-      return __whole(resp.body) && compressible(ct);
+      return compressible(ct);
     },
     None => {
       return false;

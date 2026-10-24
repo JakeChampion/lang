@@ -29,6 +29,7 @@ function test_import_targets(): test.TestOutcome {
     source.import_href("././source.fern").unwrap_or("") == "/_src/source.fern"
       && source.import_href("std/http").unwrap_or("") == "https://github.com/JakeChampion/lang/blob/main/internal/stdlib/std/http.fern"
       && source.import_href("../../compiler/weave").unwrap_or("") == "https://github.com/JakeChampion/lang/blob/main/compiler/weave.fern"
+      && source.import_href("std/option").unwrap_or("").ends_with("/std/option.fern.md")
       && source.import_href("./missing").is_none() && source.import_href("../../../etc/passwd").is_none(),
   );
 }

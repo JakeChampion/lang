@@ -1,5 +1,9 @@
 import "std/http";
 import "std/url";
+import "std/array";
+import "std/result";
+import "std/string";
+import "../../compiler/literate";
 import "../../compiler/util";
 import "../../compiler/weave";
 
@@ -7,17 +11,28 @@ const FILES: string[] = ["server.fern", "fractal.fern", "linear.fern", "series.f
 
 const REPOSITORY: string = "https://github.com/JakeChampion/lang/blob/main/";
 
+// These standard modules keep their canonical source in literate documents.
+const STDLIB_LESSONS: string[] = ["internal/stdlib/std/option.fern", "internal/stdlib/std/result.fern", "internal/stdlib/std/csv.fern"];
+
 pub struct Page {
   name: string,
   html: string,
 }
 
 pub function load(root: string): Result[Page[], string] {
+  return load_files(root, FILES);
+}
+
+pub function load_files(root: string, files: string[]): Result[Page[], string] {
   let pages: Page[] = [];
-  for name in FILES {
-    match (read_file(root + "/" + name)) {
+  for name in files {
+    let file = read_file(root + "/" + name);
+    if (file.is_err() && name.ends_with(".fern")) {
+      file = read_file(root + "/" + name + ".md");
+    }
+    match (file) {
       Ok(text) => {
-        pages = pages.append(Page { name: name, html: render(name, text) });
+        pages = pages.append(Page { name: name, html: render_files(name, text, files) });
       },
       Err(error) => {
         return Err("cannot read source file " + root + "/" + name);
@@ -28,11 +43,20 @@ pub function load(root: string): Result[Page[], string] {
 }
 
 pub function serve(pages: Page[], path: string): HttpResponse {
-  if (path.len() == 0) {
-    return response(layout("Application source", "<h1>Application source</h1><p>Read the Fern modules and follow their imports.</p>" + navigation("")));
+  if (path.len() == 0 || path.ends_with("/")) {
+    let files: string[] = [];
+    for page in pages {
+      if (page.name.starts_with(path)) {
+        files = files.append(page.name);
+      }
+    }
+    if (files.len() == 0) {
+      return http.not_found();
+    }
+    return response(layout("Application source", "<h1>Application source</h1><p>Every application is open. Follow an import to read the next module.</p>" + navigation("", files)));
   }
   for page in pages {
-    if (page.name == path) {
+    if (page.name == path || page.name == path + ".md") {
       return response(page.html);
     }
   }
@@ -44,7 +68,20 @@ function response(html: string): HttpResponse {
 }
 
 pub function render(name: string, text: string): string {
-  let body: string = "<h1>" + weave.html_escape(name) + "</h1>" + navigation(name) + "<pre class=\"code\"><code>";
+  return render_files(name, text, FILES);
+}
+
+pub function render_files(name: string, text: string, files: string[]): string {
+  if (literate.is_program(text)) {
+    let html: string = weave.weave_html(text);
+    for line in text.split("\n") {
+      if (line.trim_start().starts_with("import ")) {
+        html = html.replace(weave.highlight_fern(line), highlight_from(line, name, files));
+      }
+    }
+    return html.replace_first("<body>", "<body><header style=\"padding:1rem\"><a href=\"/\">← All examples</a> · <a href=\"/_src/\">Application source</a></header>");
+  }
+  let body: string = "<h1>" + weave.html_escape(name) + "</h1>" + navigation(name, files) + "<pre class=\"code\"><code>";
   let lines: string[] = text.split("\n");
   let count: i32 = lines.len();
   if (text.ends_with("\n")) {
@@ -54,14 +91,18 @@ pub function render(name: string, text: string): string {
   while (index < count) {
     let number: string = (index + 1).to_string();
     body = body + "<span class=\"line\" id=\"L" + number + "\"><a class=\"line-number\" href=\"#L" + number
-      + "\" aria-label=\"Line " + number + "\">" + number + "</a>" + highlight(lines[index]) + "</span>";
+      + "\" aria-label=\"Line " + number + "\">" + number + "</a>" + highlight_from(lines[index], name, files) + "</span>";
     index = index + 1;
   }
   return layout(name, body + "</code></pre>");
 }
 
 pub function highlight(line: string): string {
-  match (import_markup(line)) {
+  return highlight_from(line, "fractal.fern", FILES);
+}
+
+pub function highlight_from(line: string, name: string, files: string[]): string {
+  match (import_markup(line, name, files)) {
     Some(html) => {
       return html;
     },
@@ -71,11 +112,11 @@ pub function highlight(line: string): string {
   }
 }
 
-function import_markup(line: string): Option[string] {
+function import_markup(line: string, name: string, files: string[]): Option[string] {
   let start: i32 = import_start(line)?;
   let end: i32 = import_end(line, start)?;
   let module: string = line.drop(start + 1).take(end - start - 1);
-  let href: string = import_href(module)?;
+  let href: string = import_href_from(module, name, files)?;
   return Some(weave.highlight_fern(line.take(start)) + "<a class=\"import\" href=\"" + weave.html_escape(href) + "\">"
     + weave.highlight_fern(line.drop(start).take(end - start + 1)) + "</a>" + weave.highlight_fern(line.drop(end + 1)));
 }
@@ -89,8 +130,17 @@ function import_start(line: string): Option[i32] {
   while (start < line.len() && (line[start] == b' ' || line[start] == b'\t')) {
     start = start + 1;
   }
-  if (start >= line.len() || line[start] != b'"') {
+  if (start >= line.len()) {
     return None;
+  }
+  if (line[start] != b'"') {
+    let Some(from) = line.index_of(" from ") else {
+      return None;
+    };
+    start = from + 6;
+    if (start >= line.len() || line[start] != b'"') {
+      return None;
+    }
   }
   return Some(start);
 }
@@ -110,13 +160,35 @@ function import_end(line: string, start: i32): Option[i32] {
 }
 
 pub function import_href(module: string): Option[string] {
-  let path: string = util.resolve_path(module, "examples/fractal", "internal/stdlib");
-  for name in FILES {
-    if (path == "examples/fractal/" + name) {
+  return import_href_from(module, "fractal.fern", FILES);
+}
+
+pub function import_href_from(module: string, current: string, files: string[]): Option[string] {
+  let directory: string = "examples/fractal";
+  let prefix: string = "examples/fractal/";
+  if (current.contains("/")) {
+    let parts: string[] = current.split("/");
+    directory = "examples/" + parts.take(parts.len() - 1).join("/");
+    prefix = "examples/";
+  }
+  let path: string = util.resolve_path(module, directory, "internal/stdlib");
+  if (module.ends_with(".mjs") || module.ends_with(".js")) {
+    path = util.clean_path(directory + "/" + module);
+  }
+  if (module.starts_with("/assets/")) {
+    path = "examples/showcase/web/shared/" + module.drop(8);
+  }
+  for name in files {
+    if (path == prefix + name || path + ".md" == prefix + name) {
       return Some("/_src/" + name);
     }
   }
   if (path.starts_with("internal/stdlib/") || path.starts_with("compiler/")) {
+    for lesson in STDLIB_LESSONS {
+      if (path == lesson) {
+        path = path + ".md";
+      }
+    }
     let encoded: string[] = [];
     for segment in path.split("/") {
       encoded = encoded.append(url.url_encode(segment));
@@ -126,9 +198,9 @@ pub function import_href(module: string): Option[string] {
   return None;
 }
 
-function navigation(current: string): string {
+function navigation(current: string, files: string[]): string {
   let html: string = "<nav aria-label=\"Source files\">";
-  for name in FILES {
+  for name in files {
     let active: string = "";
     if (name == current) {
       active = " aria-current=\"page\"";
@@ -141,7 +213,7 @@ function navigation(current: string): string {
 function layout(title: string, body: string): string {
   return "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
     + "<title>" + weave.html_escape(title) + " · Fern source</title><style>" + styles() + "</style></head><body>"
-    + "<header><a href=\"/\">← Fractal explorer</a><a href=\"/_src/\">Application source</a></header><main>" + body + "</main></body></html>";
+    + "<header><a href=\"/\">← All examples</a><a href=\"/_src/\">Application source</a></header><main>" + body + "</main></body></html>";
 }
 
 function styles(): string {
@@ -149,7 +221,7 @@ function styles(): string {
     + "*{box-sizing:border-box}body{margin:0;background:#090d15;color:#e6edf5;font:15px/1.6 system-ui,sans-serif}"
     + "header{display:flex;justify-content:space-between;gap:1rem;padding:1rem 1.5rem;border-bottom:1px solid #273145}"
     + "main{max-width:100rem;margin:auto;padding:1.5rem}h1{font-size:1.5rem;overflow-wrap:anywhere}p{color:var(--muted)}"
-    + "a{color:var(--accent);text-underline-offset:.2em}nav{display:flex;flex-wrap:wrap;gap:.5rem;margin:1rem 0 1.5rem}"
+    + "a{color:var(--accent);text-underline-offset:.2em}nav{display:flex;flex-wrap:wrap;gap:.5rem;margin:1rem 0 1.5rem;max-height:12rem;overflow:auto}"
     + "nav a{padding:.3rem .7rem;border:1px solid #273145;border-radius:.4rem;text-decoration:none}nav a[aria-current]{background:#1b3a31}"
     + ".code{overflow-x:auto;padding:1rem 0;background:#101724;border:1px solid #273145;border-radius:.5rem;font:13px/1.7 ui-monospace,monospace;tab-size:2}"
     + ".line{display:block;min-height:1.7em;padding-right:1rem}.line:target{background:#293b32}"

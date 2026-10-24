@@ -7,6 +7,7 @@
 import { TileDelivery, TileCache, percentile } from "./delivery.mjs";
 
 const MAX_ZOOM = 42;
+const BASE_PATH = "/fractal";
 let delivery = null;
 
 const places = {
@@ -172,7 +173,7 @@ function setBinarySize(bytes) {
 async function pollStats() {
   if (state.transport !== "http") return;
   try {
-    const s = await (await fetch("/api/stats", { cache: "no-store" })).json();
+    const s = await (await fetch(`${BASE_PATH}/api/stats`, { cache: "no-store" })).json();
     setServer(`HTTP → container ${s.instance}, up ${fmtUptime(s.uptime_ms)}, ${s.tiles.toLocaleString()} tiles since boot`, true);
     setBinarySize(s.binary_bytes);
   } catch {
@@ -244,12 +245,13 @@ document.querySelectorAll("[data-labels]").forEach((b) =>
 // ---- start ---------------------------------------------------------------
 
 async function start() {
-  const response = await fetch("/api/config", { cache: "no-store" });
+  const response = await fetch(`${BASE_PATH}/api/config`, { cache: "no-store" });
   if (!response.ok) throw new Error("Cannot load renderer configuration");
   const config = await response.json();
   delivery = new TileDelivery({
     version: config.render_version,
     origin: location.origin,
+    basePath: BASE_PATH,
     cache: new TileCache(config.binary_bytes > 0 ? 16 * 1024 * 1024 : 0),
     onVersionChange: () => location.reload(),
     priority: (job) => {

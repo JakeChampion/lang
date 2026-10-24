@@ -20,20 +20,28 @@ sha256_check() {
   if command -v sha256sum > /dev/null; then sha256sum -c "$@"; else shasum -a 256 -c "$@"; fi
 }
 
-if [ -z "${FERN:-}" ]; then
-  case "$(uname -s)-$(uname -m)" in
+case "$(uname -s)-$(uname -m)" in
     Linux-x86_64) release=fern-linux-x86_64 host_target=x86-64-linux ;;
     Linux-aarch64) release=fern-linux-arm64 host_target=arm64-linux ;;
     Darwin-arm64) release=fern-darwin-arm64 host_target=arm64-darwin ;;
     *) echo "build.sh: no fern release for $(uname -s) $(uname -m); set FERN" >&2; exit 1 ;;
-  esac
+esac
+if [ -z "${FERN:-}" ]; then
   dir="$(mktemp -d)"
   (cd "$dir" && curl -sSfLO "$FERN_RELEASE/$release.tar.gz" && curl -sSfLO "$FERN_RELEASE/$release.tar.gz.sha256" &&
     sha256_check "$release.tar.gz.sha256" && tar xzf "$release.tar.gz")
   "$dir/fern" -target "$host_target" -o "$dir/fern-checkout" ../../compiler/fern.fern ../../internal/stdlib
   FERN="$dir/fern-checkout"
 fi
-"$FERN" -target x86-64-linux -O -o server server.fern ../../internal/stdlib
+"$FERN" -target x86-64-linux -O -o server ../showcase/server.fern.md ../../internal/stdlib
+
+# Weave source lessons with a host binary before asset compression.
+prepare_server="$PWD/server"
+if [ "$host_target" != x86-64-linux ]; then
+  prepare_server="$(mktemp -d)/prepare-server"
+  "$FERN" -target "$host_target" -O -o "$prepare_server" ../showcase/server.fern.md ../../internal/stdlib
+fi
+node ../showcase/prepare.mjs "$PWD/.showcase" "$prepare_server"
 
 if [ -n "${CONTAINER_TOOL:-}" ]; then
   "$CONTAINER_TOOL" build --platform linux/amd64 -t "$IMAGE" .
