@@ -880,6 +880,7 @@ pub function (n: i32) ordinal(): string {
   return n.to_string() + suffix;
 }
 
+// The decimal text of `n`, with a leading `-` when it is negative.
 pub function (n: i32) to_string(): string {
   return int.int_to_string(n);
 }
