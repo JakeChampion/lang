@@ -5,6 +5,8 @@
 // signed32 RC header at (pointer & ~2)-8. ARM x4..x7 or x86 rcx/rdx/r11
 // scratch registers are dead; only these and the declared result may change. No
 // cached-input or alignment annotation is accepted as evidence here.
+// An x30 data home requires the caller to save its return address outside
+// this fragment. The frame and return path remain caller obligations.
 import "./util";
 import "./ssaproofnames" as names;
 import "./ssacredithelper" as helper;
@@ -35,9 +37,9 @@ function label(line: string): boolean {
 
 function location(name: string, arm: boolean): boolean {
   let r = isa.reg(name, arm, 64);
-  // Frame base changes would invalidate the independent slot model.
+  // Frame bases must stay fixed. x30 is a data home in a framed caller.
   if (r >= 0) {
-    return if (arm) { r != 29 && r != 30 } else { r != 4 && r != 5 };
+    return if (arm) { r != 29 } else { r != 4 && r != 5 };
   }
   return isa.frame_slot(name, arm);
 }

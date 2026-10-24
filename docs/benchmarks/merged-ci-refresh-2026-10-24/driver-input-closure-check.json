@@ -1,0 +1,66 @@
+{
+  "measured_source": "0871d66b1f98c41d0b362a1f89512c257cf1f529",
+  "later_changes": [
+    "compiler/drivers/ssaretainedinline.fern",
+    "compiler/ssainlineunique.fern",
+    "internal/testing/e2ecompiler/self_host_ssa_lift_admits_test.go",
+    "spec/core.md"
+  ],
+  "drivers": [
+    {
+      "driver": "fern.fern/stage2",
+      "input_files": 134,
+      "changed_inputs_after_measurement": []
+    },
+    {
+      "driver": "fern.fern",
+      "input_files": 134,
+      "changed_inputs_after_measurement": []
+    },
+    {
+      "driver": "drivers/asm_load_run.fern",
+      "input_files": 105,
+      "changed_inputs_after_measurement": []
+    },
+    {
+      "driver": "drivers/asm_modload_run.fern",
+      "input_files": 102,
+      "changed_inputs_after_measurement": []
+    },
+    {
+      "driver": "drivers/asm_ir_run.fern",
+      "input_files": 104,
+      "changed_inputs_after_measurement": []
+    },
+    {
+      "driver": "drivers/asm_run.fern",
+      "input_files": 102,
+      "changed_inputs_after_measurement": []
+    },
+    {
+      "driver": "drivers/wasm_ir_run.fern",
+      "input_files": 104,
+      "changed_inputs_after_measurement": []
+    },
+    {
+      "driver": "drivers/wasm_run.fern",
+      "input_files": 104,
+      "changed_inputs_after_measurement": []
+    },
+    {
+      "driver": "drivers/wasm_runio_run.fern",
+      "input_files": 104,
+      "changed_inputs_after_measurement": []
+    },
+    {
+      "driver": "drivers/asm_pathprobe_run.fern",
+      "input_files": 96,
+      "changed_inputs_after_measurement": []
+    },
+    {
+      "driver": "drivers/checker_modload_run.fern",
+      "input_files": 35,
+      "changed_inputs_after_measurement": []
+    }
+  ]
+}
