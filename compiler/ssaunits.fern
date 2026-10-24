@@ -1546,8 +1546,17 @@ function integer_literal(f: ssasem.Func, ins: ssa.SInst): boolean {
 // anything else. Every backend keeps a record's field and a wide array's
 // element in an 8-byte slot, so the word is the slot's bytes on each.
 function wide_word(f: ssasem.Func, defs: ssa.SInst[], v: i32, t: typeinfo.Type): string {
-  let float: boolean = ssasem.is_f64(t);
-  if (!float && !ssasem.is_wide(t)) {
+  if (ssasem.is_float(t)) {
+    match (float_constant_bits(f, defs, v, 32)) {
+      Some(bits) => {
+        return util.i64_to_string(bits);
+      },
+      None => {
+        return "";
+      }
+    }
+  }
+  if (!ssasem.is_wide(t)) {
     return "";
   }
   let d: ssa.SInst = through_copies(defs, v);
@@ -1556,24 +1565,91 @@ function wide_word(f: ssasem.Func, defs: ssa.SInst[], v: i32, t: typeinfo.Type):
     neg = true;
     d = through_copies(defs, d.args[0]);
   }
-  if (!float) {
-    d = wide_literal(f, defs, d);
-  }
+  d = wide_literal(f, defs, d);
   if (d.kind_tag != 1) {
     return "";
   }
   let bits: i64 = d.imm as i64;
-  if (float) {
-    bits = util.parse_f64_bits(d.str);
-  } else if (d.str != "") {
+  if (d.str != "") {
     bits = util.lit_to_i64(d.str);
   }
-  if (neg && float) {
-    bits = bits ^ 1i64 << 63i64;
-  } else if (neg) {
+  if (neg) {
     bits = 0 - bits;
   }
   return util.i64_to_string(bits);
+}
+
+// Static floating tables retain the same intermediate rounding as runtime code.
+// f32 arrays use promoted f64 slots on every backend, including WASI.
+function float_constant_bits(f: ssasem.Func, defs: ssa.SInst[], v: i32, budget: i32): Option[i64] {
+  if (budget <= 0 || v < 0 || v >= defs.len()) {
+    return None;
+  }
+  let d: ssa.SInst = through_copies(defs, v);
+  if (d.result < 0 || !ssasem.is_float(f.values[d.result])) {
+    return None;
+  }
+  let bits: i64 = 0;
+  if (d.kind_tag == 1) {
+    bits = util.parse_f64_bits(d.str);
+  } else if (d.args.len() == 1 && (d.kind_tag == ssasem.cast() || d.kind_tag == 10 && d.str == "-")) {
+    match (float_constant_bits(f, defs, d.args[0], budget - 1)) {
+      Some(value) => {
+        bits = value;
+      },
+      None => {
+        return None;
+      }
+    }
+    if (d.kind_tag == 10) {
+      bits = bits ^ 1i64 << 63i64;
+    }
+  } else if (d.kind_tag == 9 && d.args.len() == 2 && (d.str == "+" || d.str == "-" || d.str == "*" || d.str == "/")) {
+    let left: i64 = 0;
+    let right: i64 = 0;
+    match (float_constant_bits(f, defs, d.args[0], budget - 1)) {
+      Some(value) => {
+        left = value;
+      },
+      None => {
+        return None;
+      }
+    }
+    match (float_constant_bits(f, defs, d.args[1], budget - 1)) {
+      Some(value) => {
+        right = value;
+      },
+      None => {
+        return None;
+      }
+    }
+    let a: f64 = f64_from_bits(left);
+    let b: f64 = f64_from_bits(right);
+    let value: f64 = 0.0;
+    if (d.str == "+") {
+      value = a + b;
+    }
+    if (d.str == "-") {
+      value = a - b;
+    }
+    if (d.str == "*") {
+      value = a * b;
+    }
+    if (d.str == "/") {
+      value = a / b;
+    }
+    // Computed NaN payloads differ between targets. Keep their runtime operation.
+    if (value != value) {
+      return None;
+    }
+    bits = f64_bits(value);
+  } else {
+    return None;
+  }
+  if (ssasem.is_f32(f.values[d.result])) {
+    bits = f64_bits((f64_from_bits(bits) as f32) as f64);
+  }
+  return Some(bits);
 }
 
 // `wide_literal(f, defs, d)` — the integer literal under a cast to the wide

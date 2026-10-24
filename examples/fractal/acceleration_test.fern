@@ -149,11 +149,27 @@ function test_output_paths(): test.TestOutcome {
   return test.pass();
 }
 
+function test_cancelled_rows(): test.TestOutcome {
+  let polls: Cell[i32] = cell_new(0);
+  let stop: () => boolean = (): boolean => {
+    polls.set(polls.get() + 1);
+    return polls.get() >= 4;
+  };
+  match (fractal.render_cancellable(42, 1931133968718, 2054079141036, stop)) {
+    Err(fractal.RenderError.Cancelled()) => {},
+    _ => {
+      return test.fail("cancelled renderer produced a tile");
+    }
+  }
+  return test.assert_true(polls.get() == 4);
+}
+
 function main(): i32 {
   let runner: test.TestRunner = test.test_new("fractal acceleration");
   runner = runner.it("lane refill, tails, and iteration deadlines", test_refill);
   runner = runner.it("shared orbit prefix", test_prefix);
   runner = runner.it("typed coordinate errors", test_invalid_tiles);
   runner = runner.it("default and direct output paths", test_output_paths);
+  runner = runner.it("cancellation between rows", test_cancelled_rows);
   return runner.finish();
 }
