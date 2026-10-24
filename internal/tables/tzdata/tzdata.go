@@ -351,7 +351,7 @@ func (t Table) Rewrite(src string) (string, error) {
 	return fmtsource.Format(src[:i] + Begin + "\n" + t.Block() + src[j:])
 }
 
-const TzFern = "internal/stdlib/std/tz.fern"
+const TzFern = "internal/stdlib/std/tz.fern.md"
 
 func Generate(src string) (string, error) {
 	files, err := Load()

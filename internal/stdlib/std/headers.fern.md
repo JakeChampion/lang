@@ -1,0 +1,333 @@
+# HTTP header values
+
+This module stores HTTP headers with case-insensitive name lookup and multiple values per name.
+
+## Model
+
+`HeaderMap` compares field names without regard to ASCII case. A field can retain several values. The list parser respects quoted content.
+
+## Contracts
+
+Map updates return the next map value. `get_all` preserves distinct field values, while list helpers interpret comma-separated members.
+
+## Executable example
+
+```fern test name=std-headers-example
+import "std/headers";
+import "std/option";
+
+function main(): i32 {
+  let h = headers.header_map_new().append("X-Name", "Ada");
+  if (h.get("x-name").unwrap_or("") != "Ada") { return 1; }
+  return 0;
+}
+```
+
+## Module assembly
+
+The root chunk preserves the declaration order. The chunks below contain the complete implementation.
+
+```fern
+<<*>>=
+<<module introduction>>
+
+<<dependencies 2>>
+
+<<3 pub function header_map_new(): HeaderMap>>
+
+<<4 function __list_member(out: string[], value: string, from: i32, to: i32): string[]>>
+
+<<5 pub function unquote(s: string): string>>
+
+<<6 function __coding_weight(members: string[], coding: string): i32>>
+
+<<7 pub function weight(member: string): i32>>
+
+<<8 function __qvalue(s: string): i32>>
+
+<<9 pub function (h: HeaderMap) append(name: string, value: string): HeaderMap>>
+```
+
+### `module introduction`
+
+```fern
+<<module introduction>>=
+// This module stores HTTP headers with case-insensitive name lookup and multiple values per name.
+```
+
+### `dependencies 2`
+
+```fern
+<<dependencies 2>>=
+import "std/string";
+import "core/map";
+```
+
+### `3 pub function header_map_new(): HeaderMap`
+
+```fern
+<<3 pub function header_map_new(): HeaderMap>>=
+pub function header_map_new(): HeaderMap {
+  let names: string[] = [];
+  let values: string[] = [];
+  return HeaderMap { names: names, values: values };
+}
+
+pub function (h: HeaderMap) get(name: string): Option[string] {
+  let i: i32 = 0;
+  while (i < h.names.len()) {
+    if (h.names[i].len() == name.len() && h.names[i].eq_ignore_ascii_case(name)) {
+      return Some(h.values[i]);
+    }
+    i = i + 1;
+  }
+  return None;
+}
+
+pub function (h: HeaderMap) has(name: string): boolean {
+  let i: i32 = 0;
+  while (i < h.names.len()) {
+    if (h.names[i].len() == name.len() && h.names[i].eq_ignore_ascii_case(name)) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+pub function (h: HeaderMap) get_all(name: string): string[] {
+  let out: string[] = [];
+  let i: i32 = 0;
+  while (i < h.names.len()) {
+    if (h.names[i].len() == name.len() && h.names[i].eq_ignore_ascii_case(name)) {
+      out = out.append(h.values[i]);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+pub function (h: HeaderMap) get_list(name: string): string[] {
+  let out: string[] = [];
+  for v in h.get_all(name) {
+    for m in split_list(v) {
+      out = out.append(m);
+    }
+  }
+  return out;
+}
+
+pub function split_list(value: string): string[] {
+  let out: string[] = [];
+  let start: i32 = 0;
+  let quoted: boolean = false;
+  let i: i32 = 0;
+  while (i < value.len()) {
+    let b: u8 = value[i];
+    if (quoted && b == 92 as u8) {
+      i = i + 1;
+    } else if (b == 34 as u8) {
+      quoted = !quoted;
+    } else if (b == 44 as u8 && !quoted) {
+      out = __list_member(out, value, start, i);
+      start = i + 1;
+    }
+    i = i + 1;
+  }
+  return __list_member(out, value, start, value.len());
+}
+```
+
+### `4 function __list_member(out: string[], value: string, from: i32, to: i32): string[]`
+
+```fern
+<<4 function __list_member(out: string[], value: string, from: i32, to: i32): string[]>>=
+function __list_member(out: string[], value: string, from: i32, to: i32): string[] {
+  let m: string = value.slice_snap(from, to).trim();
+  if (m.len() == 0) {
+    return out;
+  }
+  return out.append(m);
+}
+```
+
+### `5 pub function unquote(s: string): string`
+
+```fern
+<<5 pub function unquote(s: string): string>>=
+pub function unquote(s: string): string {
+  if (s.len() < 2 || s[0] != 34 as u8 || s[s.len() - 1] != 34 as u8) {
+    return s;
+  }
+  let end: i32 = s.len() - 1;
+  let out: string = "";
+  let from: i32 = 1;
+  let i: i32 = 1;
+  while (i < end) {
+    if (s[i] == 92 as u8 && i + 1 < end) {
+      out = out + s.slice_snap(from, i);
+      from = i + 1;
+      i = i + 2;
+    } else {
+      i = i + 1;
+    }
+  }
+  return out + s.slice_snap(from, end);
+}
+
+pub function (h: HeaderMap) preferred_coding(offers: string[]): Option[string] {
+  let members: string[] = h.get_list("Accept-Encoding");
+  let floor: i32 = __coding_weight(members, "identity");
+  let best: Option[string] = None;
+  let best_q: i32 = 0;
+  for o in offers {
+    let q: i32 = __coding_weight(members, o);
+    if (q > best_q && q >= floor) {
+      best = Some(o);
+      best_q = q;
+    }
+  }
+  return best;
+}
+```
+
+### `6 function __coding_weight(members: string[], coding: string): i32`
+
+```fern
+<<6 function __coding_weight(members: string[], coding: string): i32>>=
+function __coding_weight(members: string[], coding: string): i32 {
+  let star: i32 = -1;
+  for m in members {
+    let name: string = __member_token(m);
+    if (__same_coding(name, coding)) {
+      return weight(m);
+    }
+    if (name == "*") {
+      star = weight(m);
+    }
+  }
+  return star;
+}
+
+function __member_token(m: string): string {
+  let Some(semi) = m.index_of(";") else {
+    return m;
+  };
+  return m.slice_snap(0, semi).trim();
+}
+
+function __same_coding(name: string, coding: string): boolean {
+  if (name.eq_ignore_ascii_case(coding)) {
+    return true;
+  }
+  return name.eq_ignore_ascii_case("x-gzip") && coding.eq_ignore_ascii_case("gzip");
+}
+```
+
+### `7 pub function weight(member: string): i32`
+
+```fern
+<<7 pub function weight(member: string): i32>>=
+pub function weight(member: string): i32 {
+  let params: string[] = member.split(";");
+  let i: i32 = 1;
+  while (i < params.len()) {
+    let p: string = params[i].trim();
+    if (p.len() >= 2 && (p[0] == 113 as u8 || p[0] == 81 as u8) && p[1] == 61 as u8) {
+      return __qvalue(p.slice_snap(2, p.len()));
+    }
+    i = i + 1;
+  }
+  return 1000;
+}
+```
+
+### `8 function __qvalue(s: string): i32`
+
+```fern
+<<8 function __qvalue(s: string): i32>>=
+function __qvalue(s: string): i32 {
+  if (s.len() == 0 || s.len() > 5 || s[0] != 48 as u8 && s[0] != 49 as u8) {
+    return 0;
+  }
+  if (s.len() > 1 && s[1] != 46 as u8) {
+    return 0;
+  }
+  let q: i32 = (s[0] - 48 as u8) as i32 * 1000 + __thousandths(s);
+  if (q > 1000) {
+    return 0;
+  }
+  return q;
+}
+
+function __thousandths(s: string): i32 {
+  let q: i32 = 0;
+  let scale: i32 = 100;
+  let i: i32 = 2;
+  while (i < s.len()) {
+    if (s[i] < 48 as u8 || s[i] > 57 as u8) {
+      return 1001;
+    }
+    q = q + (s[i] - 48 as u8) as i32 * scale;
+    scale = scale / 10;
+    i = i + 1;
+  }
+  return q;
+}
+```
+
+### `9 pub function (h: HeaderMap) append(name: string, value: string): HeaderMap`
+
+```fern
+<<9 pub function (h: HeaderMap) append(name: string, value: string): HeaderMap>>=
+pub function (h: HeaderMap) append(name: string, value: string): HeaderMap {
+  return HeaderMap {
+    ...h,
+    names: h.names.append(name),
+    values: h.values.append(value),
+  };
+}
+
+pub function (h: HeaderMap) set(name: string, value: string): HeaderMap {
+  let new_names: string[] = [];
+  let new_values: string[] = [];
+  let inserted: boolean = false;
+  let i: i32 = 0;
+  while (i < h.names.len()) {
+    if (h.names[i].eq_ignore_ascii_case(name)) {
+      if (!inserted) {
+        new_names = new_names.append(name);
+        new_values = new_values.append(value);
+        inserted = true;
+      }
+    } else {
+      new_names = new_names.append(h.names[i]);
+      new_values = new_values.append(h.values[i]);
+    }
+    i = i + 1;
+  }
+  if (!inserted) {
+    new_names = new_names.append(name);
+    new_values = new_values.append(value);
+  }
+  return HeaderMap { ...h, names: new_names, values: new_values };
+}
+
+pub function (h: HeaderMap) remove(name: string): HeaderMap {
+  let new_names: string[] = [];
+  let new_values: string[] = [];
+  let i: i32 = 0;
+  while (i < h.names.len()) {
+    if (!h.names[i].eq_ignore_ascii_case(name)) {
+      new_names = new_names.append(h.names[i]);
+      new_values = new_values.append(h.values[i]);
+    }
+    i = i + 1;
+  }
+  return HeaderMap { ...h, names: new_names, values: new_values };
+}
+
+pub function (h: HeaderMap) len(): i32 {
+  return h.names.len();
+}
+```

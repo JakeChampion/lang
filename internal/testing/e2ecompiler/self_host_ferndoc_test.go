@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/jakechampion/lang/internal/syntax/parser"
+	"github.com/jakechampion/lang/internal/tools/literate"
 )
 
 func TestSelfHostFerndocSelfChecks(t *testing.T) {
@@ -82,7 +83,7 @@ func TestSelfHostFernDocMode(t *testing.T) {
 		}
 	}
 
-	one := exec.Command(fernBin, "-doc", filepath.Join(stdlib, "std", "io.fern"))
+	one := exec.Command(fernBin, "-doc", filepath.Join(stdlib, "std", "io.fern.md"))
 	got, err := one.Output()
 	if err != nil {
 		t.Fatalf("fern -doc <file>: %v", err)
@@ -119,10 +120,10 @@ func stdlibPageNames(t *testing.T, stdlib string) map[string]bool {
 	for _, ns := range []string{"std", "core"} {
 		root := filepath.Join(stdlib, ns)
 		err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-			if err != nil || d.IsDir() || !strings.HasSuffix(path, ".fern") || strings.HasPrefix(d.Name(), "_test_") {
+			if err != nil || d.IsDir() || !(strings.HasSuffix(path, ".fern") || strings.HasSuffix(path, ".fern.md")) || strings.HasPrefix(d.Name(), "_test_") {
 				return err
 			}
-			src, rerr := os.ReadFile(path)
+			src, rerr := literate.ReadFile(path)
 			if rerr != nil {
 				return rerr
 			}
@@ -133,7 +134,7 @@ func stdlibPageNames(t *testing.T, stdlib string) map[string]bool {
 			if rerr != nil {
 				return rerr
 			}
-			name := strings.ReplaceAll(strings.TrimSuffix(rel, ".fern"), string(filepath.Separator), "_") + ".md"
+			name := strings.ReplaceAll(strings.TrimSuffix(strings.TrimSuffix(rel, ".md"), ".fern"), string(filepath.Separator), "_") + ".md"
 			mod := ns + "/" + filepath.ToSlash(rel)
 			if prev, ok := from[name]; ok {
 				t.Errorf("%s and %s both want the page %s", prev, mod, name)

@@ -183,5 +183,5 @@ def region():
     return "\n".join(parts)
 
 if __name__ == "__main__":
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "internal", "stdlib", "std", "crypto", "p256.fern")
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "internal", "stdlib", "std", "crypto", "p256.fern.md")
     write_region(path, "P-256 ARITHMETIC", "gen-p256.py", region())

@@ -1,0 +1,892 @@
+# WebSocket server sessions
+
+This module implements WebSocket server sessions under RFC 6455.
+
+## Model
+
+A server session delivers text and binary messages through callbacks. A connection also exposes its negotiated protocol and output state.
+
+## Contracts
+
+Message limits and output pressure have separate controls. Send results distinguish accepted data, backpressure, and dropped data. Upgrade errors retain their cause.
+
+## Module assembly
+
+The root chunk preserves the declaration order. The chunks below contain the complete implementation.
+
+```fern
+<<*>>=
+<<module introduction>>
+
+<<dependencies 2>>
+
+<<3 pub struct Options>>
+
+<<4 pub function options(): Options>>
+
+<<5 pub enum Message>>
+
+<<6 pub function (e: UpgradeError) to_string(): string>>
+
+<<7 impl error.Error for UpgradeError>>
+
+<<8 pub function (e: UpgradeError) message(): string>>
+
+<<9 impl http.ToResponse for UpgradeError>>
+
+<<10 pub function handlers(message: (Conn, Message)>>
+
+<<11 pub struct Conn>>
+
+<<12 pub function (c: Conn) send_text(s: string): SendResult>>
+
+<<13 function __negotiated(req: HttpRequest, opts: Options): (i32, string)>>
+
+<<14 pub function accept_key(key: string): string>>
+
+<<15 function __frame(opcode: i32, payload: u8[]): u8[]>>
+
+<<16 struct __Reading>>
+
+<<17 function __run(i: i32, c: Conn, body: Stream, h: Handlers): Option[u8[]]>>
+
+<<18 function __on_data(c: Conn, h: Handlers, r: __Reading, f: __Frame): (__Reading, boolean)>>
+
+<<19 function __utf8_lead(v: i32): (i32, i32, i32)>>
+```
+
+### `module introduction`
+
+```fern
+<<module introduction>>=
+// This module implements WebSocket server sessions under RFC 6455.
+```
+
+### `dependencies 2`
+
+```fern
+<<dependencies 2>>=
+import "std/http";
+import "std/headers";
+import "std/stream";
+import "std/crypto";
+import "std/base64";
+import "std/string";
+import "std/utf8";
+import "std/array";
+import "std/option";
+import "std/deflate";
+import "std/error";
+import "core/cmp";
+```
+
+### `3 pub struct Options`
+
+```fern
+<<3 pub struct Options>>=
+pub struct Options { max_message: i32, backpressure: i32, max_backpressure: i32, protocols: string[], compression: boolean }
+```
+
+### `4 pub function options(): Options`
+
+```fern
+<<4 pub function options(): Options>>=
+pub function options(): Options {
+  let none: string[] = [];
+  return Options { max_message: 1048576, backpressure: 65536, max_backpressure: 1048576, protocols: none, compression: false };
+}
+```
+
+### `5 pub enum Message`
+
+```fern
+<<5 pub enum Message>>=
+pub enum Message { Text(string), Binary(u8[]) }
+
+pub enum SendResult { Sent, Backpressure, Dropped }
+
+pub enum UpgradeError { NotWebSocket, WrongVersion, KeyMissing }
+```
+
+### `6 pub function (e: UpgradeError) to_string(): string`
+
+```fern
+<<6 pub function (e: UpgradeError) to_string(): string>>=
+pub function (e: UpgradeError) to_string(): string {
+  return e.message();
+}
+```
+
+### `7 impl error.Error for UpgradeError`
+
+```fern
+<<7 impl error.Error for UpgradeError>>=
+impl error.Error for UpgradeError {}
+
+impl cmp.Display for UpgradeError {}
+```
+
+### `8 pub function (e: UpgradeError) message(): string`
+
+```fern
+<<8 pub function (e: UpgradeError) message(): string>>=
+pub function (e: UpgradeError) message(): string {
+  match (e) {
+    NotWebSocket => {
+      return "websocket: the request is not an upgrade to websocket";
+    },
+    WrongVersion => {
+      return "websocket: Sec-WebSocket-Version must be 13";
+    },
+    KeyMissing => {
+      return "websocket: Sec-WebSocket-Key is missing or not 16 bytes in base64";
+    }
+  }
+  return "";
+}
+```
+
+### `9 impl http.ToResponse for UpgradeError`
+
+```fern
+<<9 impl http.ToResponse for UpgradeError>>=
+impl http.ToResponse for UpgradeError {
+  function to_response(self: UpgradeError): HttpResponse {
+    match (self) {
+      KeyMissing => {
+        return http.problem(400, "", self.message());
+      },
+      _ => {
+        return http.problem(426, "", self.message()).with_header("Upgrade", "websocket").with_header("Sec-WebSocket-Version", "13");
+      }
+    }
+    return http.problem(400, "", self.message());
+  }
+}
+
+pub struct Handlers { open: (Conn) => void, message: (Conn, Message) => void, drain: (Conn) => void, close: (Conn, i32, string) => void }
+```
+
+### `10 pub function handlers(message: (Conn, Message)`
+
+```fern
+<<10 pub function handlers(message: (Conn, Message)>>=
+pub function handlers(message: (Conn, Message) => void): Handlers {
+  return Handlers { open: (c: Conn): void => {}, message: message, drain: (c: Conn): void => {}, close: (c: Conn, code: i32, reason: string): void => {} };
+}
+```
+
+### `11 pub struct Conn`
+
+```fern
+<<11 pub struct Conn>>=
+pub struct Conn { protocol: string, path: string, window: i32, opts: Options, out: Cell[u8[]], state: Cell[i32], code: Cell[i32], reason: Cell[string], pressured: Cell[i32], write: (u8[]) => i32 }
+```
+
+### `12 pub function (c: Conn) send_text(s: string): SendResult`
+
+```fern
+<<12 pub function (c: Conn) send_text(s: string): SendResult>>=
+pub function (c: Conn) send_text(s: string): SendResult {
+  return __send(c, 1, s.bytes());
+}
+
+pub function (c: Conn) send_binary(b: u8[]): SendResult {
+  return __send(c, 2, b);
+}
+
+pub function (c: Conn) ping(payload: u8[]): SendResult {
+  return __send(c, 9, array.take(payload, 125));
+}
+
+pub function (c: Conn) close(code: i32, reason: string): void {
+  if (c.state.get() != 0) {
+    return;
+  }
+  c.state.set(1);
+  c.code.set(code);
+  c.reason.set(reason);
+  c.out.set(c.out.get().concat(__frame(8, __close_payload(code, reason))));
+}
+
+pub function (c: Conn) is_open(): boolean {
+  return c.state.get() == 0;
+}
+
+pub function accept(req: HttpRequest, opts: Options, h: Handlers): Result[HttpResponse, UpgradeError] {
+  if (!__is_websocket(req)) {
+    return Err(NotWebSocket);
+  }
+  if (!__version_13(req)) {
+    return Err(WrongVersion);
+  }
+  let key: string = req.headers.get("sec-websocket-key").unwrap_or("").trim();
+  if (!__key_ok(key)) {
+    return Err(KeyMissing);
+  }
+  let protocol: string = __protocol(req, opts);
+  let deflated: (i32, string) = __negotiated(req, opts);
+  let conn: Conn = __conn(req, protocol, deflated.0, opts);
+  let body: Stream = req.body;
+  let resp: HttpResponse = http.chunks(101, (i: i32): Option[u8[]] => __run(i, conn, body, h));
+  resp = resp.with_header("Upgrade", "websocket").with_header("Sec-WebSocket-Accept", accept_key(key));
+  if (protocol.len() > 0) {
+    resp = resp.with_header("Sec-WebSocket-Protocol", protocol);
+  }
+  if (deflated.1.len() > 0) {
+    resp = resp.with_header("Sec-WebSocket-Extensions", deflated.1);
+  }
+  return Ok(resp);
+}
+```
+
+### `13 function __negotiated(req: HttpRequest, opts: Options): (i32, string)`
+
+```fern
+<<13 function __negotiated(req: HttpRequest, opts: Options): (i32, string)>>=
+function __negotiated(req: HttpRequest, opts: Options): (i32, string) {
+  if (!opts.compression) {
+    return (0, "");
+  }
+  for v in req.headers.get_all("sec-websocket-extensions") {
+    for offer in v.split(",") {
+      let bits: i32 = __deflate_offer(offer);
+      if (bits > 0) {
+        return (bits, "permessage-deflate; server_no_context_takeover; server_max_window_bits=" + bits.to_string());
+      }
+    }
+  }
+  return (0, "");
+}
+
+function __deflate_offer(offer: string): i32 {
+  let parts: string[] = offer.split(";");
+  if (parts.len() == 0 || parts[0].trim() != "permessage-deflate") {
+    return 0;
+  }
+  let bits: i32 = 15;
+  let seen: string[] = [];
+  let i: i32 = 1;
+  while (i < parts.len()) {
+    let kv: string[] = parts[i].trim().split("=");
+    let name: string = kv[0].trim();
+    if (name.len() == 0 || __seen(seen, name)) {
+      return 0;
+    }
+    seen = seen.append(name);
+    bits = __deflate_param(name, kv, bits);
+    if (bits == 0) {
+      return 0;
+    }
+    i = i + 1;
+  }
+  return bits;
+}
+
+function __seen(names: string[], name: string): boolean {
+  for n in names {
+    if (n == name) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function __window_value(v: string): i32 {
+  match (v.trim().trim_chars("\"").parse_int()) {
+    Some(n) => {
+      if (n < 8 || n > 15) {
+        return 0;
+      }
+      return n;
+    },
+    None => {
+      return 0;
+    }
+  }
+  return 0;
+}
+
+function __deflate_param(name: string, kv: string[], bits: i32): i32 {
+  if (kv.len() > 2) {
+    return 0;
+  }
+  let has_value: boolean = kv.len() == 2;
+  if (name == "server_no_context_takeover" || name == "client_no_context_takeover") {
+    if (has_value) {
+      return 0;
+    }
+    return bits;
+  }
+  if (name == "client_max_window_bits") {
+    if (has_value && __window_value(kv[1]) == 0) {
+      return 0;
+    }
+    return bits;
+  }
+  if (name == "server_max_window_bits" && has_value) {
+    return __window_value(kv[1]);
+  }
+  return 0;
+}
+```
+
+### `14 pub function accept_key(key: string): string`
+
+```fern
+<<14 pub function accept_key(key: string): string>>=
+pub function accept_key(key: string): string {
+  return base64.encode(crypto.sha1_bytes((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").as_bytes()));
+}
+
+pub function frame(fin: boolean, opcode: i32, payload: u8[], mask: u8[]): u8[] {
+  let b0: i32 = opcode;
+  if (fin) {
+    b0 = b0 | 128;
+  }
+  let out: u8[] = [b0 as u8];
+  let masked: i32 = 0;
+  if (mask.len() == 4) {
+    masked = 128;
+  }
+  let n: i32 = payload.len();
+  if (n < 126) {
+    out = out.append((masked | n) as u8);
+  } else if (n < 65536) {
+    out = out.append((masked | 126) as u8).append((n >> 8) as u8).append((n & 255) as u8);
+  } else {
+    out = out.append((masked | 127) as u8).append(0 as u8).append(0 as u8).append(0 as u8).append(0 as u8);
+    out = out.append((n >> 24 & 255) as u8).append((n >> 16 & 255) as u8).append((n >> 8 & 255) as u8).append((n & 255) as u8);
+  }
+  if (mask.len() == 4) {
+    return out.concat(mask).concat(__masked(payload, mask));
+  }
+  return out.concat(payload);
+}
+```
+
+### `15 function __frame(opcode: i32, payload: u8[]): u8[]`
+
+```fern
+<<15 function __frame(opcode: i32, payload: u8[]): u8[]>>=
+function __frame(opcode: i32, payload: u8[]): u8[] {
+  let none: u8[] = [];
+  return frame(true, opcode, payload, none);
+}
+
+function __frame_out(c: Conn, opcode: i32, payload: u8[]): u8[] {
+  if (c.window == 0 || opcode > 2 || payload.len() == 0) {
+    return __frame(opcode, payload);
+  }
+  let packed: u8[] = deflate.deflate_flushed(payload, c.window);
+  let f: u8[] = __frame(opcode, array.take(packed, packed.len() - 4));
+  return f.with(0, (f[0] as i32 | 64) as u8);
+}
+
+function __masked(payload: u8[], mask: u8[]): u8[] {
+  let out: u8[] = [];
+  let i: i32 = 0;
+  while (i < payload.len()) {
+    out = out.append((payload[i] as i32 ^ mask[i & 3] as i32) as u8);
+    i = i + 1;
+  }
+  return out;
+}
+
+function __is_websocket(req: HttpRequest): boolean {
+  if (req.method != "GET") {
+    return false;
+  }
+  if (!req.headers.get("upgrade").unwrap_or("").trim().eq_ignore_ascii_case("websocket")) {
+    return false;
+  }
+  for v in req.headers.get_all("connection") {
+    for tok in v.split(",") {
+      if (tok.trim().eq_ignore_ascii_case("upgrade")) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function __version_13(req: HttpRequest): boolean {
+  return req.headers.get("sec-websocket-version").unwrap_or("").trim() == "13";
+}
+
+function __key_ok(key: string): boolean {
+  if (key.len() != 24) {
+    return false;
+  }
+  match (base64.decode(key)) {
+    Ok(bs) => {
+      return bs.len() == 16;
+    },
+    Err(_) => {
+      return false;
+    }
+  }
+  return false;
+}
+
+function __protocol(req: HttpRequest, opts: Options): string {
+  for v in req.headers.get_all("sec-websocket-protocol") {
+    for tok in v.split(",") {
+      let want: string = tok.trim();
+      for have in opts.protocols {
+        if (want == have) {
+          return have;
+        }
+      }
+    }
+  }
+  return "";
+}
+
+function __conn(req: HttpRequest, protocol: string, window: i32, opts: Options): Conn {
+  let none: u8[] = [];
+  let write: (u8[]) => i32 = (b: u8[]): i32 => 0 - 95;
+  match (req.body.source) {
+    Some(src) => {
+      write = src.send;
+    },
+    None => {}
+  }
+  return Conn { protocol: protocol, path: req.path, window: window, opts: opts, out: cell_new(none), state: cell_new(0), code: cell_new(1005), reason: cell_new(""), pressured: cell_new(0), write: write };
+}
+
+function __send(c: Conn, opcode: i32, payload: u8[]): SendResult {
+  if (c.state.get() != 0) {
+    return Dropped;
+  }
+  let out: u8[] = c.out.get();
+  let f: u8[] = __frame_out(c, opcode, payload);
+  if (out.len() + f.len() > c.opts.max_backpressure) {
+    return Dropped;
+  }
+  c.out.set(out.concat(f));
+  if (out.len() + f.len() > c.opts.backpressure) {
+    c.pressured.set(1);
+    return Backpressure;
+  }
+  return Sent;
+}
+
+function __flush(c: Conn, h: Handlers): boolean {
+  let out: u8[] = c.out.get();
+  if (out.len() == 0) {
+    return true;
+  }
+  let none: u8[] = [];
+  c.out.set(none);
+  let f: (u8[]) => i32 = c.write;
+  let wrote: i32 = f(out);
+  if (wrote < 0) {
+    return false;
+  }
+  if (c.pressured.get() == 1) {
+    c.pressured.set(0);
+    let drain: (Conn) => void = h.drain;
+    drain(c);
+    return __flush(c, h);
+  }
+  return true;
+}
+```
+
+### `16 struct __Reading`
+
+```fern
+<<16 struct __Reading>>=
+struct __Reading { opcode: i32, parts: usize, compressed: boolean, need: i32, lo: i32, hi: i32, history: u8[], peer_closed: boolean, code: i32, reason: string }
+
+struct __Frame { fin: boolean, opcode: i32, rsv1: boolean, payload: u8[] }
+
+enum __Read { FrameRead(__Frame), BytesEnded, Violation(i32) }
+```
+
+### `17 function __run(i: i32, c: Conn, body: Stream, h: Handlers): Option[u8[]]`
+
+```fern
+<<17 function __run(i: i32, c: Conn, body: Stream, h: Handlers): Option[u8[]]>>=
+function __run(i: i32, c: Conn, body: Stream, h: Handlers): Option[u8[]] {
+  if (i > 0) {
+    return None;
+  }
+  let open: (Conn) => void = h.open;
+  open(c);
+  let none: u8[] = [];
+  let r: __Reading = __Reading { opcode: 0, parts: buf_new(1024), compressed: false, need: 0, lo: 128, hi: 191, history: none, peer_closed: false, code: 1006, reason: "" };
+  let s: Stream = body;
+  let going: boolean = __flush(c, h);
+  while (going) {
+    let step: (__Reading, Stream, boolean) = __step(c, h, r, s);
+    r = step.0;
+    s = step.1;
+    going = step.2;
+  }
+  buf_free(r.parts);
+  let closed: (Conn, i32, string) => void = h.close;
+  closed(c, __final_code(c, r), __final_reason(c, r));
+  return None;
+}
+
+function __final_code(c: Conn, r: __Reading): i32 {
+  if (r.peer_closed) {
+    return r.code;
+  }
+  if (c.state.get() == 1) {
+    return c.code.get();
+  }
+  return 1006;
+}
+
+function __final_reason(c: Conn, r: __Reading): string {
+  if (r.peer_closed) {
+    return r.reason;
+  }
+  if (c.state.get() == 1) {
+    return c.reason.get();
+  }
+  return "";
+}
+
+function __step(c: Conn, h: Handlers, r: __Reading, s: Stream): (__Reading, Stream, boolean) {
+  let read: (__Read, Stream) = __read_frame(s, c.opts.max_message, c.window > 0);
+  s = read.1;
+  match (read.0) {
+    FrameRead(f) => {
+      let acted: (__Reading, boolean) = __on_frame(c, h, r, f);
+      let flushed: boolean = __flush(c, h);
+      return (acted.0, s, acted.1 && flushed);
+    },
+    BytesEnded => {
+      return (r, s, false);
+    },
+    Violation(code) => {
+      c.close(code, "");
+      let flushed: boolean = __flush(c, h);
+      return (r, s, false);
+    }
+  }
+  return (r, s, false);
+}
+
+function __on_frame(c: Conn, h: Handlers, r: __Reading, f: __Frame): (__Reading, boolean) {
+  if (f.opcode == 9) {
+    let pong: u8[] = __frame(10, f.payload);
+    c.out.set(c.out.get().concat(pong));
+    return (r, true);
+  }
+  if (f.opcode == 10) {
+    return (r, true);
+  }
+  if (f.opcode == 8) {
+    return __on_close(c, r, f.payload);
+  }
+  return __on_data(c, h, r, f);
+}
+
+function __on_close(c: Conn, r: __Reading, payload: u8[]): (__Reading, boolean) {
+  let parsed: (i32, string, i32) = __parse_close(payload);
+  if (parsed.2 != 0) {
+    c.close(parsed.2, "");
+    return (r, false);
+  }
+  let closed: __Reading = __Reading { ...r, peer_closed: true, code: parsed.0, reason: parsed.1 };
+  if (c.state.get() == 0) {
+    let echo: i32 = parsed.0;
+    if (echo == 1005) {
+      echo = 1000;
+    }
+    c.close(echo, "");
+  }
+  return (closed, false);
+}
+
+function __parse_close(payload: u8[]): (i32, string, i32) {
+  if (payload.len() == 0) {
+    return (1005, "", 0);
+  }
+  if (payload.len() == 1) {
+    return (0, "", 1002);
+  }
+  let code: i32 = payload[0] as i32 * 256 + payload[1] as i32;
+  if (!__close_code_ok(code)) {
+    return (0, "", 1002);
+  }
+  match (utf8.from_bytes(array.slice(payload, 2, payload.len()))) {
+    Some(reason) => {
+      return (code, reason, 0);
+    },
+    None => {
+      return (0, "", 1007);
+    }
+  }
+  return (0, "", 1007);
+}
+
+function __close_code_ok(code: i32): boolean {
+  if (code >= 3000 && code <= 4999) {
+    return true;
+  }
+  if (code >= 1000 && code <= 1003) {
+    return true;
+  }
+  return code >= 1007 && code <= 1014;
+}
+
+function __close_payload(code: i32, reason: string): u8[] {
+  let none: u8[] = [];
+  if (code == 1005) {
+    return none;
+  }
+  let cut: i32 = utf8.floor_char_boundary(reason, 123);
+  return [(code >> 8) as u8, (code & 255) as u8].concat(array.take(reason.bytes(), cut));
+}
+```
+
+### `18 function __on_data(c: Conn, h: Handlers, r: __Reading, f: __Frame): (__Reading, boolean)`
+
+```fern
+<<18 function __on_data(c: Conn, h: Handlers, r: __Reading, f: __Frame): (__Reading, boolean)>>=
+function __on_data(c: Conn, h: Handlers, r: __Reading, f: __Frame): (__Reading, boolean) {
+  let opcode: i32 = __message_opcode(r, f);
+  if (opcode < 0) {
+    return __violated(c, r, 1002);
+  }
+  if (buf_len(r.parts) + f.payload.len() > c.opts.max_message) {
+    return __violated(c, r, 1009);
+  }
+  buf_push_bytes_range(r.parts, f.payload, 0, f.payload.len());
+  let next: __Reading = __Reading { ...r, opcode: opcode, compressed: r.compressed || f.rsv1 };
+  if (opcode == 1 && !next.compressed) {
+    let checked: (__Reading, boolean) = __text_checked(next, f);
+    next = checked.0;
+    if (!checked.1) {
+      return __violated(c, r, 1007);
+    }
+  }
+  if (!f.fin) {
+    return (next, true);
+  }
+  return __message_done(c, h, next, opcode);
+}
+
+function __message_done(c: Conn, h: Handlers, r: __Reading, opcode: i32): (__Reading, boolean) {
+  let data: u8[] = buf_take_bytes(r.parts);
+  let history: u8[] = r.history;
+  if (r.compressed) {
+    match (__inflated(c, history, data)) {
+      Ok(out) => {
+        data = out;
+      },
+      Err(code) => {
+        return __violated(c, r, code);
+      }
+    }
+    history = array.take_last(history.concat(data), 32768);
+    if (opcode == 1 && !utf8.from_bytes(data).is_some()) {
+      return __violated(c, r, 1007);
+    }
+  }
+  if (c.state.get() == 0) {
+    __deliver(c, h, opcode, data);
+  }
+  return (__Reading { ...r, opcode: 0, compressed: false, need: 0, lo: 128, hi: 191, history: history }, true);
+}
+
+function __inflated(c: Conn, history: u8[], parts: u8[]): Result[u8[], i32] {
+  let closed: u8[] = parts.concat([0 as u8, 0 as u8, 255 as u8, 255 as u8, 1 as u8, 0 as u8, 0 as u8, 255 as u8, 255 as u8]);
+  match (deflate.inflate_after(history, closed, c.opts.max_message)) {
+    Ok(got) => {
+      return Ok(got.out);
+    },
+    Err(e) => {
+      match (e) {
+        deflate.OutputLimit => {
+          return Err(1009);
+        },
+        _ => {
+          return Err(1007);
+        }
+      }
+    }
+  }
+  return Err(1007);
+}
+
+function __message_opcode(r: __Reading, f: __Frame): i32 {
+  if (f.opcode == 0) {
+    if (r.opcode == 0) {
+      return 0 - 1;
+    }
+    return r.opcode;
+  }
+  if (r.opcode != 0) {
+    return 0 - 1;
+  }
+  return f.opcode;
+}
+
+function __text_checked(r: __Reading, f: __Frame): (__Reading, boolean) {
+  let checked: (__Reading, boolean) = __utf8_feed(r, f.payload);
+  if (!checked.1) {
+    return (r, false);
+  }
+  if (f.fin && checked.0.need != 0) {
+    return (r, false);
+  }
+  return checked;
+}
+
+function __deliver(c: Conn, h: Handlers, opcode: i32, parts: u8[]): void {
+  let message: (Conn, Message) => void = h.message;
+  if (opcode == 1) {
+    message(c, Text(utf8.from_bytes_lossy(parts)));
+    return;
+  }
+  message(c, Binary(parts));
+}
+
+function __violated(c: Conn, r: __Reading, code: i32): (__Reading, boolean) {
+  c.close(code, "");
+  return (r, false);
+}
+
+function __utf8_feed(r: __Reading, bytes: u8[]): (__Reading, boolean) {
+  let need: i32 = r.need;
+  let lo: i32 = r.lo;
+  let hi: i32 = r.hi;
+  for b in bytes {
+    let v: i32 = b as i32;
+    if (need > 0) {
+      if (v < lo || v > hi) {
+        return (r, false);
+      }
+      need = need - 1;
+      lo = 128;
+      hi = 191;
+    } else {
+      let lead: (i32, i32, i32) = __utf8_lead(v);
+      if (lead.0 < 0) {
+        return (r, false);
+      }
+      need = lead.0;
+      lo = lead.1;
+      hi = lead.2;
+    }
+  }
+  return (__Reading { ...r, need: need, lo: lo, hi: hi }, true);
+}
+```
+
+### `19 function __utf8_lead(v: i32): (i32, i32, i32)`
+
+```fern
+<<19 function __utf8_lead(v: i32): (i32, i32, i32)>>=
+function __utf8_lead(v: i32): (i32, i32, i32) {
+  if (v < 128) {
+    return (0, 128, 191);
+  }
+  if (v >= 194 && v <= 223) {
+    return (1, 128, 191);
+  }
+  if (v >= 224 && v <= 239) {
+    return (2, __utf8_lo(v, 224, 160), __utf8_hi(v, 237, 159));
+  }
+  if (v >= 240 && v <= 244) {
+    return (3, __utf8_lo(v, 240, 144), __utf8_hi(v, 244, 143));
+  }
+  return (0 - 1, 0, 0);
+}
+
+function __utf8_lo(v: i32, lead: i32, raised: i32): i32 {
+  if (v == lead) {
+    return raised;
+  }
+  return 128;
+}
+
+function __utf8_hi(v: i32, lead: i32, lowered: i32): i32 {
+  if (v == lead) {
+    return lowered;
+  }
+  return 191;
+}
+
+function __read_frame(s: Stream, max: i32, compressing: boolean): (__Read, Stream) {
+  let head: (u8[], Stream) = s.read_n(2);
+  s = head.1;
+  if (head.0.len() < 2) {
+    return (BytesEnded, s);
+  }
+  let b0: i32 = head.0[0] as i32;
+  let b1: i32 = head.0[1] as i32;
+  let opcode: i32 = b0 & 15;
+  let fin: boolean = (b0 & 128) != 0;
+  if (!__head_ok(b0, b1, compressing)) {
+    return (Violation(1002), s);
+  }
+  let len: (i32, Stream, i32) = __read_length(s, b1 & 127, max);
+  s = len.1;
+  if (len.2 != 0) {
+    return (Violation(len.2), s);
+  }
+  if (len.0 < 0) {
+    return (BytesEnded, s);
+  }
+  if (opcode >= 8 && (len.0 > 125 || !fin)) {
+    return (Violation(1002), s);
+  }
+  let rest: (u8[], Stream) = s.read_n(4 + len.0);
+  s = rest.1;
+  if (rest.0.len() < 4 + len.0) {
+    return (BytesEnded, s);
+  }
+  return (FrameRead(__Frame { fin: fin, opcode: opcode, rsv1: (b0 & 64) != 0, payload: __masked(array.slice(rest.0, 4, rest.0.len()), array.take(rest.0, 4)) }), s);
+}
+
+function __head_ok(b0: i32, b1: i32, compressing: boolean): boolean {
+  let opcode: i32 = b0 & 15;
+  if ((b0 & 48) != 0 || (b1 & 128) == 0) {
+    return false;
+  }
+  if ((b0 & 64) != 0 && !(compressing && (opcode == 1 || opcode == 2))) {
+    return false;
+  }
+  return opcode <= 2 || opcode >= 8 && opcode <= 10;
+}
+
+function __read_length(s: Stream, len7: i32, max: i32): (i32, Stream, i32) {
+  if (len7 < 126) {
+    return (len7, s, 0);
+  }
+  let width: i32 = 2;
+  if (len7 == 127) {
+    width = 8;
+  }
+  let ext: (u8[], Stream) = s.read_n(width);
+  if (ext.0.len() < width) {
+    return (0 - 1, ext.1, 0);
+  }
+  if (width == 8 && (ext.0[0] as i32 & 128) != 0) {
+    return (0, ext.1, 1002);
+  }
+  let n: i64 = 0 as i64;
+  for b in ext.0 {
+    n = n * 256 + b as i64;
+  }
+  let floor: i64 = 126 as i64;
+  if (width == 8) {
+    floor = 65536 as i64;
+  }
+  if (n < floor) {
+    return (0, ext.1, 1002);
+  }
+  if (n > max as i64) {
+    return (0, ext.1, 1009);
+  }
+  return (n as i32, ext.1, 0);
+}
+```

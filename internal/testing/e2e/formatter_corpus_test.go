@@ -8,6 +8,7 @@ import (
 
 	"github.com/jakechampion/lang/internal/syntax/parser"
 	"github.com/jakechampion/lang/internal/syntax/printer"
+	"github.com/jakechampion/lang/internal/tools/literate"
 )
 
 func TestFormatterExampleCorpusRoundTrip(t *testing.T) {
@@ -29,7 +30,7 @@ func TestFormatterExampleCorpusRoundTrip(t *testing.T) {
 			t.Fatalf("read dir %s: %v", dir, err)
 		}
 		for _, e := range entries {
-			if filepath.Ext(e.Name()) == ".fern" {
+			if strings.HasSuffix(e.Name(), ".fern") || strings.HasSuffix(e.Name(), ".fern.md") {
 				files = append(files, filepath.Join(dir, e.Name()))
 			}
 		}
@@ -41,7 +42,7 @@ func TestFormatterExampleCorpusRoundTrip(t *testing.T) {
 	for _, f := range files {
 		f := f
 		t.Run(filepath.Base(f), func(t *testing.T) {
-			src, err := os.ReadFile(f)
+			src, err := literate.ReadFile(f)
 			if err != nil {
 				t.Fatalf("read: %v", err)
 			}

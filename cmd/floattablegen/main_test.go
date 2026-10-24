@@ -9,8 +9,8 @@ import (
 )
 
 const (
-	floatFern  = "../../internal/stdlib/std/f64.fern"
-	stringFern = "../../internal/stdlib/std/string.fern"
+	floatFern  = "../../internal/stdlib/std/f64.fern.md"
+	stringFern = "../../internal/stdlib/std/string.fern.md"
 )
 
 func TestCacheEntryIsNormalisedCeiling(t *testing.T) {

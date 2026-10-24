@@ -1,0 +1,418 @@
+# Immutable maps for known string keys
+
+This module constructs immutable maps from string keys to unsigned 64-bit values.
+
+## Model
+
+Construction assigns string keys and unsigned 64-bit values to a compact immutable layout. The builder tries a bounded set of seeds.
+
+## Contracts
+
+`ConstMap.map` assumes a key from the construction set. `VerifiedConstMap` checks a stored fingerprint and returns an option for other queries.
+
+## Module assembly
+
+The root chunk preserves the declaration order. The chunks below contain the complete implementation.
+
+```fern
+<<*>>=
+<<module introduction>>
+
+<<dependencies 2>>
+
+<<3 pub struct ConstMap>>
+
+<<4 pub function constmap_new(keys: string[], values: u64[]): Result[ConstMap, string]>>
+
+<<5 const __FIRST_SEED: u64>>
+
+<<6 function __check(keys: string[], values: u64[]): Result[boolean, string]>>
+
+<<7 function __peel(keys: string[], seed: u64, lay: Layout): Peeled>>
+```
+
+### `module introduction`
+
+```fern
+<<module introduction>>=
+// This module constructs immutable maps from string keys to unsigned 64-bit values.
+```
+
+### `dependencies 2`
+
+```fern
+<<dependencies 2>>=
+import "core/map";
+import "std/hash";
+import "std/string";
+```
+
+### `3 pub struct ConstMap`
+
+```fern
+<<3 pub struct ConstMap>>=
+pub struct ConstMap { len: i32, seed: u64, segment_length: u64, segment_length_mask: u64, segment_count_length: u64, data: u64[] }
+
+pub struct VerifiedConstMap { len: i32, seed: u64, segment_length: u64, segment_length_mask: u64, segment_count_length: u64, data: u64[], tags: u64[] }
+
+struct Layout { segment_length: u64, segment_length_mask: u64, segment_count_length: u64, array_length: i32 }
+
+struct Peeled { ok: boolean, hashes: u64[], indices: i32[], found: i32[] }
+
+const ATTEMPTS: i32 = 64;
+```
+
+### `4 pub function constmap_new(keys: string[], values: u64[]): Result[ConstMap, string]`
+
+```fern
+<<4 pub function constmap_new(keys: string[], values: u64[]): Result[ConstMap, string]>>=
+pub function constmap_new(keys: string[], values: u64[]): Result[ConstMap, string] {
+  match (__check(keys, values)) {
+    Err(e) => {
+      return Err(e);
+    },
+    Ok(_) => {}
+  }
+  let lay: Layout = __layout(keys.len());
+  let seed: u64 = __FIRST_SEED;
+  let attempt: i32 = 0;
+  while (attempt < ATTEMPTS) {
+    seed = __splitmix(seed);
+    let p: Peeled = __peel(keys, seed, lay);
+    if (p.ok) {
+      let data: u64[] = __assign(p, values, lay);
+      return Ok(ConstMap { len: keys.len(), seed: seed, segment_length: lay.segment_length, segment_length_mask: lay.segment_length_mask, segment_count_length: lay.segment_count_length, data: data });
+    }
+    attempt = attempt + 1;
+  }
+  return Err("constmap: could not place " + __i32_str(keys.len()) + " keys in " + __i32_str(ATTEMPTS) + " attempts");
+}
+
+pub function verified_new(keys: string[], values: u64[]): Result[VerifiedConstMap, string] {
+  match (__check(keys, values)) {
+    Err(e) => {
+      return Err(e);
+    },
+    Ok(_) => {}
+  }
+  let lay: Layout = __layout(keys.len());
+  let seed: u64 = __FIRST_SEED;
+  let attempt: i32 = 0;
+  while (attempt < ATTEMPTS) {
+    seed = __splitmix(seed);
+    let p: Peeled = __peel(keys, seed, lay);
+    if (p.ok) {
+      let data: u64[] = __assign(p, values, lay);
+      let tags: u64[] = __assign_tags(p, lay);
+      return Ok(VerifiedConstMap { len: keys.len(), seed: seed, segment_length: lay.segment_length, segment_length_mask: lay.segment_length_mask, segment_count_length: lay.segment_count_length, data: data, tags: tags });
+    }
+    attempt = attempt + 1;
+  }
+  return Err("constmap: could not place " + __i32_str(keys.len()) + " keys in " + __i32_str(ATTEMPTS) + " attempts");
+}
+
+pub function (m: ConstMap) len(): i32 {
+  return m.len;
+}
+
+pub function (m: VerifiedConstMap) len(): i32 {
+  return m.len;
+}
+
+pub function (m: ConstMap) map(key: string): u64 {
+  let h: u64 = __hash_key(key, m.seed);
+  let (h0, h1, h2) = __positions(h, m.segment_length, m.segment_length_mask, m.segment_count_length);
+  return m.data[h0] ^ m.data[h1] ^ m.data[h2];
+}
+
+pub function (m: VerifiedConstMap) get(key: string): Option[u64] {
+  let h: u64 = __hash_key(key, m.seed);
+  let (h0, h1, h2) = __positions(h, m.segment_length, m.segment_length_mask, m.segment_count_length);
+  if ((m.tags[h0] ^ m.tags[h1] ^ m.tags[h2]) != __tag(h)) {
+    return None;
+  }
+  return Some(m.data[h0] ^ m.data[h1] ^ m.data[h2]);
+}
+
+pub function (m: VerifiedConstMap) contains(key: string): boolean {
+  match (m.get(key)) {
+    Some(_) => {
+      return true;
+    },
+    None => {
+      return false;
+    }
+  }
+}
+
+pub function (m: VerifiedConstMap) get_or(key: string, fallback: u64): u64 {
+  match (m.get(key)) {
+    Some(v) => {
+      return v;
+    },
+    None => {
+      return fallback;
+    }
+  }
+}
+```
+
+### `5 const __FIRST_SEED: u64`
+
+```fern
+<<5 const __FIRST_SEED: u64>>=
+const __FIRST_SEED: u64 = 0x5BD1E9955BD1E995;
+```
+
+### `6 function __check(keys: string[], values: u64[]): Result[boolean, string]`
+
+```fern
+<<6 function __check(keys: string[], values: u64[]): Result[boolean, string]>>=
+function __check(keys: string[], values: u64[]): Result[boolean, string] {
+  if (keys.len() != values.len()) {
+    return Err("constmap: " + __i32_str(keys.len()) + " keys but " + __i32_str(values.len()) + " values");
+  }
+  let seen: Map[string, i32] = Map { };
+  let i: i32 = 0;
+  while (i < keys.len()) {
+    if (seen.contains(keys[i])) {
+      return Err("constmap: duplicate key \"" + keys[i] + "\"");
+    }
+    seen = seen.insert(keys[i], i);
+    i = i + 1;
+  }
+  return Ok(true);
+}
+
+function __layout(size: i32): Layout {
+  let seg: u64 = 4;
+  if (size > 0) {
+    let bits: i32 = 0;
+    let n: i32 = size;
+    while (n > 0) {
+      bits = bits + 1;
+      n = n >> 1;
+    }
+    let exp: i32 = ((bits - 1) as f64 * 0.5762 + 2.25) as i32;
+    if (exp > 18) {
+      exp = 18;
+    }
+    seg = 1 as u64 << exp as u64;
+  }
+  let factor: f64 = 1.125;
+  if (size > 1 && size < 1000000) {
+    let bits: i32 = 0;
+    let n: i32 = size;
+    while (n > 0) {
+      bits = bits + 1;
+      n = n >> 1;
+    }
+    let f: f64 = 0.875 + 0.25 * 19.93 / ((bits - 1) as f64 + 0.5);
+    if (f > factor) {
+      factor = f;
+    }
+  }
+  let capacity: i64 = (size as f64 * factor) as i64 + 1;
+  let count: i64 = (capacity + seg as i64 - 1) / (seg as i64) - 2;
+  if (count < 1) {
+    count = 1;
+  }
+  let array_length: i64 = (count + 2) * (seg as i64);
+  return Layout { segment_length: seg, segment_length_mask: seg - 1, segment_count_length: count as u64 * seg, array_length: array_length as i32 };
+}
+
+function __splitmix(x: u64): u64 {
+  let z: u64 = x + 0x9E3779B97F4A7C15;
+  z = (z ^ z >> 30) * 0xBF58476D1CE4E5B9;
+  z = (z ^ z >> 27) * 0x94D049BB133111EB;
+  return z ^ z >> 31;
+}
+
+function __hash_key(key: string, seed: u64): u64 {
+  return hash.xxh64(key.bytes(), seed);
+}
+
+function __tag(h: u64): u64 {
+  return __splitmix(h ^ 0xA0761D6478BD642F);
+}
+
+function __mulhi(a: u64, b: u64): u64 {
+  let lo_mask: u64 = 0xFFFFFFFF;
+  let a_lo: u64 = a & lo_mask;
+  let a_hi: u64 = a >> 32;
+  let b_lo: u64 = b & lo_mask;
+  let b_hi: u64 = b >> 32;
+  let lo_lo: u64 = a_lo * b_lo;
+  let hi_lo: u64 = a_hi * b_lo;
+  let lo_hi: u64 = a_lo * b_hi;
+  let hi_hi: u64 = a_hi * b_hi;
+  let cross: u64 = (lo_lo >> 32) + (hi_lo & lo_mask) + (lo_hi & lo_mask);
+  return hi_hi + (hi_lo >> 32) + (lo_hi >> 32) + (cross >> 32);
+}
+
+function __positions(h: u64, segment_length: u64, mask: u64, segment_count_length: u64): (i32, i32, i32) {
+  let h0: u64 = __mulhi(h, segment_count_length);
+  let h1: u64 = h0 + segment_length;
+  let h2: u64 = h1 + segment_length;
+  h1 = h1 ^ h >> 18 & mask;
+  h2 = h2 ^ h & mask;
+  return (h0 as i32, h1 as i32, h2 as i32);
+}
+
+function __zeros_u64(n: i32): u64[] {
+  let out: u64[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.append(0);
+    i = i + 1;
+  }
+  return out;
+}
+
+function __zeros_i32(n: i32): i32[] {
+  let out: i32[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.append(0);
+    i = i + 1;
+  }
+  return out;
+}
+
+function __mod3(x: i32): i32 {
+  if (x >= 3) {
+    return x - 3;
+  }
+  return x;
+}
+```
+
+### `7 function __peel(keys: string[], seed: u64, lay: Layout): Peeled`
+
+```fern
+<<7 function __peel(keys: string[], seed: u64, lay: Layout): Peeled>>=
+function __peel(keys: string[], seed: u64, lay: Layout): Peeled {
+  let size: i32 = keys.len();
+  let n: i32 = lay.array_length;
+  let hashes: u64[] = [];
+  let i: i32 = 0;
+  while (i < size) {
+    hashes = hashes.append(__hash_key(keys[i], seed));
+    i = i + 1;
+  }
+  let count: i32[] = __zeros_i32(n);
+  let xhash: u64[] = __zeros_u64(n);
+  let xidx: i32[] = __zeros_i32(n);
+  i = 0;
+  while (i < size) {
+    let h: u64 = hashes[i];
+    let (h0, h1, h2) = __positions(h, lay.segment_length, lay.segment_length_mask, lay.segment_count_length);
+    count = count.with(h0, count[h0] + 4);
+    xhash = xhash.with(h0, xhash[h0] ^ h);
+    xidx = xidx.with(h0, xidx[h0] ^ i);
+    count = count.with(h1, count[h1] + 4 ^ 1);
+    xhash = xhash.with(h1, xhash[h1] ^ h);
+    xidx = xidx.with(h1, xidx[h1] ^ i);
+    count = count.with(h2, count[h2] + 4 ^ 2);
+    xhash = xhash.with(h2, xhash[h2] ^ h);
+    xidx = xidx.with(h2, xidx[h2] ^ i);
+    i = i + 1;
+  }
+  let alone: i32[] = __zeros_i32(n);
+  let q: i32 = 0;
+  i = 0;
+  while (i < n) {
+    if (count[i] >> 2 == 1) {
+      alone = alone.with(q, i);
+      q = q + 1;
+    }
+    i = i + 1;
+  }
+  let out_hashes: u64[] = __zeros_u64(size);
+  let out_indices: i32[] = __zeros_i32(size);
+  let out_found: i32[] = __zeros_i32(size);
+  let stack: i32 = 0;
+  while (q > 0) {
+    q = q - 1;
+    let index: i32 = alone[q];
+    if (count[index] >> 2 != 1) {
+      continue;
+    }
+    let h: u64 = xhash[index];
+    let idx: i32 = xidx[index];
+    let found: i32 = count[index] & 3;
+    out_hashes = out_hashes.with(stack, h);
+    out_indices = out_indices.with(stack, idx);
+    out_found = out_found.with(stack, found);
+    stack = stack + 1;
+    let (h0, h1, h2) = __positions(h, lay.segment_length, lay.segment_length_mask, lay.segment_count_length);
+    let h012: i32[] = [h0, h1, h2, h0, h1];
+    let other1: i32 = h012[found + 1];
+    alone = alone.with(q, other1);
+    if (count[other1] >> 2 == 2) {
+      q = q + 1;
+    }
+    count = count.with(other1, count[other1] - 4 ^ __mod3(found + 1));
+    xhash = xhash.with(other1, xhash[other1] ^ h);
+    xidx = xidx.with(other1, xidx[other1] ^ idx);
+    let other2: i32 = h012[found + 2];
+    alone = alone.with(q, other2);
+    if (count[other2] >> 2 == 2) {
+      q = q + 1;
+    }
+    count = count.with(other2, count[other2] - 4 ^ __mod3(found + 2));
+    xhash = xhash.with(other2, xhash[other2] ^ h);
+    xidx = xidx.with(other2, xidx[other2] ^ idx);
+  }
+  return Peeled { ok: stack == size, hashes: out_hashes, indices: out_indices, found: out_found };
+}
+
+function __assign(p: Peeled, values: u64[], lay: Layout): u64[] {
+  let data: u64[] = __zeros_u64(lay.array_length);
+  let i: i32 = p.hashes.len() - 1;
+  while (i >= 0) {
+    let h: u64 = p.hashes[i];
+    let (h0, h1, h2) = __positions(h, lay.segment_length, lay.segment_length_mask, lay.segment_count_length);
+    let h012: i32[] = [h0, h1, h2, h0, h1];
+    let found: i32 = p.found[i];
+    let target: i32 = h012[found];
+    data = data.with(target, values[p.indices[i]] ^ data[h012[found + 1]] ^ data[h012[found + 2]]);
+    i = i - 1;
+  }
+  return data;
+}
+
+function __assign_tags(p: Peeled, lay: Layout): u64[] {
+  let tags: u64[] = __zeros_u64(lay.array_length);
+  let i: i32 = p.hashes.len() - 1;
+  while (i >= 0) {
+    let h: u64 = p.hashes[i];
+    let (h0, h1, h2) = __positions(h, lay.segment_length, lay.segment_length_mask, lay.segment_count_length);
+    let h012: i32[] = [h0, h1, h2, h0, h1];
+    let found: i32 = p.found[i];
+    tags = tags.with(h012[found], __tag(h) ^ tags[h012[found + 1]] ^ tags[h012[found + 2]]);
+    i = i - 1;
+  }
+  return tags;
+}
+
+function __i32_str(n: i32): string {
+  if (n == 0) {
+    return "0";
+  }
+  let neg: boolean = n < 0;
+  let v: i64 = n as i64;
+  if (neg) {
+    v = 0 as i64 - v;
+  }
+  let out: string = "";
+  while (v > 0) {
+    out = string_from_bytes_unchecked([(48 as i64 + v % 10) as u8]) + out;
+    v = v / 10;
+  }
+  if (neg) {
+    return "-" + out;
+  }
+  return out;
+}
+```

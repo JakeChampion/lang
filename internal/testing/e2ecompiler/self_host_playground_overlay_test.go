@@ -139,8 +139,8 @@ func playgroundLSPStdlibAnswers(t *testing.T, bin string) {
 	if err := json.Unmarshal(response(t, frames, "4").Result, &def); err != nil {
 		t.Fatal(err)
 	}
-	if def.URI != "file:///stdlib/std/i32.fern" || def.Range.Start.Line == 0 {
-		t.Errorf("definition of to_string = %+v, want a line of file:///stdlib/std/i32.fern", def)
+	if def.URI != "file:///stdlib/std/i32.fern.md" || def.Range.Start.Line == 0 {
+		t.Errorf("definition of to_string = %+v, want a line of file:///stdlib/std/i32.fern.md", def)
 	}
 }
 

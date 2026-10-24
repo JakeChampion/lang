@@ -1814,7 +1814,7 @@ var selfHostFmtKnownDivergences = map[string]string{}
 
 func TestSelfHostFmtCorpusParityX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	root := repoRootFromTest(t)
+	root := formatterCorpusRoot(t)
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "fern.fern")
 	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
@@ -1855,7 +1855,7 @@ func TestSelfHostFmtCorpusParityX86_64(t *testing.T) {
 
 func TestSelfHostFmtDiffCorpusParityX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	root := repoRootFromTest(t)
+	root := formatterCorpusRoot(t)
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "fern.fern")
 	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
@@ -1895,6 +1895,16 @@ func repoRootFromTest(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return root
+}
+
+func formatterCorpusRoot(t *testing.T) string {
+	t.Helper()
+	root := repoRootFromTest(t)
+	dst := t.TempDir()
+	if err := corpus.Materialize(root, dst, corpus.Sources); err != nil {
+		t.Fatal(err)
+	}
+	return dst
 }
 
 func corpusFernFiles(t *testing.T, root string) []string {
