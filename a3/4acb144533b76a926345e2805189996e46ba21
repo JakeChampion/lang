@@ -284,3 +284,8 @@ aarch64/utf8_ingest_unchecked.text	7675
 aarch64/utf8_ingest_unchecked.ir	2683450
 aarch64/utf8_ingest_validated.text	8462
 aarch64/utf8_ingest_validated.ir	6275853
+
+# lane: net-h2spec
+h2spec/passed	146
+h2spec/failed	0
+h2spec/skipped	0
