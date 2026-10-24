@@ -244,7 +244,7 @@ export class TileDelivery {
     const measured = { ...info, transferMs: Math.max(0, receivedAt - task.sentAt - (info.cached ? 0 : info.ms)) };
     this.cache.put(task.key, { blob, info: measured });
     for (const job of task.jobs) {
-      if (!job.cancelled) this.onTile(job, blob, { ...measured, queueMs: task.sentAt - job.requestedAt });
+      if (!job.cancelled) this.onTile(job, blob, { ...measured, queueMs: Math.max(0, task.sentAt - job.requestedAt) });
     }
   }
   fail(task, error) {

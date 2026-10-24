@@ -148,3 +148,13 @@ test("an obsolete renderer URL refreshes configuration and reports the new versi
   assert.deepEqual(versions, ["new-version"]); assert.match(urls[1], /api\/config$/);
   assert.equal(errors.length, 1); delivery.close();
 });
+
+
+test("a consumer that joins an active request has no negative queue time", async () => {
+  let now = 5;
+  const { delivery, requests, shown } = setup({ now: () => now });
+  delivery.setTransport("http"); delivery.request(job(1)); await tick();
+  now = 10; delivery.request(job(1)); requests[0].resolve(); await tick();
+  assert.equal(requests.length, 1); assert.equal(shown.length, 2);
+  assert.equal(shown[1][2].queueMs, 0); delivery.close();
+});

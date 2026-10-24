@@ -153,6 +153,8 @@ Automatic vectorization is disabled to keep the requested widths separate.
 The script also measures the current Fern direct kernel.
 All 589,824 escape counts and magnitude bit patterns agree across all five implementations.
 
+Bounded lanes normalize their counts to the iteration limit before comparison.
+
 The measurement includes the direct kernel and result storage only.
 It excludes shared-prefix preparation, color, PNG, serialization, and transport.
 The complete default renderer often skips much of this direct work.
