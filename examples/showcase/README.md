@@ -47,13 +47,13 @@ bin/fern -fmt -w examples/showcase/*.fern.md examples/fractal/server.fern.md
 
 ## Compression
 
-Dynamic HTML and JSON use `std/http/compress` with native gzip and zstd encoders.
+Dynamic HTML and JSON use `std/http/compress` with native Brotli, gzip, and zstd encoders.
 Static files and woven lessons use Brotli, gzip, or zstd variants from the build.
 The standard static server selects variants through Accept-Encoding quality values.
 SSE and WebSocket retain their stream bodies. PNG and WAV responses bypass text compression.
 
 The build uses Node 22.15 or newer for its three platform encoders. Netlify selects Node 24.
-Node does not run in the application container. Fern currently supplies a Brotli decoder, but no Brotli encoder.
+Node does not run in the application container. Fern supplies a fast native Brotli encoder and decoder. The build uses a higher compression level for immutable assets.
 
 Prepare compressed assets locally:
 

@@ -2,7 +2,7 @@
 
 Static assets and woven lessons have Brotli, gzip, and zstd variants from the build.
 The standard static server selects a variant with Accept-Encoding quality values.
-Dynamic HTML and JSON use the native gzip and zstd encoders. SSE and WebSocket streams keep their streaming bodies.
+Dynamic HTML and JSON use the native Brotli, gzip, and zstd encoders. SSE and WebSocket streams keep their streaming bodies.
 
 This document is the source program. Fern expands the named sections in `<<*>>` before compilation.
 The HTML source view links each section and each local import.

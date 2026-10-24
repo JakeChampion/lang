@@ -1,6 +1,6 @@
-# Brotli decompression
+# Brotli compression and decompression
 
-This module decodes Brotli data under RFC 7932.
+This module encodes and decodes Brotli data under RFC 7932.
 
 ## Model
 
@@ -17,6 +17,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<*>>=
 <<dependencies 1>>
+
+<<Compress a stream>>
 
 <<2 pub enum BrotliError>>
 
@@ -77,6 +79,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<dependencies 1>>=
 // This module decodes Brotli data under RFC 7932.
 import "std/brotli/dictionary";
+import "std/brotli/encoder";
 import "core/cmp";
 import "std/error";
 ```
@@ -1118,5 +1121,16 @@ function __context_lut(): i32[] {
     5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
     5, 5, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 7,
   ];
+}
+```
+
+## Compress a stream
+
+The fast encoder uses LZ77 matches and fixed Huffman trees. It has bounded match history.
+
+```fern
+<<Compress a stream>>=
+pub function compress(input: u8[]): u8[] {
+  return encoder.compress(input);
 }
 ```

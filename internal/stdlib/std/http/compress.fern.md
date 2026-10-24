@@ -43,6 +43,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<dependencies 2>>=
 import "std/deflate";
+import "std/brotli";
 import "std/zstd";
 import "std/headers";
 import "std/http";
@@ -61,7 +62,7 @@ pub struct Options { min_size: i32, codings: string[] }
 ```fern
 <<4 pub function options(): Options>>=
 pub function options(): Options {
-  return Options { min_size: 1024, codings: ["zstd", "gzip"] };
+  return Options { min_size: 1024, codings: ["br", "zstd", "gzip"] };
 }
 
 pub function compressed(req: HttpRequest, next: (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]): Result[HttpResponse, dyn http.ToResponse] {
@@ -89,6 +90,9 @@ pub function response(req: HttpRequest, resp: HttpResponse, o: Options): HttpRes
 }
 
 pub function encode(coding: string, body: u8[]): Option[u8[]] {
+  if (coding == "br") {
+    return Some(brotli.compress(body));
+  }
   if (coding == "gzip") {
     return Some(deflate.gzip(body));
   }
@@ -106,7 +110,7 @@ pub function encode(coding: string, body: u8[]): Option[u8[]] {
 function __written(codings: string[]): string[] {
   let out: string[] = [];
   for c in codings {
-    if (c == "gzip" || c == "zstd") {
+    if (c == "br" || c == "gzip" || c == "zstd") {
       out = out.append(c);
     }
   }

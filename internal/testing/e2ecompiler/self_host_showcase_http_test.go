@@ -236,6 +236,20 @@ func TestSelfHostShowcaseHTTP(t *testing.T) {
 		}
 	})
 	t.Run("gzip-and-netlify-negotiation", func(t *testing.T) {
+		node, err := exec.LookPath("node")
+		if err != nil {
+			t.Fatal("Node is required for independent Brotli decoding")
+		}
+		brResponse, brData := request("GET", "/notes/", "", map[string]string{"Accept-Encoding": "br"})
+		if brResponse.Header.Get("Content-Encoding") != "br" {
+			t.Fatal("native Brotli absent")
+		}
+		decode := exec.Command(node, "-e", "let data=[];process.stdin.on('data',b=>data.push(b));process.stdin.on('end',()=>{const text=require('node:zlib').brotliDecompressSync(Buffer.concat(data)).toString();if(!text.includes('<html'))process.exit(1);});")
+		decode.Stdin = bytes.NewReader(brData)
+		if out, err := decode.CombinedOutput(); err != nil {
+			t.Fatalf("native Brotli response: %v %s", err, out)
+		}
+
 		response, data := request("GET", "/notes/", "", map[string]string{"Accept-Encoding": "gzip"})
 		if response.Header.Get("Content-Encoding") != "gzip" {
 			t.Fatal("native gzip absent")
